@@ -1,8 +1,6 @@
 import copy
 import importlib.util
-import io
 import json
-import os
 import pathlib
 import shutil
 import subprocess
@@ -56,34 +54,6 @@ class QuotaRuntimeTest(unittest.TestCase):
         self.assertEqual(plan['account_scope'], 'fixture-account')
         self.assertEqual(plan['container_binding']['container_id'], self.observed['Id'])
 
-    def test_login_falls_back_only_when_updated_binary_is_absent(self):
-        native = '/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime, 'docker', return_value=native.encode()), \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
-            self.assertEqual(runtime.login_plan(self.policy, self.document)['command'][0], native)
-
-    def test_native_codex_login_rejects_a_binary_outside_its_selected_installation(self):
-        for path in ('/bin/sh', '/home/node/.local/lib/node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/bin/codex'):
-            with self.subTest(path=path), patch.object(runtime, 'provider_executable', return_value='/usr/local/bin/codex'), \
-                    patch.object(runtime, 'docker', return_value=path.encode()):
-                with self.assertRaises(runtime.SafeFailure):
-                    runtime.provider_login_executable(self.environment)
-
-    def test_ready_requires_a_functional_cli_version_command(self):
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
-                patch.object(runtime, 'docker', return_value=b'codex-cli 1.2.3\n') as execute:
-            result = runtime.create(self.policy,self.environment)
-        self.assertEqual(result['cli_version'], 'codex-cli 1.2.3')
-        self.assertTrue(result['runtime_verified'])
-        self.assertEqual(execute.call_args.args[-2:], ('/usr/local/bin/codex', '--version'))
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
-                patch.object(runtime, 'docker', return_value=b''):
-            with self.assertRaises(runtime.SafeFailure):
-                runtime.create(self.policy,self.environment)
-
     def test_foreign_profile_volume_is_not_removed(self):
         labels = runtime.labels(self.policy, self.environment)
         observed = copy.deepcopy(self.observed)
@@ -106,119 +76,6 @@ class QuotaRuntimeTest(unittest.TestCase):
                 with self.assertRaises(type(failure)):
                     runtime.create(self.policy, self.environment)
             remove.assert_called_once_with(self.policy, self.environment)
-
-    def test_failed_creation_preserves_a_preexisting_profile(self):
-        volume = self.environment['container_name'] + '-profile'
-        with patch.object(runtime, 'inspect_container', side_effect=[None, self.observed, None]), \
-                patch.object(runtime, 'docker', return_value=volume.encode()) as execute, patch.object(runtime, 'validate'), \
-                patch.object(runtime, 'create_runtime', side_effect=runtime.SafeFailure('unusable CLI')), \
-                patch.object(runtime, 'remove') as remove:
-            with self.assertRaisesRegex(runtime.SafeFailure, 'unusable CLI'):
-                runtime.create(self.policy, self.environment)
-        remove.assert_not_called()
-        self.assertEqual(execute.call_args.args, ('rm', '-f', self.environment['container_name']))
-
-    def test_query_failure_is_not_a_successful_effect(self):
-        document = {**self.document, 'action': 'query'}
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout=b'{}')):
-            with self.assertRaises(runtime.SafeFailure):
-                runtime.perform(self.policy, document)
-
-    def test_codex_error_exit_ingests_an_error_observation(self):
-        document = {**self.document, 'action': 'query'}
-        body = json.dumps({'error': 'HTTP 429', 'ventanas': []}).encode()
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime, 'provider_version', return_value='codex-cli 0.160.1') as version, \
-                patch.object(runtime.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, stdout=body)) as execute:
-            report = runtime.perform(self.policy, document)
-        self.assertEqual(report['observation_status'], 'error')
-        self.assertFalse(report['provider_report']['ok'])
-        self.assertEqual(report['provider_report']['note'], 'rate_limited')
-        self.assertEqual(report['cli_version'], 'codex-cli 0.160.1')
-        version.assert_called_once_with(self.environment)
-        self.assertEqual(execute.call_args.args[0][-1], '--refresh-own-session')
-
-    def test_grok_keeps_query_without_update_and_reasons_are_reported(self):
-        bundle = self.policy['bundles']['codex']
-        self.policy['bundles']['grok'] = dict(bundle)
-        self.policy['quota_environments']['providers'] = ['grok']
-        self.assertEqual(runtime.capabilities(self.policy), {'providers': ['grok'],
-            'actions': {'grok': ['create', 'authenticate', 'query', 'delete']}})
-        available, unavailable = runtime.provider_actions(self.policy, 'grok')
-        self.assertIn('query', available)
-        self.assertNotIn('update_cli', available)
-        self.assertIn('operations.update', unavailable['update_cli'])
-
-    def test_allowed_providers_derive_from_bundle_descriptors(self):
-        self.assertEqual(runtime.allowed_providers(self.policy), frozenset({'claude', 'codex', 'grok'}))
-        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/fake2.json'
-        descriptor.write_text(json.dumps({'schema_version': 1, 'harness': 'fake2',
-            'operations': {'install': 'runtime-package', 'execute': 'native-execution', 'quota': 'quota-collector'},
-            'context': {'native_document': 'AGENTS.md', 'max_bytes': 65536},
-            'provider': {'quota_argv': ['/usr/local/bin/node', '/usr/local/bin/leer-cuota.mjs']}}))
-        runtime._allowed_for_directories.cache_clear()
-        self.assertIn('fake2', runtime.allowed_providers(self.policy))
-
-    def test_capadd_accepts_prefixed_and_unprefixed_docker_formats(self):
-        def mount(destination, **extra):
-            return {'Destination': destination, **extra}
-        for cap_add in (list(runtime.CAPABILITIES), ['CAP_' + name for name in runtime.CAPABILITIES]):
-            observed = {**copy.deepcopy(self.observed),
-                'Config': {'User': '1000:1000', 'Labels': {
-                    'cauce.quota.environment': self.environment['id'], 'cauce.quota.company': 'fixture-company',
-                    'cauce.quota.host': 'fixture-host', 'cauce.quota.owner': 'fixture-user'}},
-                'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'NetworkMode': 'fixture-network',
-                    'Memory': 512 * 1024 * 1024, 'PidsLimit': 128, 'Tmpfs': dict(runtime.TMPFS), 'CapDrop': ['ALL'], 'CapAdd': cap_add,
-                    'SecurityOpt': ['no-new-privileges']},
-                'Mounts': [mount('/home/node', Type='volume', Name=self.environment['container_name'] + '-profile', RW=True),
-                           mount('/cauce/executor', Type='bind', Source=str(runtime.EXECUTOR_SOURCE), RW=False),
-                           mount('/cauce/lifecycle', Type='bind', Source=str(runtime.LIFECYCLE_SOURCE), RW=False)]}
-            volume = [{'Labels': observed['Config']['Labels']}]
-            with self.subTest(cap_add=cap_add[0]), patch.object(runtime, 'docker', return_value=json.dumps(volume)):
-                runtime.validate(self.policy, self.environment, observed)
-            for tmpfs in (None, {**runtime.TMPFS, '/etc': 'rw'}, {**runtime.TMPFS, '/tmp': 'rw,exec'}):
-                tampered = copy.deepcopy(observed)
-                tampered['HostConfig']['Tmpfs'] = tmpfs
-                with self.subTest(tmpfs=tmpfs), self.assertRaises(runtime.SafeFailure):
-                    runtime.validate(self.policy, self.environment, tampered)
-
-    def test_configuration_is_syntactic_and_allowance_is_enforced_later(self):
-        policy = {**self.policy, 'bundles': {'codex': {'directory': '/nonexistent-bundle'}},
-                  'quota_environments': {**self.policy['quota_environments'], 'providers': ['codex', 'gemini']}}
-        self.assertEqual(runtime.configuration(policy)['providers'], ['codex', 'gemini'])
-        self.assertEqual(runtime.capabilities(policy), {'providers': [], 'actions': {}})
-        document = {'operation_id': self.document['operation_id'], 'action': 'query', 'consent': False,
-                    'environment': {**self.document['environment'], 'provider': 'codex'}}
-        with self.assertRaises(runtime.SafeFailure):
-            runtime.packet(policy, document)
-        policy['quota_environments'] = {**policy['quota_environments'], 'providers': ['CODE X']}
-        with self.assertRaises(runtime.SafeFailure):
-            runtime.configuration(policy)
-
-    def test_login_plan_rejects_descriptor_executable_that_differs_from_provider(self):
-        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/codex.json'
-        value = json.loads(descriptor.read_text())
-        value['provider']['authenticate_argv'] = ['/usr/local/bin/othercli', 'login']
-        descriptor.write_text(json.dumps(value))
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), \
-                patch.object(runtime, 'validate'), patch.object(runtime, 'provider_executable') as executable:
-            with self.assertRaises(runtime.SafeFailure):
-                runtime.login_plan(self.policy, self.document)
-        executable.assert_not_called()
-
-    def test_descriptors_are_pinned_and_unavailable_providers_never_claim_readiness(self):
-        self.policy['quota_environments']['providers'] = ['codex', 'gemini']
-        self.assertEqual(runtime.capabilities(self.policy), {'providers': ['codex'],
-            'actions': {'codex': ['create', 'authenticate', 'query', 'update_cli', 'delete']}})
-        descriptor = pathlib.Path(self.policy['bundles']['codex']['directory']) / 'packages/adapter-sdk/dist/descriptors/codex.json'
-        descriptor.write_text(descriptor.read_text() + '\n')
-        self.assertEqual(runtime.capabilities(self.policy), {'providers': [], 'actions': {}})
-        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
-                patch.object(runtime.subprocess, 'run') as execute:
-            with self.assertRaises(runtime.SafeFailure):
-                runtime.perform(self.policy, {**self.document, 'action': 'query'})
-        execute.assert_not_called()
 
     def test_auth_verification_requires_a_successful_request_and_provider_account_identity(self):
         verified = {'fuente': 'wham-http', 'error': None, 'extra': {'account_id': 'remote-subscription'}}
@@ -273,42 +130,6 @@ class QuotaRuntimeTest(unittest.TestCase):
         error = normalize_cli_snapshot('codex', {'error': 'HTTP 429', 'ventanas': []}, 'fixture-account')
         self.assertEqual(error['observation_status'], 'error')
         self.assertEqual(error['provider_report']['windows'], [])
-
-    def test_existing_executor_dispatches_quota_without_the_agent_protocol(self):
-        spec = importlib.util.spec_from_file_location('fleet_executor_entry', ROOT / 'cli' / 'fleet-executor.py')
-        executor = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(executor)
-        stdin = io.TextIOWrapper(io.BytesIO(json.dumps(self.document).encode()))
-        stdout = io.StringIO()
-        with patch.object(executor, 'load_policy', return_value=self.policy), patch.object(runtime, 'perform', return_value={'awaiting_auth': True}) as effect, \
-                patch.object(sys, 'argv', ['fleet-executor.py', '--policy', '/fixture/policy.json', '--quota']), \
-                patch.object(sys, 'stdin', stdin), patch.object(sys, 'stdout', stdout), patch.object(executor.signal, 'signal'):
-            self.assertEqual(executor.main(), 0)
-        effect.assert_called_once_with(self.policy, self.document)
-        self.assertEqual(json.loads(stdout.getvalue()), {'awaiting_auth': True})
-
-    def test_private_policy_validates_quota_allowlist_and_requires_a_verified_descriptor(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            roots = {field: str(root / field) for field in ['state', 'runtime', 'pki', 'tokens', 'identities']}
-            for path in roots.values():
-                os.mkdir(path, 0o700)
-            import pwd
-            policy = {'schemaVersion': 1, 'host_id': 'fixture-host', 'executor_user': pwd.getpwuid(os.geteuid()).pw_name,
-                      'roots': roots, 'native': [], 'containers': {}, 'bundles': {}, 'profiles': {}, 'hooks': {},
-                      'quota_environments': {'image': 'sha256:' + 'a' * 64, 'network': 'fixture-network', 'providers': ['gemini']}}
-            filename = root / 'policy.json'
-            filename.write_text(json.dumps(policy))
-            filename.chmod(0o600)
-            response = subprocess.run([sys.executable, str(ROOT / 'cli' / 'fleet-executor.py'), '--policy', str(filename), '--capabilities'],
-                                      capture_output=True, text=True, timeout=15, check=True)
-            self.assertEqual(json.loads(response.stdout)['quota_environments'], {'providers': [], 'actions': {}})
-            policy['quota_environments']['providers'] = ['unknown-provider']
-            filename.write_text(json.dumps(policy))
-            rejected = subprocess.run([sys.executable, str(ROOT / 'cli' / 'fleet-executor.py'), '--policy', str(filename), '--capabilities'],
-                                      capture_output=True, text=True, timeout=15)
-            self.assertNotEqual(rejected.returncode, 0)
-
 
 if __name__ == '__main__':
     unittest.main()

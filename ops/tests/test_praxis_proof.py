@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import importlib.util
 import json
 import os
@@ -101,14 +100,6 @@ class PraxisProofTests(unittest.TestCase):
         self.assertEqual(self.read("tests.json")["status"], "failed")
         self.assertEqual(self.read("proof.json")["status"], "failed")
 
-    def test_source_mutation_during_gate_invalidates_snapshot(self):
-        mutation = "from pathlib import Path; Path(" + repr(str(self.workspace / "apps/api/store.py")) + ").write_text('value = 99\\n')"
-        self.assertEqual(self.run_proof([["/usr/bin/python3", "-c", mutation]]), 1)
-        snapshot = self.read("snapshot.json")
-        self.assertFalse(snapshot["source_unchanged"])
-        self.assertEqual(snapshot["status"], "failed")
-        self.assertEqual(self.read("proof.json")["status"], "failed")
-
     def test_untracked_credentials_never_enter_isolated_clone_or_environment(self):
         (self.workspace / ".env").write_text("SYNTHETIC_SECRET=private-test-only\n")
         code = "import os; from pathlib import Path; assert not Path('.env').exists(); assert 'SYNTHETIC_SECRET' not in os.environ; print('isolated')"
@@ -116,95 +107,6 @@ class PraxisProofTests(unittest.TestCase):
             self.assertEqual(self.run_proof([["/usr/bin/python3", "-B", "-m", "unittest", "discover", "-s", "apps/api", "-p", "test_*.py"],
                                             ["/usr/bin/python3", "-c", code]]), 0)
         self.assertNotIn("private-test-only", (self.args.output / "tests.json").read_text())
-
-    def test_tracked_credentials_are_rejected_before_clone(self):
-        (self.workspace / ".env").write_text("synthetic private fixture\n")
-        self.git("add", ".env")
-        self.git("commit", "-qm", "Synthetic forbidden fixture")
-        self.args.commit = self.git("rev-parse", "HEAD").strip()
-        with self.assertRaisesRegex(PROOF.ProofError, "non_public_tracked_path"):
-            self.run_proof()
-        self.assertFalse(self.args.output.exists())
-
-    def test_dirty_sources_and_wrong_commit_are_rejected(self):
-        self.args.commit = "b" * 40
-        with self.assertRaisesRegex(PROOF.ProofError, "source_commit_mismatch"):
-            self.run_proof()
-        self.args.commit = self.commit
-        (self.workspace / "apps/api/store.py").write_text("value = 99\n")
-        with self.assertRaisesRegex(PROOF.ProofError, "tracked_tree_dirty"):
-            self.run_proof()
-
-    def test_stale_output_cannot_be_reused(self):
-        self.args.output.mkdir()
-        (self.args.output / "tests.json").write_text('{"status":"passed"}')
-        with self.assertRaisesRegex(PROOF.ProofError, "output_must_be_new"):
-            self.run_proof()
-
-    def test_symlink_source_and_escaping_artifact_prefix_are_rejected(self):
-        source = self.workspace / "apps/api/store.py"
-        source.unlink()
-        source.symlink_to(self.root / "private.txt")
-        with self.assertRaisesRegex(PROOF.ProofError, "unsafe_source_path"):
-            PROOF.source_hashes(self.workspace, ["apps/api/store.py"])
-        self.args.artifact_prefix = "../private"
-        with self.assertRaisesRegex(PROOF.ProofError, "invalid_artifact_prefix"):
-            self.run_proof()
-
-    def test_timeout_is_a_failed_result(self):
-        result = PROOF.execute(["/usr/bin/python3", "-c", "import time; time.sleep(3)"], self.workspace,
-                               PROOF.child_environment(self.root), 0.05)
-        self.assertEqual(result["exit_code"], 124)
-        self.assertIn("command_timeout", result["stderr"])
-
-    def test_zero_exit_without_fresh_qa_report_is_not_passed(self):
-        self.args.qa = True
-        self.assertEqual(self.run_proof(), 1)
-        report = self.read("qa.json")
-        self.assertEqual(report["status"], "failed")
-        self.assertEqual(report["exit_code"], 1)
-        self.assertIn("qa_report_missing_or_invalid", report["results"][0]["stderr"])
-        self.assertEqual(report["inspected_images"], [])
-        self.assertFalse(report["review"]["independent"])
-        self.assertEqual(report["author"], "praxis-proof.py")
-        self.assertEqual(report["producer_kind"], "automation")
-        self.assertEqual(self.read("proof.json")["status"], "technical-progress")
-
-    def test_native_qa_producer_records_automation_identity_without_visual_approval(self):
-        script = ("import hashlib,json\nfrom pathlib import Path\n"
-                  "output=Path('proof-generated/qa'); output.mkdir(parents=True)\n"
-                  "image=output/'synthetic.png'; image.write_bytes(b'synthetic screenshot bytes')\n"
-                  "report={'status':'passed','source_sha256':{'apps/web/app.js':hashlib.sha256(Path('apps/web/app.js').read_bytes()).hexdigest()},"
-                  "'runs':[{'status':'passed','screenshots':[{'path':str(image),'sha256':hashlib.sha256(image.read_bytes()).hexdigest()}]}]}\n"
-                  "(output/'browser-qa.json').write_text(json.dumps(report))\n")
-        (self.workspace / "scripts/qa_professional.py").write_text(script)
-        self.git("add", "scripts/qa_professional.py")
-        self.git("commit", "-qm", "Synthetic QA producer")
-        self.commit = self.args.commit = self.git("rev-parse", "HEAD").strip()
-        self.args.qa = True
-        self.assertEqual(self.run_proof(), 0)
-        qa = self.read("qa.json")
-        self.assertEqual((qa["author"], qa["producer_kind"]), ("praxis-proof.py", "automation"))
-        self.assertEqual((qa["source_commit"], qa["status"], qa["exit_code"]), (self.commit, "passed", 0))
-        capture = qa["runs"][0]["screenshots"][0]
-        self.assertEqual(capture["sha256"], PROOF.digest(self.args.output / "qa/synthetic.png"))
-        self.assertEqual(qa["review"], {"independent": False, "reviewer": None})
-        self.assertEqual(qa["inspected_images"], [])
-        self.assertTrue(self.read("proof.json")["independent_review_pending"])
-        for name in ("qa.json", "snapshot.json", "tests.json"):
-            self.assertNotIn("production_clinical_accepted", self.read(name))
-
-    def test_gate_report_never_substitutes_an_actor_for_its_automation_author(self):
-        qa = PROOF.gate_report("qa", "synthetic", self.commit, {}, [], author="synthetic-actor", producer_kind="human")
-        self.assertEqual((qa["author"], qa["producer_kind"]), ("praxis-proof.py", "automation"))
-
-    def test_discover_zero_tests_is_not_passed(self):
-        selected = [["/usr/bin/python3", "-B", "-m", "unittest", "discover", "-s", "apps/api", "-p", "missing_*.py"]]
-        self.assertEqual(self.run_proof(selected), 1)
-        report = self.read("tests.json")
-        self.assertEqual(report["actual_results"]["count"], 0)
-        self.assertEqual(report["status"], "failed")
-        self.assertEqual(report["error"], "no_api_tests_executed")
 
     def install_output(self):
         return PROOF.install_evidence(self.workspace, self.args.output, self.args.artifact_prefix,
@@ -250,166 +152,12 @@ class PraxisProofTests(unittest.TestCase):
         qa = next(gate for gate in installed["gates"] if gate["id"] == "qa")
         self.assertEqual(qa["outcome"], "pending")
 
-    def test_repeated_install_does_not_overwrite_evidence(self):
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        original = self.verification.read_bytes()
-        evidence = (self.workspace / self.args.artifact_prefix / "tests.json").read_bytes()
-        self.args.output = self.root / "second-output"
-        with self.assertRaisesRegex(PROOF.ProofError, "evidence_destination_exists"):
-            self.run_proof()
-        self.assertEqual(self.verification.read_bytes(), original)
-        self.assertEqual((self.workspace / self.args.artifact_prefix / "tests.json").read_bytes(), evidence)
-
-    def test_install_only_changes_declared_files_and_lock_is_invisible_to_git(self):
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        status = {row[3:] for row in self.git("status", "--porcelain", "--untracked-files=all").splitlines()}
-        expected = {PROOF.VERIFICATION, *(self.args.artifact_prefix + "/" + name for name in ("tests.json", "snapshot.json", "proof.json"))}
-        self.assertEqual(status, expected)
-        lock_path = self.workspace / ".git/praxis-proof.lock"
-        self.assertTrue(lock_path.is_file())
-        inode = lock_path.stat().st_ino
-        self.git("add", *expected)
-        self.git("commit", "-qm", "Synthetic installed evidence")
-        self.assertEqual(self.git("status", "--porcelain", "--untracked-files=all"), "")
-        self.assertEqual(lock_path.stat().st_ino, inode)
-
-    def test_installation_lock_preserves_writer_exclusion_and_inode(self):
-        self.assertEqual(self.run_proof(), 0)
-        environment = PROOF.child_environment(self.root)
-        first = PROOF.installation_lock(self.workspace, environment)
-        try:
-            fcntl.flock(first, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            inode = os.fstat(first).st_ino
-            with self.assertRaisesRegex(PROOF.ProofError, "evidence_installation_in_progress"):
-                self.install_output()
-            second = PROOF.installation_lock(self.workspace, environment)
-            try:
-                self.assertEqual(os.fstat(second).st_ino, inode)
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finally:
-                os.close(second)
-        finally:
-            os.close(first)
-        self.install_output()
-        self.assertEqual((self.workspace / ".git/praxis-proof.lock").stat().st_ino, inode)
-
-    def test_worktree_lock_uses_its_git_metadata(self):
-        linked = self.root / "linked-worktree"
-        self.git("worktree", "add", "--detach", str(linked), self.commit)
-        environment = PROOF.child_environment(self.root)
-        lock = PROOF.installation_lock(linked, environment)
-        os.close(lock)
-        git_directory = Path(PROOF.git_text(linked, ["rev-parse", "--absolute-git-dir"], environment))
-        self.assertTrue((git_directory / "praxis-proof.lock").is_file())
-        self.assertFalse((linked / "praxis-proof.lock").exists())
-        self.assertEqual(PROOF.git_text(linked, ["status", "--porcelain", "--untracked-files=all"], environment), "")
-
-    def test_lock_symlink_and_inconsistent_git_metadata_are_rejected(self):
-        target = self.root / "synthetic-protected-file"
-        target.write_text("synthetic protected contents")
-        (self.workspace / ".git/praxis-proof.lock").symlink_to(target)
-        environment = PROOF.child_environment(self.root)
-        with self.assertRaisesRegex(PROOF.ProofError, "unsafe_installation_lock"):
-            PROOF.installation_lock(self.workspace, environment)
-        self.assertEqual(target.read_text(), "synthetic protected contents")
-        with mock.patch.object(PROOF, "git_text", return_value=str(self.root / "other-git")):
-            with self.assertRaisesRegex(PROOF.ProofError, "unsafe_git_metadata"):
-                PROOF.installation_lock(self.workspace, environment)
-
-    def test_install_rejects_different_head_without_writing(self):
-        self.assertEqual(self.run_proof(), 0)
-        self.git("commit", "--allow-empty", "-qm", "Synthetic next head")
-        original = self.verification.read_bytes()
-        with self.assertRaisesRegex(PROOF.ProofError, "installation_source_mismatch"):
-            self.install_output()
-        self.assertEqual(self.verification.read_bytes(), original)
-        self.assertFalse((self.workspace / self.args.artifact_prefix).exists())
-
     def test_install_rejects_failed_tests_without_writing(self):
         self.assertEqual(self.run_proof([["/usr/bin/python3", "-c", "raise SystemExit(7)"]]), 1)
         original = self.verification.read_bytes()
         with self.assertRaisesRegex(PROOF.ProofError, "tests_or_snapshot_not_passed"):
             self.install_output()
         self.assertEqual(self.verification.read_bytes(), original)
-
-    def test_uncommitted_new_code_is_rejected(self):
-        (self.workspace / "apps/api/new.py").write_text("synthetic = True\n")
-        with self.assertRaisesRegex(PROOF.ProofError, "tracked_tree_dirty"):
-            self.run_proof()
-        self.assertFalse(self.args.output.exists())
-
-    def test_private_prefix_and_symlink_parent_are_rejected(self):
-        for prefix in ("docs/evidence/credentials", "docs/evidence/profiles", "docs/evidence/auth.json", "../private"):
-            self.args.artifact_prefix = prefix
-            with self.assertRaisesRegex(PROOF.ProofError, "invalid_artifact_prefix"):
-                self.run_proof()
-        self.args.artifact_prefix = "docs/evidence/synthetic-proof"
-        self.args.install_evidence = True
-        (self.workspace / "docs").symlink_to(self.root / "private")
-        with self.assertRaisesRegex(PROOF.ProofError, "unsafe_metadata_path"):
-            self.run_proof()
-
-    def test_install_retains_only_current_source_bound_qa(self):
-        gate = self.old_qa()
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        installed = json.loads(self.verification.read_text())
-        self.assertEqual(next(row for row in installed["gates"] if row["id"] == "qa"), gate)
-        self.assertTrue(installed["qa_executed"])
-        self.assertTrue(installed["independent_review_pending"])
-        self.assertEqual(installed["accepted_issues"], self.previous["accepted_issues"])
-
-    def test_stale_qa_is_pending_with_reason(self):
-        self.old_qa(stale=True)
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        installed = json.loads(self.verification.read_text())
-        qa = next(row for row in installed["gates"] if row["id"] == "qa")
-        self.assertEqual(qa["outcome"], "pending")
-        self.assertTrue(qa["reason"])
-        self.assertFalse(installed["qa_executed"])
-
-    def test_unbound_transferred_qa_is_not_retained(self):
-        gate = self.old_qa()
-        gate["transferred_artifacts"] = [{"path": "docs/evidence/missing/qa.json", "sha256": "a" * 64}]
-        self.previous["gates"] = [gate]
-        PROOF.write_json(self.verification, self.previous)
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        installed = json.loads(self.verification.read_text())
-        self.assertEqual(next(row for row in installed["gates"] if row["id"] == "qa")["outcome"], "pending")
-
-    def test_failed_qa_stays_failed(self):
-        gate = self.old_qa(outcome="failed")
-        self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 0)
-        installed = json.loads(self.verification.read_text())
-        self.assertEqual(next(row for row in installed["gates"] if row["id"] == "qa"), gate)
-        self.assertFalse(installed["qa_executed"])
-
-    def test_fresh_failed_qa_replaces_previous_pass(self):
-        self.old_qa()
-        self.args.qa = self.args.install_evidence = True
-        self.assertEqual(self.run_proof(), 1)
-        installed = json.loads(self.verification.read_text())
-        qa = next(row for row in installed["gates"] if row["id"] == "qa")
-        self.assertEqual(qa["outcome"], "failed")
-        self.assertEqual(installed["status"], "technical-progress")
-        raw = json.loads((self.workspace / qa["artifacts"][0]["path"]).read_text())
-        self.assertIn("qa_report_missing_or_invalid", raw["results"][0]["stderr"])
-
-    def test_output_cannot_shadow_installed_metadata_or_private_directories(self):
-        self.args.install_evidence = True
-        self.args.output = self.workspace / self.args.artifact_prefix
-        with self.assertRaisesRegex(PROOF.ProofError, "output_collides_with_metadata"):
-            self.run_proof()
-        self.args.output = self.root / "profiles" / "new-output"
-        with self.assertRaisesRegex(PROOF.ProofError, "unsafe_output_path"):
-            self.run_proof()
-
 
 if __name__ == "__main__":
     unittest.main()

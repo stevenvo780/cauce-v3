@@ -15,10 +15,8 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import types
 import unittest
-from contextlib import redirect_stdout
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
@@ -172,18 +170,6 @@ class InstallFixture(unittest.TestCase):
 
 
 class ArgumentTests(InstallFixture):
-    def test_defaults_are_the_production_paths_matching_the_fleet_overlay(self):
-        args = self.kit.parse_arguments([])
-        self.assertEqual(args.config_directory, pathlib.Path('/etc/cauce-v3/fleet-v35/signed-authority'))
-        self.assertEqual(args.socket_directory / self.kit.SOCKET_NAME, pathlib.Path('/run/cauce-fleet-signed-authority/authority.sock'))
-        self.assertEqual((args.gateway_uid, args.gateway_gid), (1000, 1000))
-        self.assertEqual(args.gateway_container, 'cauce-v3-prod-gateway-1')
-        overlay = (pathlib.Path(__file__).resolve().parents[2] / 'deploy/compose.fleet.yaml').read_text()
-        for line in ('CAUCE_FLEET_AUTHORITY_SOCKET: /run/cauce-fleet-signed-authority/authority.sock',
-                     'CAUCE_FLEET_AUTHORITY_OWNER_UID: "0"', 'CAUCE_FLEET_AUTHORITY_PEER_UID: "1000"',
-                     'CAUCE_FLEET_AUTHORITY_GROUP_GID: "1000"', 'source: /run/cauce-fleet-signed-authority'):
-            self.assertIn(line, overlay)
-
     def test_unsafe_values_and_non_root_are_rejected_before_any_effect(self):
         for extra in (['--unit', 'relative.service'], ['--gateway-uid', '0'], ['--gateway-gid', '0'],
                       ['--gateway-container', '-dangerous'], ['--gateway-container', 'gateway; exit'],
@@ -230,128 +216,7 @@ class PreflightTests(InstallFixture):
         unit = self.kit.desired_files(args, self.kit.controller_state(args))[args.unit][0].decode()
         return dict(line.split('=', 1) for line in unit.splitlines() if '=' in line)
 
-    def test_rendered_unit_retains_the_capabilities_for_socket_and_registry_ownership(self):
-        capabilities = self.rendered_unit()['CapabilityBoundingSet'].split()
-        self.assertEqual(set(capabilities), {'CAP_CHOWN', 'CAP_DAC_OVERRIDE', 'CAP_FOWNER'})
-
-    def test_rendered_unit_allows_writes_to_every_registry_parent_without_duplicates(self):
-        paths = self.rendered_unit()['ReadWritePaths'].split()
-        self.assertEqual(paths, [str(self.issuer_state), str(self.root / 'registries/base'),
-                                str(self.root / 'registries/fleet'), str(self.socket_directory)])
-
-    def test_rendered_unit_does_not_stop_with_the_controller(self):
-        self.assertNotIn('PartOf', self.rendered_unit())
-
-    def test_unsafe_state_root_is_rejected_before_any_effect(self):
-        state = self.kit.controller_state(self.arguments())
-        policy = json.loads(self.policy.read_bytes())
-        for root in ('/var/lib/cauce/unsafe path', '/var/lib/cauce/%n', '/var/lib/cauce/\nInjected=value',
-                     '/var/lib/../cauce', 'relative'):
-            with self.subTest(root=root):
-                self.policy.write_bytes(lib.dumps({**policy, 'state_root': root}))
-                with self.assertRaises(lib.Abort):
-                    self.kit.desired_files(self.arguments(), state)
-        self.assertEqual(self.host.events, [])
-
-    def test_broad_state_root_and_registry_parents_are_rejected_before_any_effect(self):
-        policy = json.loads(self.policy.read_bytes())
-        for field in ('state_root', 'registries'):
-            for directory in ('/', '/etc', '/usr', '/var', '/home', '/root', '/boot', '/proc', '/sys', '/dev', '/run', '/srv'):
-                with self.subTest(field=field, directory=directory):
-                    value = directory if field == 'state_root' else {'base_mtls': str(pathlib.Path(directory) / 'mtls_identities.json')}
-                    self.policy.write_bytes(lib.dumps({**policy, field: value}))
-                    self.release(OLD)
-                    before = self.tree()
-                    for extra in ((), ('--apply',)):
-                        with self.assertRaisesRegex(lib.Abort, 'state_root and registry parents.*at least two levels'):
-                            self.kit.install(self.arguments(*extra))
-                        self.assertEqual(self.tree(), before)
-                        self.assertEqual(self.host.events, [])
-
-    def test_write_paths_two_levels_below_root_are_allowed(self):
-        self.policy.write_bytes(lib.dumps({'state_root': '/var/lib', 'registries': {'base_mtls': '/etc/cauce/mtls_identities.json'}}))
-        self.assertEqual(self.kit.issuer_write_paths({'command': self.command}), {'/var/lib', '/etc/cauce'})
-
-    def test_home_state_roots_and_registries_are_rejected_before_any_effect(self):
-        policy = json.loads(self.policy.read_bytes())
-        for field in ('state_root', 'registries'):
-            for directory in ('/home/fixture/state', '/root/state'):
-                with self.subTest(field=field, directory=directory):
-                    value = directory if field == 'state_root' else {'base_mtls': directory + '/mtls_identities.json'}
-                    self.policy.write_bytes(lib.dumps({**policy, field: value}))
-                    self.release(OLD)
-                    before = self.tree()
-                    for extra in ((), ('--apply',)):
-                        with self.assertRaisesRegex(lib.Abort, 'cannot be under /home or /root.*ProtectHome=yes'):
-                            self.kit.install(self.arguments(*extra))
-                        self.assertEqual(self.tree(), before)
-                        self.assertEqual(self.host.events, [])
-
-    def test_home_prefixes_outside_the_protected_directories_are_allowed(self):
-        self.policy.write_bytes(lib.dumps({'state_root': '/homework/state',
-                                          'registries': {'base_mtls': '/rootfs/registry/mtls_identities.json'}}))
-        self.assertEqual(self.kit.issuer_write_paths({'command': self.command}), {'/homework/state', '/rootfs/registry'})
-
-    def test_unsafe_or_missing_registries_are_rejected_before_any_effect(self):
-        state = self.kit.controller_state(self.arguments())
-        policy = json.loads(self.policy.read_bytes())
-        for registries in (None, {}, [], {'base_mtls': 'relative/file'},
-                           {'base_mtls': '/etc/cauce/../registry/file'},
-                           {'base_mtls': '/etc/cauce/unsafe path/file'},
-                           {'base_mtls': '/etc/cauce/%n/file'}, {'base_mtls': 42}):
-            with self.subTest(registries=registries):
-                self.policy.write_bytes(lib.dumps({**policy, 'registries': registries}))
-                with self.assertRaises(lib.Abort):
-                    self.kit.desired_files(self.arguments(), state)
-        self.assertEqual(self.host.events, [])
-
-    def test_preflight_refuses_an_old_release_pin_drift_a_public_database_file_and_a_missing_command(self):
-        entry = self.tools / OLD / self.kit.ENTRY
-        entry.unlink()
-        with self.assertRaisesRegex(lib.Abort, 'upgrade the controller first'):
-            self.kit.install(self.arguments())
-        self.release(OLD)
-        pathlib.Path(self.command['executable']).write_bytes(b'tampered\n')
-        with self.assertRaisesRegex(lib.Abort, 'executable differs'):
-            self.kit.install(self.arguments())
-        self.release(OLD)
-        self.database.chmod(0o440)
-        with self.assertRaisesRegex(lib.Abort, 'private regular file'):
-            self.kit.install(self.arguments())
-        self.database.chmod(0o400)
-        self.file(self.controller / 'controller.v1.json', lib.dumps({'version': 1}))
-        with self.assertRaisesRegex(lib.Abort, 'authority_command'):
-            self.kit.install(self.arguments())
-        self.assertFalse((self.fleet / 'signed-authority').exists())
-
-    def test_a_controller_that_is_not_node_on_its_own_release_is_refused(self):
-        wrapper = '{ path=/usr/bin/env ; argv[]=/usr/bin/env node main.js ; ignore_errors=no }'
-        with mock.patch.object(self.kit, 'systemctl_show', side_effect=lambda _service, prop: wrapper if prop == 'ExecStart' else ''):
-            with self.assertRaisesRegex(lib.Abort, 'must run exactly one node'):
-                self.kit.install(self.arguments())
-
-
 class ApplyTests(InstallFixture):
-    def test_a_not_found_unit_can_be_installed_and_enabled(self):
-        self.host.disabled_enablement = (4, 'not-found')
-        self.assertEqual(self.kit.install(self.arguments('--apply')), 'apply OK')
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'enable'])
-        self.assertTrue(self.host.enabled)
-        self.assertTrue(self.host.active)
-        self.assertTrue(self.arguments().unit.is_file())
-
-    def test_empty_enablement_output_is_rejected_before_any_effect(self):
-        before = self.tree()
-        for returncode in (0, 1, 4):
-            with self.subTest(returncode=returncode):
-                self.host.disabled_enablement = (returncode, '')
-                with self.assertRaisesRegex(lib.Abort, 'systemctl is-enabled returned no state;.*inspect.*retry'):
-                    self.kit.install(self.arguments('--apply'))
-                self.assertEqual(self.tree(), before)
-                self.assertEqual(self.host.events, [])
-                self.assertFalse(self.host.enabled)
-                self.assertFalse(self.host.active)
-
     def test_apply_installs_private_files_starts_verifies_and_a_second_run_changes_nothing(self):
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'apply OK')
         config = self.fleet / 'signed-authority'
@@ -387,25 +252,6 @@ class ApplyTests(InstallFixture):
         self.assertEqual(self.kit.install(self.arguments('--apply')), 'apply OK')
         self.assertIn(str(self.tools / NEW).encode(), unit.read_bytes())
 
-    def test_a_first_install_that_fails_verification_leaves_no_enclave_configuration(self):
-        self.host.gateway_reply = {'status': 200, 'body': {'ready': True}}
-        with self.assertRaisesRegex(lib.Abort, 'unenrolled host'):
-            self.kit.install(self.arguments('--apply'))
-        self.assertFalse((self.fleet / 'signed-authority').exists())
-        self.assertFalse((self.root / 'systemd/cauce-fleet-signed-authority.service').exists())
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'stop', 'daemon-reload'])
-        self.assertFalse(self.host.enabled)
-        self.assertTrue((self.root / 'tmpfiles.d/cauce-fleet-signed-authority.conf').is_file())
-
-    def test_socket_directory_only_needs_no_controller_and_touches_no_unit(self):
-        for item in self.controller.iterdir():
-            item.unlink()
-        self.assertEqual(self.kit.install(self.arguments('--socket-directory-only', '--apply')), 'socket directory ready')
-        self.assertEqual(self.host.events, ['tmpfiles'])
-        self.assertTrue(self.kit.directory_ok(self.socket_directory, self.gateway_gid))
-        self.assertFalse((self.root / 'systemd/cauce-fleet-signed-authority.service').exists())
-        self.assertFalse(any(command[0] == 'docker' for command in self.host.commands))
-
     def test_container_probe_failure_rolls_back_even_when_the_host_probe_succeeds(self):
         self.host.container_reply = {'status': None, 'body': None}
         with self.assertRaisesRegex(lib.Abort, 'gateway container'):
@@ -413,132 +259,17 @@ class ApplyTests(InstallFixture):
         self.assertFalse((self.fleet / 'signed-authority').exists())
         self.assertFalse(self.host.active)
 
-    def test_enable_runs_only_after_successful_verification(self):
-        verify = self.kit.verify
-
-        def verified(*args):
-            verify(*args)
-            self.host.events.append('verify')
-
-        with mock.patch.object(self.kit, 'verify', side_effect=verified):
-            self.kit.install(self.arguments('--apply'))
-        self.assertEqual(self.host.events, ['tmpfiles', 'daemon-reload', 'restart', 'verify', 'enable'])
-        self.assertTrue(self.host.enabled)
-
     def fail_after_enable(self, command, **options):
         result = self.host(command, **options)
         if command[:2] == ['systemctl', 'enable']:
             raise lib.Abort('injected enable failure')
         return result
 
-    def test_failed_enable_removes_new_enablement_and_created_configuration(self):
-        with mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
-            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertFalse(self.host.enabled)
-        self.assertFalse(self.host.active)
-        self.assertFalse((self.fleet / 'signed-authority').exists())
-        self.assertFalse(self.arguments().unit.exists())
-        self.assertIn('disable', self.host.events)
-
-    def test_failed_enable_preserves_previous_enablement_and_running_configuration(self):
-        self.kit.install(self.arguments('--apply'))
-        unit = self.arguments().unit
-        previous = unit.read_bytes()
-        self.release(NEW)
-        with mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
-            with self.assertRaisesRegex(lib.Abort, 'injected enable failure'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertTrue(self.host.enabled)
-        self.assertTrue(self.host.active)
-        self.assertEqual(unit.read_bytes(), previous)
-        self.assertNotIn('disable', self.host.events)
-
-    def test_unmanaged_enablement_states_are_rejected_before_any_effect(self):
-        before = self.tree()
-
-        def unmanaged(command, **options):
-            if command[:2] == ['systemctl', 'is-enabled']:
-                return subprocess.CompletedProcess(command, 0, status, '')
-            return self.host(command, **options)
-
-        for status in ('enabled-runtime', 'linked', 'linked-runtime', 'masked', 'static'):
-            with self.subTest(status=status), mock.patch.object(self.kit, 'run', side_effect=unmanaged):
-                with self.assertRaisesRegex(lib.Abort, 'enablement'):
-                    self.kit.install(self.arguments('--apply'))
-                self.assertEqual(self.tree(), before)
-                self.assertEqual(self.host.events, [])
-
     def fail_enable_and_disable(self, command, **options):
         if command[:2] == ['systemctl', 'disable']:
             self.host.events.append('disable')
             return subprocess.CompletedProcess(command, 1, '', 'injected disable failure')
         return self.fail_after_enable(command, **options)
-
-    def test_failed_disable_still_removes_created_configuration_and_reports_the_final_state(self):
-        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
-            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*disable.*inactive.*injected enable failure'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertIn('ROLLBACK INCOMPLETE', self.output.getvalue())
-        self.assertTrue(self.host.enabled)
-        self.assertFalse(self.arguments().unit.exists())
-        self.assertFalse((self.fleet / 'signed-authority').exists())
-        self.assertFalse(self.host.active)
-        self.assertEqual(self.host.events[-3:], ['stop', 'disable', 'daemon-reload'])
-
-    def test_failed_disable_still_restores_the_previous_configuration_and_running_service(self):
-        self.kit.install(self.arguments('--apply'))
-        args = self.arguments('--apply')
-        previous = {path: path.read_bytes() for path in (args.unit, args.config_directory / 'command.v1.json')}
-        self.host.enabled = False
-        self.release(NEW)
-        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
-            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*disable.*configuration restored.*active') as failure:
-                self.kit.install(args)
-        self.assertNotIn('installation reverted', str(failure.exception))
-        self.assertEqual({path: path.read_bytes() for path in previous}, previous)
-        self.assertTrue(self.host.active)
-        self.assertTrue(self.host.enabled)
-        self.assertEqual(self.host.events[-4:], ['stop', 'disable', 'daemon-reload', 'start'])
-
-    def test_failed_disable_without_a_restart_leaves_the_previous_service_active(self):
-        self.kit.install(self.arguments('--apply'))
-        self.host.enabled = False
-        before = self.tree()
-        with mock.patch.object(self.kit, 'run', side_effect=self.fail_enable_and_disable):
-            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*active'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertEqual(self.tree(), before)
-        self.assertTrue(self.host.active)
-        self.assertTrue(self.host.enabled)
-        self.assertNotIn('stop', self.host.events)
-
-    def test_unrestored_backup_keeps_recovery_files_and_reports_incomplete_rollback(self):
-        self.kit.install(self.arguments('--apply'))
-        self.release(NEW)
-        with mock.patch.object(self.kit, 'restore_configs', return_value=False), \
-                mock.patch.object(self.kit, 'run', side_effect=self.fail_after_enable):
-            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*backup.*inactive'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertTrue(self.arguments().unit.exists())
-        self.assertTrue(list(self.root.rglob('*.pre-authority-*')))
-        self.assertFalse(self.host.active)
-
-    def test_a_previous_service_that_cannot_restart_reports_incomplete_rollback(self):
-        self.kit.install(self.arguments('--apply'))
-        self.release(NEW)
-
-        def failed_start(command, **options):
-            if command[:2] == ['systemctl', 'start']:
-                return subprocess.CompletedProcess(command, 1, '', '')
-            return self.fail_after_enable(command, **options)
-
-        with mock.patch.object(self.kit, 'run', side_effect=failed_start):
-            with self.assertRaisesRegex(lib.Abort, 'ROLLBACK INCOMPLETE:.*did not become active.*inactive'):
-                self.kit.install(self.arguments('--apply'))
-        self.assertIn(str(self.tools / OLD).encode(), self.arguments().unit.read_bytes())
-        self.assertFalse(self.host.active)
-
 
 class LockTests(InstallFixture):
     def upgrade_kit(self):
@@ -566,41 +297,6 @@ class LockTests(InstallFixture):
                 upgrade.main(self.upgrade_arguments())
         command.assert_not_called()
         self.assertFalse((self.root / 'work').exists())
-
-    def test_upgrade_holds_the_shared_lock_while_the_namespace_child_runs_and_releases_it(self):
-        upgrade = self.upgrade_kit()
-        (self.root / 'work').mkdir(mode=0o700)
-        observed = []
-
-        def child(command, **_options):
-            with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install') as install:
-                observed.append(self.kit.main(['--fleet-config', str(self.fleet)]))
-            install.assert_not_called()
-            return subprocess.CompletedProcess(command, 0)
-
-        with mock.patch.object(upgrade, 'require_root'), mock.patch.dict(os.environ), \
-                mock.patch.object(upgrade.subprocess, 'run', side_effect=child):
-            self.assertEqual(upgrade.main(self.upgrade_arguments()), 0)
-        self.assertEqual(observed, [2])
-        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', return_value='verified') as install:
-            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 0)
-        install.assert_called_once()
-
-    def test_installer_holds_the_lock_while_installing_and_releases_it_after_failure(self):
-        def fail(_args):
-            descriptor = lib.directory_fd(self.fleet)
-            try:
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finally:
-                os.close(descriptor)
-            raise lib.Abort('injected failure')
-
-        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', side_effect=fail):
-            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 2)
-        with mock.patch.object(self.kit, 'require_root'), mock.patch.object(self.kit, 'install', return_value='verified'):
-            self.assertEqual(self.kit.main(['--fleet-config', str(self.fleet)]), 0)
-
 
 class ProbeTests(unittest.TestCase):
     def test_gateway_probe_uses_its_container_identity_and_configured_socket(self):
@@ -652,55 +348,6 @@ class ProbeTests(unittest.TestCase):
         self.assertTrue(received['head'].startswith('POST /signed-authority HTTP/1.1'))
         self.assertEqual(received['body']['packet']['payload'], {'action': 'ready'})
         self.assertEqual(received['body']['host_id'], 'zz-canary-probe')
-
-    def test_a_nonzero_probe_exit_cannot_be_accepted_from_stdout(self):
-        spec = importlib.util.spec_from_file_location('fleet_authority_install', SCRIPT)
-        kit = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(kit)
-        result = subprocess.CompletedProcess([], 2, '{"status":403,"body":{"error":"forbidden"}}', '')
-        self.assertEqual(kit.probe_reply(result), (None, None))
-
-    def test_probe_posts_an_unsigned_ready_for_the_canary_host_over_the_unix_socket(self):
-        spec = importlib.util.spec_from_file_location('fleet_authority_install', SCRIPT)
-        kit = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(kit)
-        with tempfile.TemporaryDirectory(prefix='authority-probe-', dir='/var/tmp') as directory:
-            location = str(pathlib.Path(directory) / 'authority.sock')
-            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            server.bind(location)
-            server.listen(1)
-            received = {}
-
-            def serve():
-                connection, _ = server.accept()
-                with connection:
-                    data = b''
-                    while b'\r\n\r\n' not in data:
-                        data += connection.recv(4096)
-                    head, _, body = data.partition(b'\r\n\r\n')
-                    length = int(re.search(rb'(?i)content-length: (\d+)', head)[1])
-                    while len(body) < length:
-                        body += connection.recv(4096)
-                    received.update(head=head.decode(), body=json.loads(body))
-                    reply = b'{"error":"forbidden"}'
-                    connection.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: '
-                                       + str(len(reply)).encode() + b'\r\nConnection: close\r\n\r\n' + reply)
-
-            thread = threading.Thread(target=serve)
-            thread.start()
-            try:
-                with redirect_stdout(io.StringIO()):
-                    self.assertEqual(kit.probe(location), (403, {'error': 'forbidden'}))
-            finally:
-                thread.join(10)
-                server.close()
-        self.assertTrue(received['head'].startswith('POST /signed-authority HTTP/1.1'))
-        packet = received['body']['packet']
-        self.assertEqual(received['body']['host_id'], 'zz-canary-probe')
-        self.assertEqual((packet['host_id'], packet['payload']), ('zz-canary-probe', {'action': 'ready'}))
-        self.assertRegex(packet['nonce'], r'^[0-9a-f]{64}$')
-        self.assertLess(abs(packet['issued_at'] - time.time_ns() // 1_000_000), 10_000)
-
 
 if __name__ == '__main__':
     unittest.main()

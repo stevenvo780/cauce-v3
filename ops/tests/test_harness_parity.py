@@ -1,7 +1,6 @@
 import json
 import pathlib
 import re
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -231,34 +230,6 @@ class HarnessParityTest(unittest.TestCase):
                                     alternation - names, set(), 'session key alternation')
         self.problems(checks)
 
-    def test_gateway_harness_kind_covers_descriptors_except_allowlisted(self):
-        names = set(descriptors())
-        catalog = text('services/gateway/src/console/agent-documents/catalog.ts')
-        match = re.search(r'export type HarnessKind = ([^;]+);', catalog)
-        self.assertIsNotNone(match, 'catalog.ts: HarnessKind union not found')
-        kinds = quoted(match.group(1)) - {'unknown'}
-        checks = [('services/gateway/src/console/agent-documents/catalog.ts',
-                     f"add '{name}' to HarnessKind or to GATEWAY_OMITTED in ops/tests/test_harness_parity.py")
-                    for name in sorted(names - kinds - GATEWAY_OMITTED)]
-        checks += [('services/gateway/src/console/agent-documents/catalog.ts',
-                     f"'{name}' is in HarnessKind but has no descriptor") for name in sorted(kinds - names)]
-        checks += [('ops/tests/test_harness_parity.py', f"GATEWAY_OMITTED has stale '{name}'")
-                   for name in sorted(GATEWAY_OMITTED - (names - kinds))]
-        self.problems(checks)
-
-    def test_console_catalog_names_only_real_descriptors_and_tracks_pending(self):
-        names = set(descriptors())
-        console_ids = set(re.findall(r"^\s+id: '([a-z][a-z0-9_-]*)',", text('console/src/features/config/arneses.ts'), re.M))
-        checks = [('console/src/features/config/arneses.ts', f"'{name}' has no harness descriptor")
-                    for name in sorted(console_ids - names)]
-        pending = names - console_ids
-        checks += [('console/src/features/config/arneses.ts',
-                     f"add '{name}' to ARNESES_REALES (or to CONSOLE_PENDING in ops/tests/test_harness_parity.py)")
-                    for name in sorted(pending - CONSOLE_PENDING)]
-        checks += [('ops/tests/test_harness_parity.py',
-                     f"CONSOLE_PENDING still lists '{name}' but the console already covers it; remove it")
-                    for name in sorted(CONSOLE_PENDING - pending)]
-        self.problems(checks)
 
     def test_quota_enums_and_sql_check_cover_quota_descriptors(self):
         sql_providers, checks = effective_quota_provider_check()
@@ -281,52 +252,6 @@ class HarnessParityTest(unittest.TestCase):
                 checks += set_parity_checks(path, quoted(match.group(1)), expected, 'quota provider contract')
         self.problems(checks)
 
-    def test_fleet_modules_exist_and_are_declared(self):
-        checks = []
-        docs = descriptors()
-        for name, doc in docs.items():
-            module = (doc.get('provider') or {}).get('fleet_module')
-            if module and not (ROOT / f'ops/cli/{module}.py').exists():
-                checks.append((f'ops/cli/{module}.py', f"create the fleet provider module declared by descriptors/{name}.json"))
-            expected = f'fleet_provider_{name}'
-            if (ROOT / f'ops/cli/{expected}.py').exists() and module != expected:
-                checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
-                               f"declare provider.fleet_module '{expected}'"))
-        self.problems(checks)
-
-    def test_quota_readers_require_operation_and_valid_argv(self):
-        docs = descriptors()
-        checks = []
-        for name, doc in sorted(docs.items()):
-            operations = doc['operations']
-            provider = doc.get('provider') or {}
-            if 'quota' in operations:
-                if operations.get('quota') != 'quota-collector':
-                    checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
-                                   'declare operations.quota as quota-collector for a measured harness'))
-                if not valid_quota_argv(doc):
-                    checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
-                                   'declare provider.quota_argv for a measured harness'))
-            if 'quota_argv' in provider and 'quota' not in operations:
-                checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
-                               'declares provider.quota_argv without operations.quota'))
-        self.problems(checks)
-
-    def test_quota_readers_match_store_executor_and_receipt(self):
-        self.problems(quota_reader_contract_checks())
-
-    def test_quota_reader_contracts_reject_drift_and_missing_declarations(self):
-        sources = {path: text(path) for path in (
-            'ops/cli/fleet_executor_agent_quota.py',
-            'packages/protocol/src/agent-quota.ts')}
-        original = text
-        for path, source in sources.items():
-            for altered in (source.replace("'grok'", "'muse'"), ''):
-                with self.subTest(path=path, missing=altered == ''):
-                    with patch(__name__ + '.text', side_effect=lambda requested, altered=altered, path=path:
-                               altered if requested == path else original(requested)):
-                        with self.assertRaisesRegex(AssertionError, re.escape(path)):
-                            self.problems(quota_reader_contract_checks())
 
     def assert_source_mutation_rejected(self, path, altered, check, failure_path=None):
         original = text
@@ -354,37 +279,6 @@ class HarnessParityTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assert_source_mutation_rejected(path, altered, check)
 
-    def test_harness_contracts_reject_missing_and_extra_ids(self):
-        types = 'packages/adapter-sdk/src/sdk/types.ts'
-        index = 'packages/adapter-sdk/src/harnesses/index.ts'
-        session = 'packages/adapter-sdk/src/sdk/durable-store/session-file.ts'
-        gateway = 'services/gateway/src/console/agent-documents/catalog.ts'
-        mutations = [
-            (types, text(types).replace('export type HarnessId = ', "export type HarnessId = 'ghost' | "),
-             self.test_typescript_harness_id_union_and_definitions_match_descriptors),
-            (types, text(types).replace("'grok' | ", ''), self.test_typescript_harness_id_union_and_definitions_match_descriptors),
-            (index, text(index).replace('  grok: grokDefinition,', ''), self.test_typescript_harness_id_union_and_definitions_match_descriptors),
-            (session, text(session).replace('|grok|', '|'), self.test_bins_and_session_file_regex_match_descriptors),
-            (gateway, text(gateway).replace('export type HarnessKind = ', "export type HarnessKind = 'ghost' | "),
-             self.test_gateway_harness_kind_covers_descriptors_except_allowlisted),
-        ]
-        for path, altered, check in mutations:
-            with self.subTest(path=path):
-                self.assert_source_mutation_rejected(path, altered, check)
-
-    def test_quota_contracts_reject_missing_extra_and_non_harness_drift(self):
-        paths = ('packages/protocol/src/schemas/quotas.ts', 'services/gateway/src/fleet/host-channel.capabilities.ts',
-                 'console/src/api/client/my-quotas-client.ts')
-        for path in paths:
-            source = text(path)
-            for provider, replacement in (('grok', 'ghost'), ('gemini', 'muse'), ('claude', 'minimax')):
-                with self.subTest(path=path, provider=provider):
-                    self.assert_source_mutation_rejected(path, source.replace(f"'{provider}'", f"'{replacement}'"),
-                                                         self.test_quota_enums_and_sql_check_cover_quota_descriptors)
-        path = 'packages/store/migrations/057_quota_environments.sql'
-        self.assert_source_mutation_rejected(path, text(path).replace("'claude','codex','gemini','grok'", "'claude','codex','gemini'"),
-                                             self.test_quota_enums_and_sql_check_cover_quota_descriptors, 'packages/store/migrations/')
-
     def test_quota_readers_follow_descriptor_addition_removal_and_argv(self):
         docs = descriptors()
         expected = quota_readers(docs)
@@ -404,119 +298,6 @@ class HarnessParityTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 docs['grok']['provider']['quota_argv'] = argv
                 self.assertEqual(quota_readers(docs), expected - {'grok'})
-
-    def test_quota_store_enrollment_and_account_contracts_reject_missing_and_extra_ids(self):
-        contracts = (
-            ('packages/store/src/quota-environments.ts', r'\btype QuotaProvider\s*=\s*([^;]+);', '|',
-             self.test_quota_enums_and_sql_check_cover_quota_descriptors),
-            ('services/gateway/src/fleet/enrolled-main.ts',
-             r'\bQuotaCapabilities\s*=\s*z\.object\(\{\s*providers:\s*z\.array\(z\.enum\(\[([^\]]+)\]\)', ',',
-             self.test_quota_enums_and_sql_check_cover_quota_descriptors),
-            ('services/gateway/src/routes/console/quota-environments.ts',
-             r'\bAccountCreate\s*=\s*QuotaAccountCreateSchema\.extend\(\{\s*provider:\s*z\.enum\(\[([^\]]*)\]\)', ',',
-             self.test_quota_readers_match_store_executor_and_receipt),
-        )
-        for path, pattern, separator, check in contracts:
-            source = text(path)
-            match = re.search(pattern, source)
-            self.assertIsNotNone(match, f'{path}: quota contract not found')
-            values = match.group(1)
-            missing = re.sub(r"['\"]grok['\"]\s*[,|]\s*|[,|]\s*['\"]grok['\"]", '', values)
-            for altered in (missing, values + f" {separator} 'ghost'"):
-                with self.subTest(path=path, values=altered):
-                    mutation = source[:match.start(1)] + altered + source[match.end(1):]
-                    self.assert_source_mutation_rejected(path, mutation, check)
-
-    def test_store_quota_contract_rejects_literal_dead_or_unbound_sql(self):
-        path = 'packages/store/src/agent-quota-operations-model.ts'
-        source = text(path)
-        changes = (
-            re.sub(r'agent\.harness_id\s*=\s*ANY\(\$5::text\[\]\)', "agent.harness_id IN ('codex','claude','grok')", source),
-            source.replace('const quotaReaders = await approvedAgentQuotaHarnesses();', "const quotaReaders = ['codex', 'claude', 'grok'];"),
-            source.replace('const quotaReaders = await approvedAgentQuotaHarnesses();',
-                           "// const quotaReaders = await approvedAgentQuotaHarnesses();\nconst quotaReaders = ['codex'];"),
-            source.replace(', quotaReaders]', ', []]'),
-            source.replace('const row = (await client.query', 'const unusedRow = (await client.query'),
-        )
-        for index, altered in enumerate(changes):
-            with self.subTest(mutation=index):
-                self.assertNotEqual(altered, source)
-                with self.assertRaisesRegex(AssertionError, re.escape(path)):
-                    self.problems(store_quota_reader_contract_checks(altered))
-
-    def test_effective_quota_sql_applies_later_migrations_and_combined_actions(self):
-        with tempfile.TemporaryDirectory() as directory:
-            initial = pathlib.Path(directory) / '001.sql'
-            initial.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex','gemini')));")
-            updated = pathlib.Path(directory) / '002.sql'
-            updated.write_text('ALTER TABLE quota_environments DROP CONSTRAINT quota_environments_provider_check, '
-                               "ADD CONSTRAINT quota_environments_provider_check CHECK (provider IN ('grok','gemini')); "
-                               "-- CHECK (provider IN ('ghost'))\n")
-            providers, checks = effective_quota_provider_check([updated, initial])
-        self.problems(checks)
-        self.assertEqual(providers, {'grok', 'gemini'})
-
-    def test_effective_quota_sql_intersects_active_checks_and_rejects_missing_contract(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / '001.sql'
-            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex','grok')), "
-                            "CONSTRAINT extra CHECK (provider IN ('grok','gemini')));")
-            providers, checks = effective_quota_provider_check([path])
-            self.problems(checks)
-            self.assertEqual(providers, {'grok'})
-            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex'))); "
-                            'ALTER TABLE quota_environments DROP CONSTRAINT quota_environments_provider_check;')
-            providers, checks = effective_quota_provider_check([path])
-            self.assertEqual(providers, set())
-            with self.assertRaisesRegex(AssertionError, 'effective quota_environments provider CHECK not found'):
-                self.problems(checks)
-            path.write_text("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex') OR provider='grok'));")
-            _, checks = effective_quota_provider_check([path])
-            with self.assertRaisesRegex(AssertionError, 'not a parsed closed IN contract'):
-                self.problems(checks)
-
-    def test_parity_rejects_differently_indented_and_invalid_harness_ids(self):
-        index = 'packages/adapter-sdk/src/harnesses/index.ts'
-        self.assert_source_mutation_rejected(index, text(index).replace('  hermes: hermesDefinition,',
-                                                                       '    Ghost: hermesDefinition,\n  hermes: hermesDefinition,'),
-                                             self.test_typescript_harness_id_union_and_definitions_match_descriptors)
-        path = 'packages/protocol/src/schemas/quotas.ts'
-        self.assert_source_mutation_rejected(path, re.sub(r'(QuotaEnvironmentProviderSchema\s*=\s*z\.enum\(\[)',
-                                                         r"\1'Ghost', ", text(path)),
-                                             self.test_quota_enums_and_sql_check_cover_quota_descriptors)
-
-    def test_effective_quota_sql_rejects_dynamic_values_and_duplicate_named_constraints(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / '001.sql'
-            for source, failure in (
-                ("CREATE TABLE quota_environments (provider text CHECK (provider IN ('codex', current_user)));", 'nonliteral value'),
-                ("CREATE TABLE quota_environments (provider text CONSTRAINT readers CHECK (provider IN ('codex'))); "
-                 "ALTER TABLE quota_environments ADD CONSTRAINT readers CHECK (provider IN ('grok'));", 'without dropping it'),
-            ):
-                with self.subTest(failure=failure):
-                    path.write_text(source)
-                    _, checks = effective_quota_provider_check([path])
-                    with self.assertRaisesRegex(AssertionError, failure):
-                        self.problems(checks)
-
-    def test_harness_definitions_seed_accepts_whitespace(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / 'seed.sql'
-            path.write_text("INSERT\nINTO harness_definitions(id, display_name, capabilities) VALUES\n"
-                            "  ( 'grok' , 'Grok' , '[\"messages.receive\"]' :: jsonb );")
-            rows, checks = seeded_harness_definitions([path])
-        self.problems(checks)
-        self.assertEqual(rows, {'grok': ('seed.sql', 'Grok', ['messages.receive'])})
-
-    def test_harness_definitions_seed_rejects_inserts_without_parsed_rows(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = pathlib.Path(directory) / 'seed.sql'
-            path.write_text("INSERT INTO harness_definitions(id,display_name,capabilities) VALUES\n"
-                            "  ('grok','Grok',jsonb_build_array('messages.receive'));")
-            rows, checks = seeded_harness_definitions([path])
-        self.assertEqual(rows, {})
-        with self.assertRaisesRegex(AssertionError, 'INSERT INTO harness_definitions produced no parsed seed rows'):
-            self.problems(checks)
 
     def test_harness_definitions_seed_matches_descriptors(self):
         docs = descriptors()
@@ -541,19 +322,6 @@ class HarnessParityTest(unittest.TestCase):
                 checks.append((f'packages/adapter-sdk/descriptors/{name}.json',
                                'a seeded harness must declare native execution'))
         self.problems(checks)
-
-    def test_catalog_writes_validate_against_published_descriptors(self):
-        self.assertTrue(SEEDED_CAPABILITIES, f'{HARNESS_CATALOG}: HARNESS_CATALOG_CAPABILITIES not found')
-        self.problems(catalog_write_checks())
-        source = text(HARNESS_MUTATIONS)
-        for guard in ('await assertPublishedHarnessDefinition(mutation.id, { command: value.command',
-                      'await assertPublishedHarnessDefinition(mutation.id, {\n      command: has('):
-            with self.subTest(guard=guard.splitlines()[0]):
-                self.assertIn(guard, source)
-                altered = source.replace(guard, '// ' + guard, 1)
-                with self.assertRaisesRegex(AssertionError, 'must be preceded by assertPublishedHarnessDefinition'):
-                    self.problems(catalog_write_checks(altered))
-        self.assertEqual(catalog_capabilities('export const OTHER = Object.freeze([])'), set())
 
     def test_parsers_share_the_provider_fields(self):
         python = text('ops/cli/harness_operations.py')

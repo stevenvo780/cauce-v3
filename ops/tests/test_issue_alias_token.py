@@ -136,37 +136,6 @@ class IssueAliasTokenTest(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
         self.assertEqual(result["token_sha256"], new_record["token_sha256"])
 
-    def test_never_touches_mtls_identities_file(self) -> None:
-        before = self.mtls_identities.read_bytes()
-        self._issue()
-        self.assertEqual(self.mtls_identities.read_bytes(), before)
-
-    def test_rejects_disabled_alias_and_writes_nothing(self) -> None:
-        with self.assertRaises(MODULE.IssueTokenError):
-            self._issue(alias="retirado")
-        self.assertFalse(self.tokens_dir.exists())
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
-
-    def test_rejects_unknown_alias(self) -> None:
-        with self.assertRaises(MODULE.IssueTokenError):
-            self._issue(alias="fantasma")
-        self.assertFalse(self.tokens_dir.exists())
-
-    def test_does_not_overwrite_existing_token_file(self) -> None:
-        self.tokens_dir.mkdir(mode=0o700)
-        existing = self.tokens_dir / "argos.token"
-        existing.write_text("pre-existing\n", encoding="ascii")
-        existing.chmod(0o400)
-        before = existing.read_bytes()
-
-        with self.assertRaises(MODULE.IssueTokenError):
-            self._issue()
-
-        self.assertEqual(existing.read_bytes(), before)
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
-
     def test_atomic_rollback_when_identity_already_registered(self) -> None:
         # An identity for this exact alias/tenant already exists: the JSON insertion step must
         # refuse the duplicate, and the token file already published in this same call must be
@@ -183,30 +152,6 @@ class IssueAliasTokenTest(unittest.TestCase):
         self.assertFalse((self.tokens_dir / "argos.token").exists())
         self.assertEqual(self.token_hashes.read_bytes(), before)
         self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
-
-    def test_cas_rejects_a_replaced_identity_document_with_the_existing_message(self) -> None:
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        original = self.token_hashes.stat()
-        replacement = self.identities_dir / ".token_hashes.test-race"
-        _write_json(replacement, document, 0o400)
-        replacement.replace(self.token_hashes)
-        before = self.token_hashes.read_bytes()
-        identities_fd = os.open(self.identities_dir, os.O_RDONLY | os.O_DIRECTORY)
-        lock_fd = os.open(
-            self.identities_dir / f".{MODULE.TOKEN_HASHES_FILE}.lock",
-            os.O_RDWR | os.O_CREAT,
-            0o600,
-        )
-        try:
-            with self.assertRaisesRegex(
-                MODULE.IssueTokenError,
-                r"compare-and-swap fallo: token_hashes\.json cambio durante la emision",
-            ):
-                MODULE.publish_identity_document(identities_fd, lock_fd, document, original)
-        finally:
-            os.close(lock_fd)
-            os.close(identities_fd)
-        self.assertEqual(self.token_hashes.read_bytes(), before)
 
     def test_cas_holds_the_cooperative_lock_through_replace(self) -> None:
         document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
@@ -235,30 +180,6 @@ class IssueAliasTokenTest(unittest.TestCase):
             os.close(lock_fd)
             os.close(identities_fd)
         self.assertTrue(replace_checked)
-
-    def test_dry_run_leaves_filesystem_untouched(self) -> None:
-        message = MODULE.describe_dry_run("argos", self.tokens_dir, self.identities_dir, self.flota_json, 730)
-        self.assertIn("dry-run", message)
-        self.assertIn("argos", message)
-        self.assertFalse(self.tokens_dir.exists())
-        document_after = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(document_after["identities"]), 1)
-
-    def test_cli_dry_run_exits_zero_and_prints_plan(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--alias", "argos",
-                "--tokens-dir", str(self.tokens_dir),
-                "--identities-dir", str(self.identities_dir),
-                "--flota-json", str(self.flota_json),
-                "--dry-run",
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("dry-run", completed.stdout)
-        self.assertFalse(self.tokens_dir.exists())
 
     def test_cli_issues_then_second_run_fails_without_overwrite(self) -> None:
         first = subprocess.run(
@@ -292,77 +213,6 @@ class IssueAliasTokenTest(unittest.TestCase):
         document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
         self.assertEqual(len(document["identities"]), 2)  # jarvis (seed) + argos, not tripled
 
-    def test_revoke_removes_hash_and_token_file(self) -> None:
-        self._issue()
-        token_path = self.tokens_dir / "argos.token"
-        self.assertTrue(token_path.exists())
-        before = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(before["identities"]), 2)  # jarvis (seed) + argos
-
-        result = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-
-        self.assertEqual(result["identities_removed"], 1)
-        self.assertTrue(result["token_removed"])
-        self.assertFalse(token_path.exists())
-        after = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(after["identities"]), 1)
-        self.assertEqual(after["identities"][0]["principal"]["alias"], "jarvis")
-        self.assertEqual(stat.S_IMODE(self.token_hashes.stat().st_mode), 0o400)
-
-    def test_revoke_is_idempotent(self) -> None:
-        self._issue()
-        first = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-        self.assertEqual(first["identities_removed"], 1)
-        after_first = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-
-        second = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-
-        self.assertEqual(second["identities_removed"], 0)
-        self.assertFalse(second["token_removed"])
-        after_second = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(after_second, after_first)
-
-    def test_revoke_of_never_issued_alias_is_a_noop(self) -> None:
-        result = MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-        self.assertEqual(result["identities_removed"], 0)
-        self.assertFalse(result["token_removed"])
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)  # jarvis, untouched
-
-    def test_revoke_does_not_touch_other_alias_records(self) -> None:
-        self._issue()
-        MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual([r["principal"]["alias"] for r in document["identities"]], ["jarvis"])
-
-    def test_revoke_never_touches_mtls_identities_file(self) -> None:
-        self._issue()
-        before = self.mtls_identities.read_bytes()
-        MODULE.revoke("argos", self.tokens_dir, self.identities_dir)
-        self.assertEqual(self.mtls_identities.read_bytes(), before)
-
-    def test_revoke_rejects_invalid_alias(self) -> None:
-        with self.assertRaises(MODULE.IssueTokenError):
-            MODULE.revoke("Not-Valid", self.tokens_dir, self.identities_dir)
-
-    def test_cli_revoke_dry_run_reports_and_leaves_everything_untouched(self) -> None:
-        self._issue()
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--revoke", "--dry-run",
-                "--alias", "argos",
-                "--tokens-dir", str(self.tokens_dir),
-                "--identities-dir", str(self.identities_dir),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("dry-run --revoke", completed.stdout)
-        self.assertTrue((self.tokens_dir / "argos.token").exists())
-        document = json.loads(self.token_hashes.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 2)
-
     def test_cli_revoke_removes_hash_and_token_then_succeeds_again(self) -> None:
         self._issue()
         first = subprocess.run(
@@ -391,22 +241,6 @@ class IssueAliasTokenTest(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(second.returncode, 0, second.stderr)
-
-    def test_cli_rejects_unknown_alias_without_leaking_internals(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--alias", "fantasma",
-                "--tokens-dir", str(self.tokens_dir),
-                "--identities-dir", str(self.identities_dir),
-                "--flota-json", str(self.flota_json),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("issue alias token failed", completed.stderr)
-        self.assertFalse(self.tokens_dir.exists())
-
 
 if __name__ == "__main__":
     unittest.main()

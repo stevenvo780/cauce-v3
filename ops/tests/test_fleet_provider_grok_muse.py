@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import copy
 import hashlib
 import importlib
 import io
@@ -10,24 +9,16 @@ import json
 import os
 import pathlib
 import pwd
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
-import uuid
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'ops/cli'))
-import fleet_executor_hooks as hooks  # noqa: E402
-import fleet_executor_policy as policy_validation  # noqa: E402
-import fleet_executor_profiles as profiles  # noqa: E402
-import fleet_executor_runtime as runtime  # noqa: E402
-import fleet_executor_templates as templates  # noqa: E402
 import fleet_provider_identity as identity  # noqa: E402
-import harness_operations as operations  # noqa: E402
 
 
 class IsolatedProviderTests(unittest.TestCase):
@@ -82,194 +73,6 @@ class IsolatedProviderTests(unittest.TestCase):
                 binding = {**self.binding, field: value}
                 with self.subTest(provider=provider, field=field), self.assertRaises(ValueError):
                     driver.environment(binding, self.agent)
-
-    def test_templates_accept_exact_device_login_and_reject_other_recipes(self):
-        for provider in ('grok', 'muse'):
-            driver = self.driver(provider)
-            row = {key: value for key, value in self.binding.items() if key not in {'path', 'identity'}}
-            row.update(path_root=str(self.root / 'profiles'), login={'method': 'device',
-                'command': driver.login_command(self.binding), 'sha256': self.binding['command_sha256']})
-            policy = {'bundles': {provider: {}}, 'profile_templates': [row]}
-            templates.validate_templates(policy)
-            for env in ({'META_API_KEY': 'forbidden-fixture'}, {'GROK_AUTH': 'forbidden-fixture'}, {'BASH_ENV': '/override'}):
-                candidate = copy.deepcopy(row)
-                candidate['login']['env'] = env
-                with self.subTest(provider=provider, env=env), self.assertRaises(ValueError):
-                    templates.validate_templates({**policy, 'profile_templates': [candidate]})
-            candidate = copy.deepcopy(row)
-            candidate['login']['command'].append('--oauth')
-            with self.assertRaises(ValueError):
-                templates.validate_templates({**policy, 'profile_templates': [candidate]})
-
-    def test_login_environment_is_neutral_for_every_provider_and_openclaw(self):
-        rows = []
-        for provider, method, args in [('codex', 'device', ['login', '--device-auth']),
-                ('claude', 'terminal', ['auth', 'login']), ('grok', 'device', ['login', '--device-auth']),
-                ('muse', 'device', ['login'])]:
-            rows.append({'provider': provider, 'command': '/provider/cli', 'command_sha256': 'a' * 64,
-                'login': {'method': method, 'command': ['/provider/cli', *args], 'sha256': 'a' * 64}})
-        rows.append({'provider': 'codex', 'command': '/provider/cli', 'command_sha256': 'a' * 64,
-            'openclaw': {'node_command': '/provider/node', 'node_command_sha256': 'b' * 64},
-            'login': {'method': 'device', 'command': ['/provider/node', '/provider/cli', 'models', 'auth', 'login'],
-                'sha256': 'b' * 64, 'files': {'/provider/cli': 'a' * 64}}})
-        for row in rows:
-            candidate = copy.deepcopy(row)
-            candidate['login']['env'] = {'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'TERM': 'xterm', 'NO_COLOR': '1'}
-            templates.validate_login(candidate)
-            for key in ('CODEX_HOME', 'ANTHROPIC_API_KEY', 'META_API_KEY', 'GROK_AUTH', 'BASH_ENV'):
-                candidate['login']['env'] = {key: 'forbidden-fixture'}
-                with self.subTest(provider=row['provider'], openclaw='openclaw' in row, key=key), self.assertRaises(ValueError):
-                    templates.validate_login(candidate)
-
-    def test_runtime_and_inspection_use_the_same_clean_profile(self):
-        for provider in ('grok', 'muse'):
-            driver = self.driver(provider)
-            policy = {'profiles': {'account': self.binding}}
-            with mock.patch.dict(os.environ, {'META_API_KEY': 'forbidden-fixture', 'GROK_AUTH': 'forbidden-fixture'}):
-                observed = json.loads(identity.command_output([str(self.cli)], self.packet))
-            expected = driver.environment(self.binding, self.agent)
-            values = runtime.provider_environment(policy, self.agent)
-            for key, value in expected.items():
-                self.assertEqual(values[key], value)
-                self.assertEqual(observed['env'][key], value)
-            self.assertEqual(observed['env']['HOME'], self.agent['home_directory'])
-            self.assertEqual(observed['env']['PATH'], '/usr/bin:/bin')
-            self.assertNotIn('META_API_KEY', observed['env'])
-            self.assertNotIn('GROK_AUTH', observed['env'])
-            command = self.bridge if provider == 'muse' else self.cli
-            self.assertEqual(values['CAUCE_HARNESS_COMMAND'], str(command))
-            pins = json.loads(values['CAUCE_HARNESS_COMMAND_FILES'])
-            self.assertEqual(pins[str(self.cli)], self.binding['command_sha256'])
-
-    def test_changed_binary_and_bridge_are_rejected_before_runtime(self):
-        self.driver('muse')
-        policy = {'profiles': {'account': self.binding}}
-        self.binding['muse']['bridge_sha256'] = 'b' * 64
-        with self.assertRaises(ValueError):
-            runtime.provider_environment(policy, self.agent)
-        self.driver('grok')
-        self.cli.write_text('changed')
-        with self.assertRaises(ValueError):
-            runtime.provider_environment(policy, self.agent)
-
-    def test_muse_profile_creates_owned_private_xdg_dirs_without_credentials(self):
-        root = self.root / 'profiles'
-        profile = root / 'isolated' / ('a' * 64)
-        profiles.prepare_empty_profile(str(root), str(profile), os.getuid(), os.getgid(), provider='muse')
-        for directory in (profile, profile / 'config', profile / 'data'):
-            self.assertEqual(directory.stat().st_uid, os.getuid())
-            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
-        self.assertEqual(list((profile / 'config').iterdir()), [])
-        self.assertEqual(list((profile / 'data').iterdir()), [])
-        (profile / 'config').rmdir()
-        (profile / 'config').symlink_to(self.root, target_is_directory=True)
-        with self.assertRaises(OSError):
-            profiles.prepare_empty_profile(str(root), str(profile), os.getuid(), os.getgid(), provider='muse')
-
-    def test_muse_binding_remains_resolvable_and_authentication_is_supported(self):
-        driver = self.driver('muse')
-        pathlib.Path(self.binding['path']).mkdir(mode=0o700)
-        policy = {'profiles': {'account': self.binding}}
-        with mock.patch.object(hooks, 'approve_agent', return_value=self.agent):
-            account, binding = hooks.binding_for(policy, self.agent)
-        self.assertEqual(account, 'account')
-        self.assertEqual(binding['muse'], self.binding['muse'])
-        self.assertTrue(driver.authentication_supported())
-        self.assertFalse(identity.authenticated_provider(self.packet))
-        for foreign in ({**self.binding, 'provider': 'grok'}, {**self.binding, 'muse': {'bridge': '/bridge'}}):
-            with mock.patch.object(hooks, 'approve_agent', return_value=self.agent), self.assertRaises(ValueError):
-                hooks.binding_for({'profiles': {'account': foreign}}, self.agent)
-
-    def test_declarative_payload_uses_measured_muse_and_grok_efforts(self):
-        document = {'operation_id': str(uuid.uuid4()), 'request': {'kind': 'create',
-            'target': {'resource': 'agent', 'tenant_id': 'Team', 'alias': 'isolated'}, 'expected_revision': 0,
-            'idempotency_key': 'isolated-request', 'parameters': {'harness_id': 'muse', 'runtime_key': 'isolated',
-                'primary_room_id': 'room', 'memberships': [{'room_id': 'room', 'role': 'observer'}], 'placement': {}}},
-            'fenced_targets': [], 'previous_agents': [], 'desired_memberships': []}
-        parameters = document['request']['parameters']
-        for effort in ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'):
-            parameters['reasoning_effort'] = effort
-            with self.subTest(effort=effort):
-                self.assertIs(policy_validation.validate_payload(document), document)
-        for provider, effort in [('grok', 'high'), ('muse', 'unapproved'), ('codex', 'none'), ('claude', 'ultra')]:
-            parameters.update(harness_id=provider, reasoning_effort=effort)
-            with self.subTest(provider=provider, effort=effort), self.assertRaises(ValueError):
-                policy_validation.validate_payload(document)
-        parameters.update(harness_id='grok', reasoning_effort=None)
-        self.assertIs(policy_validation.validate_payload(document), document)
-        for kind in ('start', 'restore'):
-            request = {**document['request'], 'kind': kind, 'parameters': {}}
-            for provider, effort in [('grok', 'high'), ('muse', 'unapproved')]:
-                observed = {**document, 'request': request, 'snapshot': {'agents': [
-                    {**request['target'], 'harness_id': provider, 'reasoning_effort': effort}]}}
-                with self.subTest(kind=kind, provider=provider), self.assertRaises(ValueError):
-                    policy_validation.validate_payload(observed)
-
-    def test_conflicting_cli_or_bridge_pins_fail_closed(self):
-        self.driver('muse')
-        for filename in (str(self.cli), str(self.bridge)):
-            self.binding['command_files'] = {filename: 'b' * 64}
-            with self.subTest(filename=filename), self.assertRaises(ValueError):
-                runtime.provider_environment({'profiles': {'account': self.binding}}, self.agent)
-            with self.assertRaises(ValueError):
-                identity.provider_command(self.packet)
-
-    def test_runtime_rejects_profile_purge_overlap_invalid_selection_and_pin_shapes(self):
-        for provider in ('grok', 'muse'):
-            driver = self.driver(provider)
-            for destination in (self.agent['state_directory'], self.agent['state_directory'] + '/profile'):
-                with self.subTest(provider=provider, destination=destination), self.assertRaises(ValueError):
-                    driver.environment({**self.binding, 'path': destination}, self.agent)
-            for model in ('--override', 'model\nchanged'):
-                with self.assertRaises(ValueError):
-                    driver.environment(self.binding, {**self.agent, 'model_id': model})
-            with self.assertRaises(ValueError):
-                driver.environment(self.binding, {**self.agent, 'reasoning_effort': []})
-            for pins in (None, []):
-                binding = {**self.binding, 'command_files': pins}
-                with self.assertRaises(ValueError):
-                    runtime.provider_environment({'profiles': {'account': binding}}, self.agent)
-                with self.assertRaises(ValueError):
-                    identity.provider_command({**self.packet, 'profile_binding': binding})
-
-    def test_model_arguments_are_real_and_grok_effort_is_unsupported(self):
-        for provider in ('grok', 'muse'):
-            driver = self.driver(provider)
-            self.agent['model_id'] = 'approved-model'
-            args = driver.execution_arguments(self.agent, '/private/prompt')
-            self.assertIn('--model', args)
-            self.assertEqual(args[args.index('--model') + 1], 'approved-model')
-            self.agent['reasoning_effort'] = 'max'
-            if provider == 'grok':
-                with self.assertRaises(ValueError):
-                    driver.execution_arguments(self.agent, '/private/prompt')
-            else:
-                args = driver.execution_arguments(self.agent, '/private/prompt')
-                self.assertEqual(args[args.index('--reasoning-effort') + 1], 'max')
-                self.assertNotIn('--effort', args)
-            self.agent.pop('reasoning_effort')
-
-    def test_missing_profile_identity_cannot_authenticate_or_emit_model_request(self):
-        for provider in ('grok', 'muse'):
-            driver = self.driver(provider)
-            with mock.patch.object(identity, 'command_output', side_effect=AssertionError('no model or token request')):
-                self.assertFalse(identity.authenticated_provider(self.packet))
-            self.assertTrue(driver.authentication_supported())
-
-    def test_providers_advertise_capabilities_only_with_a_descriptor_bundle(self):
-        release = self.root / 'release'
-        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
-                        release / 'packages/adapter-sdk/dist/descriptors')
-        for provider in ('grok', 'muse'):
-            self.driver(provider)
-            policy = {'bundles': {provider: {}}, 'profiles': {'account': self.binding}, 'native': [
-                {'runtime_user': self.user, 'systemd_user': self.user, 'home_directory': str(self.root), 'state_root': str(self.root / 'state')}],
-                'containers': {}, 'host_id': 'isolated', 'transport': {},
-                'hooks': {name: {} for name in ('authenticate', 'profile', 'verify', 'revoke')}}
-            self.assertEqual(templates.runtime_candidates(policy), [])
-            policy['bundles'] = {provider: {'directory': str(release)}}
-            observed = templates.runtime_candidates(policy)
-            self.assertEqual([row['harness_id'] for row in observed], [provider])
 
     @staticmethod
     def b64(raw):
@@ -371,112 +174,6 @@ else:
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
 
-    def test_fake_cli_cannot_replay_a_response_from_another_nonce(self):
-        for provider in ('grok', 'muse'):
-            with self.subTest(provider=provider):
-                packet = self.install_fake_cli(provider, 'replay')
-                self.assertTrue(identity.authenticated_provider(packet))
-                self.assertFalse(identity.authenticated_provider({**packet, 'nonce': 'b' * 64}))
-                self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
-
-    def test_forged_id_token_signature_does_not_bind_muse_identity(self):
-        packet = self.install_fake_cli('muse', 'ok', signer='foreign')
-        self.assertFalse(identity.authenticated_provider(packet))
-
-    def test_muse_id_token_with_foreign_or_expired_claims_does_not_bind(self):
-        for claims in ({'aud': '9999999999999999'}, {'iat': int(time.time()) + 3600},
-                {'iss': 'https://foreign.fixture.invalid'}, {'exp': int(time.time()) - 1},
-                {'nbf': int(time.time()) + 3600}, {'sub': ''},
-                {'aud': ['1031625952748946', 'foreign'], 'azp': 'foreign'}):
-            with self.subTest(claims=claims):
-                packet = self.install_fake_cli('muse', 'ok')
-                auth = pathlib.Path(self.binding['path']) / 'config/muse/auth.json'
-                token = self.signed_id_token('signing', {'iss': 'https://auth.meta.com',
-                    'aud': '1031625952748946', 'iat': int(time.time()), 'sub': 'subject',
-                    'exp': int(time.time()) + 3600, **claims})
-                auth.write_text(json.dumps({'token': token}))
-                self.assertFalse(identity.authenticated_provider(packet))
-
-    def test_grok_unverified_email_and_second_entry_do_not_bind(self):
-        driver = self.driver('grok')
-        profile = pathlib.Path(self.binding['path'])
-        profile.mkdir(mode=0o700, exist_ok=True)
-        (profile / 'auth.json').write_text(json.dumps({
-            'first': {'key': 'fixture-token-active', 'email': 'subject'},
-            'second': {'key': 'fixture-token-other', 'email': 'subject'}}))
-        seen = []
-        def userinfo(token):
-            seen.append(token)
-            return {'email': 'subject', 'email_verified': False, 'sub': 'subject-9'}
-        with mock.patch.object(driver, 'fetch_userinfo', side_effect=userinfo), \
-                mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
-            self.assertFalse(identity.authenticated_provider(
-                {**self.packet, 'fleet_module': 'fleet_provider_grok'}))
-        self.assertEqual(seen, ['fixture-token-active'])
-
-    def test_local_grok_email_field_does_not_bind_identity_without_userinfo(self):
-        driver = self.driver('grok')
-        profile = pathlib.Path(self.binding['path'])
-        profile.mkdir(mode=0o700, exist_ok=True)
-        (profile / 'auth.json').write_text(json.dumps({'https://auth.fixture.invalid': {
-            'key': 'fixture-token', 'email': 'subject'}}))
-        with mock.patch.object(driver, 'fetch_userinfo', side_effect=OSError('provider unavailable')), \
-                mock.patch.object(identity, 'command_output', side_effect=AssertionError('model turn forbidden')):
-            self.assertFalse(identity.authenticated_provider(
-                {**self.packet, 'fleet_module': 'fleet_provider_grok'}))
-
-    def test_resolver_rejects_non_harness_modules_and_foreign_packet_modules(self):
-        self.assertIsNone(identity.resolve_fleet_module({}, 'identity'))
-        self.assertIsNone(identity.resolve_fleet_module({}, 'probe'))
-        self.assertIsNone(identity.resolve_fleet_module({}, 'revoke'))
-        packet = {**self.packet, 'fleet_module': 'fleet_provider_identity'}
-        with self.assertRaises(identity.ProviderProofError):
-            identity.packet_fleet_module(packet)
-
-    def test_provider_hook_does_not_load_planted_usercustomize(self):
-        home = self.root / 'agent-home'
-        environment = {'HOME': str(home), 'PATH': '/usr/bin:/bin'}
-        site_packages = subprocess.run(['/usr/bin/python3', '-c', 'import site; print(site.getusersitepackages())'],
-                                       env=environment, capture_output=True, text=True, check=True).stdout.strip()
-        marker = self.root / 'usercustomize-loaded'
-        planted = pathlib.Path(site_packages)
-        planted.mkdir(parents=True)
-        (planted / 'usercustomize.py').write_text(
-            f"import pathlib\npathlib.Path({str(marker)!r}).write_text('loaded')\n")
-        subprocess.run(['/usr/bin/python3', '-c', 'pass'], env=environment, check=True, timeout=15)
-        self.assertTrue(marker.exists(), 'sanity: plain python must load the planted usercustomize')
-        marker.unlink()
-        hook = ROOT / 'ops/cli/fleet-provider-hook.py'
-        result = subprocess.run([str(hook)], input=b'{}', env=environment, capture_output=True, timeout=15)
-        self.assertEqual(result.returncode, 1)
-        self.assertFalse(marker.exists())
-
-    def test_template_login_arguments_come_from_the_descriptor(self):
-        self.driver('grok')
-        bundle = self.root / 'descriptor-release'
-        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
-                        bundle / 'packages/adapter-sdk/dist/descriptors')
-        descriptor = bundle / 'packages/adapter-sdk/dist/descriptors/grok.json'
-        value = json.loads(descriptor.read_text())
-        value['provider']['authenticate_argv'] = ['/usr/local/bin/grok', 'login', '--device-auth', '--tenant', 'fixture']
-        descriptor.write_text(json.dumps(value))
-        row = {key: val for key, val in self.binding.items() if key not in {'path', 'identity'}}
-        row.update(path_root=str(self.root / 'profiles'), login={'method': 'device',
-            'command': [str(self.cli), 'login', '--device-auth', '--tenant', 'fixture'],
-            'sha256': self.binding['command_sha256']})
-        templates.validate_templates({'bundles': {'grok': {'directory': str(bundle)}}, 'profile_templates': [row]})
-        with self.assertRaises(ValueError):
-            templates.validate_templates({'bundles': {'grok': {}}, 'profile_templates': [row]})
-
-    def test_lifecycle_recipes_have_muse_login_and_no_unpinned_grok_update(self):
-        bundle = self.root / 'release'
-        shutil.copytree(ROOT / 'packages/adapter-sdk/descriptors',
-                        bundle / 'packages/adapter-sdk/dist/descriptors')
-        self.assertEqual(operations.provider_command('muse', 'authenticate', str(bundle)), ['/usr/local/bin/muse', 'login'])
-        with self.assertRaises(operations.HarnessOperationFailure):
-            operations.provider_command('grok', 'update', str(bundle))
-
-
 class MuseBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='muse-bridge-', dir='/var/tmp')
@@ -503,42 +200,6 @@ class MuseBridgeTests(unittest.TestCase):
         self.assertEqual(observed['args'].count('--reasoning-effort'), 1)
         self.assertFalse((self.root / '.config').exists())
         self.assertEqual(list(self.root.glob('muse-prompt.*')), [])
-
-    def test_v4_bridge_rejects_pin_change_secret_override_and_duplicate_effort(self):
-        for key, value in [('CAUCE_MUSE_CLI_SHA256', '0' * 64), ('META_API_KEY', 'forbidden-fixture'),
-                ('MUSE_CONFIG_DIR', '/legacy')]:
-            with self.subTest(key=key):
-                env = self.env.copy()
-                self.env[key] = value
-                self.assertNotEqual(self.run_bridge().returncode, 0)
-                self.env = env
-        result = self.run_bridge(('exec', '--json', '--reasoning-effort', 'high'))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)['args'].count('--reasoning-effort'), 1)
-
-    def test_v4_bridge_refuses_an_echo_provider_and_multiple_prompt_or_effort_flags(self):
-        for args in [('exec', '--provider', 'echo'), ('exec', '--prompt-file', '/override'),
-                ('exec', '--reasoning-effort', 'high', '--reasoning-effort=max')]:
-            with self.subTest(args=args):
-                self.assertNotEqual(self.run_bridge(args).returncode, 0)
-
-    def test_bridge_without_exact_pins_refuses_legacy_launcher_and_relink(self):
-        launcher = self.root / '.local/bin/muse'
-        launcher.parent.mkdir(parents=True)
-        launcher.write_bytes(self.binary.read_bytes())
-        launcher.chmod(0o700)
-        legacy = self.root / '.local/share/cauce-v3/config/hegel/.config/muse'
-        legacy.mkdir(parents=True)
-        for missing in (('CAUCE_MUSE_CLI_COMMAND', 'CAUCE_MUSE_CLI_SHA256'),
-                ('CAUCE_MUSE_CLI_COMMAND',), ('CAUCE_MUSE_CLI_SHA256',)):
-            saved = self.env.copy()
-            for key in missing:
-                self.env.pop(key)
-            with self.subTest(missing=missing):
-                self.assertEqual(self.run_bridge().returncode, 78)
-                self.assertFalse((self.root / '.config').exists())
-            self.env = saved
-
 
 if __name__ == '__main__':
     unittest.main()

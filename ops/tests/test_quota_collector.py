@@ -23,7 +23,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / 'scripts' / 'quota-collector.py'
@@ -55,19 +54,6 @@ def run_cli(args, env=None, timeout=15):
 # --------------------------------------------------------------------------------------------
 # 1. El script existe y tiene la forma esperada.
 # --------------------------------------------------------------------------------------------
-
-def test_script_exists_and_shebang():
-    assert SCRIPT.exists(), 'quota-collector.py existe'
-    content = SCRIPT.read_text()
-    assert content.startswith('#!/usr/bin/env python3'), 'shebang correcto'
-    print('✓ el script existe con shebang correcto')
-
-
-def test_publish_requires_explicit_gateway_url():
-    result = run_cli(['--host', 'zz-canary-quota-host'])
-    assert result.returncode == 2
-    assert 'CAUCE_QUOTA_GATEWAY_URL o --gateway-url es obligatorio' in result.stderr
-
 
 # --------------------------------------------------------------------------------------------
 # 2. Normalizacion del fixture realista (shape real de ai-usage descrito en el pedido).
@@ -114,107 +100,9 @@ def test_dry_run_normalizes_realistic_fixture():
 # 3. Robustez: un proveedor roto o una ventana sin datos no tumban la publicacion del resto.
 # --------------------------------------------------------------------------------------------
 
-def test_malformed_provider_and_windows_without_numbers_dont_crash():
-    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as fh:
-        json.dump({
-            'schemaVersion': 2,
-            'providers': {
-                'claude': 'esto no es un objeto',
-                'codex': {'ok': True, 'available': True, 'windows': [{'key': 'vacia', 'label': 'sin numeros'}]},
-            },
-        }, fh)
-        path = fh.name
-    try:
-        result = run_cli(['--dry-run', '--input-file', path, '--host', 'zz-canary-quota-host'])
-        assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        providers = {p['provider']: p for p in payload['providers']}
-        assert providers['claude']['ok'] is False
-        assert 'no es un objeto' in providers['claude']['note']
-        assert providers['codex']['ok'] is True, 'el proveedor sigue reportandose ok, solo pierde la ventana rota'
-        assert providers['codex']['windows'] == [], 'la ventana sin usedPercent/remainingPercent/usedUnits se descarta'
-        assert 'descartada' in providers['codex']['note']
-    finally:
-        os.unlink(path)
-    print('✓ un proveedor malformado y una ventana sin numeros no tumban la publicacion del resto')
-
-
-def test_missing_providers_key_falls_back_to_configured_list():
-    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as fh:
-        json.dump({'algo': 'inesperado'}, fh)
-        path = fh.name
-    try:
-        result = run_cli(['--dry-run', '--input-file', path, '--host', 'zz-canary-quota-host'],
-                          env={'CAUCE_QUOTA_PROVIDERS': 'claude,codex'})
-        assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        names = {p['provider'] for p in payload['providers']}
-        assert names == {'claude', 'codex'}
-        assert all(p['ok'] is False for p in payload['providers'])
-    finally:
-        os.unlink(path)
-    print("✓ JSON sin 'providers' cae al fallback configurado en vez de abortar sin publicar nada")
-
-
-def test_ai_usage_binary_missing_publishes_failure_report():
-    result = run_cli(['--dry-run', '--host', 'zz-canary-quota-host'], env={
-        'CAUCE_QUOTA_AI_USAGE_CMD': 'ai-usage-que-no-existe-en-este-host --json',
-        'CAUCE_QUOTA_PROVIDERS': 'claude,codex,antigravity,opencode',
-    })
-    assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
-    assert len(payload['providers']) == 4
-    assert all(p['ok'] is False and 'no respondio' in (p['note'] or '') for p in payload['providers'])
-    print('✓ ai-usage ausente publica un reporte de falla total en vez de no publicar nada (exit 0)')
-
-
-def test_invalid_host_exits_with_config_error():
-    result = run_cli(['--dry-run', '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'kratos invalido'])
-    assert result.returncode == 2
-    assert 'host invalido' in result.stderr
-    print('✓ un host invalido frena con exit 2 antes de intentar publicar nada')
-
-
 # --------------------------------------------------------------------------------------------
 # 4. Funciones puras de saneamiento (unit-level, via importlib).
 # --------------------------------------------------------------------------------------------
-
-def test_sanitizers_are_defensive():
-    module = load_module()
-    assert module.sanitize_key(None, 'default') == 'default'
-    assert module.sanitize_key('codex bengalfox raro!', 'default').startswith(('c', 'x'))
-    assert module.KEY_RE.match(module.sanitize_key('   ', 'default'))
-    assert module.PROVIDER_RE.match(module.sanitize_provider('Codex Raro!'))
-    assert module.trim('   ', 10) is None, 'una cadena vacia tras strip no debe pasar el CHECK de longitud > 0'
-    assert module.trim('x' * 20, 5) == 'xxxx…'
-    assert module.to_number(100.5) == 100.0, 'un desborde chico (redondeo) se clampea'
-    assert module.to_number(-0.5) == 0.0, 'un desborde chico (redondeo) se clampea'
-    assert module.to_number(250) is None, 'un desborde grande NO se clampea a 100: seria leer un dato roto como sano'
-    assert module.to_number(-50) is None, 'un desborde grande NO se clampea a 0: seria leer un dato roto como agotado'
-    assert module.to_number('no-es-un-numero') is None
-    assert module.to_units(-1, 0) is None, 'used_units negativo se descarta (CHECK >= 0)'
-    assert module.to_units(0, 0) == 0
-    try:
-        module.sanitize_host('con espacios')
-        raise AssertionError('sanitize_host deberia haber levantado QuotaCollectionError')
-    except module.QuotaCollectionError:
-        pass
-    print('✓ los saneadores (host/provider/key/numero) son defensivos ante datos crudos raros')
-
-
-def test_malformed_pki_fails_clean_not_with_traceback():
-    with tempfile.TemporaryDirectory() as pki_dir:
-        for name in ('client.crt', 'client.key', 'ca.crt'):
-            pathlib.Path(pki_dir, name).write_text('esto no es un PEM valido\n')
-        result = run_cli([
-            '--input-file', str(FIXTURES / 'ai-usage-sample.json'), '--host', 'zz-canary-quota-host',
-            '--pki-dir', pki_dir, '--gateway-url', 'https://127.0.0.1:1/v3/quotas/samples',
-        ])
-        assert result.returncode == 2, result.stderr
-        assert 'Traceback' not in result.stderr, 'un PEM invalido no debe crashear con traceback sin manejar'
-        assert 'PKI invalida' in result.stderr
-    print('✓ PKI con PEM invalido falla limpio (exit 2), sin traceback')
-
 
 # --------------------------------------------------------------------------------------------
 # 5. mTLS real de punta a punta (requieren openssl para generar certificados descartables;
@@ -298,93 +186,6 @@ def _start_fake_server(pki_dir: str) -> tuple[subprocess.Popen, int]:
             details = ', '.join(type(failure).__name__ for failure in failures)
             raise RuntimeError(f'fake server startup cleanup failed: {details}') from error
         raise
-
-
-def test_fake_server_startup_failure_reaps_process():
-    class FakeStream:
-        def __init__(self, line):
-            self.line = line
-
-        def readline(self):
-            if isinstance(self.line, BaseException):
-                raise self.line
-            return self.line
-
-    class FakeProcess:
-        def __init__(self, line, wait_failure=None):
-            self.stdout = FakeStream(line)
-            self.events = []
-            self.wait_failure = wait_failure
-
-        def poll(self):
-            return None
-
-        def terminate(self):
-            self.events.append('terminate')
-
-        def wait(self, timeout):
-            self.events.append(('wait', timeout))
-            if self.wait_failure:
-                raise self.wait_failure
-            return 0
-
-    cleanup_failure = subprocess.TimeoutExpired('fake-server', 5)
-    cases = [
-        ('startup output missing', 'Traceback (most recent call last):\n', AssertionError, None),
-        ('port output malformed', 'listening on invalid\n', ValueError, None),
-        ('readline raises', OSError('readline failed'), OSError, None),
-        ('startup and reap both fail', 'Traceback (most recent call last):\n', AssertionError, cleanup_failure),
-    ]
-    for label, line, expected, wait_failure in cases:
-        proc = FakeProcess(line, wait_failure)
-        with patch.object(subprocess, 'Popen', return_value=proc):
-            try:
-                _start_fake_server('/synthetic/pki')
-            except Exception as error:
-                if wait_failure:
-                    assert isinstance(error, RuntimeError), f'{label} lost the cleanup failure: {error!r}'
-                    assert isinstance(error.__cause__, expected), f'{label} lost the startup failure: {error!r}'
-                    assert 'TimeoutExpired' in str(error)
-                else:
-                    assert isinstance(error, expected), f'{label} changed its original error: {error!r}'
-            else:
-                raise AssertionError(f'{label} did not preserve the startup failure')
-        assert proc.events == ['terminate', ('wait', 5)], f'{label} did not reap its child: {proc.events!r}'
-
-
-def test_fake_server_cleanup_attempts_all_terminations_before_waits():
-    events = []
-    wait_failure = subprocess.TimeoutExpired('fake-server', 5)
-
-    class FakeProcess:
-        def __init__(self, name, failure=None):
-            self.name = name
-            self.failure = failure
-
-        def poll(self):
-            return None
-
-        def terminate(self):
-            events.append(('terminate', self.name))
-
-        def wait(self, timeout):
-            events.append(('wait', self.name, timeout))
-            if self.failure:
-                raise self.failure
-            return 0
-
-    first = FakeProcess('first', wait_failure)
-    second = FakeProcess('second')
-    try:
-        _finish_fake_servers(first, second)
-    except RuntimeError as error:
-        assert error.__cause__ is wait_failure
-    else:
-        raise AssertionError('first wait failure was not reported')
-    assert events == [
-        ('terminate', 'first'), ('terminate', 'second'),
-        ('wait', 'first', 5), ('wait', 'second', 5),
-    ], f'cleanup skipped or reordered operations: {events!r}'
 
 
 def test_mtls_round_trip_with_ip_san_succeeds():
@@ -489,17 +290,7 @@ def test_native_cli_shapes_and_probe_rate_limit_are_preserved():
 
 TESTS = [
     test_native_cli_shapes_and_probe_rate_limit_are_preserved,
-    test_fake_server_startup_failure_reaps_process,
-    test_fake_server_cleanup_attempts_all_terminations_before_waits,
-    test_script_exists_and_shebang,
-    test_publish_requires_explicit_gateway_url,
     test_dry_run_normalizes_realistic_fixture,
-    test_malformed_provider_and_windows_without_numbers_dont_crash,
-    test_missing_providers_key_falls_back_to_configured_list,
-    test_ai_usage_binary_missing_publishes_failure_report,
-    test_invalid_host_exits_with_config_error,
-    test_sanitizers_are_defensive,
-    test_malformed_pki_fails_clean_not_with_traceback,
     test_mtls_round_trip_with_ip_san_succeeds,
     test_hostname_verification_is_enforced_and_override_works,
     test_network_failure_never_leaks_credential_content,

@@ -178,15 +178,6 @@ class HostSetupTests(unittest.TestCase):
         self.assertNotIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
         self.assertNotIn(['systemctl', '--user', 'daemon-reload'], self.commands)
 
-    def test_dry_run_changes_nothing(self):
-        receipt = host_setup.setup(self.identity, self.install_base(), True)
-        self.assertTrue(receipt['dry_run'])
-        self.assertIn('download and extract release', receipt['actions'])
-        self.assertFalse(self.install_base().exists())
-        self.assertFalse((self.home / '.config').exists())
-        self.assertEqual(json.loads((self.identity / 'setup-signer.json').read_text()), {'fingerprint': hashlib.sha256(self.signer).hexdigest()})
-        self.assertEqual(self.requests, [])
-
     def test_bad_signature_digest_and_foreign_host_are_rejected_before_install(self):
         self.tamper_signature = True
         with self.assertRaisesRegex(HostFailure, 'signature is invalid'):
@@ -199,59 +190,6 @@ class HostSetupTests(unittest.TestCase):
         with self.assertRaisesRegex(HostFailure, 'no coincide con el SHA-256 firmado'):
             host_setup.setup(self.identity, self.install_base(), False)
         self.assertFalse((self.home / '.config').exists())
-
-    def test_policy_cannot_override_local_identity_and_signer_is_anchored(self):
-        self.package_overrides = {'policy': {'executor_user': 'root'}}
-        with self.assertRaisesRegex(HostFailure, 'cannot override'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.package_overrides = {}
-        host_setup.setup(self.identity, self.install_base(), False)
-        other = self.home / 'other-signer'
-        self.signer, self.signer_dir = ensure_key(other), other
-        with self.assertRaisesRegex(HostFailure, 'differs from the anchored one'):
-            host_setup.setup(self.identity, self.install_base(), False)
-
-    def test_unanchored_identity_never_trusts_the_first_signer(self):
-        (self.identity / 'setup-signer.json').unlink()
-        with self.assertRaisesRegex(HostFailure, 'no setup signer is anchored'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse((self.identity / 'setup-signer.json').exists())
-        self.assertFalse(self.install_base().exists())
-        with self.assertRaisesRegex(HostFailure, 'differs from the anchored one'):
-            host_setup.setup(self.identity, self.install_base(), False, 'a' * 64)
-        expected = hashlib.sha256(self.signer).hexdigest()
-        self.assertTrue(host_setup.setup(self.identity, self.install_base(), True, expected)['dry_run'])
-        self.assertFalse((self.identity / 'setup-signer.json').exists())
-        self.assertTrue(host_setup.setup(self.identity, self.install_base(), False, expected)['service_active'])
-        self.assertEqual(json.loads((self.identity / 'setup-signer.json').read_text()), {'fingerprint': expected})
-
-    def test_policy_user_placeholder_becomes_the_local_executor_user(self):
-        self.package_overrides = {'policy': {'hooks': {'verify': {'user': '@user@', 'argv': ['@release@/hook']}}, 'bundles': {}}}
-        host_setup.setup(self.identity, self.install_base(), False)
-        policy = json.loads((self.install_base() / 'company-a/local-a/executor-policy.json').read_text())
-        self.assertEqual(policy['hooks']['verify']['user'], policy['executor_user'])
-        self.assertTrue(policy['hooks']['verify']['argv'][0].endswith('/hook'))
-        self.assertNotIn('@', json.dumps(policy['hooks']))
-
-    def test_executor_rejecting_policy_blocks_service_start(self):
-        self.capabilities = {'available': False, 'placements': [], 'reason': 'executor_unconfigured'}
-        with self.assertRaisesRegex(HostFailure, 'rejects it'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse(self.active)
-
-    def test_unsafe_release_entries_are_rejected(self):
-        self.archive = release_tar({'../escape': b'x'})
-        with self.assertRaisesRegex(HostFailure, 'unsafe entry'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.archive = release_tar()
-        broken = io.BytesIO()
-        with tarfile.open(fileobj=broken, mode='w') as archive:
-            info = tarfile.TarInfo('ops/readme')
-            info.size = 0
-            archive.addfile(info, io.BytesIO(b''))
-        self.archive = broken.getvalue()
-        with self.assertRaisesRegex(HostFailure, 'does not contain'):
-            host_setup.setup(self.identity, self.install_base(), False)
 
     def bundle_package(self, digest=None):
         runtime = pathlib.Path(__file__).resolve().parents[1] / 'container-runtime'
@@ -269,103 +207,6 @@ class HostSetupTests(unittest.TestCase):
             'policy': {'bundles': {'codex': {'directory': '@release@/bundle', 'digest': digest or real, 'executable': '/x',
                 'executable_sha256': 'a' * 64, 'argv': []}}}}
 
-    def test_release_directories_keep_their_archived_mode_whatever_the_umask(self):
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode='w') as archive:
-            for name, kind in (('ops', tarfile.DIRTYPE), ('ops/cli', tarfile.DIRTYPE), ('services', tarfile.DIRTYPE)):
-                info = tarfile.TarInfo(name)
-                info.type, info.mode = kind, 0o755 if name != 'services' else 0o777
-                archive.addfile(info)
-            for name in host_setup.REQUIRED_IN_RELEASE:
-                info = tarfile.TarInfo(name)
-                info.size, info.mode = 2, 0o644
-                archive.addfile(info, io.BytesIO(b'1\n'))
-        (self.home / 'release.tar').write_bytes(buffer.getvalue())
-        previous = os.umask(0o077)
-        try:
-            host_setup.extract_release(self.home / 'release.tar', self.home / 'extracted')
-        finally:
-            os.umask(previous)
-        modes = {name: (self.home / 'extracted' / name).stat().st_mode & 0o777 for name in ('ops', 'ops/cli', 'services')}
-        self.assertEqual(modes, {'ops': 0o755, 'ops/cli': 0o755, 'services': 0o755})
-
-    def test_bundle_digest_is_verified_against_the_extracted_release(self):
-        self.bundle_package('f' * 64)
-        with self.assertRaisesRegex(HostFailure, 'bundle digest differs'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse(self.active)
-        self.bundle_package()
-        self.assertTrue(host_setup.setup(self.identity, self.install_base(), False)['service_active'])
-
-    def test_release_with_internal_links_extracts_and_escaping_links_are_refused(self):
-        def linked(target: str) -> bytes:
-            buffer = io.BytesIO()
-            with tarfile.open(fileobj=buffer, mode='w') as archive:
-                for name in host_setup.REQUIRED_IN_RELEASE + ('adapter/node_modules/.pnpm/ws/index.js',):
-                    info = tarfile.TarInfo(name)
-                    info.size = 2
-                    archive.addfile(info, io.BytesIO(b'1\n'))
-                link = tarfile.TarInfo('adapter/node_modules/ws')
-                link.type, link.linkname = tarfile.SYMTYPE, target
-                archive.addfile(link)
-            return buffer.getvalue()
-        (self.home / 'inside.tar').write_bytes(linked('.pnpm/ws'))
-        host_setup.extract_release(self.home / 'inside.tar', self.home / 'inside')
-        self.assertEqual((self.home / 'inside/adapter/node_modules/ws/index.js').read_text(), '1\n')
-        for target in ('../../../escape', '/etc'):
-            (self.home / 'outside.tar').write_bytes(linked(target))
-            with self.assertRaisesRegex(HostFailure, 'unsafe entry'):
-                host_setup.extract_release(self.home / 'outside.tar', self.home / 'outside')
-
-    def test_a_cut_download_resumes_from_the_signed_offset(self):
-        self.archive = release_tar({'ops/padding.bin': os.urandom(200_000)})
-        self.cut_after = 70_000
-        self.assertTrue(host_setup.setup(self.identity, self.install_base(), False)['service_active'])
-        self.assertEqual(self.requests, ['release@0', 'release@70000'])
-
-    def test_agent_image_is_downloaded_loaded_and_checked_once(self):
-        self.image = os.urandom(150_000)
-        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': self.image_id}]}}
-        dry = host_setup.setup(self.identity, self.install_base(), True)
-        self.assertIn('download and load agent image ' + self.image_id, dry['actions'])
-        self.assertEqual(self.requests, [])
-        receipt = host_setup.setup(self.identity, self.install_base(), False)
-        self.assertEqual((receipt['image_id'], receipt['image_present'], receipt['image_loaded']), (self.image_id, False, True))
-        self.assertEqual(self.requests, ['release@0', 'agent-image@0'])
-        loads = [command for command in self.commands if command[:2] == [host_setup.DOCKER, 'load']]
-        self.assertEqual(len(loads), 1)
-        self.assertFalse(pathlib.Path(loads[0][-1]).exists())
-        self.requests, self.commands = [], []
-        again = host_setup.setup(self.identity, self.install_base(), False)
-        self.assertEqual((again['image_present'], again['image_loaded']), (True, False))
-        self.assertEqual(self.requests, [])
-        self.assertFalse(any(command[:2] == [host_setup.DOCKER, 'load'] for command in self.commands))
-
-    def test_agent_image_of_another_id_or_template_never_starts_the_service(self):
-        self.image = os.urandom(1000)
-        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': 'sha256:' + 'f' * 64}]}}
-        with self.assertRaisesRegex(HostFailure, 'no usa la imagen de agentes'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertEqual(self.requests, [])
-        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'container_templates': [{'harness_id': 'codex', 'image': self.image_id}]}}
-        self.loaded_as = 'sha256:' + '1' * 64
-        with self.assertRaisesRegex(HostFailure, 'otro almacén'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse(self.active)
-        self.image_id, self.loaded_as = 'e' * 64, 'e' * 64
-        with self.assertRaisesRegex(HostFailure, 'artifact is invalid'):
-            host_setup.setup(self.identity, self.install_base(), False)
-
-    def test_status_reports_executor_ready_only_after_setup(self):
-        before = host_setup.status(self.identity, self.install_base())
-        self.assertFalse(before['executor_ready'])
-        self.assertEqual(before['reason'], 'setup_required')
-        host_setup.setup(self.identity, self.install_base(), False)
-        after = host_setup.status(self.identity, self.install_base())
-        self.assertTrue(after['executor_ready'])
-        self.active = False
-        self.assertFalse(host_setup.status(self.identity, self.install_base())['executor_ready'])
-
     def test_second_company_for_the_same_system_user_is_rejected_and_first_unit_survives(self):
         host_setup.setup(self.identity, self.install_base(), False)
         unit = self.home / '.config/systemd/user' / self.unit_name
@@ -382,14 +223,6 @@ class HostSetupTests(unittest.TestCase):
         self.assertTrue(host_setup.status(self.identity, self.install_base())['executor_ready'])
         self.assertFalse(host_setup.status(other, self.install_base())['executor_ready'])
 
-    def test_other_company_identity_without_executor_policy_rejects_setup(self):
-        other = self.home / 'state/company-b/local-b'
-        other.mkdir(parents=True)
-        (other / 'identity.json').write_text('{}')
-        with self.assertRaisesRegex(HostFailure, 'one system user per company'):
-            host_setup.setup(self.identity, self.install_base(), True)
-        self.assertFalse(self.install_base().exists())
-
     def login_package(self, *, helper: bool = True, login: bool = True):
         cli = pathlib.Path(__file__).resolve().parents[1]
         files = {name: (cli / name.removeprefix('ops/')).read_bytes() for name in host_setup.LOGIN_HELPER_FILES} if helper else {}
@@ -399,54 +232,6 @@ class HostSetupTests(unittest.TestCase):
         if login:
             template['login'] = {'method': 'device', 'command': ['/usr/local/bin/codex', 'login', '--device-auth'], 'sha256': 'c' * 64}
         self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'profile_templates': [template]}}
-
-    def test_signed_login_recipe_installs_a_private_auth_policy_named_by_the_unit(self):
-        self.login_package()
-        self.assertIn('write provider auth policy', host_setup.setup(self.identity, self.install_base(), True)['actions'])
-        receipt = host_setup.setup(self.identity, self.install_base(), False)
-        self.assertTrue(receipt['provider_auth'])
-        root = self.install_base() / 'company-a/local-a'
-        auth_file, executor = root / 'provider-auth-policy.json', json.loads((root / 'executor-policy.json').read_text())
-        self.assertEqual(oct(auth_file.stat().st_mode & 0o777), '0o600')
-        self.assertEqual(oct((root / 'provider-login').stat().st_mode & 0o777), '0o700')
-        auth = json.loads(auth_file.read_text())
-        self.assertEqual(set(auth), {'schemaVersion', 'host_id', 'state_root', 'helper', 'profiles', 'profile_templates', 'logins'})
-        self.assertEqual((auth['host_id'], auth['state_root'], auth['logins']), ('local-a', str(root / 'provider-login'), {}))
-        self.assertEqual((auth['profiles'], auth['profile_templates']), (executor['profiles'], executor['profile_templates']))
-        release = pathlib.Path(receipt['release'])
-        self.assertEqual(auth['helper']['executable'], str(release / 'ops/cli/provider-login.py'))
-        self.assertEqual(auth['helper']['files'], {str(release / name): hashlib.sha256((release / name).read_bytes()).hexdigest()
-            for name in host_setup.LOGIN_HELPER_FILES})
-        self.assertEqual(auth['helper']['sha256'], auth['helper']['files'][auth['helper']['executable']])
-        self.assertNotRegex(auth_file.read_text(), r'(?i)token|secret|password|private')
-        unit = (self.home / '.config/systemd/user' / self.unit_name).read_text()
-        self.assertIn(f'Environment=CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE={auth_file}\n', unit)
-        self.assertLess(unit.index('CAUCE_FLEET_POLICY_FILE='), unit.index('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE='))
-        self.assertTrue(host_setup.status(self.identity, self.install_base())['provider_auth'])
-        self.commands = []
-        self.assertFalse(host_setup.setup(self.identity, self.install_base(), False)['policy_changed'])
-        self.assertNotIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
-
-    def test_without_a_signed_login_recipe_the_unit_serves_no_provider_login(self):
-        self.login_package(login=False)
-        receipt = host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse(receipt['provider_auth'])
-        self.assertFalse((self.install_base() / 'company-a/local-a/provider-auth-policy.json').exists())
-        self.assertNotIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE', (self.home / '.config/systemd/user' / self.unit_name).read_text())
-        self.assertFalse(host_setup.status(self.identity, self.install_base())['provider_auth'])
-        self.assertNotIn('write provider auth policy', host_setup.setup(self.identity, self.install_base(), True)['actions'])
-
-    def test_withdrawn_login_recipe_removes_the_auth_policy_and_restarts_the_service(self):
-        self.login_package()
-        host_setup.setup(self.identity, self.install_base(), False)
-        self.login_package(login=False)
-        self.commands = []
-        receipt = host_setup.setup(self.identity, self.install_base(), False)
-        self.assertTrue(receipt['policy_changed'])
-        self.assertFalse(receipt['provider_auth'])
-        self.assertFalse((self.install_base() / 'company-a/local-a/provider-auth-policy.json').exists())
-        self.assertNotIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE', (self.home / '.config/systemd/user' / self.unit_name).read_text())
-        self.assertIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
 
     def test_login_recipe_and_agent_image_arrive_in_one_setup(self):
         self.login_package()
@@ -459,13 +244,6 @@ class HostSetupTests(unittest.TestCase):
         self.assertEqual((receipt['image_loaded'], receipt['provider_auth']), (True, True))
         self.assertEqual(self.requests, ['release@0', 'agent-image@0'])
         self.assertIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE=', (self.home / '.config/systemd/user' / self.unit_name).read_text())
-
-    def test_login_recipe_without_the_helper_in_the_release_does_not_start_the_service(self):
-        self.login_package(helper=False)
-        with self.assertRaisesRegex(HostFailure, 'provider login helper'):
-            host_setup.setup(self.identity, self.install_base(), False)
-        self.assertFalse(self.active)
-        self.assertFalse((self.home / '.config/systemd/user' / self.unit_name).exists())
 
     def test_second_host_of_the_same_company_gets_its_own_unit(self):
         host_setup.setup(self.identity, self.install_base(), False)

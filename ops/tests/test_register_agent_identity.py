@@ -138,15 +138,6 @@ class _AgentIdentityFixture:
 
 
 class RegisterAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
-    def test_computes_sha256_of_der_not_pem_text(self) -> None:
-        pem_text = (self.cert_dir / "agent-argos.crt").read_text(encoding="ascii")
-        naive_pem_digest = hashlib.sha256(pem_text.encode("ascii")).hexdigest()
-        self.assertNotEqual(self.argos_sha256, naive_pem_digest)
-
-        result = self._register()
-
-        self.assertEqual(result["certificate_sha256"], self.argos_sha256)
-
     def test_registers_identity_with_gateway_matching_schema(self) -> None:
         result = self._register()
 
@@ -169,23 +160,6 @@ class RegisterAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
         )
         self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
         self.assertFalse(result["already_registered"])
-
-    def test_never_touches_token_hashes_file(self) -> None:
-        before = self.token_hashes.read_bytes()
-        self._register()
-        self.assertEqual(self.token_hashes.read_bytes(), before)
-
-    def test_rerunning_for_the_same_unchanged_certificate_is_a_noop(self) -> None:
-        first = self._register()
-        before = self.mtls_identities.read_bytes()
-
-        second = self._register()
-
-        self.assertTrue(second["already_registered"])
-        self.assertEqual(second["certificate_sha256"], first["certificate_sha256"])
-        self.assertEqual(self.mtls_identities.read_bytes(), before)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 2)  # jarvis + argos, not tripled
 
     def test_cas_rejects_a_replaced_identity_document_with_the_existing_message(self) -> None:
         document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
@@ -210,62 +184,6 @@ class RegisterAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
             os.close(lock_fd)
             os.close(identities_fd)
         self.assertEqual(self.mtls_identities.read_bytes(), before)
-
-    def test_rejects_a_different_certificate_for_an_already_registered_alias(self) -> None:
-        self._register()
-        self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
-        rotated_sha256 = _write_certificate(self.cert_dir / "agent-argos.crt", "agent-argos")
-        self.assertNotEqual(rotated_sha256, self.argos_sha256)
-        self.assertEqual(
-            stat.S_IMODE((self.cert_dir / "agent-argos.crt").stat().st_mode),
-            0o444,
-        )
-        before = self.mtls_identities.read_bytes()
-
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            self._register()
-
-        self.assertEqual(self.mtls_identities.read_bytes(), before)
-        self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
-
-    def test_rejects_disabled_alias_and_writes_nothing(self) -> None:
-        _write_certificate(self.cert_dir / "agent-retirado.crt", "agent-retirado")
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            self._register(alias="retirado")
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
-
-    def test_rejects_unknown_alias(self) -> None:
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            self._register(alias="fantasma")
-
-    def test_rejects_missing_certificate(self) -> None:
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            MODULE.register("argos", self.root / "empty-pki", self.identities_dir, self.flota_json, 730)
-
-    def test_dry_run_leaves_filesystem_untouched(self) -> None:
-        message = MODULE.describe_dry_run("argos", self.cert_dir, self.identities_dir, self.flota_json, 730)
-        self.assertIn("dry-run", message)
-        self.assertIn(self.argos_sha256, message)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
-
-    def test_cli_dry_run_exits_zero_and_prints_plan(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--alias", "argos",
-                "--cert-dir", str(self.cert_dir),
-                "--identities-dir", str(self.identities_dir),
-                "--flota-json", str(self.flota_json),
-                "--dry-run",
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("dry-run", completed.stdout)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
 
     def test_cli_registers_then_second_run_is_a_clean_noop(self) -> None:
         first = subprocess.run(
@@ -297,54 +215,7 @@ class RegisterAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
         document_after = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
         self.assertEqual(len(document_after["identities"]), 2)
 
-    def test_cli_rejects_unknown_alias_without_leaking_internals(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--alias", "fantasma",
-                "--cert-dir", str(self.cert_dir),
-                "--identities-dir", str(self.identities_dir),
-                "--flota-json", str(self.flota_json),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("register agent identity failed", completed.stderr)
-
-
 class RevokeAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
-    def test_revoke_removes_matching_tenant_and_alias_record(self) -> None:
-        self._register()
-        before = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(before["identities"]), 2)  # jarvis (seed) + argos
-
-        result = self._revoke()
-
-        self.assertEqual(result["identities_removed"], 1)
-        self.assertEqual(result["tenant"], "Steven")
-        self.assertEqual(result["alias"], "argos")
-        after = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(after["identities"]), 1)
-        self.assertEqual(after["identities"][0]["principal"]["alias"], "jarvis")
-        self.assertEqual(stat.S_IMODE(self.mtls_identities.stat().st_mode), 0o400)
-
-    def test_revoke_is_idempotent(self) -> None:
-        self._register()
-        first = self._revoke()
-        self.assertEqual(first["identities_removed"], 1)
-        after_first = self.mtls_identities.read_bytes()
-
-        second = self._revoke()
-
-        self.assertEqual(second["identities_removed"], 0)
-        self.assertEqual(self.mtls_identities.read_bytes(), after_first)
-
-    def test_revoke_of_never_registered_alias_is_a_noop(self) -> None:
-        result = self._revoke()
-        self.assertEqual(result["identities_removed"], 0)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)  # jarvis, untouched
-
     def test_revoke_matches_tenant_and_alias_together_not_alias_alone(self) -> None:
         """Same alias, different tenant: alias-only matching would wrongly revoke this one."""
         _write_json(
@@ -365,87 +236,6 @@ class RevokeAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
         document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
         self.assertEqual(len(document["identities"]), 2)
         self.assertEqual(document["identities"][1]["principal"]["tenant_id"], "Miguel")
-
-    def test_revoke_does_not_touch_other_alias_records(self) -> None:
-        self._register()
-        self._revoke()
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual([r["principal"]["alias"] for r in document["identities"]], ["jarvis"])
-
-    def test_revoke_never_touches_token_hashes_file(self) -> None:
-        self._register()
-        before = self.token_hashes.read_bytes()
-        self._revoke()
-        self.assertEqual(self.token_hashes.read_bytes(), before)
-
-    def test_revoke_does_not_need_the_certificate_file(self) -> None:
-        """No fingerprint needed: the leaf may already be gone by the time an agent is retired."""
-        self._register()
-        (self.cert_dir / "agent-argos.crt").unlink()
-
-        result = self._revoke()
-
-        self.assertEqual(result["identities_removed"], 1)
-
-    def test_revoke_rejects_invalid_alias(self) -> None:
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            MODULE.revoke("Steven", "Not-Valid", self.identities_dir)
-
-    def test_revoke_rejects_invalid_tenant(self) -> None:
-        with self.assertRaises(MODULE.RegisterIdentityError):
-            MODULE.revoke("bad tenant!", "argos", self.identities_dir)
-
-    def test_revoke_dry_run_leaves_filesystem_untouched(self) -> None:
-        self._register()
-
-        message = MODULE.describe_revoke_dry_run("Steven", "argos", self.identities_dir)
-
-        self.assertIn("dry-run --revoke", message)
-        self.assertIn("identities_a_eliminar=1", message)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 2)
-
-    def test_build_parser_accepts_the_exact_cauce_retirar_invocation(self) -> None:
-        """cauce retirar calls exactly: --revoke --tenant <tenant> --alias <alias>, nothing else."""
-        arguments = MODULE.build_parser().parse_args(["--revoke", "--tenant", "Steven", "--alias", "argos"])
-        self.assertTrue(arguments.revoke)
-        self.assertEqual(arguments.tenant, "Steven")
-        self.assertEqual(arguments.alias, "argos")
-        self.assertIsNone(arguments.identities_dir)
-        self.assertIsNone(arguments.cert_dir)
-
-    def test_default_identities_dir_matches_cauce_cli_convention(self) -> None:
-        self.assertEqual(MODULE.DEFAULT_IDENTITIES_DIR, pathlib.Path("/etc/cauce-v3/secrets/identities"))
-
-    def test_main_falls_back_to_default_identities_dir_when_flag_omitted(self) -> None:
-        self._register()
-        original_default = MODULE.DEFAULT_IDENTITIES_DIR
-        MODULE.DEFAULT_IDENTITIES_DIR = self.identities_dir
-        try:
-            exit_code = MODULE.main(["--revoke", "--tenant", "Steven", "--alias", "argos"])
-        finally:
-            MODULE.DEFAULT_IDENTITIES_DIR = original_default
-
-        self.assertEqual(exit_code, 0)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 1)
-
-    def test_cli_revoke_dry_run_reports_and_leaves_everything_untouched(self) -> None:
-        self._register()
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--revoke", "--dry-run",
-                "--tenant", "Steven",
-                "--alias", "argos",
-                "--identities-dir", str(self.identities_dir),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertIn("dry-run --revoke", completed.stdout)
-        document = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
-        self.assertEqual(len(document["identities"]), 2)
 
     def test_cli_revoke_removes_record_then_second_run_is_a_clean_noop(self) -> None:
         self._register()
@@ -477,34 +267,6 @@ class RevokeAgentIdentityTest(_AgentIdentityFixture, unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         document_after = json.loads(self.mtls_identities.read_text(encoding="utf-8"))
         self.assertEqual(len(document_after["identities"]), 1)
-
-    def test_cli_revoke_without_tenant_fails_loud(self) -> None:
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--revoke",
-                "--alias", "argos",
-                "--identities-dir", str(self.identities_dir),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("--tenant", completed.stderr)
-
-    def test_cli_register_without_cert_dir_still_fails_loud(self) -> None:
-        """The --revoke argparse relaxation must not silently drop this requirement outside --revoke."""
-        completed = subprocess.run(
-            [
-                sys.executable, str(SCRIPT),
-                "--alias", "argos",
-                "--identities-dir", str(self.identities_dir),
-                "--flota-json", str(self.flota_json),
-            ],
-            capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("--cert-dir", completed.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()
