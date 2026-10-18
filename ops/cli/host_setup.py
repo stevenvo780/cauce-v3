@@ -569,8 +569,8 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
                     private_directory(target.parent)
                     download(channel, item, pathlib.Path(scratch) / item['name'])
                     os.replace(pathlib.Path(scratch) / item['name'], target)
-                    # The executor refuses group- or world-writable files, and a umask of 002 is common.
-                    target.chmod(0o600)
+                # The executor refuses group- or world-writable files, and a umask of 002 is common.
+                target.chmod(0o600)
         for item in images:
             key = 'quota_image' if item['name'] == 'quota-image' else 'image'
             loaded, local_id = ensure_image(channel, item, pathlib.Path(scratch))
