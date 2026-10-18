@@ -42,7 +42,7 @@ const DEFINITIONS: Record<string, ConfigFormDefinition> = {
     tenant, { key: 'room_id', label: 'Sala/grupo', identity: true, suggestions: 'rooms', suggestionKey: 'id' }, alias,
     { key: 'role', label: 'Rol de permisos', initial: 'agent', suggestions: 'role_policies', suggestionKey: 'role' }, enabled,
   ] },
-  acl_edges: { resource: 'acl_edge', label: 'ACL', fields: [
+  acl_edges: { resource: 'acl_edge', label: 'permiso entre clientes', fields: [
     { ...tenant, key: 'from_tenant', label: 'Desde el espacio' },
     { ...tenant, key: 'to_tenant', label: 'Hacia el espacio' }, enabled,
     permission('allow_route', 'Permitir ruta'), permission('allow_read', 'Permitir lectura'), permission('allow_control', 'Permitir control'),

@@ -79,7 +79,7 @@ it('edita el nombre visible del grupo sin cambiar su identidad ni otros campos',
 const editableRows = [
   ['espacio', 'Miguel', /espacios y salas/i],
   ['membresía', 'Miguel/grp.miguel/janus', /espacios y salas/i],
-  ['ACL', 'Miguel/Steven', /acceso y roles/i],
+  ['permiso entre clientes', 'Miguel/Steven', /acceso y roles/i],
   ['política de rol', 'agent', /acceso y roles/i],
   ['harness', 'codex', /^arneses$/i],
   ['destino de avisos', 'Miguel/janus/owner_dm', /acceso y roles/i],

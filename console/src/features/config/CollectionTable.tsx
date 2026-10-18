@@ -18,6 +18,7 @@ import { columnasInertesDe, motivoInerte } from './campos-inertes';
 import {
   CabeceraConAyuda, ConfirmarQuitarControl, FilaDeFallo, InterruptorDeCelda,
 } from './Interruptor';
+import { efectoDeRol, GUIA_DE_ROLES } from './efecto-de-rol';
 import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
 import type { ControlDeInterruptores } from './use-interruptores';
 
@@ -82,6 +83,8 @@ export function CollectionTable({
         {...(bloqueoDeCatalogo ? { title: bloqueoDeCatalogo } : {})}
         onClick={() => { onFormAction({ collection: key, action: 'create' }); }}>Crear {formDefinition.label}</Button>
     </div> : null}
+    {key === 'role_policies' ? <p className="m-0 max-w-prose text-[13px] text-fg-2">{GUIA_DE_ROLES}</p> : null}
+    {key === 'acl_edges' ? <p className="m-0 max-w-prose text-[13px] text-fg-2">Un permiso entre clientes deja que un espacio le hable a otro. Si no hay fila, entre esos dos no pasa nada.</p> : null}
     {editor}
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
@@ -231,6 +234,15 @@ function Celda({
   }
 
   const valor = fila[columna.clave];
+
+  if (coleccion === 'role_policies' && columna.clave === 'role' && typeof valor === 'string' && valor.trim() !== '') {
+    const efecto = efectoDeRol(valor);
+    return <span className="grid max-w-72 gap-0.5">
+      <span>{efecto.nombre}</span>
+      <code className="text-xs text-muted">{valor}</code>
+      <span className="text-xs text-muted">{efecto.efecto}</span>
+    </span>;
+  }
 
   // **The toggle.** Only rendered when the mutation can be assembled from what the row carries;
   // otherwise it falls back to the read-only pill, which shows the data without promising it is changeable.
