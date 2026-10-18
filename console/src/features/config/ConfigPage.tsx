@@ -152,7 +152,7 @@ function PermisoDeEscritura({ access, estado }: {
   estado: ReturnType<typeof permissionState>;
 }) {
   const texto = estado === 'allowed'
-    ? 'Podés cambiar la configuración; todo cambio se deshace desde «Avanzado».'
+    ? 'Podés cambiar la configuración; los cambios reversibles se deshacen desde «Avanzado».'
     : estado === 'denied'
       // The EXACT wording from the sidebar (`CONFIG_SIN_CONTROL_REASON`): two wordings for the same denial would
       // lead the operator to believe they are two different problems.
