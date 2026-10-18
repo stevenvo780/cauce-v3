@@ -4,9 +4,9 @@
 
 - Registro público y login posterior; selector de empresa y rol resueltos por sesión; cambio de empresa invalida la generación de solicitudes y remonta recursos de la sesión.
 - Administración de empresas y autoridad separada de personas; conserva CRUD de personas y revocación. Ningún permiso depende de `is_hub`: formularios y computadoras consumen capacidades company/platform del servidor.
-- Mis cuotas independiente del inventario por agente: tarjetas fijables persistidas por persona/empresa, gráficas de ventanas reales, consumo compartido, fecha de consulta, reinicios opcionales y estados desconocido/error/antiguo distintos de agotamiento.
+- **Cuentas** contiene **Inventario** y **Asignaciones**. **Mis cuotas** concentra el saldo por cuenta: tarjetas fijables por persona/empresa, ventanas y reinicios informados por el CLI del proveedor, porcentaje usado/restante, fecha de consulta y estados desconocido/error/antiguo distintos de agotamiento. Los agentes que comparten cuenta comparten saldo.
 - Ventanas agotadas de un modelo usan «Varía por modelo» si no existe una ventana global agotada: no acreditan por sí solas agotamiento de todos los modelos ni del agente.
-- CRUD de cuentas y entornos, acciones tipadas de autenticar/consultar/actualizar/eliminar; consentimiento antes de autenticar y confirmación antes de borrar. Las operaciones pendientes o esperando autorización conservan ese estado. La salida sólo proyecta campos públicos; no ofrece shell general.
+- **Mis cuotas → Registrar cuenta** guarda el proveedor y nombre de la cuenta. **Iniciar sesión** abre el terminal web del proveedor; completa allí la autorización y pulsa **Verificar conexión**. **Actualizar cuotas y entornos** relee el saldo. La edición y eliminación de la cuenta respetan los permisos de la empresa y piden confirmación al borrar; una conexión pendiente conserva su estado hasta verificarse.
 - Capacidades por ordenador/proveedor obligatorias en los DTOs: create filtra ordenadores compatibles y neutraliza la selección al cambiar de cuenta; cada comando requiere la acción anunciada por ese ordenador y proveedor. Revalida la capacidad tras consentimiento; hosts retirados y awaiting_auth sin operación también bloquean comandos. La unión global no habilita un host concreto.
 - Autenticación de cuotas conecta el scope del broker compartido al panel/terminal de proveedor; valida operación, cuenta, perfil, proveedor, ordenador, harness y usuario. Usa el claim_epoch entregado como expected_operation_version sin confundirlo con la versión del entorno. La relectura de cuentas conserva sesiones de login; verificación de identidad y error de relectura siguen estados distintos.
 - Oficina conserva campus y terminales; plano de salas/partes editable con GET/PUT y CAS. Claves compuestas tenant/sala; deriva agentes y asignaciones de topología y descarta salas retiradas. Cuotas por agente y cansancio visibles en plano, tarjeta y ficha.
@@ -22,11 +22,10 @@
 
 ## Evidencia
 
-Las 13 suites E2E de navegador real V4 (`tests/e2e/v4-*-real-browser.test.ts`) ejecutan Chromium contra el gateway y PostgreSQL reales ([inventario de pruebas](v4-pruebas.md) y [matriz CRUD](v4-matriz-crud.md)). Los recibos adicionales y sus límites están en la [matriz de verificación](v4-matriz-local.md).
+El [inventario de pruebas](v4-pruebas.md), la [matriz CRUD](v4-matriz-crud.md) y la [matriz de verificación](v4-matriz-local.md) son evidencia histórica de recorridos locales con Chromium, gateway y PostgreSQL. No acreditan por sí solos el despliegue actual ni son un gate obligatorio de publicación; el procedimiento vigente está en [Operación](operacion.md#desplegar-v4).
 
 ## Límites
 
 - La autenticación de un proveedor externo comercial desde la UI requiere la cuenta real del proveedor en el host; `awaiting_auth` sigue siendo un estado pendiente, no una identidad verificada.
 - Las suites locales de navegador acreditan persistencia en PostgreSQL efímero y gateway real, pero no sustituyen el humo autenticado tras publicar en producción.
 - La identidad y presencia de un ordenador no demuestran que su executor esté preparado. El claim/heartbeat y el efecto físico requieren un host con `executor_ready: true`.
-

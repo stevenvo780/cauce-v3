@@ -1,4 +1,4 @@
-# Manual operativo — Cauce V3
+# Manual operativo — Cauce V4
 
 Procedimientos del producto. Fuente de verdad de arquitectura: [arquitectura.md](arquitectura.md). Este documento es solo el CÓMO operar; runbooks completos en `ops/runbooks/*.md`.
 
@@ -8,81 +8,26 @@ Si una instalación conserva un release anterior fuera del árbol (con su propio
 
 ## 1. Desplegar
 
-El primer despliegue de V4 (overlay de flota, proxy frontal, identificadores reservados, red edge, controlador, enclave, semilla y reversión) está en [Desplegar V4](#desplegar-v4). Lo que sigue es lo que `deploy/deploy.sh` comprueba en cualquier despliegue.
+El procedimiento de actualización de V4 está en [Desplegar V4](#desplegar-v4). Lo que sigue es lo que `deploy/deploy.sh` comprueba en cualquier despliegue.
 
-**Recibo de gates del SHA candidato.** `deploy.sh` no corre `pnpm`; exige un recibo verde de
-`scripts/release-gates.sh` del mismo commit. Se genera una vez por candidato, en un checkout limpio
-del SHA, con usuario normal (no root, por `qa:runtime-packaging`), tras `pnpm install --frozen-lockfile`
-y con `~/.venvs/cauce-qa/bin` en `PATH`:
-```bash
-scripts/release-gates.sh   # --list: los comandos; --concurrencia: los carriles; --trozos: los trozos de test y cobertura
+**Gate de despliegue: tres pasos.** En un clon limpio del SHA candidato, con usuario normal y las
+dependencias instaladas, `scripts/release-gates.sh` ejecuta únicamente:
+
+```text
+pnpm typecheck
+pnpm lint
+pnpm qa:runtime-packaging
 ```
-Primero corre el barrido acotado de huérfanos y, con él en verde, `pnpm typecheck`, `lint`, `test`,
-`coverage:ratchet`, `qa:testcontainers`, `qa:layout`, `qa:runtime-packaging`, `ops:validate` y
-`arch:validate`, en modo release (`CAUCE_RELEASE_VALIDATION=1`, `CAUCE_REQUIRE_TESTCONTAINERS=1`: sin
-Docker o testcontainers falla, no se salta). Los nueve gates se reparten en carriles paralelos: el
-carril 0 es el propio checkout y los demás son worktrees desechables del mismo commit, cada uno con su
-`pnpm install --frozen-lockfile --prefer-offline` (los de todos los carriles a la vez), de modo que
-ningún gate ve el `dist/`, la cobertura ni los artefactos de otro. Se crean en
-`CAUCE_RELEASE_GATES_LANES_DIR` (por defecto `.cauce-release-gates-lanes` junto al checkout; dentro del
-árbol se rechaza) y se borran al terminar; antes, su `ops/artifacts` se copia a
-`carril-N-ops-artifacts`, junto a los logs del recibo.
 
-**Carriles y trozos.** `CAUCE_RELEASE_GATES_JOBS` fija el número de carriles; por defecto, uno por cada
-3 CPU y por cada 8 GiB disponibles (10 en kratos). `test` y `coverage:ratchet`, los dos polos largos,
-se parten en `CAUCE_RELEASE_GATES_SHARDS` trozos (4 por defecto con más de un carril, 1 con `JOBS=1`) que corren en
-carriles distintos con `CAUCE_TEST_SHARD=i/N`; cuando el último trozo de un paso sale verde arranca su
-fusión (`CAUCE_TEST_SHARD_MERGE=N`). Cada corredor de pruebas corre solo su parte de ficheros, con el
-mismo corte que `vitest --shard` (`scripts/trozos.mjs`): vitest en la raíz y en la consola, y los
-`node --test` de adapter-sdk y de la medición de layout. Cada trozo de vitest se queda con
-`max(2, núcleos/N)` workers, nunca con más de los que pide su corrida (uno para `tests/e2e`,
-`CAUCE_TEST_DATA_WORKERS` para las suites de datos; `docs/calidad-y-gates.md`): con 8 trozos a la vez
-de suites de datos, bajar `CAUCE_TEST_DATA_WORKERS` reparte el host entre ellos. `test:ops`, `test:pty`
-y los dos guiones de contenedor no se parten: cada uno corre entero en un solo trozo. Cada invocación deja en el directorio
-de trozos del recibo su conjunto de ficheros y lo que corrió, y la fusión de `test` exige que los N
-trozos corrieran cada fichero de cada invocación exactamente una vez, que cada suite partible corriera
-en los N y cada entera en uno, y aplica a la suma la misma regla de suite vacía. La fusión de
-`coverage:ratchet` hace la misma comprobación del reparto, une los mapas istanbul de la raíz (consola
-y adapter-sdk se miden enteros en un trozo) y aplica el mismo trinquete con la misma base y tolerancia.
-Con `CAUCE_RELEASE_GATES_SHARDS=1` todo corre como antes, sin trozos ni fusiones.
+Consulta la lista sin ejecutar los gates con `scripts/release-gates.sh --list`. El recibo
+`recibo.json` contiene commit, árbol, comando, exit y hash de cada log; los tres pasos deben salir 0
+y corresponder al SHA que se publica. El recibo vive fuera del clon certificado. La ruta por
+defecto es `~/.local/state/cauce-v3/release-gates/<commit>-<marca>/`; se cambia con
+`CAUCE_RELEASE_GATES_DIR`.
 
-**Orden y fallo rápido.** Con varios carriles arrancan primero los trozos de `test` y
-`coverage:ratchet` y `qa:testcontainers`, y después el resto de menor a mayor duración; con `JOBS=1`
-corre en secuencia, en el orden de `--list`. Un carril que no se puede preparar reduce la concurrencia
-sin saltarse ningún gate. Con `CAUCE_RELEASE_GATES_FAIL_FAST=1` (por defecto), al primer rojo no
-arranca nada más y termina los pasos en curso: `TERM` a su grupo de procesos y a todo proceso que
-heredó su token `CAUCE_RELEASE_GATES_PASO` (también los que salieron del grupo, como cada suite de
-`test-all.mjs`), `CAUCE_RELEASE_GATES_GRACE_SECONDS` de gracia (20), `KILL`, y retira los contenedores
-etiquetados `io.cauce.gate.paso=<token>` (los PostgreSQL de testcontainers que levantan las suites;
-los `docker run` propios de algunos E2E no llevan esa etiqueta y dependen de su `afterAll`). Después
-escribe el recibo rojo, con los pasos cortados marcados `interrumpido`. Con
-`CAUCE_RELEASE_GATES_FAIL_FAST=0`, tras un rojo espera a los que ya corren. La misma limpieza de
-procesos y contenedores del token corre al acabar cada paso, verde o rojo. Ctrl-C, `TERM` o `HUP`
-terminan los pasos en curso igual y no emiten recibo.
-
-**Recibo.** Un log por paso y por trozo y `recibo.json` con `{commit, tree, comandos: [{cmd, exit,
-log_sha256, duracion, log, carril, inicio}], inicio, fin, concurrencia, carriles, trozos,
-fallo_rapido, cobertura}` en `~/.local/state/cauce-v3/release-gates/<commit>-<STAMP>/`
-(`CAUCE_RELEASE_GATES_DIR` lo cambia; nunca `/tmp`). `comandos` sigue teniendo una fila por paso de
-`--list`, en orden: la de un paso en trozos lleva el `exit` y el log de su fusión y, además,
-`trozos: [{trozo, exit, log, log_sha256, duracion, carril, inicio}]` y `fusion`; si un trozo salió
-rojo, lleva su `exit`, su log y `sin_fusion`. `cobertura` copia la tabla del trinquete por paquete,
-con `console/src` incluido: base, medido y estado, con la tolerancia de 0,20 puntos de
-`scripts/cobertura.mjs`. Se niega con el árbol sucio y no emite recibo verde si algún gate cambia
-`HEAD` o el árbol de cualquier carril; un recibo rojo sí se escribe aunque un paso cortado deje su
-carril sucio (`carriles_sucios`). El recibo no puede ir dentro del commit que certifica: se copia
-junto al bundle en el VPS, fuera del clon (dentro ensuciaría el árbol), y se pasa por ruta absoluta en
-`CAUCE_DEPLOY_GATES_RECEIPT`.
-
-`coverage:ratchet` vuelve a ejecutar, instrumentadas, buena parte de las suites de `test`, y no
-reutiliza su corrida: la matriz corre cada suite con su propia configuración y plazo, sin instrumentar,
-y relajar sus plazos debilitaría `test`. El trinquete solo mira líneas por paquete, y las líneas sí se
-fusionan sin error: v8 construye el mapa de sentencias de un fichero a partir del fuente, así que es
-el mismo en todos los trozos y una línea queda cubierta si la cubrió cualquiera. Una corrida reducida
-real (protocol, decisiones y gateway-hardening en 3 trozos) dio las mismas líneas cubiertas y totales
-en los 573 ficheros fuente que la corrida entera. Las ramas y funciones de v8 se construyen con lo que
-se ejecutó y no se fusionan rama a rama: en la fusión la cifra de ramas sale marcada como aproximada y
-el trinquete no la usa.
+El nivel `CAUCE_RELEASE_GATES_NIVEL=completo` es optativo: suites, matrices y trinquetes de cobertura
+no son requisitos de despliegue. La comprobación de comportamiento se hace usando los flujos reales
+sobre la versión desplegada. Procedimiento del operador: [Desplegar V4](#desplegar-v4).
 
 **Precondiciones que `deploy/deploy.sh` verifica y aborta si fallan (todas antes del build):**
 - `git status` limpio y `HEAD == origin/main` (`CAUCE_DEPLOY_EXPECTED_GIT_REF`).
@@ -137,7 +82,8 @@ anterior, o corregir hacia adelante. Restaurar solo pines antiguos bajo 043 deja
 **Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes):
 ```bash
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
-export CAUCE_DEPLOY_GATES_RECEIPT=/root/recibo-gates-<SHA>.json
+: "${CAUCE_DEPLOY_GATES_RECEIPT:?Define la ruta absoluta del recibo verde del candidato}"
+export CAUCE_DEPLOY_GATES_RECEIPT
 ./deploy/deploy.sh
 ```
 Hace, en orden: precondiciones → build de `deploy/Dockerfile --target runtime` y `--target console` (la consola hornea el instance-id) → push → copia candidata `prod.env.candidate-<STAMP>` con los digests SHA256 nuevos (mismos permisos; se borra al salir) → `config` y migrator efímero (todas las migraciones pendientes en UNA transacción) con esa copia; con migraciones pendientes, antes del migrator para el `dispatcher` (lee `deliveries` con `messages` en cada scrape) y comprueba `pg_stat_activity`, y lo vuelve a arrancar en cuanto el migrator termina, también si falla o se interrumpe → **solo si el migrator sale con 0**: snapshot `prod.env.pre-deploy-<STAMP>` y la copia candidata reemplaza a `prod.env` → `docker compose up -d --wait --remove-orphans` (actualiza los servicios afectados y conserva el volumen de datos de PostgreSQL) → `deploy/refresh-observability.sh` → `deploy/smoke.sh`. Registra el resultado en `deploy/HISTORIAL.md` con el sha256 del recibo o el motivo del escape (commitear tras verificar).
@@ -173,14 +119,21 @@ docker exec -i cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 --single-tran
   < packages/store/migrations/down/081_membresia_rol_derivado.sql
 # 2. Restaurar el prod.env previo (el snapshot solo existe si el migrator terminó con 0)
 cp -a /etc/cauce-v3/prod.env.pre-deploy-<STAMP> /etc/cauce-v3/prod.env
-# 3. Solo si el esquema ya quedó confirmado y hay que volver atrás: verificar sha256, terminar backends, dropdb/restore
-#    ($DB_BACKUP_DIR = directorio de dumps del timer de backup; su valor por defecto, en §5)
-D=$(ls -t "$DB_BACKUP_DIR"/*.dump | head -n 1); (cd "$(dirname "$D")" && sha256sum -c "$(basename "$D").sha256")
-docker exec cauce-v3-prod-postgres-1 psql -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
-docker exec cauce-v3-prod-postgres-1 dropdb -U cauce cauce && docker exec cauce-v3-prod-postgres-1 createdb -U cauce cauce
-docker exec -i cauce-v3-prod-postgres-1 pg_restore -U cauce -d cauce --no-owner --no-acl < "$D"
-# 3b. Si el dump es esquema 052 o posterior, --no-acl deja los logins de runtime sin permisos.
-docker exec cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c "SELECT cauce_apply_runtime_grants()"
+# 3. Solo si hay que restaurar la BD: usa el dump PREVIO anotado en la fase backup, nunca el más reciente.
+(
+  set -euo pipefail
+  : "${CAUCE_PREDEPLOY_DUMP:?Define la ruta absoluta del dump previo aprobado}"
+  [[ "$CAUCE_PREDEPLOY_DUMP" = /* ]]
+  test -r "$CAUCE_PREDEPLOY_DUMP"
+  (cd "$(dirname "$CAUCE_PREDEPLOY_DUMP")" && sha256sum -c "$(basename "$CAUCE_PREDEPLOY_DUMP").sha256")
+  docker exec cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 -U cauce -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cauce' AND pid<>pg_backend_pid()"
+  docker exec cauce-v3-prod-postgres-1 dropdb -U cauce cauce
+  docker exec cauce-v3-prod-postgres-1 createdb -U cauce cauce
+  docker exec -i cauce-v3-prod-postgres-1 pg_restore --exit-on-error -U cauce -d cauce --no-owner --no-acl < "$CAUCE_PREDEPLOY_DUMP"
+  # Con esquema 052 o posterior, --no-acl deja los logins de runtime sin permisos.
+  docker exec cauce-v3-prod-postgres-1 psql -X -v ON_ERROR_STOP=1 -U cauce -d cauce -c "SELECT cauce_apply_runtime_grants()"
+)
+# Si este bloque falla, no continúes al paso 4: conserva los servicios de aplicación parados.
 # 4. Levantar la versión previa con el compose del RELEASE ANTERIOR y sus overrides (NO el canónico)
 docker compose --env-file /etc/cauce-v3/prod.env -f <PREV_RELEASE>/deploy/compose.yaml -f <PREV_RELEASE>/deploy/compose.postgres.yaml \
   $(printf -- '-f %s ' /etc/cauce-v3/compose-overrides/*.yaml) \
@@ -193,13 +146,13 @@ Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por def
 
 ### Desplegar V4
 
-El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despliegue sin flota cambian las variables, la red edge, el orden del controlador y del enclave, y la semilla de autoridad.
+V4 ya está desplegado según `deploy/HISTORIAL.md`. Las actualizaciones usan `deploy/deploy.sh` con recibo de tres pasos, overlay de flota y paquete de ordenadores del mismo candidato. La configuración inicial de proxy, red, controlador y autoridad se conserva entre releases; no se deduce del árbol de trabajo.
 
 **Variables.** `CAUCE_DEPLOY_FLEET_OVERLAY` y `CAUCE_FRONT_PROXY_CIDR` van en el archivo de instancia (`prod.env`): `deploy.sh` las lee de ese archivo (`env_value`), no del entorno del proceso. `CAUCE_RESERVED_COMPANY_SLUGS` también va en `prod.env`, pero la consume Compose, no `deploy.sh`. `CAUCE_DEPLOY_GATES_RECEIPT` es del proceso que lanza el script.
 
 - `CAUCE_DEPLOY_FLEET_OVERLAY=1`. Exige `cauce-fleet-v35-controller.service` activo antes de recrear el gateway y añade `deploy/compose.fleet.yaml`. Vacío o `0` despliega sin overlay. Cualquier otro valor aborta.
-- `CAUCE_FRONT_PROXY_CIDR=<cidr del proxy frontal>`. `deploy.sh` lo pasa como build-arg de la imagen de consola (`deploy/Dockerfile`). nginx solo acepta `X-Forwarded-For` de ese CIDR (`set_real_ip_from`). Vacío borra la directiva y no se confía en ningún salto. Un carácter fuera de `0-9a-fA-F:./` falla el build. Si la variable no está en `prod.env`, `deploy.sh` no aborta y la imagen queda sin salto de confianza: hay que declararla antes de construir. El valor de producción está en `docs/parametros.md`.
-- `CAUCE_RESERVED_COMPANY_SLUGS=<id>,<id>`. Identificadores de las empresas que la plataforma va a crear, separados por comas. `deploy.sh` no la lee. Compose la pasa al gateway (`${CAUCE_RESERVED_COMPANY_SLUGS:-}`; vacía si falta). Cada id tiene que cumplir `COMPANY_ID_PATTERN` y se suma a la lista fija de `services/gateway/src/company-slug.ts`. Un valor inválido impide arrancar el gateway. El registro público los rechaza con el mismo 409 que un identificador ocupado. Hay que reservarlos antes de abrir el registro. El valor de producción está en `docs/parametros.md`.
+- `CAUCE_FRONT_PROXY_CIDR=<cidr del proxy frontal>`. `deploy.sh` lo pasa como build-arg de la imagen de consola (`deploy/Dockerfile`). nginx solo acepta `X-Forwarded-For` de ese CIDR (`set_real_ip_from`). Vacío borra la directiva y no se confía en ningún salto. Un carácter fuera de `0-9a-fA-F:./` falla el build. Si la variable no está en `prod.env`, `deploy.sh` no aborta y la imagen queda sin salto de confianza: hay que declararla antes de construir. Consulta el valor de tu instalación en su configuración privada; [parámetros](parametros.md) describe su significado.
+- `CAUCE_RESERVED_COMPANY_SLUGS=<id>,<id>`. Identificadores de las empresas que la plataforma va a crear, separados por comas. `deploy.sh` no la lee. Compose la pasa al gateway (`${CAUCE_RESERVED_COMPANY_SLUGS:-}`; vacía si falta). Cada id tiene que cumplir `COMPANY_ID_PATTERN` y se suma a la lista fija de `services/gateway/src/company-slug.ts`. Un valor inválido impide arrancar el gateway. El registro público los rechaza con el mismo 409 que un identificador ocupado. Hay que reservarlos antes de abrir el registro; consulta los valores privados de tu instalación.
 - `CAUCE_DEPLOY_GATES_RECEIPT`. Ruta absoluta del recibo de `scripts/release-gates.sh` del mismo commit, en el entorno del proceso. Obligatoria, salvo el escape `CAUCE_DEPLOY_SIN_RECIBO`. No va en `prod.env`. El comando de esta sección ya la exporta.
 - `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_DIR` (opcional en `prod.env`; por defecto `/etc/cauce-v3/harness-descriptor-approvals`). Directorio que solo contiene `approvals.json`, el mapa público `{harness: sha256}` que el dueño aprueba. `deploy/compose.yaml` lo monta en solo lectura y fija `CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE`; sin él el gateway retira todos los lectores de cuota de agente. `deploy.sh` se niega a construir si falta, no es un objeto de pins hex de 64 o algún pin no coincide con el descriptor de la release. Se genera desde el clon de la release y lo aprueba el dueño, pin a pin (`{}` no aprueba ninguno):
   ```bash
@@ -220,74 +173,62 @@ El primer despliegue de V4 usa el mismo `deploy/deploy.sh`. Respecto de un despl
 
 **Reversión.** Sigue la receta de esta sección: no ejecutar `docker compose down`; restaurar `prod.env.pre-deploy-<STAMP>` y, si el esquema ya quedó confirmado, el dump previo. Si el despliegue aplicó `081_membresia_rol_derivado.sql`, el down de 081 (paso 1b de la receta) va antes de restaurar los pins: el gateway anterior lee la columna de rol que 081 retiró. El `down` de `054_company_admins.sql` aborta con `rollback preserves company authority` si hay un owner, un admin cuyo `source` no es `v4.0-hub-operator`, más de una empresa, filas en `platform_authority_events` o en `agent_role_template_owners`, o principals y roles de agente distintos de las filas de plataforma que esa migración conserva. La semilla deja historial en `platform_authority_events`, así que no se deshace con ese `down`: se restaura el dump previo o se corrige hacia delante.
 
-**Ciclo del candidato.** Lista para ejecutar de principio a fin con cada candidato `<C>`. Cada paso
-deja un recibo en su hueco y no se pasa al siguiente sin él. Un rojo en cualquier paso devuelve al
-paso 1 con un candidato nuevo. El despliegue lo ejecuta el orquestador con autorización del dueño.
+**Publicar un candidato con `corte.sh` y `deploy1-*.sh`.** Los ayudantes de la sesión operativa
+están en `.delegados/v4/`, fuera de Git. Contienen los destinos y directorios privados de esa
+instalación; se usan allí, con autorización para integrar y desplegar. Un clon público no los
+incluye. En otra instalación se usan `scripts/release-gates.sh` y `deploy/deploy.sh`, configurados
+para sus propios destinos; no se copian accesos del operador.
 
-1. **Candidato.** Clon limpio de la rama de integración en `<C>`, sin cambios ni archivos sin
-   seguimiento (`git status --porcelain` vacío). Recibo: `git rev-parse HEAD` = ____.
-2. **Entorno y comprobaciones rápidas.** En ese clon, `pnpm install --frozen-lockfile` y
-   `~/.venvs/cauce-qa/bin` en `PATH`. Un log por comando, en un directorio durable:
+1. **Cerrar los cambios y revisar.** Cada carril commitea sus rutas; el operador revisa el diff.
+   `corte.sh` toma la cabeza de `claude/v4-cierre`, regenera los artefactos operativos en un worktree
+   limpio y actualiza la rama solo si nadie la movió. No incluye cambios sin commitear de los carriles.
+2. **Cortar y pasar los tres gates.** Desde el checkout autorizado:
    ```bash
-   L="$HOME/.local/state/cauce-v3/rapidos/$(git rev-parse HEAD)"; mkdir -p "$L"
-   for c in typecheck lint test:unit; do pnpm "$c" >"$L/${c/:/-}.log" 2>&1; echo "$c $?" >>"$L/exits"; done
+   bash .delegados/v4/corte.sh
    ```
-   Recibo: `$L/exits` con los tres en 0 = ____.
-3. **Gate completo.** `scripts/release-gates.sh` en el mismo clon. Comprobar el recibo:
+   Anota el SHA completo que imprime como candidato y la ruta del `recibo.json` verde.
+   El script usa el clon de gate configurado en esa instalación; no cambies sus rutas desde otro carril.
+   Si falla un paso, corrige, commitea y vuelve a cortar.
+3. **Publicar y transferir.** Solo quien tenga autorización de integración/despliegue ejecuta:
    ```bash
-   python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["commit"], all(c["exit"]==0 for c in r["comandos"]), r["cobertura"]["paquetes"]["console/src"])' <recibo.json>
+   : "${CAUCE_CANDIDATE:?Define el SHA completo que imprimió corte.sh}"
+   : "${CAUCE_RECEIPT_DIR:?Define el directorio del recibo verde}"
+   bash .delegados/v4/deploy1-local.sh "$CAUCE_CANDIDATE" "$CAUCE_RECEIPT_DIR"
    ```
-   El commit tiene que ser `<C>`, todos los exits 0 y la consola con `medido` ≥ `base` − 0,20.
-   Recibo: ruta y `sha256sum` de `recibo.json`, cobertura de consola = ____.
-4. **Revisión.** Revisión Opus del diff entre el último commit de `deploy/HISTORIAL.md` y `<C>`, sin
-   bloqueantes abiertos. Recibo: informe de revisión = ____.
-5. **Integración y bundle.** `dev` y `main` avanzan a `<C>`; `git bundle create <bundle> main`; el
-   bundle y el recibo se copian al VPS, fuera de cualquier clon. Recibo: `sha256sum <bundle>` = ____.
-6. **Prechequeo del VPS** (root, solo lectura):
+   Comprueba el recibo contra `--list` y publica `dev` y `main` al candidato, además de la rama de
+   cierre. Transfiere bundle y recibo, construye y valida el paquete firmado de ordenadores del
+   mismo SHA y lo instala en el destino. Si cambiaron los descriptores, exige aprobaciones nuevas:
+   no reutilices las de otro digest.
+   Las ramas se publican antes de construir el paquete: un fallo posterior no deshace esa publicación
+   ni acredita un despliegue. Resuelve el fallo antes de pasar al host remoto.
+4. **Preparar el host y desplegar por fases.** Con el destino SSH autorizado en `CAUCE_DEPLOY_HOST`:
    ```bash
-   awk '/^MemAvailable:/ {printf "MemAvailable %.1f GiB\n", $2/1048576}' /proc/meminfo  # >= 8 GiB
-   df -BG --output=avail / | tail -1                                                  # >= 20G
-   systemctl is-active cauce-fleet-v35-controller                                     # active
-   grep -c '^CAUCE_DEPLOY_FLEET_OVERLAY=1$' /etc/cauce-v3/prod.env                     # 1
-   stat -c '%u %a %n' /etc/cauce-v3/fleet-v35/gateway                                 # 1000 700
-   ls -ld /var/lib/cauce-v3-context-broker/repository /var/lib/cauce-v3-context-broker/ssh /run/cauce-fleet-signed-authority
+   : "${CAUCE_DEPLOY_HOST:?Define el destino SSH autorizado}"
+   ssh "$CAUCE_DEPLOY_HOST" bash -s -- "$CAUCE_CANDIDATE" pre < .delegados/v4/deploy1-vps.sh
+   ssh "$CAUCE_DEPLOY_HOST" bash -s -- "$CAUCE_CANDIDATE" backup < .delegados/v4/deploy1-vps.sh
+   ssh "$CAUCE_DEPLOY_HOST" bash -s -- "$CAUCE_CANDIDATE" clone < .delegados/v4/deploy1-vps.sh
+   ssh "$CAUCE_DEPLOY_HOST" bash -s -- "$CAUCE_CANDIDATE" enclave0 < .delegados/v4/deploy1-vps.sh
+   ssh "$CAUCE_DEPLOY_HOST" bash -s -- "$CAUCE_CANDIDATE" deploy < .delegados/v4/deploy1-vps.sh
    ```
-   Las dos rutas del broker son los valores por defecto de `CAUCE_CONTEXT_REPOSITORY_DIRECTORY` y
-   `CAUCE_CONTEXT_GIT_KEY_DIRECTORY` en `deploy/compose.yaml`; si `prod.env` las cambia, se comprueban
-   las suyas. `deploy.sh` vuelve a exigir todas las fuentes de bind mounts antes del build.
-   Recibo: salida completa = ____.
-7. **Backup fresco.** `systemctl start cauce-v3-host-backup.service` y, cuando termine,
-   `systemctl start cauce-v3-host-backup-monitor.service`. Después,
-   `systemctl show -p Result --value cauce-v3-host-backup.service cauce-v3-host-backup-monitor.service`
-   tiene que dar `success` dos veces. Con migraciones pendientes, `deploy.sh` exige que tenga 2 h o menos
-   y repite el monitor antes del migrator. Recibo: hora UTC del dump = ____.
-8. **Clon en el VPS.** `git clone --branch main <bundle> <clon>`; en `<clon>`, `git rev-parse HEAD` =
-   `<C>` y `git status --porcelain` vacío. Si es el primer despliegue con el enclave, ejecutar antes su
-   paso 0 ([Enclave](#enclave-de-autoridad-firmada-de-la-flota)). Recibo: ____.
-9. **`deploy.sh`.** El comando de esta sección con `CAUCE_DEPLOY_GATES_RECEIPT=<recibo>`, desde
-   `<clon>` y con salida a un log fuera del clon. Recibo: log y fila nueva de `deploy/HISTORIAL.md` = ____.
-10. **Después del `up`.** IP efectiva de la consola igual a `CAUCE_CONSOLE_EDGE_IP` (Red edge),
-    `schema_migrations` en la última migración del bundle, nueve servicios sanos y humo de `deploy.sh`
-    ([§6](#6-smoke-y-comprobaciones-rápidas-de-salud)). Recibo: ____.
-11. **Controlador y enclave en `<C>`.** `fleet-controller-upgrade.py` (preflight y `--apply`, ver
-    `v3.5-controlador-despliegue.md`) y después el enclave con el export de esa release. Recibo: ____.
-12. **Recorrido autenticado sobre lo desplegado.** Un recibo por flujo, verde o rojo, con su evidencia:
-    - inicio de sesión del dueño y vistas de empresas, oficina, Mis cuotas, ordenadores y auditoría = ____;
-    - registro de una empresa `zz-canary-<run>` desde la página de registro y entrada como owner = ____;
-    - recorrido externo: registro público, empresa básica y aislamiento A/B contra la URL desplegada,
-      `pnpm verify:external --base-url https://<consola>` desde un clon limpio en `<C>`
-      ([Recorrido externo](#recorrido-externo-pnpm-verifyexternal)). Recibo: ruta del `receipt.json`
-      con `failures=0`, las dos empresas `retired` y `client.sha` = `<C>` sin `+dirty` = ____;
-    - entrega real por el bus con ACK, como en la verificación funcional de
-      `ops/runbooks/ventana-primer-despliegue.md` = ____.
-13. **Cierre.** Con cero flujos esenciales en rojo: la columna «Resultado» de la fila de HISTORIAL
-    refleja el humo real, se actualizan la deuda de `docs/v3.1-pendientes.md` y `docs/version-3.1.md`
-    y el [informe final](v4-informe-final.md), y se limpian los recursos `zz-canary-<run>`. Con algún
-    rojo: corregir, nuevo `<C>` y volver al paso 1.
+   Ejecuta cada línea después de comprobar la anterior. `pre` informa recursos, controlador y
+   permisos; `backup` exige backup y monitor exitosos; `clone` comprueba SHA, árbol limpio y recibo;
+   `enclave0` prepara el directorio del socket. `deploy` lanza `deploy.sh` en segundo plano e imprime
+   el log: ese mensaje acredita el arranque, no el éxito.
+   Antes de `deploy`, anota en el registro privado la ruta y el SHA-256 del dump anterior al candidato;
+   esa es la copia que se selecciona con `CAUCE_PREDEPLOY_DUMP` si hace falta revertir la BD.
+5. **Comprobar el resultado.** Lee el final del log y la fila de `deploy/HISTORIAL.md`; verifica smoke,
+   esquema e imágenes del candidato. Si cambió el controlador o el SDK, actualízalos con el kit de
+   esa release ([controlador](v3.5-controlador-despliegue.md)) y luego el
+   [enclave](#enclave-de-autoridad-firmada-de-la-flota). Los ayudantes no hacen esa actualización.
+6. **Recorrer lo desplegado.** Con usuarios autorizados, comprueba los flujos afectados: acceso y
+   personas, Mis cuotas y login, alta/preparación/baja de agentes, contexto del siguiente turno e
+   historial en GitHub. Registra el SHA, acción, resultado y evidencia, y limpia los canarios propios.
+   Un fallo funcional requiere corrección y un candidato nuevo. Actualiza el [informe final](v4-informe-final.md)
+   separando código, comprobación local y comprobación desplegada.
 
 #### Recorrido externo (`pnpm verify:external`)
 
-Comprueba desde fuera, contra la URL pública, lo que la guardia local prueba contra PostgreSQL: que una empresa
+Herramienta optativa de diagnóstico; no forma parte del gate de tres pasos. Comprueba desde fuera, contra la URL pública, que una empresa
 nueva se registra y se usa, y que ninguna petición manipulada de una empresa lee, escribe ni enumera recursos de
 otra. Usa solo la API pública: no necesita SSH, credenciales reales ni conexión a la base. Código en
 `services/gateway/src/security/route-isolation-external*.ts`; la matriz de casos es la misma
@@ -388,44 +329,24 @@ Proyecto compose propio (`deploy/decisiones/`, script `desplegar.sh`): `deploy.s
 
 ## 2. Alta y baja de un agente
 
-Un servidor nuevo de una empresa (computadora V4: invitación desde la consola, `cauce hosts enroll` y `cauce hosts setup`, agentes y baja) se da de alta con [Dar de alta un servidor de la empresa](v4-alta-servidor.md). Esta sección cubre la flota declarativa de `ops/flota.json`.
+El flujo de V4 empieza en **Ajustes → Agentes → Añadir agente**: registrar, asignar computadora y
+grupo inicial, previsualizar y crear; después **Preparar en la computadora** y completar el login
+del proveedor. El registro y la operación física son pasos distintos. Para un agente existente,
+abre su ficha y usa **Registro** u **Operación**. No des por completada una operación en cola.
 
-Única fuente de verdad: BD (`agents` + `memberships`). Cadena declarativa obligatoria — nunca editar a mano `ops/container-aliases.json`, `ops/manifests/*.yaml` ni `ops/generated/**`:
-```
-BD (INSERT/UPDATE) → export-fleet-snapshot.py → ops/flota.json → regenerate-fleet.sh → validate.sh → cauce <alias> aprovisionar/retirar
-```
+Para agentes con ejecución, **Eliminar** guía primero el retiro reversible y después la eliminación
+definitiva. Los que no tienen entorno se borran desde **Registro → Eliminar registro**. Descarga
+antes la copia si existe un espacio y revisa la previsualización de lo que se conserva y se borra.
+Pasos de interfaz: [crear y preparar](v4-guia.md#crear-y-preparar-un-agente) y
+[eliminar](v4-guia.md#editar-detener-o-eliminar-un-agente). Por CLI: [espacios](v4-cli.md).
+Para conectar una computadora: [alta de servidor](v4-alta-servidor.md).
 
-**Alta**: `INSERT` transaccional en `agents` (con `enabled=true`) y `memberships`, luego:
-```bash
-python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json   # git diff: solo flota.json, el alias entra a "fleet"
-./ops/scripts/regenerate-fleet.sh                                    # deriva manifest, unit systemd, container-aliases.json, config Telegram
-./ops/scripts/validate.sh                                            # gate: hermeticidad byte a byte + checksums
-ops/cli/cauce <alias> aprovisionar                                   # cert mTLS + token + clave PTY + PKI de contenedor + token de Telegram
-systemctl --user daemon-reload && systemctl --user enable --now cauce-v3-container-<alias>.service
-```
-**La única pieza que pide un humano**: el token del bot de Telegram, generado en BotFather — `aprovisionar` lo solicita interactivamente, lo deja en `/etc/cauce-v3/telegram-runtime/<tenant>/<alias>.token` (0600) y recién entonces reemplaza la fila del alias en `config.json` (`ops/scripts/publish-telegram-token.py`).
-
-El paso [3d] de `aprovisionar` configura el launcher PTY con `CAUCE_PTY_RELAY_HOST`
-(obligatoria, nombre DNS o IP; IPv6 entre corchetes) y `CAUCE_PTY_RELAY_PORT`
-(opcional, de 1 a 65535; por defecto `8445`). Ejemplo ficticio:
-
-```bash
-export CAUCE_PTY_RELAY_HOST=relay.example.invalid
-export CAUCE_PTY_RELAY_PORT=9445
-ops/cli/cauce <alias> aprovisionar --dry-run
-```
-
-El dry-run muestra ambos valores efectivos sin escribir archivos. Si falta el `.env`
-del launcher, el aprovisionamiento valida host y puerto antes de emitir o registrar
-credenciales; sin host falla nombrando `CAUCE_PTY_RELAY_HOST` antes de escribir nada.
-La escritura conserva modo `0600` en `${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/<alias>.env`;
-si ese archivo ya existe, se conserva sin reemplazarlo y no exige esas variables.
-Para crear el archivo, las variables deben estar disponibles en el host que ejecuta
-el aprovisionamiento.
-
-**Baja**: `ops/cli/cauce <alias> retirar` (para la unit y revoca token e identidad mTLS) → `UPDATE agents SET enabled=false` → re-exportar snapshot (el alias pasa a `retired`) → `regenerate-fleet.sh` (purga manifest y units huérfanas: `ops/scripts/generate-container-units.py:309-310` y `ops/scripts/generate-units.py:122`) → `validate.sh`.
-
-**Aviso de orden**: `enabled=false` en BD saca al agente del enrutado de entregas, pero el `hello`/lease del gateway se autoriza además por certificado mTLS — un agente dado de baja en BD puede seguir conectándose hasta que `retirar` revoca su credencial. No dar el UPDATE por baja completa sin correr `retirar`.
+**Flota declarativa heredada.** `ops/flota.json` y sus artefactos siguen describiendo agentes
+preexistentes; no son el flujo de alta de un agente dinámico V4. Si el operador cambia esa flota,
+debe exportar el estado aprobado de la BD y regenerar/validar los derivados con los scripts de
+`ops/scripts/`; nunca edita a mano `ops/container-aliases.json`, `ops/manifests/*.yaml` o
+`ops/generated/**`. El aprovisionamiento heredado y su PKI quedan en [despliegue de flota](v3.5-despliegue-flota.md).
+Un registro deshabilitado por sí solo no revoca una identidad de ejecución.
 
 ### Reponer una entrega fallida desde el CLI
 
@@ -502,13 +423,14 @@ Primer despliegue de V4 en producción, desde la raíz del clon del despliegue v
 ```bash
 ops/cli/cauce-platform-contenedor --mostrar     # solo muestra imagen, red y secretos
 cauce platform contenedor admin semilla --email "$CORREO_SUPER_ADMIN"
+: "${CAUCE_COMPANY_ID:?Define la empresa autorizada}"
 for correo in "$CORREO_SUPER_ADMIN" "$CORREO_OWNER"; do
-  cauce platform contenedor admin semilla --email "$correo" --company humanizar --role owner
+  cauce platform contenedor admin semilla --email "$correo" --company "$CAUCE_COMPANY_ID" --role owner
 done
 ```
 
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
-`role=platform_admin` para Steven y `role=company_owner`, `scope=company` para Miguel.
+`role=platform_admin` para el administrador de plataforma y `role=company_owner`, `scope=company` para el dueño de la empresa.
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
@@ -633,7 +555,7 @@ launcher instalada antes de usar la siega como control operativo.
 | `cauce-v3-watchdog@.timer` / `cauce-v3-reconciler@.timer` | cada 30 s / cada 5 min, por alias | salud y reconciliación de cada adaptador |
 | `cauce-v3-health@.timer` | cada minuto, por instancia | sonda periódica de salud |
 | `cauce-v3-quota-collector.timer` | cada 5 min | recolector de cuotas de IA |
-| `cauce-v3-ci-local.timer` | 05:30 UTC diario | gate completo + `validate.sh` sobre un worktree desechable, en el propio host |
+| `cauce-v3-ci-local.timer` | Según la unidad instalada | Comprobaciones locales optativas en un worktree desechable; no bloquean el despliegue. Consultar su estado antes de asumir que está activo |
 
 Verificar un dump:
 ```bash

@@ -18,7 +18,7 @@ No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_
 | `features/queues/` | Colas de salida, DLQ y única superficie de replay/cancelación/resolución |
 | `features/observability/` | Métricas, gráficos, salud de colas |
 | `features/config/` | Configuración versionada con OCC |
-| `features/accounts/` | Gestión y selección de cuentas/tenants |
+| `features/accounts/` | Cuentas: Inventario y Asignaciones; Mis cuotas: saldo por cuenta y acceso al login de proveedor |
 | `features/auth/` | Login OIDC / contraseña / selección de sesión |
 | `features/audit/` | Visor de eventos de auditoría y telemetría |
 | `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
@@ -84,7 +84,8 @@ Cada entidad operativa tiene una sola superficie de mutación. Las demás vistas
 mismo dato para dar contexto, pero sólo enlazan a su autoridad:
 
 - `/live`, pestañas **Perfil** y **Ficheros**: perfil canónico y manual del arnés del agente;
-- `/accounts`: cuentas de proveedor, techos por alias y bindings de fallback;
+- `/accounts` (**Cuentas**): **Inventario** y **Asignaciones** para administrar las cuentas y qué agentes las usan;
+- `/my-quotas` (**Mis cuotas**): única vista del saldo por cuenta; permite registrar la cuenta, iniciar sesión en el terminal web del proveedor y actualizar sus cuotas;
 - `/messages/:tenant/:alias`: redacción y publicación durable;
 - `/queues?delivery=:id`: replay, cancelación y resolución de DLQ;
 - `/config`: topología, registro de agentes, computadoras, políticas y revisiones; no acepta
@@ -308,7 +309,7 @@ El porqué de cada una de esas reglas está en
 [ADR-009](adr/009-control-de-tui-desde-la-consola.md), y el runbook operativo —compuertas,
 interruptores, arriendo y grabación— en el §4 de [terminal-pty.md](terminal-pty.md).
 
-## Gate de regresión visual
+## Comprobación visual V3 (histórica)
 
 `qa/layout-gate.mjs` (ejecutar con `pnpm qa:layout`): lanza la consola con mocks y recorre con
 Chromium las diez rutas declaradas en `ROUTES` —`/`, `/live`, `/accounts`, `/messages`, el hilo
@@ -322,9 +323,9 @@ teclado), la accesibilidad de la nav (enlaces sin nombre, rótulos solapados, po
 el desperdicio vertical: `foldDesaprovechado` —la banda muerta bajo lo último realmente pintado
 dentro de `main`, no bajo la caja que un `<details>` plegado sigue reportando—, `objetoPrincipalTop`
 y `objetoPrincipalBajoElPliegue`, más las `pantallas` de scroll de cada ruta. Línea base en
-`qa/layout-baseline.json`. La semántica del trinquete, los objetivos de v3.1 y la única forma
-sancionada de subir un valor registrado están en
-[calidad-y-gates.md](calidad-y-gates.md#gate-de-maquetado-pnpm-qalayout). Requiere
+`qa/layout-baseline.json`. Este es el recorrido de maquetado de V3, conservado como referencia histórica;
+sus trinquetes no son el gate de publicación actual. Para publicar V4, usa
+[Operación](operacion.md#desplegar-v4). La herramienta visual requiere
 `npx playwright install chromium`.
 
 ## Despliegue
