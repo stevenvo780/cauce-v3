@@ -27,7 +27,7 @@ export function projectLiveFleet(snapshot: FleetActivitySnapshot | undefined, to
     if (edge.to_tenant && edge.to_alias) pending.add(`${edge.to_tenant}/${edge.to_alias}`);
   }
   const hidden = new Set(snapshot.agents.filter((agent) =>
-    (agent.agent_enabled === false || agent.registered === false) && !pending.has(agentKey(agent))).map(agentKey));
+    agent.registered === false && !pending.has(agentKey(agent))).map(agentKey));
   const known = new Set(snapshot.agents.map(agentKey));
   const agents = snapshot.agents.filter((agent) => !hidden.has(agentKey(agent)));
   const totals = snapshot.totals;
@@ -52,7 +52,7 @@ export function projectLiveFleet(snapshot: FleetActivitySnapshot | undefined, to
         members: room.members?.filter((member) => {
           const key = `${tenant.id ?? ''}/${member.alias ?? ''}`;
           if (hidden.has(key)) return false;
-          return known.has(key) || pending.has(key) || (member.agent_enabled !== false && member.registered !== false);
+          return known.has(key) || pending.has(key) || member.registered !== false;
         }),
       })),
     })),

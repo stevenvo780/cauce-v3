@@ -9,7 +9,7 @@ function agent(alias: string, fields: Partial<FleetActivityAgent> = {}): FleetAc
 }
 
 describe('proyección de la flota viva', () => {
-  it('retira bajas inactivas de agentes, cifras y membresías sin alterar el historial original', () => {
+  it('retira fantasmas sin registro de agentes, cifras y membresías sin alterar el historial original', () => {
     const snapshot: FleetActivitySnapshot = {
       agents: [agent('operador'), agent('teseo'), agent('perseo'),
         agent('backend', { agent_enabled: false, flags: ['never_connected'] }),
@@ -21,9 +21,9 @@ describe('proyección de la flota viva', () => {
       snapshot.agents?.map((a) => ({ alias: a.alias, enabled: true, registered: a.registered, agent_enabled: a.agent_enabled })) }] }] };
     const original = structuredClone({ snapshot, topology });
     const result = projectLiveFleet(snapshot, topology);
-    expect(result.snapshot?.agents?.map((a) => a.alias)).toEqual(['operador', 'teseo', 'perseo']);
-    expect(result.snapshot?.totals).toEqual({ agents: 3, by_state: { idle: 3 }, flagged: { never_connected: 0 }, in_flight: 0 });
-    expect(result.topology?.tenants?.[0].rooms?.[0].members?.map((m) => m.alias)).toEqual(['operador', 'teseo', 'perseo']);
+    expect(result.snapshot?.agents?.map((a) => a.alias)).toEqual(['operador', 'teseo', 'perseo', 'backend', 'frontend']);
+    expect(result.snapshot?.totals).toEqual({ agents: 5, by_state: { idle: 5 }, flagged: { never_connected: 2 }, in_flight: 0 });
+    expect(result.topology?.tenants?.[0].rooms?.[0].members?.map((m) => m.alias)).toEqual(['operador', 'teseo', 'perseo', 'backend', 'frontend']);
     expect({ snapshot, topology }).toEqual(original);
   });
 
@@ -51,8 +51,9 @@ describe('proyección de la flota viva', () => {
 
   it('los campos desconocidos siguen siendo desconocidos', () => {
     const unknown = agent('desconocido', { registered: null, agent_enabled: null });
-    const projected = projectLiveFleet({ agents: [unknown, agent('baja', { agent_enabled: false })] }, undefined);
-    expect(projected.snapshot?.agents).toEqual([unknown]);
+    const baja = agent('baja', { agent_enabled: false });
+    const projected = projectLiveFleet({ agents: [unknown, baja] }, undefined);
+    expect(projected.snapshot?.agents).toEqual([unknown, baja]);
     expect(projected.snapshot?.totals).toBeUndefined();
     const topology: TopologySnapshot = { tenants: [{ id: 'Hospital' }] };
     expect(projectLiveFleet(undefined, topology)).toEqual({ snapshot: undefined, topology });

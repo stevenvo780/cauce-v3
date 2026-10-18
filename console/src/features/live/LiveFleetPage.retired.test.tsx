@@ -4,7 +4,7 @@ import type { FleetActivityAgent } from '../../api/types';
 import { server } from '../../mocks/server';
 import { renderLive } from './render-live';
 
-it('la pantalla no convierte los nombres históricos retirados en una caída de los tres agentes actuales', async () => {
+it('los agentes registrados deshabilitados se ven caídos: sin ciclo de vida en la actividad no se distinguen de un borrador nuevo', async () => {
   const agents: FleetActivityAgent[] = ['operador', 'teseo', 'perseo', 'backend', 'frontend'].map((alias, index) => ({
     tenant_id: 'Hospital', alias, display_name: alias, registered: true, agent_enabled: index < 3,
     presence: { online: index < 3 }, work_state: 'idle', in_flight: 0, queued: 0,
@@ -16,9 +16,9 @@ it('la pantalla no convierte los nombres históricos retirados en una caída de 
   );
   renderLive();
   const verdict = await screen.findByLabelText('Veredicto de la flota');
-  await waitFor(() => { expect(verdict).toHaveAttribute('data-tone', 'ok'); });
+  await waitFor(() => { expect(verdict).toHaveAttribute('data-tone', 'alerta'); });
   const lista = screen.getByRole('listbox', { name: /oficina con \d+ agentes/i });
-  expect(within(lista).getAllByRole('option')).toHaveLength(3);
-  expect(within(lista).queryByRole('option', { name: /^(backend|frontend):/ })).toBeNull();
-  expect(verdict).toHaveTextContent('3 conectados');
+  expect(within(lista).getAllByRole('option')).toHaveLength(5);
+  expect(within(lista).getByRole('option', { name: /^backend:/ })).toBeInTheDocument();
+  expect(verdict).toHaveTextContent(/necesitan atención/);
 });
