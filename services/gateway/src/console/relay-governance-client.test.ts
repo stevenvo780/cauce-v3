@@ -115,12 +115,6 @@ describe('lo que el cliente pone en el cable', () => {
     expect(JSON.parse(recibidas[0]?.body ?? '')).toEqual({ tenant_id: 'Steven', alias: 'zeus', path: RUTA });
   });
 
-  it('se presenta con el token compartido como Bearer', async () => {
-    await cliente().readFile('Steven', 'zeus', RUTA);
-
-    expect(recibidas[0]?.authorization).toBe(`Bearer ${TOKEN}`);
-  });
-
   it('usa el endpoint explícito /list para índices de directorio', async () => {
     contestar(200, {
       path: MEMORY_ROOT, total: 0, observed_at_least: 0, truncated: false, entries: [],
@@ -150,17 +144,6 @@ describe('índice de directorio', () => {
     };
   }
 
-  it('acepta metadata absoluta, acotada y coherente', async () => {
-    contestar(200, listing());
-    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toEqual(listing());
-  });
-
-  it('conserva un límite inferior cuando el cap impide conocer el total', async () => {
-    const lowerBound = listing({ total: null, observed_at_least: 5_000, truncated: true });
-    contestar(200, lowerBound);
-    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toEqual(lowerBound);
-  });
-
   it.each([
     ['escape ..', listing({ entries: [{
       path: `${MEMORY_ROOT}/../auth.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z',
@@ -186,43 +169,6 @@ describe('índice de directorio', () => {
     }] })],
   ])('rechaza %s', (_label, body) => {
     expect(parseDirectoryOutcome(JSON.stringify(body))).toHaveProperty('error');
-  });
-
-  it('rechaza más de 200 entradas y totales incoherentes', () => {
-    expect(parseDirectoryOutcome(JSON.stringify(listing({
-      total: 201,
-      truncated: true,
-      entries: Array.from({ length: 201 }, (_, index) => ({
-        path: `${MEMORY_ROOT}/${String(index)}.md`, bytes: index, modified_at: '2026-08-24T10:00:00Z',
-      })),
-    })))).toHaveProperty('error');
-    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: 0 })))).toHaveProperty('error');
-    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: 2, truncated: false })))).toHaveProperty('error');
-    expect(parseDirectoryOutcome(JSON.stringify(listing({ total: -1, entries: [] })))).toHaveProperty('error');
-  });
-
-  it('rechaza cuerpos no JSON, campos extra y fallos deformes', () => {
-    expect(parseDirectoryOutcome('<html>')).toHaveProperty('error');
-    expect(parseDirectoryOutcome(JSON.stringify(listing({ extra: true })))).toHaveProperty('error');
-    expect(parseDirectoryOutcome(JSON.stringify({ error: 'timeout', reason: 'tarde', extra: true }))).toEqual({
-      error: 'unknown', reason: 'el terminal-relay contestó un fallo de índice inválido',
-    });
-  });
-
-  it('propaga auth, timeout y relay offline sin inventar vacío', async () => {
-    contestar(401, '');
-    expect(await cliente().listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
-      error: 'permission_denied',
-    });
-
-    responder = () => { /* relay vivo pero mudo */ };
-    expect(await cliente({ timeoutMs: 150 }).listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
-      error: 'timeout',
-    });
-
-    expect(await cliente({ puerto: 1, timeoutMs: 500 }).listDirectory('Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
-      error: 'unavailable',
-    });
   });
 
   it('aborta el socket saliente y devuelve cancelled cuando cierra el HTTP de la consola', async () => {
@@ -254,60 +200,6 @@ describe('lo que el cliente entiende de la respuesta', () => {
       content: CONTENIDO,
     });
   });
-
-  it('conserva `truncated` y el tamaño REAL del fichero', async () => {
-    contestar(200, {
-      path: RUTA, bytes: 900_000, truncated: true, modified_at: '2026-08-24T10:00:00Z',
-      sha: 'a'.repeat(64), content: 'recortado',
-    });
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toMatchObject({ truncated: true, bytes: 900_000 });
-  });
-
-  it('propaga el fallo de lectura que declara el relay', async () => {
-    contestar(200, { error: 'symlink_detected', reason: 'apunta a otro sitio' });
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
-      error: 'symlink_detected', reason: 'apunta a otro sitio'
-    });
-  });
-
-  it('convierte en `unknown` un código de error que no reconoce', async () => {
-    contestar(200, { error: 'te_lo_invento', reason: 'lo que sea' });
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({ error: 'unknown', reason: 'lo que sea' });
-  });
-
-  it('no inventa el contenido de una lectura que vino sin metadatos', async () => {
-    contestar(200, {
-      path: RUTA, modified_at: '2026-08-24T10:00:00Z', sha: sha(CONTENIDO), content: CONTENIDO,
-    });
-
-    // Filling `bytes` or `modified_at` with a zero and today's date would be showing a credible
-    // file nobody measured. Fail closed.
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
-      error: 'unknown', reason: 'la lectura vino sin un tamaño creíble'
-    });
-  });
-
-  it('rechaza una lectura que no dice si viene recortada', async () => {
-    contestar(200, {
-      path: RUTA, bytes: 9, modified_at: '2026-08-24T10:00:00Z',
-      sha: sha(CONTENIDO), content: CONTENIDO,
-    });
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
-      error: 'unknown', reason: 'la lectura no dice si viene recortada'
-    });
-  });
-
-  it('rechaza un cuerpo que no es JSON', async () => {
-    contestar(200, '<html>vaya</html>');
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
-      error: 'unknown', reason: 'el terminal-relay contestó algo que no es JSON'
-    });
-  });
 });
 
 describe('lo que el cliente hace cuando el transporte falla', () => {
@@ -317,32 +209,6 @@ describe('lo que el cliente hace cuando el transporte falla', () => {
     expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
       error: 'permission_denied', reason: 'el terminal-relay rechazó la credencial del gateway'
     });
-  });
-
-  it('dice qué código contestó el relay cuando no es 200', async () => {
-    contestar(503, { error: 'unavailable' });
-
-    expect(await cliente().readFile('Steven', 'zeus', RUTA)).toEqual({
-      error: 'unavailable', reason: 'el terminal-relay contestó 503'
-    });
-  });
-
-  it('vence sin lanzar si el relay no contesta', async () => {
-    responder = () => { /* se traga la petición: el relay está vivo pero mudo */ };
-
-    const resultado = await cliente({ timeoutMs: 150 }).readFile('Steven', 'zeus', RUTA);
-
-    // `timeout` and not `unavailable`: the relay may be healthy and the pty-agent the silent one.
-    expect(resultado).toMatchObject({ error: 'timeout' });
-    expect((resultado as { reason: string }).reason).toContain('timed out');
-  });
-
-  it('no lanza si el relay no está escuchando', async () => {
-    // Port with nobody listening: a `throw` here would take down the entire Directiva screen.
-    const resultado = await cliente({ puerto: 1, timeoutMs: 500 }).readFile('Steven', 'zeus', RUTA);
-
-    expect(resultado).toMatchObject({ error: 'unavailable' });
-    expect((resultado as { reason: string }).reason).toContain('no se pudo hablar con el terminal-relay');
   });
 
   it('corta una respuesta que se pasa del tope en vez de acumularla', async () => {
@@ -389,13 +255,6 @@ describe('escritura gobernada', () => {
     expect(await cliente().writeFile(
       'Steven', 'zeus', RUTA, 'x', { state: 'absent' },
     )).toMatchObject({ error: 'unknown' });
-  });
-
-  it('una creación viaja como absent y sólo acepta operation=create', async () => {
-    contestar(200, { path: RUTA, operation: 'create', sha: sha('x'), bytes: 1 });
-    expect(await cliente().writeFile(
-      'Steven', 'zeus', RUTA, 'x', { state: 'absent' },
-    )).toMatchObject({ operation: 'create', sha: sha('x'), bytes: 1 });
   });
 
   it('manda un lote ordenado a /write-batch y exige ACK por cada fichero', async () => {

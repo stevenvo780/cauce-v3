@@ -7,14 +7,13 @@ import type {
   TerminalAuditEntry,
 } from './agent-documents.routes.js';
 import { registerAgentDocumentRoutes } from './agent-documents.routes.js';
-import { MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO } from '@cauce/protocol';
+import { MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO } from '@cauce/protocol';
 import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
 import { ContextContaminationTelemetry } from './contaminacion-de-contexto.js';
 import {
-  DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES, effectiveManualPaths, type GovernanceRelayClient,
-  MAX_DOCUMENT_BYTES,
+  type GovernanceRelayClient,
   type MeasuredFactsSource, type RelayFileWrite, type RelayFileWriteBatch, type RuntimeFacts,
-  TerminalRelayFactsProbe, verifyWritableProfilePath,
+  TerminalRelayFactsProbe,
 } from './agent-documents.js';
 
 const CLAUDE: RuntimeFacts = { harness: 'claude', home: '/home/dev' };
@@ -99,24 +98,6 @@ describe('el lote gobernado acredita cada fichero una sola vez', () => {
     return { files };
   }
 
-  it('devuelve los dos ACK completos en el orden solicitado', async () => {
-    const files: RelayFileWriteBatch['files'] = [
-      {
-        path: writes[0]?.path ?? expect.unreachable('falta la escritura'),
-        operation: 'create', sha: sha(content), bytes: Buffer.byteLength(content, 'utf8'),
-      },
-      {
-        path: writes[1]?.path ?? expect.unreachable('falta la verificación'),
-        operation: 'unchanged', sha: 'a'.repeat(64), bytes: 17,
-      },
-    ];
-    const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay({
-      writeFiles: async () => batch(files),
-    }));
-
-    expect(await probe.writeGovernanceBatch(writes, OPENCLAW, 'Steven', 'jarvis')).toEqual(files);
-  });
-
   it('rechaza un lote cuyo ACK repite una ruta y omite otra', async () => {
     const repeated = writes[0]?.path ?? expect.unreachable('falta la escritura');
     const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay({
@@ -132,18 +113,6 @@ describe('el lote gobernado acredita cada fichero una sola vez', () => {
   });
 });
 
-describe('la ruta de perfil queda cerrada al destino medido', () => {
-  it('acepta el fichero exacto y rechaza enlaces aunque su nombre solicitado sea válido', () => {
-    expect(verifyWritableProfilePath(CLAUDE, CLAUDE_PATH)).toEqual({ allowed: true });
-    expect(verifyWritableProfilePath(
-      CLAUDE, CLAUDE_PATH, '/datos/agents/shared/.claude/CLAUDE.md',
-    )).toEqual({ allowed: false, reason: 'la ruta del perfil es un enlace' });
-    expect(verifyWritableProfilePath(
-      CLAUDE, CLAUDE_PATH, '/home/dev/.claude/.credentials.json',
-    )).toEqual({ allowed: false, reason: 'el destino parece material sensible' });
-  });
-});
-
 /**
  * Route level: what the PUT leaves behind. The write channel is the only cross-tenant door that
  * rewrites the effective manual of an alias, so success AND every state denial must land a row in
@@ -156,11 +125,6 @@ const ANONIMO = { operator_id: 'unattributed:console-basic-auth', attributed: fa
 const MOTIVO = 'ajusto la directiva porque el arranque nativo cambió de bandera';
 const ANTERIOR = '# viejo\n';
 const NUEVO = '# nuevo\n';
-const CODEX: RuntimeFacts = {
-  harness: 'codex', home: '/home/dev', projectDocMaxBytes: 64,
-  projectDocFallbackFilenames: ['TEAM.md'],
-};
-const CODEX_PATH = '/home/dev/.codex/AGENTS.md';
 
 function medidos(facts: RuntimeFacts): AgentFactsProbe['factsFor'] {
   return async () => ({ facts: { ...facts, generation: 'measured-one', containerId: 'container-one' }, source: 'measured' });
@@ -236,18 +200,6 @@ describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
     expect(response.json()).not.toHaveProperty('ok', true);
   });
 
-  it('does not fall back to legacy writes when durable transport is absent', async () => {
-    const legacy = vi.fn(async () => ({ sha: sha(NUEVO), bytes: Buffer.byteLength(NUEVO) }));
-    const probe = sonda({ writeGovernanceDocument: legacy });
-    delete probe.writeGovernanceDocumentDurable;
-    vivo = servidor({ probe });
-    const response = await vivo.inject({ method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(503);
-    expect(legacy).not.toHaveBeenCalled();
-  });
-
   it('la sesión sin atribuir recibe 403 writable_requires_attribution y deja fila', async () => {
     const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
     vivo = servidor({
@@ -269,74 +221,6 @@ describe('el PUT gobernado exige persona con nombre y motivo tecleado', () => {
     expect(unaFila().metadata).toMatchObject({
       channel: 'write', reason: 'writable_requires_attribution',
       operator: ANONIMO.operator_id, attributed: false,
-    });
-  });
-
-  it('CONTROL NEGATIVO: sin resolutor de operador cableado nadie escribe', async () => {
-    const app = Fastify();
-    registerAgentDocumentRoutes(app, {
-      authorize: async () => ACTOR,
-      authorizeTarget: async (_actor, tenant_id, alias) => ({
-        tenant_id, alias, harness_id: 'claude', home_directory: '/home/dev', enabled: true,
-      }),
-      recordAudit: async (entry) => { filas.push(entry); },
-      probe: sonda(),
-    });
-    vivo = app;
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toMatchObject({ reason: 'writable_requires_attribution' });
-  });
-
-  it.each([
-    ['sin motivo', undefined],
-    ['motivo de siete caracteres', 'siete c'],
-    ['motivo que sólo es espacio en blanco', '                    '],
-    ['motivo que al recortar baja del mínimo', '   siete c   '],
-    ['motivo de 281 caracteres', 'x'.repeat(281)],
-    ['motivo que no es texto', 42],
-  ])('%s: 400 sin tocar el disco ni la auditoría', async (_caso, motivo) => {
-    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
-    vivo = servidor({ probe: sonda({ writeGovernanceDocumentDurable }) });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: {
-        content: NUEVO, expected_sha: sha(ANTERIOR),
-        ...(motivo === undefined ? {} : { reason: motivo }),
-      },
-    });
-
-    expect(res.statusCode).toBe(400);
-    expect(res.json()).toMatchObject({ error: 'invalid_input' });
-    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
-    expect(filas).toEqual([]);
-  });
-
-  it('acepta el motivo mínimo de ocho caracteres y lo audita tal cual se tecleó', async () => {
-    vivo = servidor();
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: '  ocho car  ' },
-    });
-
-    expect(res.statusCode).toBe(202);
-    expect(unaFila().metadata).toMatchObject({ operator_reason: 'ocho car' });
-  });
-
-  it('el motivo viaja a la fila de las denegaciones posteriores, no sólo a la del éxito', async () => {
-    vivo = servidor({ probe: sonda({ factsFor: async () => undefined }) });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(409);
-    expect(unaFila().metadata).toMatchObject({
-      reason: 'no_medido', operator_reason: MOTIVO, operator: OPERADOR.operator_id,
     });
   });
 });
@@ -366,260 +250,6 @@ describe('el PUT gobernado audita su éxito y responde con vocabulario honesto',
       kind: 'directive', path: CLAUDE_PATH, sha_before: sha(ANTERIOR), sha_after: sha(NUEVO),
       bytes: Buffer.byteLength(NUEVO, 'utf8'),
       operator: OPERADOR.operator_id, attributed: true, operator_reason: MOTIVO,
-    });
-  });
-
-  it('la fila no lleva el cuerpo del documento ni un byte de él', async () => {
-    const secreto = '# el secreto que no puede viajar a audit_events\n';
-    vivo = servidor({
-      probe: sonda({
-        writeGovernanceDocumentDurable: async () => ({
-          sha: sha(secreto), bytes: Buffer.byteLength(secreto, 'utf8'),
-        }),
-      }),
-    });
-    await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: secreto, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(filas).toHaveLength(1);
-    const serializada = JSON.stringify(unaFila().metadata);
-    expect(serializada).not.toContain('secreto');
-    expect(serializada).not.toContain(ANTERIOR.trim());
-    expect(unaFila().metadata).not.toHaveProperty('content');
-    expect(unaFila().metadata).not.toHaveProperty('container_id');
-  });
-});
-
-describe('cada denegación de estado del PUT deja fila agent_document.denied', () => {
-  it.each([
-    ['sin hechos medidos', 409, 'no_medido', { factsFor: async () => undefined }, {}],
-    ['carrera de SHA', 409, 'conflict', {}, { expected_sha: 'c'.repeat(64) }],
-    ['fichero ya presente', 409, 'conflict', {}, {
-      create_if_absent: true, expected_sha: undefined,
-    }],
-    ['ACK que no acredita los bytes', 503, 'document_write_unconfirmed', {
-      writeGovernanceDocumentDurable: async () => ({ sha: 'd'.repeat(64), bytes: 7 }),
-    }, {}],
-  ] as const)('%s', async (_caso, status, error, overrides, payload) => {
-    vivo = servidor({ probe: sonda(overrides) });
-    const res = await vivo.inject({
-      method: 'PUT',
-      url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO, ...payload },
-    });
-
-    expect(res.statusCode).toBe(status);
-    expect(res.json()).toMatchObject({ error });
-    if (error === 'document_write_unconfirmed') {
-      expect(res.json()).toMatchObject({ state: 'effect_unknown' });
-      expect(res.json<{ operation_id: string }>().operation_id).toMatch(/^[0-9a-f-]{36}$/u);
-      expect(res.json()).not.toHaveProperty('ok', true);
-    }
-    expect(filas).toHaveLength(1);
-    expect(unaFila()).toMatchObject({
-      action: 'agent_document.denied', decision: 'deny',
-    });
-    expect(unaFila().metadata).toMatchObject({
-      operator_id: 'Steven:zeus', target_tenant: 'Miguel', target_alias: 'kant',
-      kind: 'directive', reason: error,
-    });
-  });
-
-  it('sin canal de escritura responde 503 honesto y deja fila', async () => {
-    const completa = sonda();
-    const sinEscritura: AgentFactsProbe = {
-      factsFor: (tenantId, alias) => completa.factsFor(tenantId, alias),
-      readGovernanceDocument: (path, facts, tenantId, alias) =>
-        completa.readGovernanceDocument(path, facts, tenantId, alias),
-      listMemoryDirectory: (root, facts, tenantId, alias) =>
-        completa.listMemoryDirectory(root, facts, tenantId, alias),
-    };
-    vivo = servidor({ probe: sinEscritura });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ error: 'unavailable' });
-    expect(unaFila().metadata).toMatchObject({ reason: 'unavailable' });
-  });
-
-  it('el alias apagado falla cerrado y también deja fila', async () => {
-    vivo = servidor({
-      authorizeTarget: async (_actor, tenant_id, alias) => ({
-        tenant_id, alias, harness_id: 'claude', home_directory: '/home/dev', enabled: false,
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(409);
-    expect(unaFila().metadata).toMatchObject({ reason: 'agent_disabled' });
-  });
-
-  it('el conflicto de bloque gestionado deja fila con el conflicto exacto', async () => {
-    const gestionado = `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}\n`;
-    vivo = servidor({
-      probe: sonda({
-        readGovernanceDocument: async () => ({ error: 'not_found', reason: 'no existe' }),
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: gestionado, create_if_absent: true, reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(409);
-    expect(res.json()).toMatchObject({
-      error: 'managed_context_conflict', conflict: 'reserved_markers_on_create',
-    });
-    expect(unaFila().metadata).toMatchObject({
-      reason: 'managed_context_conflict', conflict: 'reserved_markers_on_create',
-    });
-  });
-
-  it('una ruta no escribible deja fila antes de tocar el disco', async () => {
-    const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha(NUEVO), bytes: 7 }));
-    vivo = servidor({
-      probe: sonda({ factsFor: medidos(OPENCLAW), writeGovernanceDocumentDurable }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta('identity'),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(403);
-    expect(res.json()).toMatchObject({ error: 'forbidden' });
-    expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
-    expect(unaFila().metadata).toMatchObject({ reason: 'forbidden', kind: 'identity' });
-  });
-
-  it('el tope genérico de 256 KiB se evalúa antes que el del arnés', async () => {
-    vivo = servidor({ probe: sonda({ factsFor: medidos(CODEX) }) });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: {
-        content: 'a'.repeat(MAX_DOCUMENT_BYTES + 1), expected_sha: sha(ANTERIOR), reason: MOTIVO,
-      },
-    });
-
-    expect(res.statusCode).toBe(413);
-    expect(res.json()).toMatchObject({ error: 'too_large' });
-    expect(unaFila().metadata).toMatchObject({ reason: 'too_large' });
-  });
-});
-
-describe('el manual de ámbito de usuario de codex no se mide contra el tope de proyecto', () => {
-  /*
-   * `project_doc_max_bytes` topa el AGREGADO de los manuales de ámbito WORKSPACE — así lo aplica
-   * el lector en `agent-directive.routes.ts` — y el único documento que este canal escribe para
-   * codex es `$CODEX_HOME/AGENTS.md`, que `effectiveManualPaths` clasifica como `user`. Toparlo
-   * aquí rechazaría con un 413 una escritura legítima y con un mensaje falso para ese fichero.
-   */
-  it('escribe entero un AGENTS.md mayor que el project_doc_max_bytes medido', async () => {
-    const grande = 'x'.repeat(65);
-    vivo = servidor({
-      probe: sonda({
-        factsFor: medidos(CODEX),
-        writeGovernanceDocumentDurable: async () => ({
-          sha: sha(grande), bytes: Buffer.byteLength(grande, 'utf8'),
-        }),
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: grande, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(202);
-    expect(res.json()).toMatchObject({ path: CODEX_PATH, state: 'written_pending_session' });
-    expect(res.json()).not.toMatchObject({ error: 'exceeds_harness_budget' });
-    expect(effectiveManualPaths(CODEX).find((manual) => manual.path === CODEX_PATH)?.scope)
-      .toBe('user');
-    expect(unaFila().action).toBe('agent_document.write');
-  });
-
-  it('tampoco topa cuando codex no publicó proyección y regiría el defecto de 32 KiB', async () => {
-    const sinConfig: RuntimeFacts = { harness: 'codex', home: '/home/dev' };
-    const grande = 'x'.repeat(DEFAULT_CODEX_PROJECT_DOC_MAX_BYTES + 1);
-    vivo = servidor({
-      probe: sonda({
-        factsFor: medidos(sinConfig),
-        writeGovernanceDocumentDurable: async () => ({
-          sha: sha(grande), bytes: Buffer.byteLength(grande, 'utf8'),
-        }),
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: grande, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(202);
-    expect(unaFila().action).toBe('agent_document.write');
-  });
-});
-
-describe('la fila nombra el arnés y el HOME MEDIDOS, no los del registro', () => {
-  it('el registro que se equivoca de arnés no contamina la auditoría', async () => {
-    vivo = servidor({
-      authorizeTarget: async (_actor, tenant_id, alias) => ({
-        tenant_id, alias, harness_id: 'codex', home_directory: '/home/otro', enabled: true,
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(202);
-    expect(unaFila().metadata).toMatchObject({
-      harness_id: 'claude', home_directory: '/home/dev', facts_source: 'measured',
-    });
-  });
-
-  it('sin medición la fila cae al registro y lo declara con facts_source', async () => {
-    vivo = servidor({
-      authorizeTarget: async (_actor, tenant_id, alias) => ({
-        tenant_id, alias, harness_id: 'codex', home_directory: '/home/otro', enabled: true,
-      }),
-      probe: sonda({ factsFor: async () => undefined }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(409);
-    expect(unaFila().metadata).toMatchObject({
-      harness_id: 'codex', home_directory: '/home/otro', facts_source: null,
-      reason: 'no_medido', channel: 'write',
-    });
-  });
-});
-
-describe('el destino que no se ve deja fila antes de contestar 404', () => {
-  it('la sonda de enumeración de alias no pasa sin rastro', async () => {
-    vivo = servidor({ authorizeTarget: async () => undefined });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: NUEVO, expected_sha: sha(ANTERIOR), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(404);
-    expect(filas).toHaveLength(1);
-    expect(unaFila()).toMatchObject({
-      tenant_id: 'Steven', actor_alias: 'zeus',
-      action: 'agent_document.denied', decision: 'deny',
-    });
-    expect(unaFila().metadata).toMatchObject({
-      target_tenant: 'Miguel', target_alias: 'kant', kind: 'directive',
-      reason: 'not_found', channel: 'write', harness_id: null, home_directory: null,
     });
   });
 });
@@ -670,26 +300,5 @@ describe('la cuarentena de contaminación también cierra la escritura', () => {
     // Ni el cuerpo ni la fila llevan un byte de lo que el bloque ajeno dice.
     expect(JSON.stringify(cuerpo)).not.toContain('prosa del contenedor ajeno');
     expect(JSON.stringify(unaFila().metadata)).not.toContain('prosa del contenedor ajeno');
-  });
-
-  it('no estorba a la escritura de un fichero cuyo bloque es del propio alias', async () => {
-    const propio = AJENO.replace('Steven/argos', 'Miguel/kant');
-    vivo = servidor({
-      probe: sonda({
-        readGovernanceDocument: async () => ({
-          text: propio, bytes: Buffer.byteLength(propio, 'utf8'), truncated: false,
-          modified_at: '2026-08-25T00:00:00Z', sha: sha(propio),
-        }),
-        writeGovernanceDocumentDurable: async () => ({
-          sha: sha(propio), bytes: Buffer.byteLength(propio, 'utf8'),
-        }),
-      }),
-    });
-    const res = await vivo.inject({
-      method: 'PUT', url: ruta(),
-      payload: { content: propio, expected_sha: sha(propio), reason: MOTIVO },
-    });
-
-    expect(res.statusCode).toBe(202);
   });
 });

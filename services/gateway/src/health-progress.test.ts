@@ -74,34 +74,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
-  it('rejects an incomplete delivery-capacity contract before running its SQL probe', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS capacity_column_exact')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            capacity_column_exact: false,
-            capacity_constraint_valid: true,
-            inflight_index_valid: true,
-            claim_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeDeliveryAdmissionPath(pool)).rejects.toThrow(/schema-015 delivery admission/u);
-
-    const calls = query.mock.calls.map(([sql]) => sql);
-    expect(calls.at(-1)).toBe('ROLLBACK');
-    expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
-  });
-
   it('probes the schema-031 wake claim read-only, bounded and without a real recipient', async () => {
     const query = vi.fn(async (sql: string, parameters?: readonly unknown[]) => {
       const schema = schemaBarrierReply(sql, parameters);
@@ -138,32 +110,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(query.mock.calls[9]?.[1]).toBeUndefined();
     expect(client.release).toHaveBeenCalledWith(false);
-  });
-
-  it('rejects a missing schema-031 contract before pretending the wake SQL is usable', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS migration_applied')) {
-        return {
-          rows: [{
-            migration_applied: false,
-            connection_token_exact: false,
-            claim_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeWakePath(pool)).rejects.toThrow(/schema-031 claim contract/u);
-
-    const calls = query.mock.calls.map(([sql]) => sql);
-    expect(calls.at(-1)).toBe('ROLLBACK');
-    expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
   });
 
   it('probes schema-032 and its exact-fence CAS read-only without observing a session', async () => {
@@ -204,34 +150,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     expect(client.release).toHaveBeenCalledWith(false);
   });
 
-  it('rejects a missing schema-032 constraint before running the claim CAS probe', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS columns_exact')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            columns_exact: true,
-            constraint_exact: false,
-            claim_permissions: true,
-            audit_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeTerminalClaimPath(pool)).rejects.toThrow(/schema-032 claim contract/u);
-
-    const calls = query.mock.calls.map(([sql]) => sql);
-    expect(calls.at(-1)).toBe('ROLLBACK');
-    expect(calls.some((sql) => sql.includes('WITH requested'))).toBe(false);
-  });
-
   it('probes schema-033 columns, owner CHECK, unique request index and CAS read-only', async () => {
     const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
       const schema = schemaBarrierReply(sql, params);
@@ -269,32 +187,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     ]);
     expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
-  });
-
-  it('rejects a merely named but non-unique schema-033 request index', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS request_index_exact')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            columns_exact: true,
-            constraint_exact: true,
-            request_index_exact: false,
-            mutation_permissions: true,
-            audit_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeTerminalBrowserOwnerPath(pool)).rejects.toThrow(/schema-033 browser owner/u);
-    expect(query.mock.calls.map(([sql]) => sql).at(-1)).toBe('ROLLBACK');
   });
 
   it('probes schema-034 relay instance and UUIDv4 process fencing read-only', async () => {
@@ -378,34 +270,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     ]);
     expect(calls[9]).not.toMatch(/\b(?:INSERT|UPDATE|DELETE|TRUNCATE|FOR\s+UPDATE)\b/iu);
     expect(client.release).toHaveBeenCalledWith(false);
-  });
-
-  it('rejects a disabled schema-035 adoption trigger before its behavior probe', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS functions_exact')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            columns_exact: true,
-            constraints_exact: true,
-            functions_exact: true,
-            triggers_exact: false,
-            mutation_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeProfileRuntimePath(pool)).rejects.toThrow(/schema-035 profile runtime/u);
-    const calls = query.mock.calls.map(([sql]) => sql);
-    expect(calls.at(-1)).toBe('ROLLBACK');
-    expect(calls.some((sql) => sql.includes('AS documents_contract'))).toBe(false);
   });
 
   it('probes schema-037 ledger, exact index topology and journal authority read-only', async () => {

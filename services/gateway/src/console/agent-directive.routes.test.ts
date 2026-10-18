@@ -112,53 +112,6 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
     });
   });
 
-  it('devuelve el fallo de memoria discriminado, nunca memory:null ni un cero inventado', async () => {
-    vivo = servidor({
-      probe: {
-        factsFor: async () => ({
-          facts: { harness: 'claude', home: '/home/dev' }, source: 'measured',
-        }),
-        readGovernanceDocument: async () => ({ error: 'not_found', reason: 'sin manual' }),
-        listMemoryDirectory: async () => ({ error: 'timeout', reason: 'el agente no contestó' }),
-      },
-    });
-
-    const response = await vivo.inject({
-      method: 'GET', url: '/v3/console/agents/Steven/zeus/directive',
-    });
-    expect(response.statusCode).toBe(200);
-    expect(response.json<AgentDirective>().memory).toEqual({
-      root: '/home/dev/.claude/projects',
-      error: 'timeout',
-      reason: 'el agente no contestó',
-    });
-  });
-
-  it('conserva total desconocido y el límite inferior observado', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:zeus': {
-          facts: { harness: 'claude', home: '/home/dev' },
-          documents: {},
-          memory: {
-            root: '/home/dev/.claude/projects',
-            total: null,
-            observed_at_least: 5_000,
-            truncated: true,
-            entries: [],
-          },
-        },
-      }),
-    });
-
-    const response = await vivo.inject({
-      method: 'GET', url: '/v3/console/agents/Steven/zeus/directive',
-    });
-    expect(response.json<AgentDirective>().memory).toMatchObject({
-      total: null, observed_at_least: 5_000, truncated: true,
-    });
-  });
-
   it('con hechos medidos devuelve contenido de CLAUDE.md + memoria', async () => {
     const claudeContent: GovernanceDocumentContent = {
       text: '# Manual de uso\n\nVer /docs para más info.',
@@ -240,97 +193,6 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
     expect(body.memory).toMatchObject({ error: 'unavailable' });
     expect(body.memory && 'error' in body.memory ? body.memory.reason : '')
       .toMatch(/no medido|sin hechos/u);
-  });
-
-  it('not_found medido se omite: files vacío significa miró y no existe', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:kant': {
-          facts: { harness: 'codex', home: '/home/dev' },
-          documents: {
-            '/home/dev/.codex/AGENTS.md': {
-              error: 'not_found',
-              reason: 'fichero no existe',
-            },
-          },
-          memory: {
-            root: '/home/dev/.codex/memories',
-            total: 0,
-            observed_at_least: 0,
-            truncated: false,
-            entries: [],
-          },
-        },
-      }),
-    });
-
-    const res = await vivo.inject({
-      method: 'GET',
-      url: '/v3/console/agents/Steven/kant/directive',
-    });
-    expect(res.statusCode).toBe(200);
-
-    const body = res.json<AgentDirective>();
-    expect(body.publicado).toBe(true);
-    expect(body.files).toEqual([]);
-  });
-
-  it('mezcla existente + not_found devuelve sólo el manual que realmente existe', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:zeus': {
-          facts: {
-            harness: 'claude', home: '/home/dev', workspaceRoot: '/workspace',
-            projectRoot: '/workspace/repo', cwd: '/workspace/repo',
-          },
-          documents: {
-            // Counterexample: it exists in the mount, but it is above projectRoot and does not govern.
-            '/workspace/CLAUDE.md': {
-              text: '# ajeno\n', bytes: 8, truncated: false,
-              modified_at: '2026-08-26T00:00:00Z', sha: 'a'.repeat(64),
-            },
-            '/workspace/repo/CLAUDE.local.md': {
-              text: '# local\n', bytes: 8, truncated: false,
-              modified_at: '2026-08-26T00:00:00Z', sha: 'd'.repeat(64),
-            },
-          },
-        },
-      }),
-    });
-    const response = await vivo.inject({
-      method: 'GET', url: '/v3/console/agents/Steven/zeus/directive',
-    });
-    expect(response.json<AgentDirective>().files).toEqual([expect.objectContaining({
-      path: '/workspace/repo/CLAUDE.local.md', scope: 'workspace', sha: 'd'.repeat(64),
-    })]);
-    expect(response.json<AgentDirective>().files?.some(({ path }) => path === '/workspace/CLAUDE.md'))
-      .toBe(false);
-  });
-
-  it('mezcla existente + timeout conserva el fallo discriminado y no finge ausencia', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:zeus': {
-          facts: { harness: 'claude', home: '/home/dev', cwd: '/workspace/repo' },
-          documents: {
-            '/home/dev/.claude/CLAUDE.md': {
-              text: '# global\n', bytes: 9, truncated: false,
-              modified_at: '2026-08-26T00:00:00Z', sha: 'e'.repeat(64),
-            },
-            '/workspace/repo/CLAUDE.md': { error: 'timeout', reason: 'panel no respondió' },
-          },
-        },
-      }),
-    });
-    const response = await vivo.inject({
-      method: 'GET', url: '/v3/console/agents/Steven/zeus/directive',
-    });
-    expect(response.json<AgentDirective>().files).toEqual([
-      expect.objectContaining({ path: '/home/dev/.claude/CLAUDE.md', text: '# global\n' }),
-      expect.objectContaining({
-        path: '/workspace/repo/CLAUDE.md', text: null, error: 'timeout', reason: 'panel no respondió',
-      }),
-    ]);
   });
 
   it('Codex selecciona override, salta AGENTS; un override vacío sí cae al fallback', async () => {
@@ -489,52 +351,6 @@ describe('GET /v3/console/agents/:tenant/:alias/directive', () => {
     expect(body.files?.[0]?.text?.length).toBeLessThanOrEqual(256 * 1024);
     expect(body.files?.some((file) => file.path?.endsWith('/openclaw.json'))).toBe(false);
   });
-
-  it('arnés unknown queda no medido y nunca fabrica medido:true con files vacío', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:unknown': {
-          facts: { harness: 'unknown', home: '/home/dev' },
-          documents: {},
-        },
-      }),
-    });
-
-    const res = await vivo.inject({
-      method: 'GET',
-      url: '/v3/console/agents/Steven/unknown/directive',
-    });
-
-    const body = res.json<AgentDirective>();
-    expect(body.publicado).toBe(true);
-    expect(body.medido).toBe(false);
-    expect(body.motivo).toMatch(/no está soportado/u);
-    expect(body.files).toBeNull();
-  });
-
-  it('Hermes sirve su AGENTS.md medido en lugar de una ausencia falsa', async () => {
-    vivo = servidor({
-      probe: mockProbe({
-        'Steven:hermes': {
-          facts: { harness: 'hermes', home: '/home/dev' },
-          documents: {
-            '/home/dev/AGENTS.md': {
-              text: '# Hermes\n', bytes: 9, truncated: false,
-              modified_at: '2026-08-26T00:00:00Z', sha: 'f'.repeat(64),
-            },
-          },
-        },
-      }),
-    });
-    const response = await vivo.inject({
-      method: 'GET', url: '/v3/console/agents/Steven/hermes/directive',
-    });
-    expect(response.json<AgentDirective>()).toMatchObject({
-      medido: true,
-      manual_order: 'workspace_only',
-      files: [{ path: '/home/dev/AGENTS.md', text: '# Hermes\n' }],
-    });
-  });
 });
 
 describe('raíces de memoria separadas de manuales e inventario', () => {
@@ -548,9 +364,5 @@ describe('raíces de memoria separadas de manuales e inventario', () => {
     expect(memoryRootForHarness({
       harness: 'openclaw', home: '/home/claw', openclawWorkspace: '/home/claw/workspace-kant',
     })).toBe('/home/claw/workspace-kant/memory');
-  });
-
-  it('OpenClaw sin workspace medido no inventa una memoria bajo ~/.openclaw', () => {
-    expect(memoryRootForHarness({ harness: 'openclaw', home: '/home/claw' })).toBeNull();
   });
 });

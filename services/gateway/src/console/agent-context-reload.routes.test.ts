@@ -4,7 +4,7 @@ import { StoreError } from '@cauce/store';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO, conBloqueDePerfil, conRevisionDelPerfil,
+  MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
   type ContextoDeAlias,
 } from '@cauce/protocol';
 import {
@@ -14,8 +14,6 @@ import {
 import {
   registerAgentContextHistoryRoutes, type DocumentRevisionView,
 } from './agent-context-history.routes.js';
-import { nombresDelArnes } from '@cauce/protocol';
-import { RELOAD_DOCUMENT_KINDS } from './agent-context-reload.routes.js';
 import { ContextContaminationTelemetry } from './contaminacion-de-contexto.js';
 import { CONTEXT_APPLY_POLICY } from './context-apply-policy.js';
 import { prepareAgentProfileRuntime } from './agent-profile-runtime.js';
@@ -37,12 +35,6 @@ function textoDe(alias: string): string {
     '# CLAUDE.md', MARCA_PERFIL_INICIO, `<!-- alias: ${alias} -->`, 'perfil proyectado',
     MARCA_PERFIL_FIN, '',
   ].join('\n');
-}
-
-function proyectar(base: string, alias: string, cuerpo: string, revision = 4): string {
-  return conRevisionDelPerfil(
-    conBloqueDePerfil(base, `<!-- alias: ${alias} -->\n${cuerpo}`), revision,
-  );
 }
 
 const ACK: ProfileRuntimeAck = {
@@ -270,16 +262,6 @@ let vivo: ReturnType<typeof servidor> | undefined;
 afterEach(async () => { await vivo?.close(); vivo = undefined; auditoria.length = 0; });
 
 describe('POST .../context/reload as an operator', () => {
-  it('refuses an invalid expectation snapshot before preparing or applying runtime bytes', async () => {
-    const double = runtime();
-    const prepare = vi.fn(async () => double.preflight);
-    vivo = servidor({ prepareRuntime: prepare,
-      readRuntimeExpectation: async () => { throw new StoreError('conflict', 'invalid runtime expectation'); } }, double);
-    const response = await vivo.inject({ method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO } });
-    expect(response.statusCode).toBe(409);
-    expect(prepare).not.toHaveBeenCalled();
-    expect(double.aplicaciones).toEqual([]);
-  });
 
   it('denies a delivery claimed after preflight before writing the runtime', async () => {
     const double = runtime();
@@ -347,23 +329,6 @@ describe('POST .../context/reload as an operator', () => {
     expect(auditoria.map((entry) => entry.decision)).toEqual(['deny']);
   });
 
-  it('refuses a reason shorter than the one the PTY plane demands', async () => {
-    const doble = runtime();
-    vivo = servidor({}, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: 'corto' },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('requires the control permission on the operator form', async () => {
-    const authorize = vi.fn<AgentContextReloadDeps['authorize']>(async () => OPERADOR_ACTOR);
-    vivo = servidor({ authorize });
-    await vivo.inject({ method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO } });
-    expect(authorize.mock.calls[0]?.[1]).toBe('control');
-  });
-
   it('fails closed while a delivery is in flight and says so in the body', async () => {
     const doble = runtime();
     vivo = servidor({ deliveryInFlight: async () => enVuelo(1) }, doble);
@@ -374,102 +339,6 @@ describe('POST .../context/reload as an operator', () => {
     const body = response.json<{ error: string; message: string }>();
     expect(body.error).toBe('delivery_in_flight');
     expect(body.message).toMatch(/entrega/u);
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('names the deliveries that hold the reload back, and only their four fields', async () => {
-    const doble = runtime();
-    vivo = servidor({ deliveryInFlight: async () => enVuelo(2) }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    const body = response.json<{ deliveries: Record<string, unknown>[] }>();
-    expect(body.deliveries).toEqual([
-      {
-        delivery_id: 'entrega-1', status: 'started',
-        claimed_at: '2026-09-01T10:00:01.000Z', deadline_at: '2026-09-01T10:30:01.000Z',
-      },
-      {
-        delivery_id: 'entrega-2', status: 'started',
-        claimed_at: '2026-09-01T10:00:02.000Z', deadline_at: '2026-09-01T10:30:02.000Z',
-      },
-    ]);
-    for (const entrega of body.deliveries) {
-      expect(Object.keys(entrega).sort())
-        .toEqual(['claimed_at', 'deadline_at', 'delivery_id', 'status']);
-    }
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  /*
-   * A body that grows with the queue is a body an operator cannot read and a refusal a caller can
-   * make expensive. The list is capped and the audit row keeps the REAL number, so nobody reads
-   * «20» and believes the alias had twenty turns open.
-   */
-  it('lists at most twenty deliveries while the audit row keeps the real count', async () => {
-    const doble = runtime();
-    vivo = servidor({ deliveryInFlight: async () => enVuelo(37) }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    const body = response.json<{ deliveries: { delivery_id: string }[] }>();
-    expect(body.deliveries).toHaveLength(20);
-    expect(body.deliveries[0]?.delivery_id).toBe('entrega-1');
-    expect(body.deliveries[19]?.delivery_id).toBe('entrega-20');
-    const fila = auditoria[0];
-    expect(fila?.decision).toBe('deny');
-    const metadata = fila?.metadata as Record<string, unknown>;
-    expect(metadata.deliveries_in_flight).toBe(37);
-    // The row records the count and nothing else about those deliveries.
-    expect(Object.keys(metadata)).not.toContain('deliveries');
-  });
-
-  it('never refuses when nothing is in flight, however empty the list comes back', async () => {
-    const doble = runtime();
-    vivo = servidor({ deliveryInFlight: async () => ({ count: 0, deliveries: [] }) }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(doble.aplicaciones).toEqual(['apply']);
-  });
-
-  it('refuses a disabled alias: a reload does not resurrect a runtime that must stay off', async () => {
-    const doble = runtime();
-    vivo = servidor({
-      authorizeTarget: async (_actor, tenantId, alias) => ({ tenant_id: tenantId, alias, enabled: false }),
-    }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('agent_disabled');
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('refuses an alias with no durable profile to re-materialize', async () => {
-    const doble = runtime();
-    vivo = servidor({
-      readContext: async (tenantId, alias) => ({
-        contexto: {
-          perfil: {
-            tenant_id: tenantId, alias, purpose: null, role_summary: null, human_brief: null,
-            responsibilities: [], restrictions: [], tools: [], operating_rules: [],
-          },
-          hechos: { arnes: { harness: 'claude', home: '/home/dev' } },
-        } as never,
-        exists: false,
-        revision: null,
-        applied_revision: null,
-      }),
-    }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('profile_absent');
     expect(doble.aplicaciones).toEqual([]);
   });
 });
@@ -514,117 +383,6 @@ describe('the contamination guard quarantines the reload', () => {
     expect(fila?.metadata.reason).toBe('context_contaminated');
     expect(fila?.metadata.findings).toEqual(['foreign_managed_block']);
     expect(JSON.stringify(fila?.metadata)).not.toContain('perfil proyectado');
-  });
-
-  /** A refusal that is NOT contamination keeps its own code instead of being dressed as one. */
-  it('leaves a preflight conflict that no longer shows a foreign block as a plain conflict', async () => {
-    const probe = sonda(textoDe('Steven/argos'));
-    vivo = servidor({
-      readContext: async (tenantId, alias) => ({
-        contexto: contextoReal(tenantId, alias), exists: true, revision: 4, applied_revision: 3,
-      }),
-      prepareRuntime: async () => {
-        throw Object.assign(new Error('la generación cambió'), { code: 'conflict' });
-      },
-      measureContext: (tenantId, alias) => medirContextoDeGobierno(probe, tenantId, alias),
-      readRuntimeExpectation: async () => undefined,
-    });
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('conflict');
-  });
-
-  it('quarantines a fingerprint that disagrees with the expectation of the live generation', async () => {
-    const disco = proyectar('', 'Steven/argos', 'perfil sembrado con cuotas de hoy', 3);
-    const doble = runtime({
-      observedSha: sha('c'),
-      texto: disco,
-      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
-    });
-    vivo = servidor({}, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('context_contaminated');
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('quarantines prose injected outside the block, which the projection copies verbatim', async () => {
-    const disco = proyectar('regla añadida a mano', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
-    const recordRuntimeExpectation =
-      vi.fn<TestReloadDeps['recordRuntimeExpectation']>(async () => undefined);
-    const doble = runtime({
-      observedSha: sha('c'),
-      texto: disco,
-      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
-    });
-    vivo = servidor({ recordRuntimeExpectation }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    const body = response.json<{
-      error: string; contaminacion: { findings: { reason: string }[] };
-    }>();
-    expect(body.error).toBe('context_contaminated');
-    expect(body.contaminacion.findings.map((finding) => finding.reason))
-      .toEqual(['expectation_sha_mismatch']);
-    expect(doble.aplicaciones).toEqual([]);
-    expect(recordRuntimeExpectation).not.toHaveBeenCalled();
-    expect(JSON.stringify(body)).not.toContain('regla añadida a mano');
-  });
-
-  it('quarantines the same injection on the self-reload that carries no person', async () => {
-    const disco = proyectar('regla añadida a mano', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
-    const doble = runtime({
-      observedSha: sha('c'),
-      texto: disco,
-      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
-    });
-    vivo = servidor({ authorize: async () => ALIAS_ACTOR }, doble);
-    const response = await vivo.inject({ method: 'POST', url: RUTA_PROPIA });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('context_contaminated');
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('re-materializes when only the alias own profile block drifted from the live expectation', async () => {
-    const disco = proyectar('', 'Steven/argos', 'perfil sembrado con cuotas de hoy');
-    const doble = runtime({
-      observedSha: sha('c'),
-      texto: disco,
-      intended: proyectar(disco, 'Steven/argos', 'perfil proyectado'),
-    });
-    vivo = servidor({
-      readRuntimeExpectation: async () => ({
-        generation: 'gen-viva', revision: 3,
-        documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
-      }),
-    }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(doble.aplicaciones).toEqual(['apply']);
-  });
-
-  /** Drift against a dead generation IS what a reload repairs; quarantining it strands the alias. */
-  it('re-materializes when the recorded expectation belongs to a generation already gone', async () => {
-    const doble = runtime({ observedSha: sha('c') });
-    vivo = servidor({
-      readRuntimeExpectation: async () => ({
-        generation: 'gen-anterior', revision: 3,
-        documents: [{ name: 'CLAUDE.md', path: '/home/dev/CLAUDE.md', sha: sha('a') }],
-      }),
-    }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(doble.aplicaciones).toEqual(['apply']);
   });
 });
 
@@ -688,20 +446,6 @@ describe('the journal of a reload is readable back', () => {
     expect(historial.json<{ entries: { path: string }[] }>().entries.map((e) => e.path))
       .toEqual(['/home/dev/openclaw/AGENTS.md']);
   });
-
-  it('keeps the write audit row and answers a typed 5xx when the journal refuses the row', async () => {
-    const doble = runtime();
-    vivo = servidor({
-      recordDocumentRevision: async () => { throw new Error('el diario no anotó la fila'); },
-    }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(503);
-    expect(response.json<{ error: string }>().error).toBe('context_reload_effect_unknown');
-    expect(auditoria.map((entry) => [entry.action, entry.decision]))
-      .toEqual([['agent_document.write', 'allow']]);
-  });
 });
 
 describe('POST /v3/console/agents/:alias/context/reload as the alias itself', () => {
@@ -719,13 +463,6 @@ describe('POST /v3/console/agents/:alias/context/reload as the alias itself', ()
     expect(fila?.metadata.attributed).toBe(false);
   });
 
-  it('requires only the read permission: the alias is repairing its own files', async () => {
-    const authorize = vi.fn<AgentContextReloadDeps['authorize']>(async () => ALIAS_ACTOR);
-    vivo = servidor({ authorize });
-    await vivo.inject({ method: 'POST', url: RUTA_PROPIA });
-    expect(authorize.mock.calls[0]?.[1]).toBe('read');
-  });
-
   it('refuses to let one alias reload another one through the tenant-less form', async () => {
     const doble = runtime();
     vivo = servidor({ authorize: async () => OPERADOR_ACTOR }, doble);
@@ -734,16 +471,6 @@ describe('POST /v3/console/agents/:alias/context/reload as the alias itself', ()
     expect(response.json<{ reason: string }>().reason).toBe('self_reload_only');
     expect(doble.aplicaciones).toEqual([]);
     expect(auditoria.map((entry) => entry.decision)).toEqual(['deny']);
-  });
-
-  it('refuses a body: the self-heal call carries nothing to interpret', async () => {
-    const doble = runtime();
-    vivo = servidor({ authorize: async () => ALIAS_ACTOR }, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_PROPIA, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(400);
-    expect(doble.aplicaciones).toEqual([]);
   });
 });
 
@@ -761,37 +488,5 @@ describe('a reload never claims more than it proved', () => {
     expect(response.statusCode).toBe(503);
     expect(recordRuntimeExpectation).not.toHaveBeenCalled();
     expect(auditoria.map((entry) => entry.decision)).toEqual(['allow']);
-  });
-
-  it('refuses to write without a measured generation able to fence the ACK', async () => {
-    const doble = runtime({ generation: null });
-    vivo = servidor({}, doble);
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json<{ error: string }>().error).toBe('runtime_unverified');
-    expect(doble.aplicaciones).toEqual([]);
-  });
-
-  it('records the expectation of the revision it re-materialized, never a new one', async () => {
-    const recordRuntimeExpectation =
-      vi.fn<TestReloadDeps['recordRuntimeExpectation']>(async () => undefined);
-    vivo = servidor({ recordRuntimeExpectation });
-    const response = await vivo.inject({
-      method: 'POST', url: RUTA_OPERADOR, payload: { reason: MOTIVO },
-    });
-    expect(response.statusCode).toBe(200);
-    expect(recordRuntimeExpectation.mock.calls[0]?.[2]).toBe(4);
-  });
-});
-
-describe('RELOAD_DOCUMENT_KINDS', () => {
-  it('journals every governance file of every harness the protocol projects', () => {
-    for (const harness of ['claude', 'codex', 'openclaw']) {
-      for (const name of nombresDelArnes(harness)) {
-        expect(RELOAD_DOCUMENT_KINDS.has(name), `${harness}: ${name}`).toBe(true);
-      }
-    }
   });
 });

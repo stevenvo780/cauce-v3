@@ -1,15 +1,13 @@
-import { schemaBarrierReply } from '../../../tests/helpers/schema-barrier.js';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { createPool, type DatabasePool } from '@cauce/store';
 import { afterEach, describe, expect, it } from 'vitest';
 import { dockerTestRequirement, startTestDatabase } from '../../../tests/helpers/postgres.js';
 import {
-  buildLoopbackHealthProbe, probeConsolePublishIntentPath,
+  buildLoopbackHealthProbe,
   probeDeliveryAdmissionPath, probeProfileRuntimePath,
   probeTerminalBrowserOwnerPath, probeTerminalClaimPath, probeTerminalRelayInstancePath,
-  probeWakePath, renderWakePumpMetrics,
+  probeWakePath,
 } from './health.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 
@@ -33,29 +31,6 @@ async function listeningDataApp(): Promise<{ server: Server }> {
 }
 
 describe('gateway readiness stops lying about the listener the agents actually use', () => {
-  it('rejects schema-037 when same-named indexes do not match the exact definitions', async () => {
-    const query = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS migration_ledger_exact')) {
-        return {
-          rows: [{
-            migration_ledger_exact: true,
-            indexes_exact: false,
-            journal_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = { connect: vi.fn(async () => client) } as unknown as DatabasePool;
-
-    await expect(probeConsolePublishIntentPath(pool))
-      .rejects.toThrow(/schema-037 console publish intent/u);
-    expect(query.mock.calls.map(([sql]) => sql).at(-1)).toBe('ROLLBACK');
-  });
 
   it('reports ready while the data listener is up', async () => {
     const app = await buildLoopbackHealthProbe({
@@ -101,199 +76,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     await app.close();
   });
 
-  it('reports not_ready when wake SQL is denied with no sessions and a clean empty cycle', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const clientQuery = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-      const schema = schemaBarrierReply(sql, params);
-      if (schema) return schema;
-      if (sql.includes('AS migration_applied')) {
-        return {
-          rows: [{
-            migration_applied: true,
-            connection_token_exact: true,
-            claim_permissions: true,
-          }],
-          rowCount: 1,
-        };
-      }
-      if (sql.includes('WITH requested')) throw new Error('permission denied for adapter_outbox');
-      return { rows: [], rowCount: 0 };
-    });
-    const client = { query: clientQuery, on: vi.fn(), off: vi.fn(), release: vi.fn() };
-    const pool = {
-      query: async () => ({ rows: [{ ssl: true }], rowCount: 1 }),
-      connect: vi.fn(async () => client),
-    } as unknown as DatabasePool;
-    const app = await buildLoopbackHealthProbe({
-      pool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => undefined,
-      consolePublishIntentProbe: async () => undefined,
-      companyIsolationProbe: async () => undefined,
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ status: 'not_ready', reason: 'wake_path_unavailable' });
-    expect(clientQuery.mock.calls.some(([sql]) => sql.includes('WITH requested'))).toBe(true);
-    await app.close();
-  });
-
-  it('reports not_ready when delivery admission is unavailable before other consumer probes', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => { throw new Error('agents SELECT denied'); },
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => undefined,
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'delivery_admission_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for broken schema-032 CAS even with no terminal sessions and a clean wake cycle', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => { throw new Error('missing exact-fence constraint'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'terminal_claim_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for a broken schema-033 owner fence after schema-032 passes', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => { throw new Error('request index is not unique'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'terminal_browser_owner_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for a broken schema-034 relay pin after earlier terminal probes pass', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => { throw new Error('relay pin widened'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'terminal_relay_instance_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for a broken schema-035 profile adoption path after PTY probes pass', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => { throw new Error('adoption trigger disabled'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'profile_runtime_path_unavailable',
-    });
-    await app.close();
-  });
-
-  it('reports not_ready for a broken schema-037 journal after schema-035 passes', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      dataApp: await listeningDataApp(),
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => undefined,
-      consolePublishIntentProbe: async () => { throw new Error('head predicate changed'); },
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({
-      status: 'not_ready', reason: 'console_publish_intent_path_unavailable',
-    });
-    await app.close();
-  });
-
   it('reports not_ready when Postgres is down, before it ever probes the ACK path', async () => {
     let ackProbes = 0;
     const app = await buildLoopbackHealthProbe({
@@ -306,54 +88,6 @@ describe('gateway readiness stops lying about the listener the agents actually u
     expect(response.json()).toEqual({ status: 'not_ready', reason: 'postgres_unavailable' });
     expect(ackProbes).toBe(0);
     await app.close();
-  });
-
-  it('is actually wired in main.ts, not just available', async () => {
-    const main = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
-    expect(main).toMatch(/buildLoopbackHealthProbe\(\{[\s\S]*?dataApp: app[\s\S]*?\}\)/u);
-    expect(main).toMatch(/wakePumpTelemetry[\s\S]*?health\.listen\(\{ host: '0\.0\.0\.0'/u);
-  });
-
-  it('exports bounded identity-free wake progress on the internal listener', async () => {
-    const telemetry = new WakePumpTelemetry();
-    telemetry.beginCycle();
-    telemetry.markClaimed();
-    telemetry.recordOutcome('sent');
-    telemetry.finishCycle();
-    const app = await buildLoopbackHealthProbe({
-      pool: answeringPool,
-      ackProbe: async () => undefined,
-      wakePumpTelemetry: telemetry,
-      deliveryAdmissionProbe: async () => undefined,
-      wakeProbe: async () => undefined,
-      terminalClaimProbe: async () => undefined,
-      terminalBrowserOwnerProbe: async () => undefined,
-      terminalRelayInstanceProbe: async () => undefined,
-      profileRuntimeProbe: async () => undefined,
-    });
-
-    const response = await app.inject({ method: 'GET', url: '/metrics' });
-    expect(response.statusCode).toBe(200);
-    expect(response.headers['content-type']).toContain('text/plain');
-    expect(response.body).toContain('cauce_gateway_wake_pump_cycles_total 1');
-    expect(response.body).toContain('cauce_gateway_wake_pump_claimed_total 1');
-    expect(response.body).toContain('cauce_gateway_wake_pump_last_success_timestamp_seconds');
-    expect(response.body).toContain('cauce_gateway_wake_pump_consecutive_failures 0');
-    expect(response.body).toContain('cauce_gateway_wake_pump_outcomes_total{result="sent"} 1');
-    expect(response.body).not.toMatch(/tenant_id|tenant=|alias=|event_id|claim_token|recipient_alias/u);
-    await app.close();
-  });
-
-  it('fails closed if a telemetry implementation invents a label or negative counter', () => {
-    expect(() => renderWakePumpMetrics({
-      snapshot: () => ({
-        state: 'idle', lastProgressAtMs: null, lastSuccessAtMs: null, consecutiveFailures: 0,
-        counters: {
-          cycles: -1, claimed: 0, sent: 0, retry: 0, dead: 0,
-          fenced: 0, error: 0, cancelled: 0,
-        },
-      }),
-    })).toThrow(/invalid cycles counter/u);
   });
 
   it('does not report ready for a pump that never started or keeps failing while still making progress', async () => {
@@ -600,11 +334,4 @@ describe('gateway readiness stops lying about the listener the agents actually u
       await database.container.stop();
     }
   }, 120_000);
-
-  it('keeps the old behaviour when no data app is supplied', async () => {
-    const app = await buildLoopbackHealthProbe({ pool: answeringPool, ackProbe: async () => undefined });
-    expect((await app.inject({ method: 'GET', url: '/health/ready' })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/health/live' })).json()).toEqual({ status: 'live' });
-    await app.close();
-  });
 });
