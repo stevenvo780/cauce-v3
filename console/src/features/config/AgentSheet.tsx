@@ -12,6 +12,8 @@ import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { AgentRemovalDialog } from './AgentRemovalDialog';
 import { GroupsTab, SummaryTab } from './AgentSheetTabs';
+import { AmpliacionesTab } from './AmpliacionesTab';
+import { ConsoleAccessBoundary } from '../../api/console-access';
 import { teamBlock } from './team-access';
 import { TeamFormDialog } from './TeamFormDialog';
 import type { ConfigWrites } from './use-config-writes';
@@ -21,7 +23,7 @@ import type { ConfigMutationNotice } from './use-config-mutation';
 
 const TAB = 'cursor-pointer whitespace-nowrap border-0 border-b-2 border-transparent bg-transparent px-3 py-2.5 text-[13px] font-medium text-muted outline-none '
   + 'transition-colors hover:text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand data-[active]:border-brand data-[active]:text-fg';
-const TAB_LABEL: Record<SheetTab, string> = { resumen: 'Resumen', registro: 'Registro', operacion: 'Operación', grupos: 'Grupos' };
+const TAB_LABEL: Record<SheetTab, string> = { resumen: 'Resumen', registro: 'Registro', operacion: 'Operación', grupos: 'Grupos', ampliaciones: 'Ampliaciones' };
 
 export interface SheetIntent { tab: SheetTab; kind?: 'retire' | 'purge'; remove?: boolean }
 
@@ -45,7 +47,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
 }) {
   const view = agentView(agent, snapshot, hosts);
   const editable = agent.registered && !retired;
-  const tabs: SheetTab[] = editable ? ['resumen', 'registro', 'operacion', 'grupos'] : ['resumen', 'grupos'];
+  const tabs: SheetTab[] = editable ? ['resumen', 'registro', 'operacion', 'ampliaciones', 'grupos'] : ['resumen', 'grupos'];
   const [tab, setTab] = useState<SheetTab>(tabs.includes(intent.tab) ? intent.tab : 'resumen');
   const [visited, setVisited] = useState<ReadonlySet<SheetTab>>(() => new Set([tab]));
   const [dirtySources, setDirtySources] = useState<ReadonlySet<SheetTab>>(new Set());
@@ -58,14 +60,14 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
 
   useEffect(() => { if (confirming) keepEditing.current?.focus(); }, [confirming]);
 
-  const markers = useMemo(() => Object.fromEntries((['registro', 'operacion', 'grupos'] as const).map((id) => [id, (value: boolean) => {
+  const markers = useMemo(() => Object.fromEntries((['registro', 'operacion', 'grupos', 'ampliaciones'] as const).map((id) => [id, (value: boolean) => {
     setDirtySources((previous) => {
       if (previous.has(id) === value) return previous;
       const next = new Set(previous);
       if (value) next.add(id); else next.delete(id);
       return next;
     });
-  }])) as Record<'registro' | 'operacion' | 'grupos', (value: boolean) => void>, []);
+  }])) as Record<'registro' | 'operacion' | 'grupos' | 'ampliaciones', (value: boolean) => void>, []);
 
   function requestClose() {
     if (dirty) setConfirming(true); else onClose();
@@ -137,6 +139,10 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
               : id === 'grupos' ? <GroupsTab agent={agent} view={view} snapshot={snapshot} onReloaded={onReloaded} onDirtyChange={markers.grupos}
                 onEditTeam={ctx ? (row) => { ctx.openForm({ collection: 'rooms', action: 'update', row }, true); } : undefined}
                 editBlock={ctx ? (row) => teamBlock(ctx, 'update', row) : undefined} />
+                : id === 'ampliaciones' ? <ErrorBoundary label={`Ampliaciones de ${view.ref}`} onReset={() => { select('resumen'); }}>
+                  <ConsoleAccessBoundary><AmpliacionesTab tenantId={agent.tenantId} alias={agent.alias} snapshot={snapshot} hostId={view.hostId}
+                    onReloaded={onReloaded} onDirtyChange={markers.ampliaciones} /></ConsoleAccessBoundary>
+                </ErrorBoundary>
                 : id === 'registro' ? <ErrorBoundary label={`Registro de ${view.ref}`} onReset={() => { select('resumen'); }}>
                   <AgentRegistryEditor snapshot={snapshot} hosts={hosts} onReloaded={onReloaded} tenantId={agent.tenantId}
                     alias={agent.alias} onDeleted={onDeleted} initialOpen hideTrigger embedded onDirtyChange={markers.registro} />

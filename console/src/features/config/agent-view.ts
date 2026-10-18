@@ -34,7 +34,7 @@ export function agentView(agent: SettingsAgent, snapshot: ConfigurationSnapshot,
   };
 }
 
-export type SheetTab = 'resumen' | 'registro' | 'operacion' | 'grupos';
+export type SheetTab = 'resumen' | 'registro' | 'operacion' | 'grupos' | 'ampliaciones';
 
 /** `Tenant/alias` from the deep-link value; both halves must be present. */
 export function parseAgentRef(value: string | null | undefined): { tenantId: string; alias: string } | undefined {

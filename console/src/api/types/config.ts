@@ -10,12 +10,13 @@ export type ConfigResource =
  * `authorizeMutation` did not add them to the self-service list, so a non-hub tenant gets 403.
  */
 type RegistryConfigResource =
-  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding';
+  | 'agent' | 'provider_account' | 'alias_routing_ceiling' | 'agent_account_binding'
+  | 'agent_extensions' | 'host_extensions_allowed';
 export type AnyConfigResource = ConfigResource | RegistryConfigResource;
 export type ConfigAction = 'create' | 'update' | 'delete' | 'retire' | 'restore';
 export type ConfigLeafMutation = Record<string, unknown> & {
   resource: AnyConfigResource;
-  action: ConfigAction;
+  action: ConfigAction | 'set';
 };
 export type ConfigMutation = ConfigLeafMutation | (Record<string, unknown> & {
   resource: 'batch'; action: 'apply'; mutations: ConfigLeafMutation[];
@@ -76,6 +77,7 @@ export interface ConfigurationSnapshot {
   agent_account_bindings?: Record<string, unknown>[] | null;
   /** Diagnostic read-only copy; writes use the canonical Profile API. */
   agent_profiles?: Record<string, unknown>[] | null;
+  host_extensions_allowed?: Record<string, unknown>[] | null;
   revisions?: ConfigRevision[] | null;
 }
 
