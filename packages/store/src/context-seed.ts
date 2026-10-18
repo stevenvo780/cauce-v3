@@ -15,15 +15,16 @@ export interface ContextSeedResult extends ContextTarget {
 const MAX_NATIVE_BYTES = 262_144;
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
-/** Agents of enabled companies and tenants that are neither retired nor purged; the aliases people act through are not agents. */
+/** A configured runtime remains an agent even when a person also acts through its alias. */
 export async function activeContextTargets(pool: DatabasePool, company?: string): Promise<ContextTarget[]> {
   return (await pool.query<ContextTarget>(`SELECT tenant.company_id,agent.tenant_id,agent.alias FROM agents agent
     JOIN tenants tenant ON tenant.id=agent.tenant_id JOIN companies company ON company.id=tenant.company_id
     WHERE agent.retired_at IS NULL AND agent.purged_at IS NULL AND tenant.enabled AND tenant.retired_at IS NULL
       AND tenant.purged_at IS NULL AND company.enabled AND company.retired_at IS NULL AND ($1::text IS NULL OR tenant.company_id=$1)
-      AND NOT EXISTS (SELECT 1 FROM console_users person WHERE person.tenant_id=agent.tenant_id AND person.alias=agent.alias)
+      AND ((agent.runtime_key IS NOT NULL AND agent.harness_id IS NOT NULL AND agent.container_name IS NOT NULL)
+      OR (NOT EXISTS (SELECT 1 FROM console_users person WHERE person.tenant_id=agent.tenant_id AND person.alias=agent.alias)
       AND NOT EXISTS (SELECT 1 FROM human_tenant_memberships human
-        WHERE human.tenant_id=agent.tenant_id AND human.actor_alias=agent.alias)
+        WHERE human.tenant_id=agent.tenant_id AND human.actor_alias=agent.alias)))
     ORDER BY tenant.company_id,agent.tenant_id,agent.alias`, [company ?? null])).rows;
 }
 
