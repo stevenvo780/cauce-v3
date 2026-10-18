@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Sha256HexSchema } from './schemas/core.js';
 
 export const EXTENSION_TYPES = ['mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control'] as const;
 export const ExtensionTypeSchema = z.enum(EXTENSION_TYPES);
@@ -7,7 +8,8 @@ export type ExtensionType = z.infer<typeof ExtensionTypeSchema>;
 const AbsolutePathSchema = z.string().min(1).max(4096).regex(/^\/[^\p{Cc}:,]*$/u)
   .refine(value => value === '/' || value.slice(1).split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..'),
     'Use an absolute path without empty, dot or parent segments');
-const NetworkNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u)
+const ExtensionNameSchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u);
+const NetworkNameSchema = ExtensionNameSchema
   .refine(value => value !== 'host' && value !== 'none', 'Use an isolated Docker network');
 const EnvironmentNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/u);
 const HostSchema = z.union([z.hostname().max(253), z.ipv4(), z.ipv6()]);
@@ -64,7 +66,7 @@ export const ExtensionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('docker'), access: z.enum(['read', 'control']) }).strict(),
   BrowserExtensionSchema,
   z.object({
-    type: z.literal('mcp'), name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u),
+    type: z.literal('mcp'), name: ExtensionNameSchema,
     command: z.string().min(1).max(512).regex(/^[^\p{Cc}\s]+$/u),
     args: z.array(z.string().max(4096).regex(/^[^\p{Cc}]*$/u)).max(100),
     env: z.array(EnvironmentNameSchema).max(100),
@@ -110,6 +112,26 @@ export const ExtensionsAllowedSchema = z.object({
   }
 });
 export type ExtensionsAllowed = z.infer<typeof ExtensionsAllowedSchema>;
+
+export const ExtensionPreparationReceiptSchema = z.object({
+  extensions_sha256: Sha256HexSchema,
+  ssh: z.object({
+    public_key: z.string().max(512).regex(/^ssh-ed25519 [A-Za-z0-9+/]{68}(?: [^\p{Cc}]{1,128})?$/u),
+    fingerprint: z.string().regex(/^SHA256:[A-Za-z0-9+/]{43}$/u),
+    hosts: z.array(SshHostSchema).min(1).max(100),
+  }).strict().optional(),
+  mcp: z.object({
+    harness: z.enum(['claude', 'codex', 'openclaw', 'grok', 'muse']),
+    path: z.enum(['.claude.json', 'config.toml', 'openclaw.json', 'config/muse/settings.json']),
+    names: z.array(ExtensionNameSchema).max(100), removed: z.array(ExtensionNameSchema).max(100),
+  }).strict().optional(),
+  tools: z.object({ packages: z.array(FixedToolPackageSchema).min(1).max(100) }).strict().optional(),
+  browser: z.object({
+    mode: z.literal('ssh_tunnel'), host: HostSchema, port: PortSchema,
+    cdp_url: z.url().max(128).regex(/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u),
+  }).strict().optional(),
+}).strict();
+export type ExtensionPreparationReceipt = z.infer<typeof ExtensionPreparationReceiptSchema>;
 
 export function agentExtensionsPolicyViolation(extensions: AgentExtensions, allowed: ExtensionsAllowed): string | undefined {
   for (const extension of extensions) {

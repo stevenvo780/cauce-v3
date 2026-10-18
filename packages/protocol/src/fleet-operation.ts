@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from './patterns.js';
 import { AliasSchema, TenantSchema, Sha256HexSchema } from './schemas/core.js';
 import { ConfigurationDependencySchema } from './configuration-identity.js';
-import { AgentExtensionsSchema, ExtensionsAllowedSchema } from './agent-extensions.js';
+import { AgentExtensionsSchema, ExtensionPreparationReceiptSchema, ExtensionsAllowedSchema } from './agent-extensions.js';
 
 export const RuntimeKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const IdentifierSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
@@ -82,6 +82,7 @@ export const FleetOperationStatusSchema = z.enum(['queued', 'running', 'awaiting
 export const AgentLifecycleSchema = z.enum(['draft', 'provisioning', 'auth_pending', 'verifying', 'ready', 'failed', 'retiring', 'retired']);
 export const FleetStepNameSchema = z.enum(['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge']);
 export const FleetEvidenceSchema = z.object({
+  extensions_receipt: ExtensionPreparationReceiptSchema.optional(),
   artifact_sha256: Sha256HexSchema.optional(), runtime_digest: Sha256HexSchema.optional(),
   certificate_fingerprint: Sha256HexSchema.optional(), authority_verified: z.boolean().optional(),
   provider_verified: z.boolean().optional(), hello_verified: z.boolean().optional(),

@@ -1,9 +1,10 @@
 import type { FleetPurgeResource } from '@cauce/protocol/fleet-operation';
+import type { AgentExtensions } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 
 interface PurgedAgent {
   container_name: string | null; runtime_mode: string | null; state_directory: string | null;
-  sharing: string;
+  sharing: string; extensions: AgentExtensions;
 }
 
 const LABELS = 'solo si lleva las etiquetas cauce.fleet esperadas';
@@ -15,7 +16,7 @@ const LABELS = 'solo si lleva las etiquetas cauce.fleet esperadas';
  * The executor decides again on what it observes, so this is the plan, not the outcome.
  */
 export async function fleetPurgeResources(client: DatabaseClient, tenantId: string, alias: string): Promise<FleetPurgeResource[]> {
-  const agent = (await client.query<PurgedAgent>(`SELECT agent.container_name,agent.runtime_mode,agent.state_directory,
+  const agent = (await client.query<PurgedAgent>(`SELECT agent.container_name,agent.runtime_mode,agent.state_directory,agent.extensions,
       (SELECT count(*)::text FROM agents other WHERE other.container_name=agent.container_name AND other.purged_at IS NULL
         AND NOT (other.tenant_id=agent.tenant_id AND other.alias=agent.alias)) AS sharing
     FROM agents agent WHERE agent.tenant_id=$1 AND agent.alias=$2`, [tenantId, alias])).rows[0];
@@ -32,9 +33,15 @@ export async function fleetPurgeResources(client: DatabaseClient, tenantId: stri
   if (agent.sharing !== '0') {
     return [{ type: 'container', name, action: 'keep', reason: `Contenedor compartido con ${agent.sharing} agente(s) más: solo se retiran los restos del alias.` }];
   }
-  return [
+  const resources: FleetPurgeResource[] = [
     { type: 'container', name, action: 'delete', reason: `Contenedor propio del agente, ${LABELS}.` },
     { type: 'volume', name: `${name}-state`, action: 'delete', reason: `Volumen de estado, ${LABELS}.` },
     { type: 'volume', name: `${name}-provider-profiles`, action: 'delete', reason: `Volumen de perfiles de proveedor (si existe), ${LABELS}.` },
   ];
+  const docker = agent.extensions.some(extension => extension.type === 'docker');
+  const browser = agent.extensions.some(extension => extension.type === 'browser' && extension.mode === 'sidecar');
+  if (docker) resources.push({ type: 'container', name: `${name}-docker-proxy`, action: 'delete', reason: `Proxy Docker del agente, ${LABELS}.` });
+  if (browser) resources.push({ type: 'container', name: `${name}-browser`, action: 'delete', reason: `Navegador del agente, ${LABELS}.` });
+  if (docker || browser) resources.push({ type: 'network', name: `${name}-sidecars`, action: 'delete', reason: `Red privada de los sidecars del agente, ${LABELS}.` });
+  return resources;
 }
