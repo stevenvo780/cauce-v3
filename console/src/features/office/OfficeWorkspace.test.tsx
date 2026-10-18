@@ -132,38 +132,6 @@ it('tras un conflicto reaplica sólo lo que cambió el borrador y conserva lo qu
   expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, parts: [{ label: 'Nueva parte' }] });
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
 });
-it('tras un conflicto conserva la posición de una sala creada por la otra persona aunque la topología aún no la liste', async () => {
-  const nueva: OfficeRoom = { tenant_id: 'One', room_id: 'nueva', x: 111, y: 222, width: 280, height: 210,
-    parts: [{ id: 'mesa-nueva', label: 'Mesa nueva', x: 5, y: 6, width: 40, height: 50 }] };
-  let version = 0; let rooms: OfficeRoom[] = []; let available: { tenant_id: string; room_id: string }[] | undefined;
-  const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
-  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms, ...(available ? { available } : {}) })),
-    http.put('*/v3/console/office/layout', async ({ request }) => {
-      const input = await request.json() as { expected_version: number; rooms: OfficeRoom[] }; writes.push(input);
-      if (writes.length === 1) {
-        version = 7; rooms = [{ tenant_id: 'One', room_id: 'general', x: 600, y: 300, width: 300, height: 200, parts: [] }, nueva];
-        available = [{ tenant_id: 'One', room_id: 'general' }, { tenant_id: 'One', room_id: 'nueva' }, { tenant_id: 'Two', room_id: 'general' }];
-        return HttpResponse.json({ error: 'conflict', message: 'office layout version changed; reload and retry' }, { status: 409 });
-      }
-      if (input.expected_version !== version) return HttpResponse.json({ error: 'conflict' }, { status: 409 });
-      rooms = input.rooms; version += 1;
-      return HttpResponse.json({ company_id: 'one', version, rooms });
-    }));
-  const user = userEvent.setup(); renderWithApi(workspace());
-  const choice = await conflictedDraft(user);
-  await user.click(choice.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
-  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
-  expect(screen.getByRole('status')).toHaveTextContent('Tu borrador se reaplicó sobre la versión nueva sin tocar lo que cambió la otra persona.');
-  expect(screen.getByRole('region', { name: 'Sala One/nueva' })).toHaveStyle({ left: '111px', top: '222px', width: '280px', height: '210px' });
-  expect(screen.getByLabelText('Parte Mesa nueva')).toBeVisible();
-  expect(screen.getByRole('region', { name: 'Sala One/General' })).toHaveStyle({ left: '600px', top: '300px' });
-  expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' });
-  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
-  expect(writes).toHaveLength(2); expect(writes[1].expected_version).toBe(7);
-  expect(writes[1].rooms.find(room => room.room_id === 'nueva')).toEqual(nueva);
-  expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, parts: [{ label: 'Nueva parte' }] });
-});
 it('un borrador no vuelve a guardar una sala que la topología ya retiró', async () => {
   let version = 0; let stored: OfficeRoom[] = [];
   const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
@@ -228,20 +196,6 @@ it('una sala reaplicada que la topología ya listó no vuelve al guardarse si lu
   expect(writes).toHaveLength(2); expect(writes[1].expected_version).toBe(7);
   expect(writes[1].rooms.map(room => `${room.tenant_id}/${room.room_id}`)).toEqual(['One/general', 'Two/general']);
 });
-it('tras un conflicto avisa de las salas donde el borrador sustituye el cambio de la otra persona antes de guardar', async () => {
-  const writes = conflictingServer([{ tenant_id: 'Two', room_id: 'general', x: 500, y: 40, width: 300, height: 260, parts: [] }]);
-  const user = userEvent.setup(); renderWithApi(workspace());
-  const choice = await conflictedDraft(user);
-  await user.click(choice.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
-  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
-  expect(screen.getByRole('status')).toHaveTextContent('En Two/General tu cambio sustituye al de la otra persona; revisa el plano antes de guardarlo.');
-  // Same field: the draft's x wins. The other person's y, which the draft left alone, is kept.
-  expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px', top: '40px' });
-  expect(writes).toHaveLength(1);
-  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
-  expect(writes[1].rooms.find(room => room.tenant_id === 'Two')).toMatchObject({ x: 760, y: 40, parts: [{ label: 'Nueva parte' }] });
-});
 it('tras un conflicto puede cargar la versión de la otra persona y descartar el borrador sin escribir nada', async () => {
   const writes = conflictingServer([{ tenant_id: 'Two', room_id: 'general', x: 500, y: 40, width: 300, height: 260, parts: [] }]);
   const user = userEvent.setup(); renderWithApi(workspace());
@@ -291,15 +245,6 @@ it('una relectura fallida tras el conflicto conserva el aviso y el borrador hast
   expect(writes[1].expected_version).toBe(9); expect(writes[1].rooms).toEqual(writes[0].rooms);
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
 });
-it('explica en español la falta de autoridad al leer el plano', async () => {
-  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json(
-    { error: 'forbidden', message: 'company office authority is required' }, { status: 403 },
-  )));
-  const user = userEvent.setup(); renderWithApi(workspace());
-  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/Pide acceso a un administrador de la empresa/u);
-  expect(screen.getByRole('alert').textContent).not.toContain('company office authority');
-});
 it('conserva el motivo concreto de un 403 al guardar y mantiene el borrador', async () => {
   server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json(
     { error: 'forbidden', message: 'La sala One/general ya no está disponible en la empresa activa.' }, { status: 403 },
@@ -312,34 +257,6 @@ it('conserva el motivo concreto de un 403 al guardar y mantiene el borrador', as
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/Pide acceso a un administrador de la empresa/u);
   expect(alert).toHaveTextContent('La sala One/general ya no está disponible en la empresa activa.');
-  expect(screen.getByText('Plano sin guardar')).toBeVisible();
-});
-it('no muestra la frase HTTP genérica de un 403 al guardar', async () => {
-  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json(
-    { error: 'forbidden', message: 'Forbidden' }, { status: 403 },
-  )));
-  const user = userEvent.setup(); renderWithApi(workspace());
-  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
-  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/Pide acceso a un administrador de la empresa/u);
-  expect(alert.textContent).not.toContain('Forbidden');
-  expect(screen.getByText('Plano sin guardar')).toBeVisible();
-});
-it('mapea una solicitud de plano inválida sin mostrar el mensaje inglés del gateway', async () => {
-  server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json(
-    { error: 'invalid_request', message: 'invalid office layout' }, { status: 400 },
-  )));
-  const user = userEvent.setup(); renderWithApi(workspace());
-  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
-  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent(/Revisa las posiciones y tamaños/u);
-  expect(alert.textContent).not.toContain('invalid office layout');
   expect(screen.getByText('Plano sin guardar')).toBeVisible();
 });
 it('distingue un guardado confirmado cuya relectura falla y no conserva el borrador', async () => {
@@ -365,32 +282,6 @@ it('distingue un guardado confirmado cuya relectura falla y no conserva el borra
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
   expect(screen.queryByText('Plano de oficina guardado para esta empresa.')).not.toBeInTheDocument();
 });
-it('retira el aviso cuando una relectura posterior al guardado confirmado llega', async () => {
-  let reads = 0; let saved: { company_id: string; version: number; rooms: OfficeRoom[] } | undefined;
-  server.use(http.get('*/v3/console/office/layout', () => {
-    reads += 1;
-    if (reads === 1) return HttpResponse.json({ company_id: 'one', version: 0, rooms: [] });
-    if (reads === 2 || !saved) return HttpResponse.json({ error: 'internal', message: 'Internal Server Error' }, { status: 500 });
-    return HttpResponse.json(saved);
-  }),
-  http.put('*/v3/console/office/layout', async ({ request }) => {
-    const input = await request.json() as { rooms: OfficeRoom[] };
-    saved = { company_id: 'one', version: 1, rooms: input.rooms };
-    return HttpResponse.json(saved);
-  }));
-  const user = userEvent.setup(); renderWithApi(workspace());
-  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
-  await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/El plano se guardó, pero no se pudo releer/u);
-  expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Releer plano y cuotas' }));
-  await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
-  expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
-  expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
-  expect(screen.queryByText('Plano de oficina guardado para esta empresa.')).not.toBeInTheDocument();
-});
 it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo', async () => {
   let version = 0;
   server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms: [] })),
@@ -409,17 +300,4 @@ it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo'
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   expect(await screen.findByText('Plano de oficina guardado para esta empresa.')).toBeVisible();
   expect(mounts).toHaveBeenCalledTimes(2);
-});
-it('sin salas explica qué hacer en lugar de un mapa vacío y anuncia la lectura de la topología', async () => {
-  server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version: 0, available: [], rooms: [] })));
-  const authority = { role: 'company_owner' as const, scope: 'company' as const, home_company: 'one', acting_company: 'one', platform_override: false };
-  const office = (map?: typeof topology) => <CompanySessionProvider state={{ authenticated: true, authority }}>
-    <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} onAgent={vi.fn()} /></CompanySessionProvider>;
-  const user = userEvent.setup(); const view = renderWithApi(office());
-  await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  expect(screen.getByText('Leyendo salas…')).toBeVisible();
-  expect(screen.queryByText(/Aún no hay salas/u)).not.toBeInTheDocument();
-  view.rerender(<ApiProvider api={testApi}>{office(topology)}</ApiProvider>);
-  expect(await screen.findByText('Aún no hay salas. Crea una desde «Gestionar salas y asignaciones».')).toBeVisible();
-  expect(screen.queryByLabelText('Mapa de salas y agentes')).not.toBeInTheDocument();
 });

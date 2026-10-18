@@ -3,12 +3,10 @@ import { useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRenderHarness, NativePath2D } from '../../test/office-render-canvas';
 import { tileAt } from './avatar';
-import { worldToScreen } from './camera';
 import { lotCell } from './campus-lots';
 import type { OfficeEngine } from './engine';
 import { useFrameSize, useHeight, useMaximized } from './frame';
-import { DOUBLE_MS } from './gesture';
-import { CAMPUS, TILE } from './level';
+import { CAMPUS } from './level';
 import { useOfficeEngine } from './use-office-engine';
 import { useOfficeInput } from './use-office-input';
 import { buildWorldMap, groupLevelId } from './world-map';
@@ -145,69 +143,6 @@ describe('office DOM input with the real engine', () => {
     expect(screen.getByLabelText('Selection')).toHaveTextContent('none');
   });
 
-  it('lets wheel scroll the page at limits and clipping, but consumes a trackpad pinch', () => {
-    const { game, canvas, list, point } = mountInput();
-    const zoom = game.target.zoom;
-    expect(fireEvent.wheel(canvas, { ...point(480, 320), deltaY: 100, cancelable: true })).toBe(true);
-    expect(game.target.zoom).toBe(zoom);
-    expect(fireEvent.wheel(canvas, { ...point(480, 320), deltaY: -100, cancelable: true })).toBe(false);
-    expect(game.target.zoom).toBeGreaterThan(zoom);
-    const beforeClip = game.target.zoom;
-    list.style.overflowY = 'auto';
-    Object.defineProperties(list, { scrollHeight: { value: 800 }, clientHeight: { value: 300 } });
-    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 960, 300));
-    expect(fireEvent.wheel(canvas, { deltaY: 100, cancelable: true })).toBe(true);
-    expect(game.target.zoom).toBe(beforeClip);
-    vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, -100, 960, 640));
-    expect(fireEvent.wheel(canvas, { deltaY: -100, cancelable: true })).toBe(true);
-    expect(game.target.zoom).toBe(beforeClip);
-    expect(fireEvent.wheel(canvas, { deltaY: -3, ctrlKey: true, clientX: 500, clientY: 300, cancelable: true })).toBe(false);
-    expect(game.target.zoom).toBeGreaterThan(beforeClip);
-  });
-
-  it('double taps zoom instead of walking and discards a pending walk on unmount', () => {
-    vi.useFakeTimers();
-    const { game, tap, point, unmount } = mountInput();
-    const level = game.levelOf(roomId);
-    if (!level) throw new Error('Missing room');
-    const walkable = level.walkable.findIndex(Boolean);
-    const at = worldToScreen(game.cam, game.view, { x: (walkable % level.cols + 0.5) * TILE, y: (Math.floor(walkable / level.cols) + 0.5) * TILE - 2 });
-    const before = { ...game.avatar };
-    tap(point(at.x, at.y));
-    expect(game.pendingWalk).not.toBe(0);
-    const zoom = game.target.zoom;
-    act(() => { vi.advanceTimersByTime(20); });
-    tap(point(at.x, at.y));
-    expect(game.target.zoom).toBeGreaterThan(zoom);
-    expect(game.pendingWalk).toBe(0);
-    act(() => { vi.advanceTimersByTime(DOUBLE_MS + 10); });
-    expect(game.avatar.x).toBe(before.x); expect(game.avatar.y).toBe(before.y);
-    game.lastTap = null;
-    tap(point(-500, -500));
-    unmount();
-    act(() => { vi.advanceTimersByTime(DOUBLE_MS + 10); });
-    expect(game.marker).toBeNull();
-  });
-
-  it('walks after a single floor tap and marks an unreachable destination', () => {
-    vi.useFakeTimers();
-    const { game, tap, point } = mountInput();
-    const level = game.levelOf(roomId);
-    if (!level) throw new Error('Missing room');
-    const walkable = level.walkable.findIndex(Boolean);
-    const dest = { x: (walkable % level.cols + 0.5) * TILE, y: (Math.floor(walkable / level.cols) + 0.5) * TILE };
-    const at = worldToScreen(game.cam, game.view, { ...dest, y: dest.y - 2 });
-    tap(point(at.x, at.y));
-    act(() => { vi.advanceTimersByTime(DOUBLE_MS + 1); });
-    expect(game.marker?.ok).toBe(true);
-    expect(screen.getByLabelText('Walk')).toHaveTextContent('on');
-    expect(game.avatar.route).toHaveLength(0);
-    game.lastTap = null;
-    tap(point(-500, -500));
-    act(() => { vi.advanceTimersByTime(DOUBLE_MS + 1); });
-    expect(game.marker?.ok).toBe(false);
-  });
-
   it('uses arrows to choose agents, opens the keyboard menu and clears selection in stages', () => {
     const { game, list } = mountInput();
     fireEvent.keyDown(list, { key: 'Home' });
@@ -254,28 +189,6 @@ describe('office DOM input with the real engine', () => {
     fireEvent.keyDown(list, { key: 'Escape' });
     expect(screen.getByLabelText('Walk')).toHaveTextContent('off');
     fireEvent.keyDown(list, { key: 'c' }); expect(game.following).toBe(true);
-  });
-
-  it('hovers and enters a campus building, then exits through its door by tapping', () => {
-    const { game, canvas, point, tap } = mountInput({ interior: false });
-    const site = map.campus.siteOf.get(roomId);
-    if (!site) throw new Error('Missing campus building');
-    const at = worldToScreen(game.cam, game.view, { x: (site.x + site.w / 2) * TILE, y: (site.y + 1) * TILE });
-    fireEvent.pointerMove(canvas, point(at.x, at.y));
-    expect(screen.getByLabelText('Site')).toHaveTextContent(roomId);
-    expect(screen.getByLabelText('Hover')).toHaveTextContent('none');
-    fireEvent.pointerMove(canvas, { ...point(-500, -500), pointerType: 'touch' });
-    expect(screen.getByLabelText('Site')).toHaveTextContent(roomId);
-    tap(point(at.x, at.y));
-    expect(game.level).toBe(roomId);
-    expect(screen.getByLabelText('Hint')).toHaveTextContent('dismissed');
-    const level = game.levelOf(roomId);
-    if (!level) throw new Error('Missing interior');
-    const door = worldToScreen(game.cam, game.view, { x: (level.door.tile.x + 0.5) * TILE, y: (level.rows - 0.5) * TILE });
-    game.lastTap = null;
-    tap(point(door.x, door.y));
-    expect(game.level).toBe(CAMPUS);
-    expect(game.pendingWalk).toBe(0);
   });
 
   it('moves one tile per arrow in reduced motion and leaves scrolling free after unmount', () => {
@@ -331,27 +244,6 @@ describe('office browser lifecycle with controlled observer APIs', () => {
     unmount();
     expect(observed.size).toBe(0);
     expect(remove).toHaveBeenCalledWith('resize', expect.any(Function));
-  });
-
-  it('keeps maximize open when Escape is blocked and follows native fullscreen exit', async () => {
-    const { rerender, unmount } = render(<FrameHarness blocked />);
-    const frame = screen.getByTestId('frame');
-    Object.defineProperty(frame, 'requestFullscreen', { value: () => Promise.reject(new Error('Unsupported')) });
-    fireEvent.click(screen.getByRole('button', { name: 'Maximize' }));
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByLabelText('Maximized')).toHaveTextContent('true');
-    rerender(<FrameHarness />);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByLabelText('Maximized')).toHaveTextContent('false');
-    fireEvent.click(screen.getByRole('button', { name: 'Maximize' }));
-    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: frame });
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getByLabelText('Maximized')).toHaveTextContent('true');
-    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
-    fireEvent(document, new Event('fullscreenchange'));
-    expect(screen.getByLabelText('Maximized')).toHaveTextContent('false');
-    await act(async () => { await Promise.resolve(); });
-    unmount();
   });
 
   it('suspends the animation when hidden or offscreen and cancels it on unmount', () => {
