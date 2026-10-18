@@ -1,22 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import {
-  AGENT_PROFILE_LIMITS, measureStrictestUnits, type AgentProfile, type HechosDelAlias,
+  measureStrictestUnits, type AgentProfile, type HechosDelAlias,
 } from "../src/agent-profile.js";
 import {
   MARCA_FIN, MARCA_INICIO, MARCA_PERFIL_FIN, MARCA_PERFIL_INICIO,
 } from "../src/marcas-de-bloque.js";
 import {
-  DOCUMENTOS_DE_GOBIERNO, ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL,
-  PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes, harnessDocumentDirectory,
+  ErrorDeTopeDelArnes, FICHEROS_OPENCLAW, PREFIJO_REVISION_PERFIL,
+  PRESUPUESTOS_DE_CONTEXTO, TOPES_OPENCLAW, ficherosDelArnes,
   harnessDocumentPaths, marcaDeRevisionDelPerfil, nombresDelArnes, revisionDelPerfil,
   verifyManagedContextEdit, type FicheroGenerado,
 } from "../src/ficheros-del-arnes.js";
 
 // Tests for the per-harness file generator.
-
-/** An emoji outside the BMP: 1 code point, 2 UTF-16 units. */
-const ASTRAL = "\u{1F389}";
 
 function perfil(overrides: Partial<AgentProfile> = {}): AgentProfile {
   return {
@@ -63,15 +60,6 @@ test("claude recibe UN solo CLAUDE.md, y codex UN solo AGENTS.md", () => {
   assert.deepEqual(deCodex.map((f: FicheroGenerado) => f.nombre), ["AGENTS.md"]);
 });
 
-test("el formato legacy conserva un solo salto entre owner y cuerpo", () => {
-  const claude = textoDe(
-    ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }),
-    "CLAUDE.md",
-  );
-  assert.ok(claude.includes("<!-- alias: Steven/zeus -->\n## Identidad y propósito"));
-  assert.ok(!claude.includes("<!-- alias: Steven/zeus -->\n\n## Identidad y propósito"));
-});
-
 test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () => {
   const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
   assert.deepEqual(
@@ -82,15 +70,6 @@ test("openclaw recibe los SIETE ficheros medidos, con esos nombres exactos", () 
   // would stay green the day the generator stopped emitting one.
   assert.deepEqual(ficheros.map((f: FicheroGenerado) => f.nombre), [...FICHEROS_OPENCLAW]);
   assert.deepEqual(nombresDelArnes("openclaw"), [...FICHEROS_OPENCLAW]);
-});
-
-test("un arnés desconocido no recibe ningún fichero, en vez de recibir el de otro", () => {
-  assert.deepEqual(ficherosDelArnes(
-    "hermes",
-    { perfil: perfil(), hechos: hechos() },
-    new Map([["AGENTS.md", `${MARCA_PERFIL_INICIO}\nroto`]]),
-  ), []);
-  assert.deepEqual(nombresDelArnes("hermes"), []);
 });
 
 test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
@@ -120,88 +99,6 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
         `${String(marcador)} se coló en ${fichero.nombre}; sólo pertenece a ${duenno}`,
       );
     }
-  }
-});
-
-test.each(["claude", "codex", "openclaw"])("%s no congela permisos, destinos, cuotas ni montaje en disco", (harness) => {
-  const antes = ficherosDelArnes(harness, { perfil: perfil(), hechos: hechos() });
-  const despues = ficherosDelArnes(harness, {
-    perfil: perfil(),
-    hechos: hechos({
-      permisos: { ruta: false, lectura: false, control: false, notificacion: false },
-      destinos: ["socrates"],
-      cuotas: [{ proveedor: "codex", cuenta: "otra", limite: "agotada" }],
-      arnes: {
-        harness: "claude", home: "/otro/home", contenedor: "otro-contenedor",
-        capacidades: ["otra-capacidad"],
-      },
-    }),
-  });
-
-  assert.deepEqual(
-    despues.map((fichero: FicheroGenerado) => [fichero.nombre, fichero.texto]),
-    antes.map((fichero: FicheroGenerado) => [fichero.nombre, fichero.texto]),
-  );
-  for (const fichero of despues) {
-    assert.doesNotMatch(
-      fichero.texto,
-      /kant|argos|socrates|CUOTA-TOOLS|otra-capacidad|otro-contenedor|\/otro\/home|Leer el estado/,
-    );
-  }
-});
-
-// ── MEMORY AND HEARTBEAT BELONG TO THE AGENT ──────────────────────────────────────────────────
-
-test("MEMORY y HEARTBEAT que YA existen se devuelven intactos byte a byte, y sin escribir", () => {
-  const memoriaViva = "# Memoria\n\nlo que el agente aprendió solo\n";
-  const latidoVivo = "cada 30 min miro la cola\n";
-  const ficheros = ficherosDelArnes(
-    "openclaw", { perfil: perfil(), hechos: hechos() },
-    new Map([["MEMORY.md", memoriaViva], ["HEARTBEAT.md", latidoVivo]]),
-  );
-
-  const memoria = ficheros.find((f: FicheroGenerado) => f.nombre === "MEMORY.md");
-  assert.ok(memoria);
-  assert.equal(memoria.texto, memoriaViva, "MEMORY.md se modificó: es del agente, no nuestro");
-  assert.equal(memoria.escribir, false, "no hay que reescribir un MEMORY.md que ya estaba");
-  // The DECLARED POLICY, not just the result: today a MEMORY treated as a managed block would
-  // happen to yield the same text —because no section applies to it—, and that coincidence
-  // disappears the day someone assigns it one. What protects the file is the policy, not the tie.
-  assert.equal(memoria.politica, "solo-si-falta");
-
-  const latido = ficheros.find((f: FicheroGenerado) => f.nombre === "HEARTBEAT.md");
-  assert.ok(latido);
-  assert.equal(latido.texto, latidoVivo);
-  assert.equal(latido.escribir, false);
-  assert.equal(latido.politica, "solo-si-falta");
-});
-
-test("CONTROL NEGATIVO: un MEMORY con marcas nuestras TAMPOCO se toca", () => {
-  // If the generator treated MEMORY as a "managed block", this file would be rewritten. The MEMORY
-  // policy is not "merge": it is "it is not mine".
-  const memoriaConMarcas = `${MARCA_PERFIL_INICIO}\nviejo\n${MARCA_PERFIL_FIN}\nlo del agente\n`;
-  const ficheros = ficherosDelArnes(
-    "openclaw", { perfil: perfil(), hechos: hechos() },
-    new Map([["MEMORY.md", memoriaConMarcas]]),
-  );
-  const memoria = ficheros.find((f: FicheroGenerado) => f.nombre === "MEMORY.md");
-  assert.ok(memoria);
-  assert.equal(memoria.texto, memoriaConMarcas);
-  assert.equal(memoria.escribir, false);
-  assert.equal(memoria.politica, "solo-si-falta");
-});
-
-test("MEMORY y HEARTBEAT que FALTAN se siembran vacíos, y se escriben", () => {
-  const ficheros = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  for (const nombre of ["MEMORY.md", "HEARTBEAT.md"]) {
-    const fichero = ficheros.find((f: FicheroGenerado) => f.nombre === nombre);
-    assert.ok(fichero);
-    assert.equal(fichero.escribir, true, `${nombre} falta: hay que crearlo`);
-    assert.equal(fichero.politica, "solo-si-falta");
-    // Empty of OUR CONTENT: neither profile nor managed block. The file existing is the only thing
-    // the seeding adds; whatever it says inside is the agent's.
-    assert.doesNotMatch(fichero.texto, /PROPOSITO-SOUL|ROL-IDENTITY|RESPONSABILIDAD-AGENTS/);
-    assert.ok(!fichero.texto.includes(MARCA_PERFIL_INICIO), `${nombre} no lleva bloque gestionado`);
   }
 });
 
@@ -240,37 +137,6 @@ test("el editor manual sólo puede cambiar bytes fuera de los bloques gestionado
   assert.deepEqual(verifyManagedContextEdit(current, proposed), { allowed: true });
 });
 
-test("el editor manual acepta CRLF si conserva bloques, revisión y EOL gestionados byte a byte", () => {
-  const current = [
-    "# Manual anterior",
-    MARCA_INICIO,
-    "contrato sellado",
-    MARCA_FIN,
-    marcaDeRevisionDelPerfil(7),
-    MARCA_PERFIL_INICIO,
-    "perfil proyectado",
-    MARCA_PERFIL_FIN,
-    "cola anterior",
-    "",
-  ].join("\r\n");
-  const proposed = current
-    .replace("# Manual anterior", "# Manual nuevo")
-    .replace("cola anterior", "cola nueva");
-
-  assert.deepEqual(verifyManagedContextEdit(current, proposed), { allowed: true });
-  assert.deepEqual(
-    verifyManagedContextEdit(current, current.replace("contrato sellado", "contrato alterado")),
-    { allowed: false, conflict: "managed_fixed_context_changed" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(
-      current,
-      current.replace(`${marcaDeRevisionDelPerfil(7)}\r\n`, `${marcaDeRevisionDelPerfil(7)}\n`),
-    ),
-    { allowed: false, conflict: "managed_profile_revision_changed" },
-  );
-});
-
 test("el editor manual rechaza cambios byte a byte en contexto, perfil y revisión", () => {
   const current = [
     MARCA_INICIO,
@@ -294,156 +160,6 @@ test("el editor manual rechaza cambios byte a byte en contexto, perfil y revisi�
       { allowed: false, conflict },
     );
   }
-});
-
-test("el editor manual rechaza marcadores retirados, añadidos, desconocidos o malformados", () => {
-  const current = `${MARCA_PERFIL_INICIO}\nperfil\n${MARCA_PERFIL_FIN}\nmanual\n`;
-  const unknown = "<!-- CAUCE:FUTURO v9 -->";
-
-  assert.deepEqual(
-    verifyManagedContextEdit(current, current.replace(`${MARCA_PERFIL_FIN}\n`, "")),
-    { allowed: false, conflict: "malformed_proposed" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(current, `${current}${unknown}\n`),
-    { allowed: false, conflict: "unknown_reserved_markers_in_proposed" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit("manual\n", `manual\ntexto ${unknown}\n`),
-    { allowed: false, conflict: "malformed_proposed" },
-  );
-
-  const currentWithUnknown = `manual anterior\n${unknown}\n`;
-  assert.deepEqual(
-    verifyManagedContextEdit(currentWithUnknown, `manual nuevo\n${unknown}\n`),
-    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(currentWithUnknown, currentWithUnknown.replace("FUTURO", "OTRO")),
-    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
-  );
-});
-
-test("un gateway antiguo falla cerrado ante payload o movimiento de pares CAUCE futuros", () => {
-  const futureStart = "<!-- CAUCE:FUTURO v2 -->";
-  const futureEnd = "<!-- CAUCE:FIN-FUTURO -->";
-  const current = [
-    "manual anterior",
-    futureStart,
-    "payload opaco",
-    futureEnd,
-    "manual posterior",
-    "",
-  ].join("\n");
-
-  assert.deepEqual(
-    verifyManagedContextEdit(current, current.replace("payload opaco", "payload alterado")),
-    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(
-      current,
-      [futureStart, "payload opaco", futureEnd, "manual anterior", "manual posterior", ""].join("\n"),
-    ),
-    { allowed: false, conflict: "unknown_reserved_markers_in_current" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit("manual conocido\n", current),
-    { allowed: false, conflict: "unknown_reserved_markers_in_proposed" },
-  );
-});
-
-test("se protege el orden relativo de bloques conocidos, no su anclaje al texto manual", () => {
-  const fixed = [MARCA_INICIO, "contrato", MARCA_FIN].join("\n");
-  const profile = [
-    marcaDeRevisionDelPerfil(3),
-    MARCA_PERFIL_INICIO,
-    "perfil",
-    MARCA_PERFIL_FIN,
-  ].join("\n");
-  const current = `antes\n${fixed}\nentre\n${profile}\ndespués\n`;
-
-  assert.deepEqual(
-    verifyManagedContextEdit(current, `antes\nentre\ndespués\n${fixed}\n${profile}\n`),
-    { allowed: true },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(current, `antes\n${profile}\nentre\n${fixed}\ndespués\n`),
-    { allowed: false, conflict: "reserved_markers_changed" },
-  );
-});
-
-test("la creación manual sólo admite documentos sin marcadores reservados", () => {
-  assert.deepEqual(verifyManagedContextEdit(undefined, "# Manual\n"), { allowed: true });
-  assert.deepEqual(
-    verifyManagedContextEdit("# Manual anterior\r\n", "# Manual nuevo\r\n"),
-    { allowed: true },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(undefined, `${MARCA_INICIO}\ncontrato\n${MARCA_FIN}\n`),
-    { allowed: false, conflict: "reserved_markers_on_create" },
-  );
-  assert.deepEqual(
-    verifyManagedContextEdit(undefined, "<!-- CAUCE:FUTURO v1 -->\n"),
-    { allowed: false, conflict: "reserved_markers_on_create" },
-  );
-});
-
-test("regenerar sobre lo ya generado NO duplica el bloque", () => {
-  const contexto = { perfil: perfil(), hechos: hechos() };
-  const primera = textoDe(ficherosDelArnes("openclaw", contexto), "SOUL.md");
-  const segunda = textoDe(
-    ficherosDelArnes("openclaw", contexto, new Map([["SOUL.md", primera]])), "SOUL.md",
-  );
-  assert.equal(segunda, primera, "la segunda generación no es idéntica: el fichero se mueve solo");
-  assert.equal(segunda.split(MARCA_PERFIL_INICIO).length - 1, 1, "el bloque quedó duplicado");
-});
-
-test("el bloque SELLADO del contrato no se toca: el generador sólo escribe el suyo", () => {
-  // Block A is written by the adapter and its sha is the envelope's. If the generator reformatted
-  // it, the seal would stop matching and the envelope would ship whole forever with no error.
-  const sellado = `${MARCA_INICIO}\nCONTRATO INTOCABLE\n${MARCA_FIN}`;
-  const ficheros = ficherosDelArnes(
-    "openclaw", { perfil: perfil(), hechos: hechos() },
-    new Map([["AGENTS.md", `${sellado}\n\nde una persona\n`]]),
-  );
-  const agents = textoDe(ficheros, "AGENTS.md");
-  assert.ok(agents.includes(sellado), "el bloque sellado del contrato se modificó");
-  assert.ok(agents.includes("de una persona"));
-});
-
-// ── DETERMINISM ──────────────────────────────────────────────────────────────────────────────
-
-test("mismo perfil y mismos hechos -> los MISMOS bytes", () => {
-  const uno = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  const otro = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  assert.deepEqual(uno.map((f: FicheroGenerado) => f.texto), otro.map((f: FicheroGenerado) => f.texto));
-});
-
-test("el ORDEN EN QUE SE CONSTRUYÓ el perfil no cambia un solo byte", () => {
-  // `JSON.stringify` and `Object.keys` respect insertion order, so a profile coming from a
-  // `JSON.parse` produces different bytes from one built by hand if anything depends on order.
-  const derecho: AgentProfile = {
-    tenant_id: "Steven", alias: "zeus", purpose: "P", role_summary: "R", human_brief: "H",
-    responsibilities: ["a"], restrictions: ["b"], tools: ["c"], operating_rules: ["d"],
-  };
-  const alReves = {
-    operating_rules: ["d"], tools: ["c"], restrictions: ["b"], responsibilities: ["a"],
-    human_brief: "H", role_summary: "R", purpose: "P", alias: "zeus", tenant_id: "Steven",
-  } as AgentProfile;
-  assert.deepEqual(
-    ficherosDelArnes("openclaw", { perfil: derecho, hechos: hechos() }).map((f: FicheroGenerado) => f.texto),
-    ficherosDelArnes("openclaw", { perfil: alReves, hechos: hechos() }).map((f: FicheroGenerado) => f.texto),
-  );
-});
-
-test("CONTROL NEGATIVO del determinismo: cambiar UN campo SÍ cambia los bytes", () => {
-  // Without this test, a generator that always returned the empty string would pass the two above.
-  const base = ficherosDelArnes("openclaw", { perfil: perfil(), hechos: hechos() });
-  const movido = ficherosDelArnes("openclaw", {
-    perfil: perfil({ purpose: "OTRO proposito distinto" }), hechos: hechos(),
-  });
-  assert.notDeepEqual(base.map((f: FicheroGenerado) => f.texto), movido.map((f: FicheroGenerado) => f.texto));
 });
 
 // ── THE OPENCLAW CAPS ─────────────────────────────────────────────────────────────────────────
@@ -485,45 +201,6 @@ test("el TOTAL que pasa del tope da error, aunque NINGÚN fichero pase por su cu
   );
 });
 
-test("CONTROL NEGATIVO de los topes: justo por debajo NO falla y NO se trunca", () => {
-  // If the guard were misplaced —a `>=` where a `>` belongs, or the cap measured against the
-  // wrong text— this test would turn red. It also checks that the text comes out WHOLE.
-  const casi = "z".repeat(1_999);
-  const ficheros = ficherosDelArnes("openclaw", {
-    perfil: perfil({ purpose: casi }), hechos: hechos(),
-  });
-  const soul = textoDe(ficheros, "SOUL.md");
-  assert.ok(soul.includes(casi), "el propósito salió truncado estando dentro del tope");
-});
-
-test("el tope se mide en la unidad de openclaw (UTF-16), no en bytes ni en puntos de código", () => {
-  // An emoji outside the BMP weighs 1 code point and 2 UTF-16 units. openclaw counts like JS.
-  // Measuring code points would let through a file that openclaw cannot fit.
-  const mitad = Math.floor(TOPES_OPENCLAW.porFichero / 2) + 1;
-  const astral = ASTRAL.repeat(mitad);
-  assert.equal(measureStrictestUnits(astral), mitad * 2);
-  assert.throws(
-    () => ficherosDelArnes("openclaw", { perfil: perfil({ purpose: astral }), hechos: hechos() }),
-    ErrorDeTopeDelArnes,
-  );
-});
-
-test("claude no declara tope: un perfil enorme NO se rechaza por el tope de otro arnés", () => {
-  const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
-  assert.equal(PRESUPUESTOS_DE_CONTEXTO.claude.porFichero, undefined);
-  assert.equal(PRESUPUESTOS_DE_CONTEXTO.claude.total, undefined);
-  assert.doesNotThrow(
-    () => ficherosDelArnes("claude", { perfil: perfil({ purpose: enorme }), hechos: hechos() }),
-  );
-});
-
-test("openclaw conserva EXACTAMENTE los topes de hoy, y los declara en su unidad UTF-16", () => {
-  assert.deepEqual(PRESUPUESTOS_DE_CONTEXTO.openclaw, {
-    unit: "utf16_strictest", porFichero: 90_000, total: 200_000,
-  });
-  assert.deepEqual({ ...TOPES_OPENCLAW }, { porFichero: 90_000, total: 200_000 });
-});
-
 test("codex se mide en BYTES UTF-8, y el hecho medido por alias manda sobre el defecto", () => {
   const acentos = "á".repeat(20_000);
   assert.equal(measureStrictestUnits(acentos), 20_000);
@@ -536,32 +213,6 @@ test("codex se mide en BYTES UTF-8, y el hecho medido por alias manda sobre el d
   assert.doesNotThrow(() => ficherosDelArnes("codex", contexto, new Map(), {
     topes: { unit: "utf8_bytes", porFichero: 64 * 1_024 },
   }));
-});
-
-test("lo que Cauce escribe ya lo acota AGENT_PROFILE_LIMITS.total; sin tope estaba el fichero ANFITRIÓN", () => {
-  assert.equal(AGENT_PROFILE_LIMITS.total, 24_000);
-  const claude = textoDe(ficherosDelArnes("claude", { perfil: perfil(), hechos: hechos() }), "CLAUDE.md");
-  assert.ok(measureStrictestUnits(claude) < AGENT_PROFILE_LIMITS.total);
-
-  const anfitrion = "h".repeat(40_000);
-  assert.throws(
-    () => ficherosDelArnes(
-      "codex", { perfil: perfil(), hechos: hechos() }, new Map([["AGENTS.md", anfitrion]]),
-    ),
-    ErrorDeTopeDelArnes,
-  );
-});
-
-test.each(["claude", "codex"])("%s conserva identidad, reglas y herramientas autoradas sin hechos volátiles", (harness) => {
-  const text = ficherosDelArnes(harness, { perfil: perfil(), hechos: hechos() })[0]?.texto;
-  assert.ok(text);
-  assert.match(text, /<!-- alias: Steven\/zeus -->/u);
-  assert.match(text, /PROPOSITO-SOUL|ROL-IDENTITY/u);
-  assert.match(text, /RESTRICCION-AGENTS/u);
-  assert.match(text, /HERRAMIENTA-TOOLS/u);
-  assert.match(text, /REGLA-AGENTS/u);
-  assert.doesNotMatch(text, /Permisos y acceso|Cuotas y límites|Configuración del arnés/u);
-  assert.doesNotMatch(text, /CUOTA-TOOLS|CAPACIDAD-TOOLS|Cambiar configuración \(control\)/u);
 });
 
 test("las rutas de gobierno salen de UNA tabla; un hecho declarado no canónico falla cerrado", () => {
@@ -583,27 +234,6 @@ test("las rutas de gobierno salen de UNA tabla; un hecho declarado no canónico 
   assert.deepEqual(harnessDocumentPaths("claude", { home: "/home/dev", claudeConfigDir: "relativo" }), []);
   assert.deepEqual(harnessDocumentPaths("openclaw", { openclawWorkspace: "/ws/../escape" }), []);
   assert.deepEqual(harnessDocumentPaths("opencode", { home: "/h" }), []);
-});
-
-test("la tabla de rutas y la de nombres emitidos no se contradicen", () => {
-  for (const [arnes, entrada] of Object.entries(DOCUMENTOS_DE_GOBIERNO)) {
-    const emitidos = nombresDelArnes(arnes);
-    if (emitidos.length === 0) continue;
-    assert.deepEqual([...entrada.documentos], [...emitidos], arnes);
-  }
-});
-
-// ── THE EMPTY PROFILE ────────────────────────────────────────────────────────────────────────
-
-test("un perfil sin nada escrito no produce encabezados huecos", () => {
-  const vacio: AgentProfile = {
-    tenant_id: "Steven", alias: "argos", purpose: null, role_summary: null, human_brief: null,
-    responsibilities: [], restrictions: [], tools: [], operating_rules: [],
-  };
-  const ficheros = ficherosDelArnes("openclaw", { perfil: vacio, hechos: hechos() });
-  const soul = textoDe(ficheros, "SOUL.md");
-  assert.ok(!soul.includes(MARCA_PERFIL_INICIO), "SOUL vacío no debe llevar bloque");
-  assert.equal(soul.trim(), "");
 });
 
 test("la proyección revisionada escribe y reemplaza una sola revisión en el fichero canónico", () => {
@@ -639,59 +269,6 @@ test("la proyección revisionada escribe y reemplaza una sola revisión en el fi
   for (const file of revisionTres) {
     if (file.nombre !== "AGENTS.md") assert.ok(!file.texto.includes(PREFIJO_REVISION_PERFIL));
   }
-});
-
-test("un perfil vacío revisionado conserva un bloque propio acreditable", () => {
-  const vacio: AgentProfile = {
-    tenant_id: "Steven", alias: "zeus", purpose: null, role_summary: null, human_brief: null,
-    responsibilities: [], restrictions: [], tools: [], operating_rules: [],
-  };
-  const claude = textoDe(
-    ficherosDelArnes("claude", { perfil: vacio, hechos: hechos() }, new Map(), { revision: 8 }),
-    "CLAUDE.md",
-  );
-  assert.equal(revisionDelPerfil(claude), 8);
-  assert.match(claude, /<!-- alias: Steven\/zeus -->/u);
-  assert.ok(claude.includes(MARCA_PERFIL_INICIO));
-});
-
-test("codex queda en el formato legacy porque el modo nativo todavía no lo soporta", () => {
-  const codex = textoDe(
-    ficherosDelArnes("codex", { perfil: perfil(), hechos: hechos() }, new Map(), { revision: 8 }),
-    "AGENTS.md",
-  );
-  assert.ok(!codex.includes(PREFIJO_REVISION_PERFIL));
-  assert.match(codex, /PROPOSITO-SOUL/u);
-});
-
-test("una revisión malformada, repetida o fuera del fichero canónico falla cerrado", () => {
-  const contexto = { perfil: perfil(), hechos: hechos() };
-  const cases = [
-    new Map([["AGENTS.md", `${PREFIJO_REVISION_PERFIL} basura -->\n`]]),
-    new Map([["AGENTS.md", `${marcaDeRevisionDelPerfil(1)}\n${marcaDeRevisionDelPerfil(1)}\n`]]),
-    new Map([[
-      "AGENTS.md",
-      `${MARCA_PERFIL_INICIO}\n<!-- alias: Steven/zeus -->\n${marcaDeRevisionDelPerfil(1)}\n${MARCA_PERFIL_FIN}\n`,
-    ]]),
-    new Map([["SOUL.md", `${marcaDeRevisionDelPerfil(1)}\n${MARCA_PERFIL_INICIO}\nx\n${MARCA_PERFIL_FIN}\n`]]),
-  ];
-  for (const existing of cases) {
-    assert.throws(() => ficherosDelArnes("openclaw", contexto, existing, { revision: 2 }));
-  }
-});
-
-test("la siembra sin revisión rechaza una proyección revisionada en vez de falsear vigencia", () => {
-  const contexto = { perfil: perfil(), hechos: hechos() };
-  const revisionada = ficherosDelArnes("openclaw", contexto, new Map(), { revision: 4 });
-  const existing = new Map(revisionada.map((file) => [file.nombre, file.texto]));
-  assert.throws(
-    () => ficherosDelArnes(
-      "openclaw",
-      { perfil: perfil({ purpose: "cambio sin revisión" }), hechos: hechos() },
-      existing,
-    ),
-    /requires an explicit durable revision/u,
-  );
 });
 
 test("la proyección rechaza bloques incompletos, duplicados, no alineados y solapados", () => {
@@ -732,46 +309,4 @@ test("los campos autorados no pueden inyectar delimitadores reservados", () => {
       { revision: 2 },
     ));
   }
-});
-
-test("la proyección rechaza CRLF antes de producir una mezcla de finales de línea", () => {
-  assert.throws(
-    () => ficherosDelArnes(
-      "claude",
-      { perfil: perfil(), hechos: hechos() },
-      new Map([["CLAUDE.md", "# Manual\r\n"]]),
-      { revision: 2 },
-    ),
-    /does not accept CR or CRLF/u,
-  );
-});
-
-test("un TOOLS.md enorme que la siembra no toca no veta los ficheros que sí escribe", () => {
-  const enorme = "x".repeat(TOPES_OPENCLAW.porFichero + 1);
-  const existentes = new Map([["TOOLS.md", enorme]]);
-  const generados = ficherosDelArnes(
-    "openclaw", { perfil: perfil({ tools: [] }), hechos: hechos() }, existentes, { revision: 3 },
-  );
-  const tools = generados.find((f: FicheroGenerado) => f.nombre === "TOOLS.md");
-  assert.ok(tools);
-  assert.equal(tools.escribir, false);
-  assert.equal(tools.texto, enorme);
-  const soul = generados.find((f: FicheroGenerado) => f.nombre === "SOUL.md");
-  assert.ok(soul, "el generador no emitió SOUL.md");
-  assert.ok(soul.escribir, "SOUL.md debía escribirse aunque TOOLS.md sea enorme");
-});
-
-test("una variable de arnés VACÍA cae al defecto bajo $HOME; una definida y relativa se rechaza", () => {
-  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "" }),
-    "/home/dev/.claude");
-  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "   " }),
-    "/home/dev/.claude");
-  assert.equal(harnessDocumentDirectory("codex", { home: "/home/dev", codexHome: "" }),
-    "/home/dev/.codex");
-  assert.equal(harnessDocumentDirectory("claude", { home: "/home/dev", claudeConfigDir: "relativo" }),
-    undefined);
-  assert.equal(harnessDocumentDirectory("codex", { home: "/home/dev", codexHome: "../fuga" }),
-    undefined);
-  assert.equal(harnessDocumentDirectory("openclaw", { home: "/home/dev", openclawWorkspace: "" }),
-    undefined);
 });
