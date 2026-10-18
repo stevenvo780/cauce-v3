@@ -26,8 +26,11 @@ export function projectLiveFleet(snapshot: FleetActivitySnapshot | undefined, to
     if (edge.from_tenant && edge.from_alias) pending.add(`${edge.from_tenant}/${edge.from_alias}`);
     if (edge.to_tenant && edge.to_alias) pending.add(`${edge.to_tenant}/${edge.to_alias}`);
   }
+  // Retired agents leave the fleet: hidden even with work in flight (the activity query already
+  // excludes them; this mirrors it for stale or mocked payloads that still carry the row).
   const hidden = new Set(snapshot.agents.filter((agent) =>
-    agent.registered === false && !pending.has(agentKey(agent))).map(agentKey));
+    agent.lifecycle_state === 'retired'
+    || (agent.registered === false && !pending.has(agentKey(agent)))).map(agentKey));
   const known = new Set(snapshot.agents.map(agentKey));
   const agents = snapshot.agents.filter((agent) => !hidden.has(agentKey(agent)));
   const totals = snapshot.totals;

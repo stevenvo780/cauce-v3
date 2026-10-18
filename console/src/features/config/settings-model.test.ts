@@ -43,6 +43,19 @@ describe('inventario compacto de configuración', () => {
     expect(filterSettingsAgents(agents, 'nadie')).toEqual([]);
   });
 
+  it('no lista a un retirado como «solo miembro» en el inventario principal', () => {
+    const agents = settingsAgents({
+      agents: [{ tenant_id: 'A', alias: 'activo', enabled: true }],
+      memberships: [
+        { tenant_id: 'A', alias: 'activo', room_id: 'one', enabled: true },
+        { tenant_id: 'A', alias: 'viejo', room_id: 'one', enabled: true },
+      ],
+      rooms: [{ tenant_id: 'A', id: 'one', display_name: 'Equipo A' }],
+      retired: { tenants: [], rooms: [], memberships: [], agents: [{ tenant_id: 'A', alias: 'viejo' }] },
+    });
+    expect(agents.map((agent) => agent.alias)).toEqual(['activo']);
+  });
+
   it('no inventa identidades para filas incompletas y conserva un inventario vacío', () => {
     expect(settingsAgents({ agents: [{ alias: 'one' }, { tenant_id: 'A' }], memberships: [] })).toEqual([]);
     expect(settingsAgents({})).toEqual([]);

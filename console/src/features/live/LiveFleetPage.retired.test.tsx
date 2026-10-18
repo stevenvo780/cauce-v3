@@ -22,3 +22,21 @@ it('los agentes registrados deshabilitados se ven caídos: sin ciclo de vida en 
   expect(within(lista).getByRole('option', { name: /^backend:/ })).toBeInTheDocument();
   expect(verdict).toHaveTextContent(/necesitan atención/);
 });
+
+it('en local: el borrador se ve, el retirado no se ve y el activo se ve', async () => {
+  const agents: FleetActivityAgent[] = [
+    { tenant_id: 'Steven', alias: 'borrador', display_name: 'borrador', registered: true, agent_enabled: false, lifecycle_state: 'draft', presence: { online: false }, work_state: 'idle', in_flight: 0, queued: 0, flags: ['never_connected'] },
+    { tenant_id: 'Steven', alias: 'retirado', display_name: 'retirado', registered: true, agent_enabled: false, lifecycle_state: 'retired', presence: { online: false }, work_state: 'idle', in_flight: 0, queued: 0, flags: ['never_connected'] },
+    { tenant_id: 'Steven', alias: 'activo', display_name: 'activo', registered: true, agent_enabled: true, lifecycle_state: 'ready', presence: { online: true }, work_state: 'idle', in_flight: 0, queued: 0, flags: [] },
+  ];
+  server.use(
+    http.get('http://localhost/v3/console/activity', () => HttpResponse.json({ observed_at: new Date().toISOString(), agents, totals: { agents: 3, in_flight: 0, queued: 0 } })),
+    http.get('http://localhost/v3/console/topology', () => HttpResponse.json({ tenants: [{ id: 'Steven', rooms: [{ id: 'office', members: agents.map((a) => ({ alias: a.alias, enabled: true, registered: true, agent_enabled: a.agent_enabled })) }] }] })),
+  );
+  renderLive();
+  const lista = await screen.findByRole('listbox', { name: /oficina con \d+ agentes/i });
+  await waitFor(() => { expect(within(lista).getAllByRole('option')).toHaveLength(2); });
+  expect(within(lista).getByRole('option', { name: /^borrador:/ })).toBeInTheDocument();
+  expect(within(lista).getByRole('option', { name: /^activo:/ })).toBeInTheDocument();
+  expect(within(lista).queryByRole('option', { name: /^retirado:/ })).not.toBeInTheDocument();
+});

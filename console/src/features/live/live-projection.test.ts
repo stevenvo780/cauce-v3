@@ -59,6 +59,22 @@ describe('proyección de la flota viva', () => {
     expect(projectLiveFleet(undefined, topology)).toEqual({ snapshot: undefined, topology });
   });
 
+  it('oculta a los retirados aunque tengan trabajo en vuelo, y conserva borrador y activo', () => {
+    const draft = agent('borrador', { agent_enabled: false, lifecycle_state: 'draft', flags: ['never_connected'] });
+    const retired = agent('retirado', { agent_enabled: false, lifecycle_state: 'retired', in_flight: 2, work_state: 'working' });
+    const active = agent('activo', { lifecycle_state: 'ready' });
+    const snapshot: FleetActivitySnapshot = {
+      agents: [draft, retired, active],
+      totals: { agents: 3, by_state: { idle: 2, working: 1 }, in_flight: 2 },
+    };
+    const topology: TopologySnapshot = { tenants: [{ id: 'Hospital', rooms: [{ id: 'grp.hospital', members:
+      snapshot.agents?.map((a) => ({ alias: a.alias, enabled: true, registered: true, agent_enabled: a.agent_enabled })) }] }] };
+    const result = projectLiveFleet(snapshot, topology);
+    expect(result.snapshot?.agents?.map((a) => a.alias)).toEqual(['borrador', 'activo']);
+    expect(result.snapshot?.totals?.agents).toBe(2);
+    expect(result.topology?.tenants?.[0].rooms?.[0].members?.map((m) => m.alias)).toEqual(['borrador', 'activo']);
+  });
+
   it('excluye de la topología un principal no registrado sin inventar bajas para metadatos ausentes', () => {
     const topology: TopologySnapshot = { tenants: [{ id: 'Hospital', rooms: [{ id: 'grp.hospital', members: [
       { alias: 'console-proxy', registered: false, enabled: true }, { alias: 'sin-metadatos', enabled: true },

@@ -38,6 +38,17 @@ export function settingsAgents(snapshot: ConfigurationSnapshot): SettingsAgent[]
     const pair = identity(row);
     if (pair) identities.set(JSON.stringify(pair), pair);
   }
+  // Retired agents live only in the retired section: a historical membership must not relist
+  // them here as member-only, or the main count stops matching the registered-not-retired rule.
+  const keyOf = (row: Row): string | undefined => {
+    const pair = identity(row);
+    return pair ? JSON.stringify(pair) : undefined;
+  };
+  const registeredKeys = new Set((snapshot.agents ?? []).flatMap((row) => keyOf(row) ?? []));
+  const retiredKeys = new Set((snapshot.retired?.agents ?? []).flatMap((row) => keyOf(row) ?? []));
+  for (const key of [...identities.keys()]) {
+    if (retiredKeys.has(key) && !registeredKeys.has(key)) identities.delete(key);
+  }
   return [...identities].map(([key, [tenantId, alias]]) => {
     const matches = (row: Row) => row.tenant_id === tenantId && row.alias === alias;
     const agent = snapshot.agents?.find(matches);

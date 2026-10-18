@@ -61,6 +61,8 @@ export interface FleetActivityAgent {
   alias: string;
   display_name?: string | null;
   harness_id?: string | null;
+  /** Registry lifecycle ('draft', 'ready', 'retired', …); null when unregistered or unreported. */
+  lifecycle_state?: string | null;
   /** false: the alias appeared via deliveries or lease, not via the agent registry. */
   registered?: boolean | null;
   agent_enabled?: boolean | null;
