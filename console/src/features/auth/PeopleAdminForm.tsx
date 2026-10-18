@@ -75,7 +75,7 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     <label>Permiso web<select value={values.role} disabled={busy} onChange={event => { edit({ role: event.target.value as ManagedPerson['role'] }); }}>
       <option value="reader">Lector</option><option value="operator">Operador</option></select></label>
     <label>Espacio de la persona<select value={values.tenant_id} disabled={busy} onChange={event => { edit({ tenant_id: event.target.value, alias: '' }); }}>
-      <option value="">Elige espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {JSON.stringify(row.id)}</option>)}
+      <option value="">Elige espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {String(row.id)}</option>)}
       {person && !tenants.some(row => row.id === person.tenant_id) ? <option value={person.tenant_id} disabled>{person.tenant_id} · no habilitado</option> : null}
     </select></label>
     <label>Identidad de la persona<select value={values.alias} disabled={busy} onChange={event => { edit({ alias: event.target.value }); }}>
