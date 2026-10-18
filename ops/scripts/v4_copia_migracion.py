@@ -120,6 +120,42 @@ def git(repository: str, *arguments: str, check: bool = True, fd: int | None = N
     return done.stdout.decode('utf-8', 'surrogateescape') if done.returncode == 0 else ''
 
 
+def git_remotes(path: str, directory: int) -> tuple[dict[str, str], list[str]]:
+    remotes, dropped = {}, []
+    for line in git(path, 'remote', '-v', fd=directory).splitlines():
+        name, _, rest = line.partition('\t')
+        if rest.endswith(' (fetch)') and REMOTE_RE.fullmatch(name):
+            if VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape')):
+                dropped.append('redacted-' + hashlib.sha256(name.encode('utf-8', 'surrogateescape')).hexdigest())
+                continue
+            url = clean_url(rest[:-len(' (fetch)')])
+            if url:
+                remotes[name] = url
+            else:
+                dropped.append(name)
+    return remotes, sorted(dropped)
+
+
+def git_history_omission(path: str, directory: int) -> dict:
+    remotes, _ = git_remotes(path, directory)
+    return {'path': path + '/.git', 'reason': 'git-sensitive-history', 'kind': 'directory', 'files': 0, 'bytes': 0,
+            'remotes': remotes, 'reclone_commands': [['git', 'clone', '--', url, path + '.reclonado'] for _, url in sorted(remotes.items())],
+            'source_retention_days': 7, 'source_retained': True}
+
+
+def validate_git_omission(item: dict) -> None:
+    path = relative(item.get('path'))
+    remotes = item.get('remotes')
+    if not path.endswith('/.git') or item.get('reason') != 'git-sensitive-history' or not isinstance(remotes, dict):
+        raise Failure('invalid Git history omission')
+    if any(not isinstance(name, str) or not REMOTE_RE.fullmatch(name) or VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape'))
+           or not isinstance(url, str) or clean_url(url) != url for name, url in remotes.items()):
+        raise Failure('Git history omission has unsafe remotes')
+    commands = [['git', 'clone', '--', url, path[:-len('/.git')] + '.reclonado'] for _, url in sorted(remotes.items())]
+    if item.get('reclone_commands') != commands or item.get('source_retention_days') != 7 or item.get('source_retained') is not True:
+        raise Failure('invalid Git history recovery metadata')
+
+
 class GitObjects:
     def __init__(self, directory: int, object_format: str, shallow: list[str]):
         self.object_format, self.shallow = object_format, set(shallow)
@@ -440,18 +476,6 @@ class Copier:
             raise Failure(f'shallow metadata leaves the copied space: {path}')
         shallow = shallow_boundaries(shallow_path, object_format)
         branch = git(path, 'symbolic-ref', '-q', '--short', 'HEAD', check=False, fd=directory).strip() or None
-        remotes, dropped = {}, []
-        for line in git(path, 'remote', '-v', fd=directory).splitlines():
-            name, _, rest = line.partition('\t')
-            if rest.endswith(' (fetch)') and REMOTE_RE.fullmatch(name):
-                if VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape')):
-                    dropped.append('redacted-' + hashlib.sha256(name.encode('utf-8', 'surrogateescape')).hexdigest())
-                    continue
-                url = clean_url(rest[:-len(' (fetch)')])
-                if url:
-                    remotes[name] = url
-                else:
-                    dropped.append(name)
         snapshot = {}
         for line in git(path, 'for-each-ref', '--format=%(objectname)%00%(refname)', fd=directory).splitlines():
             oid, _, name = line.partition('\0')
@@ -461,7 +485,7 @@ class Copier:
                 omit(name, 'git-state-not-exported')
         if git(path, 'diff', '--cached', '--name-only', '-z', check=False, fd=directory):
             omit('index', 'git-state-not-exported')
-        selected, had_history = {}, bool(snapshot or head)
+        selected, had_history, sensitive_history = {}, bool(snapshot or head), False
         objects = GitObjects(directory, object_format, shallow)
         try:
             for name, oid in sorted({**snapshot, **({'HEAD': head} if head else {})}.items()):
@@ -474,7 +498,11 @@ class Copier:
                     selected[name] = oid
                 else:
                     omit(name, 'git-sensitive-history')
+                    sensitive_history = True
             head = selected.get('HEAD')
+            if sensitive_history:
+                self.omissions.append(git_history_omission(path, directory))
+                return
             if not selected:
                 self.omissions.append({'path': path + '/.git', 'reason': 'git-no-clean-refs' if had_history else 'git-without-commits',
                                        'kind': 'directory', 'files': 0, 'bytes': 0})
@@ -508,6 +536,7 @@ class Copier:
             bundle_digest = scan(reader, os.fstat(reader).st_size, None)[0]
         finally:
             os.close(reader)
+        remotes, dropped = git_remotes(path, directory)
         self.repositories[path] = {'path': path, 'head': head, 'branch': branch if head and branch and BRANCH_RE.fullmatch(branch) and 'refs/heads/' + branch in selected else None,
                                    'objectFormat': object_format, 'shallow': shallow, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(selected) - int(head is not None),
                                    'bundle': bundle, 'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
@@ -661,6 +690,8 @@ def validate(manifest: dict) -> dict:
             raise Failure(f'manifest link target is invalid: {entry["path"]}')
     for item in manifest['omissions']:
         relative(item['path'])
+        if 'remotes' in item or 'reclone_commands' in item:
+            validate_git_omission(item)
     for repo in manifest['repositories']:
         relative(repo['path'])
         if not valid_boundaries(repo.get('shallow', []), repo.get('objectFormat', 'sha1')):
