@@ -3,6 +3,7 @@ import type { HostEnrollment, HostInvitation } from '../../api/client/host-enrol
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ApiError } from '../../api/client/core';
+import { FormDialog } from '../../components/dialogs';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { useCompanyAuthority } from '../auth/company-authority';
@@ -93,15 +94,23 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
       <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || enrollments.loading} onClick={() => { void enrollments.reload(); }}>Releer invitaciones</Button>
         <Button variant="primary" size="sm" disabled={!ready || !!currentInvitation} onClick={() => { setForm(true); }}>Añadir ordenador</Button></div></div>
     <p className="m-0 text-xs text-muted">Crea una invitación y úsala en el ordenador que vas a conectar. Allí se confirma su identidad y después se prepara el ejecutor con la política de tu empresa, sin pasar por la plataforma.</p>
-    {error || enrollments.error ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}
+    {!form && (error || enrollments.error) ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {enrollments.loading ? <p role="status">Leyendo invitaciones…</p> : null}
-    {form ? <form aria-label="Invitar ordenador" className="grid gap-3 sm:grid-cols-2" onSubmit={event => { event.preventDefault(); void create(); }}>
-      <label>Identificador del ordenador<span className="flex flex-col gap-1 sm:flex-row sm:items-center">{prefix ? <span aria-hidden="true" className="font-mono text-sm break-all">{prefix}</span> : null}
-        <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} disabled={!ready} onChange={event => { setHostId(event.target.value); }} /></span></label>
-      <label>Nombre del ordenador<input required maxLength={120} value={name} disabled={!ready} onChange={event => { setName(event.target.value); }} /></label>
-      <div className="flex gap-2 sm:col-span-2"><Button type="submit" disabled={!ready}>Crear invitación</Button><Button disabled={busy} onClick={() => { setForm(false); }}>Cancelar</Button></div>
-    </form> : null}
+    <FormDialog open={form} busy={busy} onClose={() => { setForm(false); }} title="Invitar ordenador"
+      description="El identificador y el nombre van en campos propios. La invitación se usa una sola vez en ese ordenador.">
+      <form aria-label="Invitar ordenador" className="grid gap-3" onSubmit={event => { event.preventDefault(); void create(); }}>
+        {error || enrollments.error ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}
+        <label>Identificador del ordenador
+          {prefix ? <span aria-hidden="true" className="font-mono text-sm break-all">{prefix}</span> : null}
+          <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} placeholder="equipo-1" disabled={!ready} onChange={event => { setHostId(event.target.value); }} />
+        </label>
+        <label>Nombre del ordenador
+          <input required maxLength={120} value={name} placeholder="Ordenador del equipo" disabled={!ready} onChange={event => { setName(event.target.value); }} />
+        </label>
+        <div className="flex flex-wrap gap-2"><Button type="submit" disabled={!ready}>Crear invitación</Button><Button disabled={busy} onClick={() => { setForm(false); }}>Cancelar</Button></div>
+      </form>
+    </FormDialog>
     {currentInvitation ? <section aria-label="Invitación de un solo uso" className="grid gap-2 rounded-lg border border-warn p-3">
       <Notice tone="warn">Esta invitación se entrega una sola vez. Caduca <Time value={currentInvitation.expires_at} />. Conserva su contenido antes de cerrar; podrás cancelar y crear otra si lo pierdes.</Notice>
       <label>Invitación del ordenador<textarea readOnly className="min-h-32 font-mono text-xs" value={JSON.stringify(currentInvitation, null, 2)} /></label>
