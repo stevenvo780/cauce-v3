@@ -22,11 +22,8 @@ const hostId = `zz-canary-host-${run}`;
 const hostName = `zz-canary-equipo-${run}`;
 const hostEditedName = `zz-canary-equipo-editado-${run}`;
 const hostAgentAlias = `zz-canary-hostagent-${run}`;
-const accountId = `zz-canary-acct-${run}`;
 const accountLabel = `zz-canary-cuenta-${run}`;
 const accountEditedLabel = `zz-canary-cuenta-editada-${run}`;
-const accountExternal = `zz-canary-sub-${run}`;
-const accountLocator = `CAUCE_ZZ_CANARY_${run.toUpperCase()}_PATH`;
 const agentAlias = `zz-canary-agent-${run}`;
 const agentName = `zz-canary-agente-${run}`;
 const partLabel = `zz-canary-part-${run}`;
@@ -37,6 +34,7 @@ let pageA: V4Page | undefined;
 let pageB: V4Page | undefined;
 let hubA = '';
 let hubB = '';
+let accountId = '';
 
 const active = () => { if (!fixture) throw new Error('V4 CRUD matrix fixture is not initialized'); return fixture; };
 const base = () => active().baseUrl;
@@ -100,9 +98,9 @@ async function storedAccount(): Promise<Record<string, unknown>[]> {
 
 async function openAccounts(page: V4Page): Promise<void> {
   await page.goto(`${base()}/accounts`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('heading', { name: 'Cuentas y cuotas', exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByRole('heading', { name: 'Cuentas', exact: true }).waitFor({ timeout: 20_000 });
   await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
-  await page.getByRole('button', { name: 'Nueva cuenta', exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByRole('link', { name: 'Registrar en Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
 }
 
 async function previewAndApply(page: V4Page, dialog: V4Locator, label: string): Promise<void> {
@@ -112,14 +110,6 @@ async function previewAndApply(page: V4Page, dialog: V4Locator, label: string): 
   await actions.getByRole('button', { name: 'Aplicar', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Aplicado en revisión' }).waitFor({ timeout: 20_000 });
   await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
-}
-
-async function fillAccountForm(dialog: V4Locator, locator: string): Promise<void> {
-  await dialog.getByLabel('Id de cuenta').fill(accountId);
-  await dialog.getByLabel('Id externo de la suscripción').fill(accountExternal);
-  await dialog.getByLabel('Tenant pagador').fill(hubA);
-  await dialog.getByLabel('Etiqueta').fill(accountLabel);
-  await dialog.getByLabel('Locator de la credencial').fill(locator);
 }
 
 async function openPlan(page: V4Page): Promise<void> {
@@ -287,46 +277,52 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
     expect(JSON.stringify((await apiGet(page, '/v3/console/fleet/hosts')).body)).not.toContain(hostId);
   }, 240_000);
 
-  it('cuentas de proveedor: alta desde el formulario con locator inválido y duplicado rechazados, y lectura sin credencial', async () => {
+  it('cuentas de proveedor: alta en Mis cuotas con nombre obligatorio, reintento idempotente y lectura sin credencial', async () => {
     const page = ownerPage();
+    let registrationKey = '';
     await step(page, 'provider account create', async () => {
       await openAccounts(page);
-      await page.getByRole('button', { name: 'Nueva cuenta', exact: true }).click();
-      const dialog = page.getByRole('dialog');
-      await fillAccountForm(dialog, 'locator-invalido');
-      await dialog.getByText('Con env_path el locator tiene que ser el nombre de una variable', { exact: false }).waitFor({ timeout: 15_000 });
-      expect(await dialog.getByRole('group', { name: 'Acciones de alta de cuenta', exact: true })
-        .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
-      expect(await storedAccount()).toEqual([]);
-      await dialog.getByLabel('Locator de la credencial').fill(accountLocator);
-      await dialog.getByLabel('Habilitada').click();
-      await previewAndApply(page, dialog, 'alta de cuenta');
+      await page.getByRole('link', { name: 'Registrar en Mis cuotas', exact: true }).click();
+      await page.getByRole('heading', { name: 'Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
+      await expect.poll(async () => page.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+      await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Registrar cuenta de cuotas', exact: true });
+      expect(await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled()).toBe(true);
+      expect((await pool().query('SELECT id FROM provider_accounts WHERE company_id=$1 AND label=$2', [ownerA.company.slug, accountLabel])).rows).toEqual([]);
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill(accountLabel);
+      await form.getByRole('combobox', { name: /^Proveedor/u }).selectOption('codex');
+      await form.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'Cuenta registrada.' }).waitFor({ timeout: 20_000 });
+      await form.waitFor({ state: 'hidden', timeout: 20_000 });
+      await page.getByRole('article', { name: `Cuotas de ${accountLabel}`, exact: true }).waitFor({ timeout: 20_000 });
+      const registered = await pool().query<{ id: string; quota_registration_key: string }>(
+        'SELECT id,quota_registration_key FROM provider_accounts WHERE company_id=$1 AND label=$2', [ownerA.company.slug, accountLabel]);
+      expect(registered.rows).toHaveLength(1);
+      accountId = registered.rows[0]?.id ?? '';
+      registrationKey = registered.rows[0]?.quota_registration_key ?? '';
+      expect(accountId).toMatch(/^qa_[a-f0-9]{32}$/u);
+      expect(registrationKey).not.toBe('');
+      await openAccounts(page);
       await page.getByRole('row', { name: new RegExp(accountId, 'u') }).waitFor({ timeout: 20_000 });
     });
     expect(await storedAccount()).toEqual([{
-      provider: 'codex', external_account_id: accountExternal, payer_tenant_id: hubA, label: accountLabel,
-      credential_ref: accountLocator, shared_with_pool: false, enabled: true,
+      provider: 'codex', external_account_id: `unverified:${accountId}`, payer_tenant_id: hubA, label: accountLabel,
+      credential_ref: `op:quota/${accountId}`, shared_with_pool: false, enabled: false,
     }]);
     const snapshot = await apiGet(page, '/v3/console/config');
     expect(snapshot.status).toBe(200);
     expect(JSON.stringify(snapshot.body)).toContain(accountId);
-    expect(JSON.stringify(snapshot.body)).not.toContain(accountLocator);
+    expect(JSON.stringify(snapshot.body)).not.toContain(`op:quota/${accountId}`);
     const accounts = (snapshot.body as { provider_accounts?: Record<string, unknown>[] }).provider_accounts ?? [];
     const projected = accounts.find((row) => row.id === accountId);
-    expect(projected).toMatchObject({ provider: 'codex', external_account_id: accountExternal, label: accountLabel });
+    expect(projected).toMatchObject({ provider: 'codex', external_account_id: `unverified:${accountId}`, label: accountLabel });
     expect(projected && Object.hasOwn(projected, 'credential_ref')).toBe(false);
 
-    await step(page, 'provider account duplicate rejected', async () => {
-      await page.getByRole('button', { name: 'Nueva cuenta', exact: true }).click();
-      const dialog = page.getByRole('dialog');
-      await fillAccountForm(dialog, accountLocator);
-      errors.expectHttpError('/v3/console/config/changes', 409);
-      await dialog.getByRole('group', { name: 'Acciones de alta de cuenta', exact: true })
-        .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).click();
-      await dialog.getByRole('alert').first().waitFor({ timeout: 20_000 });
-      expect(await dialog.getByRole('group', { name: 'Acciones de alta de cuenta', exact: true })
-        .getByRole('button', { name: 'Aplicar', exact: true }).isDisabled()).toBe(true);
-      await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    await step(page, 'provider account retry does not duplicate the account and rejects a changed payload', async () => {
+      expect(await apiMutation(page, '/v3/console/quota-accounts', 'POST', { provider: 'codex', label: accountLabel, idempotency_key: registrationKey })).toBe(200);
+      errors.expectHttpError('/v3/console/quota-accounts', 409);
+      expect(await apiMutation(page, '/v3/console/quota-accounts', 'POST', { provider: 'codex', label: accountEditedLabel, idempotency_key: registrationKey })).toBe(409);
+      expect((await pool().query('SELECT id FROM provider_accounts WHERE company_id=$1 AND quota_registration_key=$2', [ownerA.company.slug, registrationKey])).rows).toEqual([{ id: accountId }]);
     });
     expect(await storedAccount()).toHaveLength(1);
     expect((await storedAccount())[0]).toMatchObject({ label: accountLabel });
@@ -335,6 +331,8 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
   it('cuentas de proveedor: edita y publica desde el formulario, otra empresa no la ve ni tras publicarla y el borrado exige confirmación exacta', async () => {
     const page = ownerPage();
     const foreign = foreignPage();
+    expect(accountId).not.toBe('');
+    expect(await storedAccount()).toHaveLength(1);
     await step(foreign, 'foreign company cannot read or delete the private account', async () => {
       const snapshot = await apiGet(foreign, '/v3/console/config');
       expect(JSON.stringify(snapshot.body)).not.toContain(accountId);
@@ -356,15 +354,15 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       expect(await page.getByRole('row', { name: new RegExp(accountId, 'u') }).innerText()).toContain(accountEditedLabel);
     });
     expect(await storedAccount()).toEqual([{
-      provider: 'codex', external_account_id: accountExternal, payer_tenant_id: hubA, label: accountEditedLabel,
-      credential_ref: accountLocator, shared_with_pool: true, enabled: true,
+      provider: 'codex', external_account_id: `unverified:${accountId}`, payer_tenant_id: hubA, label: accountEditedLabel,
+      credential_ref: `op:quota/${accountId}`, shared_with_pool: true, enabled: false,
     }]);
 
     await step(foreign, 'foreign company still cannot see the pooled account of another company', async () => {
       const snapshot = await apiGet(foreign, '/v3/console/config');
       expect(JSON.stringify(snapshot.body)).not.toContain(accountId);
-      expect(JSON.stringify(snapshot.body)).not.toContain(accountLocator);
-      expect(JSON.stringify(snapshot.body)).not.toContain(accountExternal);
+      expect(JSON.stringify(snapshot.body)).not.toContain(`op:quota/${accountId}`);
+      expect(JSON.stringify(snapshot.body)).not.toContain(`unverified:${accountId}`);
     });
 
     await step(page, 'provider account delete needs the exact confirmation', async () => {
@@ -427,28 +425,14 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
     expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);
   }, 240_000);
 
-  it('registro de agente: la baja con membresía da 409 y tras quitarla el registro desaparece de la UI y de PostgreSQL', async () => {
+  it('registro de agente: la baja atómica previsualiza sin escribir y elimina registro y membresías de la UI y PostgreSQL', async () => {
     const page = ownerPage();
     const ref = encodeURIComponent(`${hubA}/${agentAlias}`);
-    await step(page, 'agent delete blocked by membership', async () => {
-      await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
-      const sheet = page.getByRole('dialog');
-      await sheet.waitFor({ timeout: 20_000 });
-      await sheet.getByRole('tab', { name: 'Registro', exact: true }).click();
-      const editor = sheet.getByRole('region', { name: `Registro de ${hubA}/${agentAlias}`, exact: true });
-      await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
-      const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
-      errors.expectHttpError('/v3/console/config/changes', 409);
-      await form.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
-      await sheet.getByRole('alert').first().waitFor({ timeout: 20_000 });
-      expect(await form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).isDisabled()).toBe(true);
-      await form.getByRole('button', { name: 'Cancelar eliminación', exact: true }).click();
-    });
-    expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);
-    expect(await configChange(page, { resource: 'membership', action: 'delete', tenant_id: hubA, room_id: 'office', alias: agentAlias })).toBe(201);
-    expect((await pool().query('SELECT 1 FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(0);
-
-    await step(page, 'agent delete after membership removal', async () => {
+    expect((await pool().query('SELECT enabled,runtime_key FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ enabled: false, runtime_key: null }]);
+    expect((await pool().query('SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ room_id: 'office' }]);
+    const before = (await apiGet(page, '/v3/console/config')).body.revision;
+    expect(typeof before).toBe('number');
+    await step(page, 'agent delete preview preserves the registry, membership and revision', async () => {
       await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
       const sheet = page.getByRole('dialog');
       await sheet.waitFor({ timeout: 20_000 });
@@ -457,11 +441,20 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
       const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
       await form.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
+      await sheet.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
       await expect.poll(async () => form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+      expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(before);
+      expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);
+      expect((await pool().query('SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ room_id: 'office' }]);
+    });
+    await step(page, 'agent delete atomically removes its registry and membership', async () => {
+      const form = page.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
       await form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).click();
       await page.getByText(`Registro de ${hubA}/${agentAlias} eliminado en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
     });
     expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(0);
+    expect((await pool().query('SELECT 1 FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(0);
+    expect(Number((await apiGet(page, '/v3/console/config')).body.revision)).toBeGreaterThan(Number(before));
     await step(page, 'deleted agent stays deleted after reload', async () => {
       await openConfig(page, 'agentes');
       await page.getByLabel('Buscar agente o grupo').fill(agentAlias);
