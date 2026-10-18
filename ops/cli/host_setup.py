@@ -38,6 +38,7 @@ DOCKER = '/usr/bin/docker'
 IMAGE_ID = re.compile(r'sha256:[a-f0-9]{64}')
 DOWNLOAD_RETRY_SECONDS = (2, 5, 10, 20)
 DOCKER_LOAD_SECONDS = 3600
+CAPABILITIES_TIMEOUT_SECONDS = 180
 MAX_PACKAGE_AGE_MS = 3600 * 1000
 NAME = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 HEX = re.compile(r'[a-f0-9]{64}')
@@ -491,8 +492,12 @@ def write_if_changed(filename: pathlib.Path, content: str, mode: int) -> bool:
 
 
 def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dict:
-    result = runner([shutil.which('python3') or sys.executable, str(release / 'ops/cli/fleet-executor.py'),
-        '--policy', str(policy_file), '--capabilities'], 30)
+    try:
+        result = runner([shutil.which('python3') or sys.executable, str(release / 'ops/cli/fleet-executor.py'),
+            '--policy', str(policy_file), '--capabilities'], CAPABILITIES_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        raise HostFailure(f'la verificación de capacidades del executor superó {CAPABILITIES_TIMEOUT_SECONDS} segundos; '
+            'revisa el servicio, las plantillas y la conexión con la autoridad de flota; identidad local conservada') from None
     try:
         report = json.loads(result.stdout) if result.returncode == 0 else {}
     except ValueError:

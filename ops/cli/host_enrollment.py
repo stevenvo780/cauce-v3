@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import hashlib
 import json
 import pathlib
@@ -98,6 +99,22 @@ def heartbeat(directory: pathlib.Path) -> dict:
             'docker_version': docker_version, 'status': 'reachable'})
 
 
+def failure_reason(error: Exception) -> str:
+    if isinstance(error, subprocess.TimeoutExpired):
+        reason = 'un subproceso superó su tiempo límite; revisa el executor y sus dependencias'
+    elif isinstance(error, subprocess.CalledProcessError):
+        reason = f'un subproceso terminó con código {error.returncode}'
+    elif isinstance(error, OSError):
+        reason = errno.errorcode.get(error.errno, 'error de E/S') + '; revisa archivos, ejecutables y permisos locales'
+    elif isinstance(error, json.JSONDecodeError):
+        reason = f'JSON inválido en la línea {error.lineno}, columna {error.colno}'
+    elif isinstance(error, UnicodeError):
+        reason = 'texto con codificación inválida'
+    else:
+        reason = 'datos o configuración local inválidos'
+    return type(error).__name__ + ': ' + reason
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Enroll this computer using a fresh local identity')
     commands = parser.add_subparsers(dest='action', required=True)
@@ -137,8 +154,9 @@ def main() -> int:
             return 1
         print('cauce: no se pudo verificar el enrolamiento o canal; identidad local conservada. Revisa la invitación, permisos, conexión y estado en la consola.', file=sys.stderr)
         return 1
-    except (OSError, ValueError, subprocess.SubprocessError):
-        print('cauce: no se pudo verificar el enrolamiento o canal; identidad local conservada. Revisa la invitación, permisos, conexión y estado en la consola.', file=sys.stderr)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print('cauce: no se pudo completar hosts ' + args.action + '; identidad local conservada. Motivo: '
+            + failure_reason(error), file=sys.stderr)
         return 1
 
 
