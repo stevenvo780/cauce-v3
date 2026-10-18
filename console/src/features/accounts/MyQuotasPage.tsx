@@ -197,7 +197,7 @@ function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel, f
     void save({ provider: provider as QuotaAccountProvider, label: label.trim(), enabled, pause, idempotency_key: idempotencyKey }); }}>
     <label>Nombre de la cuenta<input required maxLength={80} value={label} disabled={locked} onChange={event => { setLabel(event.target.value); }} /></label>
     <label>Proveedor<select value={provider} disabled={locked || !!account} onChange={event => { setProviderChoice(event.target.value); }}>
-      {[...new Set([...QUOTA_ACCOUNT_PROVIDERS, ...account ? [account.provider] : []])].map(value => <option key={value} value={value}>{PROVIDER_LABEL[value] ?? value}</option>)}</select></label>
+      {[...new Set([...(account ? QUOTA_ACCOUNT_PROVIDERS : QUOTA_ACCOUNT_PROVIDERS.filter((value) => EXECUTABLE_QUOTA_PROVIDERS.has(value))), ...account ? [account.provider] : []])].map(value => <option key={value} value={value}>{PROVIDER_LABEL[value] ?? value}</option>)}</select></label>
     {!account && !executable.includes(provider) ? <Notice tone="info">Ningún ordenador puede consultar todavía esta cuenta. Se registra igual; para ver su cuota, añade una computadora en{' '}
       <a href="/config?seccion=computadoras" onClick={event => { onNavClick(event, '/config?seccion=computadoras'); }}>Ajustes → Computadoras</a>.</Notice> : null}
     {account ? <><label className="flex items-center gap-2"><input type="checkbox" checked={enabled} disabled={locked} onChange={event => { setEnabled(event.target.checked); }} />Cuenta habilitada</label>

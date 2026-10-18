@@ -49,7 +49,9 @@ export function AccountLogin({ account, snapshot, allowed, reload, environmentId
         : environment && !environmentHost ? 'El ordenador del entorno de esta cuenta no está disponible ahora. Revisa que esté encendido y conectado.'
           : !destination || (!environment && !snapshot.capabilities.hosts.some(host => host.host_id === hostId
             && quotaHostSupports(host, account.provider, 'create') && quotaHostSupports(host, account.provider, 'authenticate')))
-            ? `Ningún ordenador de la empresa puede iniciar sesión en ${account.provider}. Conecta un ordenador con el ejecutor de cuotas en Ajustes → Computadoras.`
+            ? snapshot.capabilities.hosts.length
+              ? `Ningún ordenador conectado ofrece iniciar sesión en ${account.provider}: el ejecutor de cuotas de la empresa no tiene ese proveedor. Revisa los proveedores del ordenador en Ajustes → Computadoras.`
+              : `Ningún ordenador de la empresa puede iniciar sesión en ${account.provider}. Conecta un ordenador con el ejecutor de cuotas en Ajustes → Computadoras.`
           : otherOperation ? 'El entorno de esta cuenta tiene otra operación en curso. Espera a que termine.'
             : brokenEnvironment ? 'No se pudo crear el entorno de esta cuenta. Elimínalo en «Entornos de consulta» y vuelve a intentarlo.' : undefined;
   const refresh = useCallback(() => { void reload().catch(() => undefined); }, [reload]);

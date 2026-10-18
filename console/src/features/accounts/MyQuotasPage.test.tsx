@@ -131,7 +131,7 @@ it('registra una cuenta y respeta límites contractuales en las cuentas y entorn
   await user.click(screen.getByRole('button', { name: 'Registrar cuenta' }));
   const form = within(await screen.findByRole('form', { name: 'Registrar cuenta de cuotas' }));
   expect(form.getByRole('textbox', { name: 'Nombre de la cuenta' })).toHaveAttribute('maxlength', '80');
-  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('ClaudeGPT / CodexAntigravityGrokMuse');
+  expect(form.getByRole('combobox', { name: 'Proveedor' })).toHaveTextContent('ClaudeGPT / CodexGrokMuseAntigravity (agy)');
   await user.type(form.getByRole('textbox', { name: 'Nombre de la cuenta' }), 'Sin agentes');
   await user.click(form.getByRole('button', { name: 'Registrar cuenta' }));
   expect(await screen.findByText('Cuenta registrada. Crea su entorno para autenticar y consultar.')).toBeVisible();
