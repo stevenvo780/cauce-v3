@@ -158,7 +158,7 @@ class GitObjects:
 
     def inspect(self, oid: str) -> tuple[bool, tuple[str, ...]]:
         kind, data = self.read(oid)
-        if VERIFIED_CREDENTIAL.search(data):
+        if sensitive_bytes(data):
             return False, ()
         dependencies = []
         if kind == 'tree':
@@ -169,7 +169,7 @@ class GitObjects:
                 if end < 0 or not separator or not raw_name or b'/' in raw_name or end + oid_size >= len(data):
                     raise Failure('invalid Git tree')
                 name = fold_text(raw_name.decode('utf-8', 'surrogateescape'))
-                if credential_name(name) or name == '.git':
+                if credential_name(name) or omission_reason(name, mode in (b'40000', b'040000', b'160000')) or name == '.git':
                     return False, ()
                 if mode not in (b'40000', b'040000', b'100644', b'100755', b'120000', b'160000'):
                     raise Failure('unsupported Git tree entry')
