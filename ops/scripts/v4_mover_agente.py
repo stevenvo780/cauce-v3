@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import fcntl
 import hashlib
 import json
@@ -79,6 +80,10 @@ def load_plan(path, alias):
     timeout = plan.get('timeout', 300)
     if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 3600:
         raise ValueError('timeout debe estar entre 0 y 3600 segundos')
+    authentication_wait = plan.get('authentication_wait_seconds', 0)
+    if type(authentication_wait) not in (int, float) or not math.isfinite(authentication_wait) \
+            or not 0 <= authentication_wait <= 1800:
+        raise ValueError('authentication_wait_seconds debe estar entre 0 y 1800 segundos')
     if plan.get('alias', alias) != alias:
         raise ValueError('el alias del plan no coincide')
     if not plan.get('company') or not plan.get('tenant'):
@@ -236,6 +241,18 @@ class Cut:
         self.save()
         return result
 
+    def awaiting_authentication(self, operation):
+        observed = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+        self.receipt['awaiting_auth'] = {'operation_id': operation['id'], 'observed_at': observed,
+                                       'timeout_seconds': self.plan['authentication_wait_seconds']}
+        self.save()
+        marker = ROOT / '.delegados/v4/hechas' / ('corte-' + self.plan['alias'] + '.listo')
+        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with marker.open('x', encoding='utf-8') as writer:
+            writer.write('awaiting_auth ' + observed + '\n')
+            writer.flush()
+            os.fsync(writer.fileno())
+
     def measure(self, label):
         if self.plan['source'].get('sudo'):
             from v4_medicion_migracion import load, scope_from_config
@@ -316,6 +333,8 @@ class Cut:
 
     def run(self):
         alias, timeout = self.plan['alias'], self.plan.get('timeout', 300)
+        authentication = {'authentication_wait': self.plan.get('authentication_wait_seconds', 0),
+                          'on_authentication': self.awaiting_authentication}
         self.original_row = self.fleet.agent(alias)
         self.legacy = self.original_row.get('runtime_mode') is None
         self.original = migration_parameters(self.fleet, self.original_row, self.plan)
@@ -381,14 +400,16 @@ class Cut:
                 self.receipt['legacy_checkpoint'] = checkpoint
                 self.create_attempted = True
                 try:
-                    created = self.step('preparar-flota-v4', lambda: self.fleet.operation('create', alias, target, timeout=timeout))
+                    created = self.step('preparar-flota-v4', lambda: self.fleet.operation(
+                        'create', alias, target, timeout=timeout, **authentication))
                     self.receipt['create_operation_id'] = created['id']
                 finally:
                     if self.fleet.last_operation_id:
                         self.receipt['create_operation_id'] = self.fleet.last_operation_id
             else:
                 self.relocation_attempted = True
-                self.step('reubicar-flota', lambda: self.fleet.operation('update', alias, target, timeout=timeout))
+                self.step('reubicar-flota', lambda: self.fleet.operation(
+                    'update', alias, target, timeout=timeout, **authentication))
             if target['placement']['mode'] == 'container':
                 limits = destination_limits(self.plan)
                 self.step('limites-destino', lambda: self.destination.call('limit', {

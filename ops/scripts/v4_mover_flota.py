@@ -219,9 +219,11 @@ class Fleet:
             raise FleetFailure('fleet acceptance differs from its preview', row, settled=False)
         return row
 
-    def operation(self, kind: str, alias: str, parameters: dict, timeout: float = 300) -> dict:
+    def operation(self, kind: str, alias: str, parameters: dict, timeout: float = 300, *,
+                  authentication_wait: float = 0, on_authentication=None) -> dict:
         if kind not in {'create', 'update', 'start', 'stop', 'retire'} or not isinstance(parameters, dict) \
-                or not math.isfinite(timeout) or timeout <= 0:
+                or not math.isfinite(timeout) or timeout <= 0 \
+                or not math.isfinite(authentication_wait) or not 0 <= authentication_wait <= 1800:
             raise FleetFailure('invalid migration operation')
         agent = self.agent(alias)
         target = {'resource': 'agent', 'tenant_id': agent['tenant_id'], 'alias': agent['alias']}
@@ -234,14 +236,22 @@ class Fleet:
             raise FleetFailure('fleet preview does not authorize the exact migration operation')
         row = self._accepted(request)
         deadline = time.monotonic() + timeout
+        authentication_deadline = None
         while row['status'] not in TERMINAL:
-            if row['status'] == 'awaiting_auth' or time.monotonic() >= deadline:
+            waiting = row['status'] == 'awaiting_auth'
+            if waiting and authentication_wait and authentication_deadline is None:
+                authentication_deadline = time.monotonic() + authentication_wait
+                deadline += authentication_wait
+                if on_authentication is not None:
+                    on_authentication(row)
+            active_deadline = min(deadline, authentication_deadline) if waiting and authentication_deadline else deadline
+            if waiting and not authentication_wait or time.monotonic() >= active_deadline:
                 reason = 'provider authentication is required' if row['status'] == 'awaiting_auth' else 'fleet operation timed out'
                 settled = self._cancel_and_settle(row, max(30, min(timeout, 180)))
                 if settled['status'] == 'succeeded':
                     return settled
                 raise FleetFailure(reason + '; operation cancellation settled', settled)
-            time.sleep(min(0.5, max(0, deadline - time.monotonic())))
+            time.sleep(min(120 if waiting else 0.5, max(0, active_deadline - time.monotonic())))
             try:
                 row = self._read_operation(row)
             except FleetFailure as error:
