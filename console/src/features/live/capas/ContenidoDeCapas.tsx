@@ -24,10 +24,10 @@ function SinMedir({ children }: { children: ReactNode }) {
 function NoSeMiro({ motivo, que }: { motivo: string | undefined; que: string }) {
   return (
     <SinMedir>
-      No se pudo mirar {que} de este alias: el gateway todavía no publica esta lectura
-      {motivo ? <> (dijo: «{motivo}»)</> : ' y no dio un motivo'}. Eso NO significa que no exista
-      —significa que la consola no lo vio—. El día que publique{' '}
-      <code>GET /v3/console/agents/:tenant/:alias/directive</code>, esta columna se llena sola.
+      No se pudo mirar {que} de este alias.
+      {motivo
+        ? <> El servidor dijo: «{motivo}». Eso no significa que no exista: esta sesión no alcanzó a verlo.</>
+        : <> La lectura no llegó y el servidor no dio un motivo. Eso no significa que no exista.</>}
     </SinMedir>
   );
 }
