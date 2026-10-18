@@ -128,7 +128,8 @@ describe('GET tenant-qualified del mapa de documentos', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json<DocumentsResponse>();
     expect(body.facts_source).toBe('database');
-    expect(body.caveat).toMatch(/5 de los 14/);
+    expect(body.caveat).toMatch(/no medidas dentro del contenedor/);
+    expect(body.caveat).not.toMatch(/5 de los 14|23-ago/);
     expect(body.items.every((d) => !d.readable)).toBe(true);
     expect(body.items.every((d) => !d.editable)).toBe(true);
     // On top of that, the path the DB gives is the wrong one: kant runs claude.js, not codex.

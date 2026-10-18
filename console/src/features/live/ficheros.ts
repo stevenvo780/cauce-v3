@@ -60,8 +60,7 @@ export function explicarFallo(status: number | undefined, mensajeServidor?: stri
         titulo: 'La ruta de este fichero no está medida',
         detalle: detalle ??
           'Nadie ha mirado todavía dentro del contenedor de este agente qué arnés corre ni con ' +
-          'qué HOME. Sin esa medición la ruta sería una suposición, y el registro se equivoca de ' +
-          'arnés en 5 de los 14 alias.',
+          'qué HOME. Sin esa medición la ruta sería una suposición.',
         pendiente: true,
       };
     case 503:

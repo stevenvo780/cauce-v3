@@ -21,7 +21,14 @@ function SinMedir({ children }: { children: ReactNode }) {
   );
 }
 
+function sinContenedor(motivo: string | undefined): boolean {
+  return typeof motivo === 'string' && /contenedor no medido|sin hechos de entorno/iu.test(motivo);
+}
+
 function NoSeMiro({ motivo, que }: { motivo: string | undefined; que: string }) {
+  if (sinContenedor(motivo)) {
+    return <SinMedir>Este agente no tiene contenedor. Se prepara en Computadoras.</SinMedir>;
+  }
   return (
     <SinMedir>
       No se pudo mirar {que} de este alias.

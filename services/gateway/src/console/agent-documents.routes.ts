@@ -273,9 +273,8 @@ export interface DocumentsResponse {
 }
 
 const CAVEAT_NO_MEDIDO =
-  'Estas rutas están DEDUCIDAS del registro, no medidas dentro del contenedor. El 23-ago-2026 el ' +
-  'registro se equivocaba de arnés en 5 de los 14 alias, así que trátalas como una pista y no ' +
-  'como la verdad. Nada es editable hasta que el pty-agent mida el entorno del proceso.';
+  'Estas rutas están deducidas del registro, no medidas dentro del contenedor. Trátalas como una ' +
+  'pista y no como la verdad. Nada es editable hasta que se mida el entorno del proceso.';
 
 const MANAGED_CONTEXT_CONFLICT_MESSAGES: Record<ManagedContextEditConflict, string> = {
   malformed_current: 'el fichero actual tiene marcadores CAUCE malformados; no se modifica manualmente',
