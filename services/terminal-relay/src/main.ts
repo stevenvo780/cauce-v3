@@ -133,16 +133,16 @@ browserServer.on('tlsClientError', () => { logEvent('terminal_relay_console_hand
 browserServer.on('error', (error: unknown) => { logEvent('terminal_relay_browser_server_error', { error: errorLabel(error) }); });
 
 agentServer.listen(config.agentPort, config.listenHost, () => {
-  logEvent('terminal_relay_agent_listening', { port: config.agentPort });
+  logEvent('terminal_relay_agent_listening', { port: config.agentPort }, { level: 'info' });
 });
 browserServer.listen(config.browserPort, config.listenHost, () => {
-  logEvent('terminal_relay_browser_listening', { port: config.browserPort });
+  logEvent('terminal_relay_browser_listening', { port: config.browserPort }, { level: 'info' });
 });
 healthServer.on('error', (error: unknown) => {
   logEvent('terminal_relay_health_server_error', { error: errorLabel(error) });
 });
 healthServer.once('listening', () => {
-  logEvent('terminal_relay_health_listening', { port: config.healthPort });
+  logEvent('terminal_relay_health_listening', { port: config.healthPort }, { level: 'info' });
 });
 
 let stopRecordingRetention: (() => void) | undefined;
