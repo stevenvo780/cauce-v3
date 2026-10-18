@@ -72,7 +72,7 @@ function AgentRow({ agent, routeId, active, rail }: { agent: AgenteDeMensajeria;
         </a>
         {!rail && state === 'unprepared' ? (
           <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias}
-            className="absolute bottom-1 left-11 z-10 text-[11px] font-medium text-brand-ink underline" />
+            className="ml-11 block w-fit pb-1 text-[11px] font-medium text-brand-ink underline" />
         ) : null}
         {rail ? null : (
           <span className={cn(

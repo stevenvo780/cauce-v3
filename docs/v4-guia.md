@@ -6,7 +6,7 @@ Abre la consola de tu instalación e inicia sesión. Cada acción se limita a la
 
 1. En la pantalla de acceso, pulsa **Crear cuenta y empresa**. Completa tu nombre, correo, contraseña (12 caracteres o más), el nombre de la empresa y un identificador libre: empieza por una letra y usa minúsculas, números o guiones.
 2. Al terminar se crean la empresa y tu acceso como dueño, y entras en el **Chat**.
-3. El chat ya lista dos agentes en borrador, sin ordenador: `owner` (con tu nombre, en la sala `office`) y `context-director`. El aviso «Borrador · sin ordenador» no es una caída. El espacio de la empresa tiene un identificador que empieza por `hub-`. Para conectar un ordenador y añadir agentes, abre **Ajustes**.
+3. El chat ya lista dos agentes en borrador, sin ordenador: `owner` (con tu nombre, en la sala `office`) y `context-director`. El aviso «Sin preparar» no es una caída. El espacio de la empresa tiene un identificador que empieza por `hub-`. Para conectar un ordenador y añadir agentes, abre **Ajustes**.
 
 Si administras la plataforma, el selector de empresa permite cambiar la empresa activa. Compruébala antes de crear o borrar recursos. Los demás usuarios trabajan dentro de su empresa y de los espacios autorizados.
 
@@ -93,7 +93,7 @@ Los contextos se publican en un repositorio privado compartido, separados por em
 
 En **Oficina**, abre un agente para consultar su estado, cuenta y cuota, o entrar en **Chat**, **Terminal** y **Perfil y contexto**. Las salas de la empresa salen de sus recursos. El campus añade lugares fijos del plano (cafetería, parque, residencia, recepción y taller): no son salas tuyas. Para editar el plano, pulsa **Plano editable**, guarda con **Guardar plano** y comprueba el resultado al volver a abrirlo. El cansancio representa disponibilidad de cuota; la falta de datos o un error se muestran por separado. **Sin datos** en un agente sin cuenta no es cuota agotada.
 
-En **Chat**, abre la tarjeta del agente aunque diga **Borrador · sin ordenador**. Escribe en **Mensaje para …** y pulsa Enter. Sin ordenador el envío queda en cola: verás **Lease sin dato · envío en cola** y **recibiendo…**. No es un fallo de la caja.
+En **Chat**, abre la tarjeta del agente aunque diga **Sin preparar**. Escribe en **Mensaje para …** y pulsa Enter. Sin ordenador el envío queda en cola: verás **Lease sin dato · envío en cola** y **recibiendo…**. No es un fallo de la caja.
 
 En la terminal, confirma el agente y el modo permitido antes de escribir. Desde el CLI puedes iniciar tu sesión con `cauce login`, abrir `cauce <tenant>/<alias>` y salir con `Ctrl-]`. Si expira el acceso, usa `cauce login --renew`. Comandos y permisos: [CLI](v4-cli.md), [terminal](terminal-pty.md).
 

@@ -154,7 +154,7 @@ export function ChatAttachmentsComposer({
       <label className="sr-only" htmlFor={`messenger-input-${agentId}`}>Mensaje para {agentAlias}</label>
       {unpreparedHref ? (
         <p className="m-0 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn-ink" role="note">
-          Este agente no tiene ordenador: el mensaje quedará en cola hasta prepararlo.{' '}
+          Este agente todavía no está preparado: el mensaje quedará en cola hasta prepararlo.{' '}
           <a href={unpreparedHref} className="font-medium text-brand-ink" onClick={(event) => { onNavClick(event, unpreparedHref); }}>Prepararlo</a>
         </p>
       ) : null}
