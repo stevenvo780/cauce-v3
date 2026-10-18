@@ -9,7 +9,7 @@ import { PrepareAgentLink } from '../features/config/prepare-agent-link';
 import { LIVE_STATE_META } from '../features/live/agent-state';
 import { colaNecesitaAtencion, ordenarPorSaludDeCola } from '../features/messages/queue-health';
 import type { AgenteDeMensajeria } from '../features/messages/roster';
-import { agentLiveState } from '../features/terminal/fleet';
+import { agentLiveState, tenantVisibleName } from '../features/terminal/fleet';
 import { onNavClick } from '../router';
 import { STATE_TONE, TONE_CLASS } from '../status-tone';
 import { agentHref } from './agent-href';
@@ -28,7 +28,8 @@ function queueHint(agent: AgenteDeMensajeria, salud: Partial<Salud>): string | u
 }
 
 function AgentRow({ agent, routeId, active, rail }: { agent: AgenteDeMensajeria; routeId: string; active: boolean; rail: boolean }) {
-  const { salud, live } = useFleet();
+  const { salud, live, topology } = useFleet();
+  const place = tenantVisibleName(topology.data, agent.tenantId);
   const state = agentLiveState(agent, live);
   const tone = STATE_TONE[state];
   const hint = queueHint(agent, salud);
@@ -62,7 +63,7 @@ function AgentRow({ agent, routeId, active, rail }: { agent: AgenteDeMensajeria;
             <span className="min-w-0 flex-1">
               <span className="flex min-w-0 items-baseline justify-between gap-2">
                 <span className="min-w-0 max-w-[60%] shrink-0 truncate text-[13px] font-medium">{agent.alias}</span>
-                <span className="min-w-0 flex-1 truncate text-[11px] text-muted">{agent.tenantId}</span>
+                <span className="min-w-0 flex-1 truncate text-[11px] text-muted" title={place === agent.tenantId ? undefined : agent.tenantId}>{place}</span>
               </span>
               <span className={cn('block truncate text-xs', alert ? 'text-danger-ink' : 'text-muted')}>
                 {LIVE_STATE_META[state].label}{hint ? ` · ${hint}` : ''}

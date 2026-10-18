@@ -28,6 +28,11 @@ export function fleetAgentId(tenantId: string, alias: string): string {
   return `${tenantId}:${alias}`;
 }
 
+export function tenantVisibleName(topology: TopologySnapshot | undefined, tenantId: string): string {
+  const label = topology?.tenants?.find((tenant) => tenant.id === tenantId)?.label?.trim();
+  return label && label.length > 0 ? label : tenantId;
+}
+
 /** Combines server topology and observed leases without inventing fleet members. */
 export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnapshot): FleetAgent[] {
   const records = new Map<string, MutableFleetAgent>();

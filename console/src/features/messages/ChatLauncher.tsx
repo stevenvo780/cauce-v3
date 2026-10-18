@@ -17,6 +17,7 @@ import { useFleet } from '../../shell/fleet-context';
 import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
 import { PrepareAgentLink } from '../config/prepare-agent-link';
+import { tenantVisibleName } from '../terminal/fleet';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import {
   SECTION_TITLE, lastMessages, launcherSections, needsAttention, nextCardIndex,
@@ -58,6 +59,8 @@ interface CardProps {
   state?: LiveState;
   /** Why the live view chose that state; the preview falls back to it when there is no message. */
   reason?: string;
+  /** Company or space name. The raw tenant id stays on `title` when it differs. */
+  place: string;
   last?: LastMessage;
   salud?: SaludDeCola;
   layout: 'tile' | 'row' | 'bubble';
@@ -66,7 +69,7 @@ interface CardProps {
   onFocus: (index: number) => void;
 }
 
-function LauncherCard({ agent, index, state, reason, last, salud, layout, highlighted, onOpen, onFocus }: CardProps) {
+function LauncherCard({ agent, index, state, reason, place, last, salud, layout, highlighted, onOpen, onFocus }: CardProps) {
   const key = keyOf(agent);
   const appearance = useAgentAppearance(key);
   const [hue] = orbHues(key, appearance?.hue);
@@ -78,7 +81,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
   const statusText = reason ?? (state ? 'Sin mensajes recientes' : UNKNOWN_STATE_META.hint);
   const previewPlain = last?.text ? `${last.from ? `${last.from}: ` : ''}${last.text}` : statusText;
   const label = [
-    `${agent.alias}, ${agent.tenantId}`, meta.label, last?.text ? '' : statusText,
+    `${agent.alias}, ${place}`, meta.label, last?.text ? '' : statusText,
     ...chips.map((chip) => chip.text), time ? `último mensaje ${time}` : '',
   ].filter(Boolean).join(' · ');
   const style = { '--i': index, '--h1': hue } as CSSProperties;
@@ -128,7 +131,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
           <span className={cn('absolute right-0.5 bottom-0.5 size-3 rounded-full ring-2 ring-surface', tone.dot)} aria-hidden="true" />
         </span>
         <span className="cl-alias max-w-full truncate text-[13px] font-medium text-fg">{agent.alias}</span>
-        <span className="max-w-full truncate text-[10px] text-muted">{time ?? agent.tenantId}</span>
+        <span className="max-w-full truncate text-[10px] text-muted" title={place === agent.tenantId ? undefined : agent.tenantId}>{time ?? place}</span>
       </a>
     );
   }
@@ -143,7 +146,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
         <span className="grid min-w-0 flex-1 gap-1">
           <span className="flex min-w-0 items-baseline gap-2">
             <span className="cl-alias min-w-0 max-w-[60%] truncate text-[15px] font-semibold text-fg">{agent.alias}</span>
-            <span className="min-w-0 flex-1 truncate text-xs text-muted">{agent.tenantId}</span>
+            <span className="min-w-0 flex-1 truncate text-xs text-muted" title={place === agent.tenantId ? undefined : agent.tenantId}>{place}</span>
             {time ? <time dateTime={last?.createdAt} className="ml-auto shrink-0 text-[11px] text-muted">{time}</time> : null}
           </span>
           <span className={previewClass} title={previewPlain}>{preview}</span>
@@ -162,7 +165,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
             <span className="cl-alias truncate text-[15px] font-semibold tracking-tight text-fg">{agent.alias}</span>
             {time ? <time dateTime={last?.createdAt} className="ml-auto shrink-0 text-[11px] text-muted">{time}</time> : null}
           </span>
-          <span className="truncate text-xs text-muted">{agent.tenantId}</span>
+          <span className="truncate text-xs text-muted" title={place === agent.tenantId ? undefined : agent.tenantId}>{place}</span>
         </span>
       </span>
       <span className={previewClass} title={previewPlain}>{preview}</span>
@@ -192,7 +195,7 @@ function SkeletonGrid({ phone }: { phone: boolean }) {
 
 /** The landing of the Chat section: a quick picker that opens a conversation in one gesture. */
 export function ChatLauncher({ phone }: { phone: boolean }) {
-  const { agents, live, salud, activity, messages, loading, error, reload } = useFleet();
+  const { agents, live, salud, activity, messages, topology, loading, error, reload } = useFleet();
   const [activityReadFailed, setActivityReadFailed] = useState(false);
   useEffect(() => {
     if (activity.error) setActivityReadFailed(true);
@@ -343,6 +346,7 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
                       index={start + index}
                       state={stateOf(agent)}
                       reason={live.get(agent.id)?.reason}
+                      place={tenantVisibleName(topology.data, agent.tenantId)}
                       last={last.get(agent.id)}
                       salud={salud[agent.id]}
                       layout={bubbles ? 'bubble' : phone ? 'row' : 'tile'}
