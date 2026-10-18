@@ -124,20 +124,36 @@ class OpenClawProviderTest(unittest.TestCase):
         import fleet_executor_profiles
         agent = {**self.agent, 'runtime_mode': 'container', 'container_name': 'isolated', '_placement': {'python': '/usr/bin/python3'}}
         binding = {**self.binding, 'container_name': 'isolated'}
+        receipt = {'extensions_sha256': hashlib.sha256(b'[]').hexdigest()}
         with mock.patch.object(fleet_executor_policy, 'approve_agent', return_value=agent), \
                 mock.patch.object(templates, 'resolve_profile', return_value=binding), \
                 mock.patch.object(fleet_executor_container, 'inspect_container', return_value={}), \
                 mock.patch.object(fleet_executor_container, 'validate_container'), \
                 mock.patch.object(fleet_executor_container, 'identity_for', return_value={'container_id': 'a' * 64}), \
                 mock.patch.object(fleet_executor_container, 'user_identity', return_value=('1000', '1000')), \
-                mock.patch.object(fleet_executor_container, 'checked_command') as execute:
-            fleet_executor_profiles.prepare_profile({'profiles': {'account-one': binding}}, agent)
-        argv = execute.call_args.args[0]
-        self.assertEqual(argv[argv.index('--user') + 1], agent['runtime_user'])
-        self.assertIn('-i', argv)
-        packet = json.loads(execute.call_args.kwargs['input_data'])
-        self.assertEqual(packet['profile_binding'], binding)
-        self.assertNotIn('_placement', packet['agent'])
+                mock.patch.object(fleet_executor_container, 'checked_command',
+                    side_effect=[b'', json.dumps(receipt).encode()]) as execute:
+            self.assertEqual(fleet_executor_profiles.prepare_profile({'profiles': {'account-one': binding}}, agent), receipt)
+        self.assertEqual(execute.call_count, 2)
+        for call, script, action in zip(execute.call_args_list,
+                ('fleet_provider_openclaw.py', 'fleet_provider_identity.py'), ('--prepare', '--prepare-extensions'), strict=True):
+            argv = call.args[0]
+            self.assertEqual(argv, [fleet_executor_container.DOCKER, 'exec', '-i', '--user', agent['runtime_user'],
+                '--env', 'PYTHONDONTWRITEBYTECODE=1', 'a' * 64, agent['_placement']['python'],
+                f'{fleet_executor_container.EXECUTOR_DESTINATION}/{script}', action])
+            raw = call.kwargs['input_data']
+            self.assertIsInstance(raw, bytes)
+            self.assertLessEqual(len(raw), 262144)
+            packet = json.loads(raw)
+            self.assertEqual(packet['agent']['runtime_user'], agent['runtime_user'])
+            self.assertNotIn('_placement', packet['agent'])
+            self.assertFalse(any(key.startswith('_') for key in packet['agent']))
+        profile_packet, extension_packet = [json.loads(call.kwargs['input_data']) for call in execute.call_args_list]
+        self.assertEqual(set(profile_packet), {'profile_binding', 'agent'})
+        self.assertEqual(profile_packet['profile_binding'], binding)
+        self.assertEqual(extension_packet, {'profile': binding['path'], 'state': agent['state_directory'],
+            'agent': profile_packet['agent']})
+        self.assertEqual(execute.call_args_list[1].kwargs['timeout'], fleet_executor_profiles.PREPARE_EXTENSION_TIMEOUT)
 
     def anthropic(self, mode='anthropic-token'):
         self.binding['provider'] = 'claude'
