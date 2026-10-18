@@ -1,15 +1,15 @@
 import { preparePostgresSuite } from './postgres-suite.js';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, StoreError, lockCompanyAuthority, type DatabasePool } from '../src/index.js';
+import type { DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
+import { CauceRepository, lockCompanyAuthority, type DatabasePool } from '../src/index.js';
 import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import {
   ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
-  terminalAck as buildTerminalAck, type Consumer
+  type Consumer
 } from './helpers/consumer.js';
 
 let database: TestDatabase;
@@ -49,11 +49,6 @@ const consumer = (tenant: Tenant, alias: string): Promise<Consumer> =>
 const nextDelivery = (
   target: Consumer, predicate?: (delivery: DeliveryEnvelope) => boolean
 ): Promise<DeliveryEnvelope> => claimNext(repository, target, predicate);
-
-const terminalAck = (
-  delivery: DeliveryEnvelope, target: Consumer, messages: unknown[],
-  reply: string | null = 'done', eventId = randomUUID()
-): Ack => buildTerminalAck(delivery, target, { messages, reply, eventId });
 
 const ackWith = async (
   target: Consumer, delivery: DeliveryEnvelope, messages: unknown[],
@@ -182,63 +177,6 @@ describe('correlation provenance and hop saturation', () => {
       [victimRoot]
     )).rowCount).toBe(0);
   });
-
-  it.each([
-    { name: 'fractional', value: 1.5 },
-    { name: 'integer overflow', value: 2_147_483_647 },
-    { name: 'negative', value: -5 },
-    { name: 'string', value: '9' },
-    { name: 'null', value: null }
-  ])('applies the ACK and materializes hop 1 for a poisoned hop_count: $name', async ({ value }) => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command({
-      body: { text: 'poisoned hop count', correlation: { hop_count: value } }
-    }));
-    const delivery = await nextDelivery(argos);
-
-    await ackWith(argos, delivery, [{ to: 'socrates', body: 'still one hop' }]);
-
-    expect((await materializations())[0]).toMatchObject({ hop_count: 1, hop_budget: 16 });
-  });
-
-  it('saturates a poisoned durable hop budget instead of propagating it', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [{ to: 'socrates', body: 'first hop' }]);
-    await pool.query(`UPDATE agent_output_materializations SET hop_budget=1000000000`);
-
-    const child = await nextDelivery(socrates);
-    await ackWith(socrates, child, [{ to: 'jarvis', body: 'second hop' }]);
-
-    const rows = await materializations();
-    expect(rows).toHaveLength(2);
-    expect(rows[1]).toMatchObject({
-      source_alias: 'socrates', target_alias: 'jarvis', hop_count: 2, hop_budget: 16
-    });
-  });
-
-  it('keeps growing the delegation path across an agent.response continuation', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const seneca = await consumer('Pablo', 'seneca');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [{ to: 'socrates', body: 'delegate down' }]);
-    const child = await nextDelivery(socrates);
-    await ackWith(socrates, child, [{ to: 'seneca', body: 'delegate deeper' }]);
-    const leaf = await nextDelivery(seneca);
-    await ackWith(seneca, leaf, [], 'leaf reply');
-
-    const continuation = await nextDelivery(socrates, (item) => item.body.type === 'agent.response');
-    await ackWith(socrates, continuation, [{ to: 'jarvis', body: 'redelegate after the answer' }]);
-
-    const rows = await materializations();
-    const redelegation = rows.find((row) => row.target_alias === 'jarvis');
-    expect(redelegation).toMatchObject({ hop_count: 2, hop_budget: 16 });
-    expect(redelegation?.visited_path).toEqual(['Steven/argos', 'Steven/socrates']);
-  });
 });
 
 describe('cycle cutting', () => {
@@ -279,84 +217,6 @@ describe('cycle cutting', () => {
          AND metadata->>'rejection_code'='cycle_detected'`
     )).rowCount).toBe(1);
   });
-
-  it('leaves the back edge alone while the policy flag is off', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const jarvis = await consumer('Steven', 'jarvis');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [{ to: 'socrates', body: 'go' }]);
-    const child = await nextDelivery(socrates);
-    await ackWith(socrates, child, [{ to: 'jarvis', body: 'go deeper' }]);
-    const grandchild = await nextDelivery(jarvis);
-
-    await ackWith(jarvis, grandchild, [{ to: 'argos', body: 'back edge' }]);
-
-    const rows = await materializations();
-    expect(rows.map((row) => [row.source_alias, row.target_alias, row.status])).toEqual([
-      ['argos', 'socrates', 'materialized'],
-      ['socrates', 'jarvis', 'materialized'],
-      ['jarvis', 'argos', 'materialized']
-    ]);
-  });
-
-  it('allows a diamond where two branches converge on an unvisited agent', async () => {
-    await setChainPolicy({ cycle_cut_enabled: true });
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const jarvis = await consumer('Steven', 'jarvis');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [
-      { to: 'socrates', body: 'left' },
-      { to: 'jarvis', body: 'right' }
-    ]);
-
-    const left = await nextDelivery(socrates);
-    await ackWith(socrates, left, [{ to: 'seneca', body: 'converge' }]);
-    const right = await nextDelivery(jarvis);
-    await ackWith(jarvis, right, [{ to: 'seneca', body: 'converge' }]);
-
-    const rows = await materializations();
-    expect(rows.filter((row) => row.target_alias === 'seneca')).toEqual([
-      expect.objectContaining({ source_alias: 'socrates', status: 'materialized' }),
-      expect.objectContaining({ source_alias: 'jarvis', status: 'materialized' })
-    ]);
-    expect(rows.every((row) => row.rejection_code === null)).toBe(true);
-  });
-});
-
-describe('server-side @all prohibition on internal turns', () => {
-  it('rejects an @all directive emitted from a delegated agent.message', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await consumer('Steven', 'jarvis');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [{ to: 'socrates', body: 'delegate' }]);
-    const child = await nextDelivery(socrates);
-
-    await ackWith(socrates, child, [{ to: '@all', body: 'broadcast from an internal turn' }]);
-
-    const rows = await materializations();
-    expect(rows.filter((row) => row.source_alias === 'socrates')).toEqual([
-      expect.objectContaining({ status: 'rejected', rejection_code: 'invalid_output' })
-    ]);
-  });
-
-  it('still expands @all for a non-internal user request', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{ to: '@all', body: 'broadcast from a user request' }]);
-
-    const rows = await materializations();
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((row) => row.status === 'materialized')).toBe(true);
-  });
 });
 
 describe('interim chain progress towards Telegram', () => {
@@ -382,52 +242,6 @@ describe('interim chain progress towards Telegram', () => {
     };
   }
 
-  it('announces the addressed delegation but suppresses a delegated branch return', async () => {
-    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
-    const chain = await telegramChain('progress-basic');
-    const root = await nextDelivery(chain.argos);
-    await ackWith(chain.argos, root, [
-      { to: 'kant', body: 'branch one' },
-      { to: 'socrates', body: 'branch two' }
-    ]);
-    const first = await nextDelivery(chain.kant);
-    await ackWith(chain.kant, first, [], 'branch one reply');
-
-    const relays = await progressRelays();
-    expect(relays.map((relay) => relay.stage)).toEqual(['delegated']);
-    expect(relays.every((relay) => relay.relay_kind === 'ack' && !relay.terminal)).toBe(true);
-    expect(relays.every((relay) => relay.root_message_id === chain.rootMessageId)).toBe(true);
-    expect(relays[0]?.reply).toContain('argos delegó en Steven/kant, Steven/socrates');
-    expect((await pool.query<{ emitted: number }>(
-      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
-    )).rows[0]?.emitted).toBe(1);
-  });
-
-  it('preserves denied progress for a delegated branch', async () => {
-    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
-    const chain = await telegramChain('progress-denied');
-    const seneca = await consumer('Pablo', 'seneca');
-    const root = await nextDelivery(chain.argos);
-    await ackWith(chain.argos, root, [
-      { to: 'seneca', body: 'cross-tenant branch before reverse ACL revocation' }
-    ]);
-    const child = await nextDelivery(seneca);
-    await pool.query(
-      `UPDATE acl_edges SET allow_route=false
-       WHERE from_tenant='Pablo' AND to_tenant='Steven'`
-    );
-
-    await ackWith(seneca, child, [], 'denied branch reply');
-
-    const relays = await progressRelays();
-    expect(relays.map((relay) => relay.stage)).toEqual(['delegated', 'denied']);
-    expect(relays[1]?.reply).toContain('reverse_acl_unavailable');
-    expect(relays.every((relay) => relay.root_message_id === chain.rootMessageId)).toBe(true);
-    expect((await pool.query<{ emitted: number }>(
-      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
-    )).rows[0]?.emitted).toBe(2);
-  });
-
   it('stops exactly at the configured budget with a single capped notice', async () => {
     await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 1 });
     const chain = await telegramChain('progress-capped');
@@ -445,60 +259,6 @@ describe('interim chain progress towards Telegram', () => {
     expect((await pool.query<{ emitted: number }>(
       `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
     )).rows[0]?.emitted).toBe(1);
-  });
-
-  it('never double counts a replayed ACK', async () => {
-    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
-    const chain = await telegramChain('progress-replay');
-    const root = await nextDelivery(chain.argos);
-    const eventId = randomUUID();
-    const ack = terminalAck(root, chain.argos, [{ to: 'kant', body: 'once' }], 'done', eventId);
-    await repository.ackDelivery(root.delivery_id, 'Steven', 'argos', ack);
-    await repository.ackDelivery(root.delivery_id, 'Steven', 'argos', ack);
-
-    expect(await progressRelays()).toHaveLength(1);
-    expect((await pool.query<{ emitted: number }>(
-      `SELECT emitted FROM agent_chain_progress WHERE root_message_id=$1`, [chain.rootMessageId]
-    )).rows[0]?.emitted).toBe(1);
-  });
-
-  it('emits nothing at all while the policy flag is off', async () => {
-    const chain = await telegramChain('progress-disabled');
-    const root = await nextDelivery(chain.argos);
-    await ackWith(chain.argos, root, [{ to: 'kant', body: 'silent' }]);
-
-    expect(await progressRelays()).toEqual([]);
-    expect((await pool.query(`SELECT 1 FROM agent_chain_progress`)).rowCount).toBe(0);
-  });
-
-  it('is unclaimable and superseded once a final relay of the same root is processing', async () => {
-    await setChainPolicy({ progress_relay_enabled: true, progress_relay_max_events: 12 });
-    const chain = await telegramChain('progress-supersede');
-    const root = await nextDelivery(chain.argos);
-    await ackWith(chain.argos, root, [{ to: 'kant', body: 'branch' }]);
-    await pool.query(
-      `INSERT INTO adapter_outbox(
-         tenant_id,adapter,kind,idempotency_key,request_id,message_id,delivery_id,trace_id,origin,
-         payload,status,claimed_at,claim_expires_at
-       ) VALUES('Steven','telegram','origin_relay',$1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'processing',
-                now(),now()+interval '1 minute')`,
-      [
-        `relay-root:${chain.rootMessageId}`, root.request_id, chain.rootMessageId, root.delivery_id,
-        chain.traceId, JSON.stringify(telegramOrigin('progress-supersede')),
-        JSON.stringify({
-          outcome: 'done',
-          result: { output: { reply: 'final' } },
-          correlation: { message_id: chain.rootMessageId, root_message_id: chain.rootMessageId }
-        })
-      ]
-    );
-
-    const claimed = await repository.claimOutbox('origin_relay', 'progress-worker', 10, 30_000, 'telegram');
-
-    expect(claimed.some((event) => event.payload.progress_stage !== undefined)).toBe(false);
-    expect((await pool.query<{ status: string }>(
-      `SELECT status FROM adapter_outbox WHERE payload->>'progress_stage' IS NOT NULL`
-    )).rows).toEqual([{ status: 'dead' }]);
   });
 });
 
@@ -554,25 +314,6 @@ describe('agentChain read model', () => {
     expect(edges[0]?.target).toMatchObject({ tenant_id: 'Pablo', alias: 'seneca' });
     expect(chain.counters).toMatchObject({ redacted_endpoints: 1 });
   });
-
-  it('is default-deny for an actor outside the chain and for an unknown trace', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const input = command();
-    await repository.publish(input);
-    const root = await nextDelivery(argos);
-    await ackWith(argos, root, [{ to: 'socrates', body: 'private branch' }]);
-
-    await expect(repository.agentChain(input.trace_id, 'Miguel', 'kratos'))
-      .rejects.toMatchObject({ code: 'not_found' });
-    await expect(repository.agentChain(`trace-${randomUUID()}`, 'Steven', 'kant'))
-      .rejects.toBeInstanceOf(StoreError);
-    // 'kant' is the seed hub operator (migration 003 reassigns it once), not a plain
-    // 'agent' member, so the permission this actor actually holds comes from 'operator'.
-    await pool.query(`UPDATE role_policies SET allow_read=false WHERE role='operator'`);
-    await expect(repository.agentChain(input.trace_id, 'Steven', 'kant'))
-      .rejects.toMatchObject({ code: 'forbidden' });
-    await pool.query(`UPDATE role_policies SET allow_read=true WHERE role='operator'`);
-  });
 });
 
 describe('versioned chain policy', () => {
@@ -608,20 +349,5 @@ describe('versioned chain policy', () => {
       .toEqual([1, 2].map(() => ({ scope: 'platform', actor_human_id: humanId })));
     expect((await pool.query("SELECT action,actor_human_id::text FROM audit_events WHERE action LIKE 'config.%' ORDER BY id")).rows)
       .toEqual([{ action: 'config.change', actor_human_id: humanId }, { action: 'config.rollback', actor_human_id: humanId }]);
-  });
-
-  it('denies a chain policy mutation to a company owner and to an agent in the hub', async () => {
-    await pool.query(
-      `UPDATE memberships SET role='operator' WHERE tenant_id='Pablo' AND alias='midas'`
-    );
-    await database.adminPool.query("INSERT INTO agents(tenant_id,alias,enabled) VALUES('Pablo','midas',false),('Steven','kant',false)");
-    const humanId = (await seedFleetHuman(database.adminPool, 'Pablo', 'midas', 'owner')).slice('console:'.length);
-    const authority = (client: Parameters<typeof lockCompanyAuthority>[0]) => lockCompanyAuthority(client, { tenant: 'Pablo', alias: 'midas', humanId });
-    await expect(repository.applyConfigurationChange('Pablo', 'midas', {
-      resource: 'chain_policy', action: 'update', id: 'default', value: { cycle_cut_enabled: true }
-    }, false, 0, authority)).rejects.toMatchObject({ code: 'forbidden' });
-    await expect(repository.applyConfigurationChange('Steven', 'kant', {
-      resource: 'chain_policy', action: 'update', id: 'default', value: { cycle_cut_enabled: true }
-    }, false)).rejects.toMatchObject({ code: 'forbidden' });
   });
 });

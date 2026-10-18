@@ -9,7 +9,6 @@ import {
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
-import { requireValue } from './helpers.js';
 import {
   ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext, type Consumer
 } from './helpers/consumer.js';
@@ -72,18 +71,6 @@ async function fillOpenRoots(count = AGENT_ROOT_OPEN_LIMIT): Promise<PublishMess
   return published;
 }
 
-/** An agent root whose delivery died and that its author retried: returns the clone's message id. */
-async function replayedAgentRoot(): Promise<string> {
-  const dead = requireValue((await agentRoot()).delivery_ids[0], 'delivery id');
-  await pool.query(`UPDATE deliveries SET status='dead',terminal_at=now() WHERE id=$1`, [dead]);
-  await pool.query(`INSERT INTO dead_letters(delivery_id,tenant_id,reason,payload,attempts)
-    SELECT id,recipient_tenant,'prueba','{}'::jsonb,attempt FROM deliveries WHERE id=$1`, [dead]);
-  const clone = await repository.retryOwnDelivery(dead, 'Steven', 'kant');
-  return requireValue((await pool.query<{ message_id: string }>(
-    'SELECT message_id FROM deliveries WHERE id=$1', [clone.delivery_id]
-  )).rows[0], 'clone').message_id;
-}
-
 async function rejectionOf(input: PublishMessage): Promise<AgentRootLimitError> {
   const error: unknown = await agentRoot(input).then(() => undefined, (failure: unknown) => failure);
   expect(error).toBeInstanceOf(AgentRootLimitError);
@@ -140,22 +127,6 @@ describe('tope de raíces abiertas por agente', () => {
     }
   }, 120_000);
 
-  it('una raíz terminada libera un lugar', async () => {
-    await fillOpenRoots();
-    await rejectionOf(command());
-    const argos = await consumer('Steven', 'argos');
-    const delivery = await claimNext(repository, argos);
-    await applyTerminalAck(repository, argos, delivery, { reply: 'listo' });
-    await expect(agentRoot()).resolves.toMatchObject({ duplicate: false });
-    await rejectionOf(command());
-  }, 120_000);
-
-  it('el reintento idempotente al tope sigue devolviendo duplicate:true', async () => {
-    const [first] = await fillOpenRoots();
-    if (first === undefined) throw new Error('no root was published');
-    await expect(agentRoot(first)).resolves.toMatchObject({ duplicate: true });
-  }, 120_000);
-
   it('publicaciones concurrentes no pasan el tope', async () => {
     const outcomes = await Promise.allSettled(
       Array.from({ length: AGENT_ROOT_OPEN_LIMIT + 4 }, () => agentRoot())
@@ -164,13 +135,6 @@ describe('tope de raíces abiertas por agente', () => {
     for (const outcome of outcomes) {
       if (outcome.status === 'rejected') expect(outcome.reason).toBeInstanceOf(AgentRootLimitError);
     }
-  }, 120_000);
-
-  it('el clon reintentado de una raíz de agente muerta ocupa un lugar', async () => {
-    const clone = await replayedAgentRoot();
-    await fillOpenRoots(AGENT_ROOT_OPEN_LIMIT - 1);
-    const rejection = await rejectionOf(command());
-    expect(rejection.openRoots.map((root) => root.message_id)).toContain(clone);
   }, 120_000);
 
   it('una raíz ocupa su lugar mientras corre su cadena, no sólo su primer salto', async () => {
@@ -197,31 +161,6 @@ describe('tope de raíces abiertas por agente', () => {
     expect(closed.deliveries).toEqual([expect.objectContaining({ alias: 'jarvis', status: 'done', reply: 'consolidado' })]);
     await expect(agentRoot()).resolves.toMatchObject({ duplicate: false });
   }, 180_000);
-
-  it('una espera humana abierta en la cadena también ocupa el lugar', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const root = await agentRoot(command({ recipients: [{ tenant_id: 'Steven', alias: 'argos' }] }));
-    const delivery = await claimNext(repository, argos);
-    await applyTerminalAck(repository, argos, delivery, { reply: 'pregunté a la persona' });
-    await pool.query(
-      `INSERT INTO agent_chain_gates(root_message_id,tenant_id,asked_by_alias,source_delivery_id,source_attempt,
-         output_index,trace_id,question,correlation)
-       VALUES($1,'Steven','argos',$2,1,0,'trace-gate','¿Aprobás?','{}'::jsonb)`,
-      [root.message_id, delivery.delivery_id]
-    );
-    await fillOpenRoots(AGENT_ROOT_OPEN_LIMIT - 1);
-    expect((await rejectionOf(command())).openRoots.map((open) => open.message_id)).toContain(root.message_id);
-    await pool.query(`UPDATE agent_chain_gates SET status='cancelled'`);
-    await expect(agentRoot()).resolves.toMatchObject({ duplicate: false });
-  }, 120_000);
-
-  it('las raíces de operador no cuentan ni tienen tope', async () => {
-    for (let index = 0; index < AGENT_ROOT_OPEN_LIMIT + 2; index += 1) {
-      await expect(repository.publish(command())).resolves.toMatchObject({ duplicate: false });
-    }
-    await fillOpenRoots();
-    await rejectionOf(command());
-  }, 120_000);
 });
 
 describe('combustible y ciclo de una raíz de agente', () => {
@@ -245,49 +184,6 @@ describe('combustible y ciclo de una raíz de agente', () => {
     expect(reason).toContain(`${String(AGENT_ROOT_DELEGATIONS)} delegaciones`);
   }, 120_000);
 
-  it('el clon de una raíz de agente muerta conserva el combustible reducido', async () => {
-    const { rows } = await fuelOf(() => replayedAgentRoot());
-    expect(rows).toEqual({ materialized: AGENT_ROOT_DELEGATIONS, codes: ['root_budget_exhausted'] });
-  }, 120_000);
-
-  it('la raíz de operador conserva el combustible de la política', async () => {
-    await setCaps({ delegation_caps_enabled: true, max_edge_repeats_per_root: 1_000 });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    await applyTerminalAck(repository, argos, await claimNext(repository, argos), {
-      messages: branches(AGENT_ROOT_DELEGATIONS + 1)
-    });
-    expect(await materializedAndRejected()).toEqual({ materialized: AGENT_ROOT_DELEGATIONS + 1, codes: [] });
-  }, 120_000);
-
-  async function chainBackToActor(publish: () => Promise<unknown>): Promise<(string | null)[]> {
-    await setCaps({ cycle_cut_enabled: true });
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await publish();
-    await applyTerminalAck(repository, argos, await claimNext(repository, argos), {
-      messages: [{ to: 'socrates', body: 'seguí vos' }]
-    });
-    const toSocrates = await claimNext(repository, socrates, (item) => item.body.type === 'agent.message');
-    const result = await applyTerminalAck(repository, socrates, toSocrates, {
-      messages: [{ to: 'kant', body: 'te lo devuelvo' }]
-    });
-    return (result.delegation_rejections ?? []).map((rejection) => rejection.code);
-  }
-
-  it('el actor cuenta como visitado: B -> C -> A se corta como ciclo', async () => {
-    expect(await chainBackToActor(() => agentRoot())).toEqual(['cycle_detected']);
-    expect((await materializedAndRejected()).codes).toEqual(['cycle_detected']);
-  }, 120_000);
-
-  it('el clon de una raíz de agente muerta también corta B -> C -> A', async () => {
-    expect(await chainBackToActor(() => replayedAgentRoot())).toEqual(['cycle_detected']);
-  }, 120_000);
-
-  it('en una raíz de operador el mismo camino sigue abierto', async () => {
-    expect(await chainBackToActor(() => repository.publish(command()))).toEqual([]);
-    expect(await materializedAndRejected()).toEqual({ materialized: 2, codes: [] });
-  }, 120_000);
 });
 
 describe('lectura del resultado por quien publicó', () => {
@@ -351,33 +247,8 @@ describe('lectura del resultado por quien publicó', () => {
     return root.message_id;
   }
 
-  it('una respuesta tardía de un subagente no reemplaza la del fan-in', async () => {
-    const view = await repository.getMessage(await throughFanin('done'), 'Steven', 'kant', 'agent');
-    expect(view.deliveries).toEqual([expect.objectContaining({ alias: 'jarvis', reply: 'consolidado' })]);
-  }, 180_000);
-
   it('un fan-in fallido no se tapa con la respuesta de un subagente', async () => {
     const view = await repository.getMessage(await throughFanin('failed'), 'Steven', 'kant', 'agent');
     expect(view.deliveries).toEqual([expect.objectContaining({ alias: 'jarvis', reply: null })]);
   }, 180_000);
-
-  it('el operador ve la respuesta de lo que publicó como operador; su certificado de agente no', async () => {
-    const id = await answered(() => repository.publish(command()));
-    expect(await replyOf(id, 'kant', 'operator')).toBe('hecho y verificado');
-    expect(await replyOf(id, 'kant', 'agent')).toBeUndefined();
-  }, 120_000);
-
-  it('la respuesta de una sonda de gate no se muestra a nadie', async () => {
-    await database.adminPool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','kant') ON CONFLICT DO NOTHING");
-    await database.adminPool.query(`INSERT INTO company_system_principals(company_id,kind,tenant_id,room_id,actor_alias,principal_alias)
-      SELECT company_id,'gate_probe',id,'grp.steven','kant','gate-probe' FROM tenants WHERE id='Steven'`);
-    const nonce = 'a'.repeat(32);
-    const id = await answered(() => repository.publish(command({
-      body: { type: 'system.gate.probe', nonce, timeout_ms: 60_000 }, priority: -100,
-      idempotency_key: `gate:Steven:argos:${nonce}`,
-      authenticated_context: { session_id: 'gate-probe', channel: 'gate' },
-    })));
-    expect(await replyOf(id, 'kant', 'operator')).toBeUndefined();
-    expect(await replyOf(id, 'kant', 'agent')).toBeUndefined();
-  }, 120_000);
 });

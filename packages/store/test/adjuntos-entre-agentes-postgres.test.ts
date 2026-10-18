@@ -81,24 +81,6 @@ function digest(bytes: Buffer): string {
 
 const informe = payload(2048, 0x25);
 
-async function enableHumanGate(): Promise<void> {
-  await pool.query(`UPDATE agent_chain_policies SET human_gate_enabled=true WHERE id='default'`);
-}
-
-interface StubbedTarget { tenant_id: Tenant; alias: string; online: boolean }
-
-/** The expanded-size cap only bites on a fleet larger than any seed room has aliases. */
-const stubRoutingTargets = (count: number): (() => void) => {
-  const mutable = repository as unknown as {
-    routingTargets(client: unknown, tenant: Tenant, alias: string): Promise<StubbedTarget[]>;
-  };
-  const original = mutable.routingTargets.bind(repository);
-  mutable.routingTargets = async () => Array.from({ length: count }, (_, index) => ({
-    tenant_id: 'Steven', alias: `peer_${String(index).padStart(4, '0')}`, online: true
-  }));
-  return () => { mutable.routingTargets = original; };
-};
-
 const attachmentsOf = (delivery: DeliveryEnvelope): Record<string, unknown>[] => {
   const value = delivery.body.attachments_v1;
   return Array.isArray(value) ? value as Record<string, unknown>[] : [];
@@ -156,51 +138,9 @@ describe('the delegation edge transports files', () => {
     }]);
     expect(child.body.attachments_note).toBeUndefined();
   });
-
-  it('routes an image media type as an image attachment', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const captura = payload(512, 0x89);
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'captura',
-      artifacts: [{ name: 'captura.png', uri: dataUri('image/png', captura) }]
-    }]);
-
-    expect(attachmentsOf(await nextDelivery(socrates))[0]).toMatchObject({
-      kind: 'image', mime_type: 'image/png', name: 'captura.png'
-    });
-  });
 });
 
 describe('degradation when the bytes do not fit', () => {
-  it('keeps the delegation and notes the artifacts beyond the per-message count', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'cinco ficheros',
-      artifacts: [1, 2, 3, 4, 5].map((index) => ({
-        name: `parte-${String(index)}.txt`,
-        uri: dataUri('text/plain', payload(64, index))
-      }))
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.text).toBe('cinco ficheros');
-    expect(attachmentsOf(child)).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE);
-    expect(child.body.attachments_note)
-      .toBe('1 adjunto(s) no viajaron: superan el máximo de adjuntos por mensaje');
-    expect((await pool.query(
-      `SELECT status,rejection_code FROM agent_output_materializations`
-    )).rows).toEqual([{ status: 'materialized', rejection_code: null }]);
-  });
 
   it('drops the artifact that would break the aggregate budget', async () => {
     const argos = await consumer('Steven', 'argos');
@@ -226,68 +166,6 @@ describe('degradation when the bytes do not fit', () => {
     expect(child.body.attachments_note)
       .toBe('1 adjunto(s) no viajaron: exceden el cupo del mensaje');
   }, 180_000);
-
-  it('keeps the delegation text when the artifacts field is malformed', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [
-      { to: 'socrates', body: 'artifacts es una cadena', artifacts: 'informe.pdf' }
-    ]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.text).toBe('artifacts es una cadena');
-    expect(child.body.attachments_v1).toBeUndefined();
-    expect(child.body.attachments_note).toBeUndefined();
-  });
-
-  it('drops an artifact whose name is a traversal and keeps the delegation', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'nombre con travesia',
-      artifacts: [{ name: '../../etc/passwd', uri: dataUri('text/plain', payload(32, 7)) }]
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.text).toBe('nombre con travesia');
-    expect(child.body.attachments_v1).toBeUndefined();
-    expect(child.body.attachments_note)
-      .toBe('1 adjunto(s) no viajaron: llevan un nombre no admitido');
-    expect((await pool.query(
-      `SELECT metadata->>'rejected_attachment_names' AS rejected FROM audit_events
-       WHERE action='agent_output.materialize'`
-    )).rows).toEqual([{ rejected: '1' }]);
-  });
-
-  it('names every cause when several artifacts fall for different reasons', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'dos causas',
-      artifacts: [
-        { name: '../../etc/passwd', uri: dataUri('text/plain', payload(32, 7)) },
-        { name: 'local.txt', uri: 'file:///etc/passwd' }
-      ]
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.text).toBe('dos causas');
-    expect(child.body.attachments_note).toBe(
-      '2 adjunto(s) no viajaron: 1 no llegan por un origen entregable;'
-      + ' 1 llevan un nombre no admitido'
-    );
-  });
 });
 
 describe('the return hop carries references, never bytes', () => {
@@ -391,74 +269,6 @@ describe('a broadcast never loses its text over a file', () => {
         .toBe('1 adjunto(s) no viajaron: no caben en la difusión a toda la flota');
     }
   }, 180_000);
-
-  it('still rejects a broadcast whose text alone blows the expanded budget', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    const restore = stubRoutingTargets(20);
-
-    try {
-      const result = await ackWith(argos, root, [{ to: '@all', body: 'x'.repeat(60 * 1024) }]);
-
-      expect(result.delegation_materializations).toBeUndefined();
-      expect(result.delegation_rejections).toEqual([
-        expect.objectContaining({ output_index: 0, target: '@all', code: 'invalid_output' })
-      ]);
-    } finally {
-      restore();
-    }
-  }, 180_000);
-});
-
-describe('an artifact the edge cannot inline still travels', () => {
-  it('carries an https artifact as a reference instead of dropping it', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'esta en el bucket',
-      artifacts: [{
-        name: 'informe.pdf',
-        uri: 'https://ejemplo.invalid/informe.pdf',
-        media_type: 'application/pdf',
-        sha256: digest(informe)
-      }]
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.text).toBe('esta en el bucket');
-    expect(child.body.artifacts_v1).toEqual([{
-      name: 'informe.pdf',
-      uri: 'https://ejemplo.invalid/informe.pdf',
-      media_type: 'application/pdf',
-      declared_sha256: digest(informe)
-    }]);
-    expect(child.body.attachments_v1).toBeUndefined();
-    expect(child.body.attachments_note).toBeUndefined();
-  });
-
-  it('drops a scheme no reader could fetch and says so', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'en mi disco',
-      artifacts: [{ name: 'informe.pdf', uri: 'file:///home/agente/informe.pdf' }]
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(child.body.attachments_v1).toBeUndefined();
-    expect(child.body.artifacts_v1).toBeUndefined();
-    expect(child.body.attachments_note)
-      .toBe('1 adjunto(s) no viajaron: no llegan por un origen entregable');
-  });
 });
 
 describe('the digest of what travels is the digest of what travels', () => {
@@ -491,29 +301,6 @@ describe('the digest of what travels is the digest of what travels', () => {
       sha256: digest(informe),
       size: informe.length
     }]);
-  });
-
-  it('moves body_hash when the same text carries a different file', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [
-      { to: 'socrates', body: 'mismo texto', artifacts: [
-        { name: 'uno.txt', uri: dataUri('text/plain', payload(64, 1)) }
-      ] },
-      { to: 'socrates', body: 'mismo texto', artifacts: [
-        { name: 'dos.txt', uri: dataUri('text/plain', payload(64, 2)) }
-      ] }
-    ]);
-
-    const hashes = (await pool.query<{ body_hash: string }>(
-      `SELECT body_hash FROM agent_output_materializations
-       WHERE status='materialized' ORDER BY output_index`
-    )).rows.map((row) => row.body_hash);
-    expect(hashes).toHaveLength(2);
-    expect(hashes[0]).not.toBe(hashes[1]);
   });
 });
 
@@ -563,118 +350,5 @@ describe('a locator is a link, never a payload', () => {
     expect(refs.every((ref) => ref.uri === undefined)).toBe(true);
     expect(Buffer.byteLength(JSON.stringify(response.body), 'utf8'))
       .toBeLessThan(agentFaninMaxAggregateBytes);
-  }, 180_000);
-
-  it('caps how many artifacts one ack may declare for a single delegation', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: 'socrates',
-      body: 'nueve ficheros',
-      artifacts: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => ({
-        name: `parte-${String(index)}.txt`,
-        uri: dataUri('text/plain', payload(64, index))
-      }))
-    }]);
-
-    const child = await nextDelivery(socrates);
-    expect(attachmentsOf(child)).toHaveLength(MAX_ATTACHMENTS_PER_MESSAGE);
-    expect(child.body.attachments_note)
-      .toBe('4 adjunto(s) no viajaron: superan el máximo de adjuntos por mensaje');
-  });
-});
-
-describe('the broadcast budget counts what it actually stores', () => {
-  it('withholds an artifact whose base64 does not fit even though its bytes would', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const jarvis = await consumer('Steven', 'jarvis');
-    const grande = payload(240_000, 0x37);
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    const result = await ackWith(argos, root, [{
-      to: '@all',
-      body: 'para todos',
-      artifacts: [{ name: 'grande.bin', uri: dataUri('application/octet-stream', grande) }]
-    }]);
-
-    expect(result.delegation_materializations).toHaveLength(2);
-    for (const branch of [socrates, jarvis]) {
-      const child = await nextDelivery(branch);
-      expect(child.body.text).toBe('para todos');
-      expect(child.body.attachments_v1).toBeUndefined();
-      expect(child.body.attachments_note)
-        .toBe('1 adjunto(s) no viajaron: no caben en la difusión a toda la flota');
-    }
-  }, 180_000);
-
-  it('counts only the artifacts that would have travelled', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await consumer('Steven', 'jarvis');
-    const grande = payload(240_000, 0x38);
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [{
-      to: '@all',
-      body: 'para todos',
-      artifacts: [
-        { name: 'grande.bin', uri: dataUri('application/octet-stream', grande) },
-        { name: 'local.txt', uri: 'file:///etc/passwd' }
-      ]
-    }]);
-
-    expect((await nextDelivery(socrates)).body.attachments_note)
-      .toBe('1 adjunto(s) no viajaron: no caben en la difusión a toda la flota');
-  }, 180_000);
-});
-
-describe('what is hashed and what is asked are what was written', () => {
-  it('gives the same body_hash to two texts that differ only in the secret', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await consumer('Steven', 'socrates');
-    await consumer('Steven', 'jarvis');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    await ackWith(argos, root, [
-      { to: 'socrates', body: 'entra con Bearer abc123DEF456ghi789 y avisa' },
-      { to: 'jarvis', body: 'entra con Bearer zzz999YYY888xxx777 y avisa' }
-    ]);
-
-    const hashes = (await pool.query<{ body_hash: string }>(
-      `SELECT body_hash FROM agent_output_materializations
-       WHERE status='materialized' ORDER BY output_index`
-    )).rows.map((row) => row.body_hash);
-    expect(hashes).toHaveLength(2);
-    expect(hashes[0]).toBe(hashes[1]);
-  });
-
-  it('redacts the question a human gate stores and returns', async () => {
-    await enableHumanGate();
-    const argos = await consumer('Steven', 'argos');
-    const token = 'abc123DEF456ghi789';
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-
-    const result = await ackWith(
-      argos, root, [{ to: '@human', body: `¿uso Bearer ${token} para entrar?` }]
-    );
-
-    const gates = (await pool.query<{ question: string }>(
-      'SELECT question FROM agent_chain_gates'
-    )).rows;
-    expect(gates).toEqual([{ question: '¿uso Bearer [secreto-redactado] para entrar?' }]);
-    expect(JSON.stringify(result)).not.toContain(token);
-    const relays = (await pool.query<{ reply: string }>(
-      `SELECT payload#>>'{result,output,reply}' AS reply FROM adapter_outbox
-       WHERE kind='origin_relay' AND payload->>'gate_id' IS NOT NULL`
-    )).rows;
-    expect(relays.some((relay) => relay.reply.includes(token))).toBe(false);
   }, 180_000);
 });

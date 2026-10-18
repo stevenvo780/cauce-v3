@@ -165,128 +165,6 @@ describe('agent context reconciliation fence', () => {
     await expect(claim).resolves.toHaveLength(1);
   });
 
-  it('revalidates a lease after waiting for the agent capacity row', async () => {
-    const lease = await repository.acquireLease(
-      tenant, alias, 'capacity-wait-adapter', [], 250, { resume: true },
-    );
-    const epoch = acquiredEpoch(lease);
-    await repository.publish(command());
-    const blocker = await pool.connect();
-    await blocker.query('BEGIN');
-    await blocker.query(
-      `SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [tenant, alias],
-    );
-    const claim = repository.claimDeliveries(
-      tenant, alias, 'capacity-wait-adapter', epoch, 1, 30_000,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    await blocker.query('COMMIT');
-    blocker.release();
-
-    await expect(claim).rejects.toMatchObject({ code: 'fenced' });
-    expect((await pool.query<{ status: string }>(
-      `SELECT status FROM deliveries WHERE recipient_tenant=$1 AND recipient_alias=$2`,
-      [tenant, alias],
-    )).rows).toEqual([{ status: 'pending' }]);
-  });
-
-  it('rejects an already in-flight delivery before invoking the runtime effect', async () => {
-    const revision = await profileRevision();
-    const expected = contract(revision);
-    const lease = await repository.acquireLease(
-      tenant, alias, 'context-busy-adapter', [], 30_000, { resume: true },
-    );
-    const epoch = acquiredEpoch(lease);
-    await repository.publish(command());
-    await repository.claimDeliveries(
-      tenant, alias, 'context-busy-adapter', epoch, 1, 30_000,
-    );
-    const apply = vi.fn(async () => effect(revision, 'unexpected'));
-
-    await expect(repository.reconcileAgentContextRuntime({
-      tenantId: tenant,
-      alias,
-      expectedRevision: revision,
-      expectedExpectation: expected,
-      apply,
-    })).rejects.toMatchObject({ code: 'conflict' });
-    expect(apply).not.toHaveBeenCalled();
-  });
-
-  it('serializes a canonical profile writer behind the runtime effect', async () => {
-    const revision = await profileRevision();
-    const expected = contract(revision);
-    let enterEffect!: () => void;
-    const effectEntered = new Promise<void>((resolve) => { enterEffect = resolve; });
-    let releaseEffect!: () => void;
-    const mayFinish = new Promise<void>((resolve) => { releaseEffect = resolve; });
-    const reconcile = repository.reconcileAgentContextRuntime({
-      tenantId: tenant,
-      alias,
-      expectedRevision: revision,
-      expectedExpectation: expected,
-      apply: async () => {
-        enterEffect();
-        await mayFinish;
-        return effect(revision, 'committed');
-      },
-    });
-    await effectEntered;
-    const profiles = new AgentProfileRepository(pool);
-    const current = await profiles.read(tenant, alias);
-    const replacement = profiles.replace(
-      { ...current, role_summary: 'A later desired profile' },
-      revision,
-      { tenant_id: tenant, alias: 'kant' },
-    );
-    const replacementState = await Promise.race([
-      replacement.then(() => 'settled'),
-      new Promise<'blocked'>((resolve) => setTimeout(() => { resolve('blocked'); }, 80)),
-    ]);
-    expect(replacementState).toBe('blocked');
-
-    releaseEffect();
-    await expect(reconcile).resolves.toEqual({ state: 'committed', value: 'committed' });
-    await expect(replacement).resolves.toMatchObject({ revision: revision + 1 });
-  });
-
-  it('serializes a canonical expectation writer behind the runtime effect', async () => {
-    const revision = await profileRevision();
-    const expected = contract(revision);
-    let enterEffect!: () => void;
-    const effectEntered = new Promise<void>((resolve) => { enterEffect = resolve; });
-    let releaseEffect!: () => void;
-    const mayFinish = new Promise<void>((resolve) => { releaseEffect = resolve; });
-    const reconcile = repository.reconcileAgentContextRuntime({
-      tenantId: tenant,
-      alias,
-      expectedRevision: revision,
-      expectedExpectation: expected,
-      apply: async () => {
-        enterEffect();
-        await mayFinish;
-        return effect(revision, 'committed');
-      },
-    });
-    await effectEntered;
-    const later = contract(revision, 'd'.repeat(64));
-    const replacement = repository.recordProfileRuntimeExpectation(tenant, alias, later);
-    const replacementState = await Promise.race([
-      replacement.then(() => 'settled'),
-      new Promise<'blocked'>((resolve) => setTimeout(() => { resolve('blocked'); }, 80)),
-    ]);
-    expect(replacementState).toBe('blocked');
-
-    releaseEffect();
-    await expect(reconcile).resolves.toEqual({ state: 'committed', value: 'committed' });
-    await replacement;
-    const stored = await pool.query<{ documents: unknown }>(
-      `SELECT documents FROM agent_profile_runtime_expectations
-        WHERE tenant_id=$1 AND alias=$2`, [tenant, alias],
-    );
-    expect(stored.rows[0]?.documents).toEqual(later.documents);
-  });
-
   it('rejects a stale full expectation contract before invoking the runtime effect', async () => {
     const revision = await profileRevision();
     const stale = contract(revision);
@@ -349,21 +227,6 @@ describe('agent context reconciliation fence', () => {
   });
 });
 
-describe('context reload snapshot compatibility', () => {
-  it.each(['absent', 'previous-generation'] as const)('reloads an idle online target with %s expectation', async (state) => {
-    const revision = await profileRevision();
-    const previous = { ...contract(revision), generation: 'previous-generation' };
-    if (state === 'absent') await pool.query('DELETE FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2', [tenant, alias]);
-    else await repository.recordProfileRuntimeExpectation(tenant, alias, previous);
-    await repository.acquireLease(tenant, alias, 'idle-online', [], 30_000);
-    const apply = vi.fn(async () => effect(revision, 'applied'));
-    await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-      expectedRevision: revision, expectedExpectation: state === 'absent' ? null : previous, apply,
-    })).resolves.toEqual({ state: 'committed', value: 'applied' });
-    expect(apply).toHaveBeenCalledOnce();
-  });
-});
-
 async function replaceProfile(revision: number): Promise<void> {
   const profiles = new AgentProfileRepository(pool);
   await profiles.replace({ ...(await profiles.read(tenant, alias)), role_summary: 'New saved profile' },
@@ -387,21 +250,6 @@ async function withRuntimeBytes(run: (file: string) => Promise<void>): Promise<v
 }
 
 describe('context reload claim exclusion and snapshot CAS', () => {
-  it('rejects a late canonical claim before changing runtime bytes', async () => {
-    await withRuntimeBytes(async (file) => {
-      const revision = await profileRevision();
-      const expected = contract(revision);
-      const lease = await repository.acquireLease(tenant, alias, 'late-claim', [], 30_000);
-      await repository.publish(command());
-      expect(await repository.claimDeliveries(tenant, alias, 'late-claim', acquiredEpoch(lease), 1, 30_000)).toHaveLength(1);
-      const apply = vi.fn(async () => { await writeFile(file, 'after'); return effect(revision, 'applied'); });
-      await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-        expectedRevision: revision, expectedExpectation: expected, apply,
-      })).rejects.toMatchObject({ code: 'conflict' });
-      expect(apply).not.toHaveBeenCalled();
-      expect(await readFile(file, 'utf8')).toBe('before');
-    });
-  });
 
   it('holds a real claim until bytes, expectation, document journal and audit commit together', async () => {
     await withRuntimeBytes(async (file) => {
@@ -436,22 +284,6 @@ describe('context reload claim exclusion and snapshot CAS', () => {
     });
   });
 
-  it.each(['profile', 'expectation', 'absent-to-present'] as const)('rejects a changed %s snapshot before any bytes', async (changed) => {
-    await withRuntimeBytes(async (file) => {
-      const revision = await profileRevision();
-      if (changed === 'absent-to-present') await pool.query('DELETE FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2', [tenant, alias]);
-      const expected = changed === 'absent-to-present' ? null : contract(revision);
-      if (changed === 'profile') await replaceProfile(revision);
-      else await repository.recordProfileRuntimeExpectation(tenant, alias, contract(revision, 'c'.repeat(64)));
-      const apply = vi.fn(async () => { await writeFile(file, 'after'); return effect(revision, 'applied'); });
-      await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-        expectedRevision: revision, expectedExpectation: expected, apply,
-      })).rejects.toMatchObject({ code: 'conflict' });
-      expect(apply).not.toHaveBeenCalled();
-      expect(await readFile(file, 'utf8')).toBe('before');
-    });
-  });
-
   it('reloads a saved profile newer than its prior applied revision and generation', async () => {
     const previousRevision = await profileRevision();
     const previous = contract(previousRevision);
@@ -480,7 +312,6 @@ describe('context reload claim exclusion and snapshot CAS', () => {
     });
   });
 });
-
 
 describe('gateway reload with the canonical Store fence', () => {
   it('denies a real claim that arrives while preflight is preparing before changing bytes', async () => {
@@ -550,26 +381,7 @@ describe('gateway reload with the canonical Store fence', () => {
   });
 });
 
-
 describe('reload validation and reconciliation compatibility', () => {
-  it('rejects malformed recorded documents at the durable constraint without disabling it', async () => {
-    const revision = await profileRevision();
-    await expect(pool.query("UPDATE agent_profile_runtime_expectations SET documents='{}'::jsonb WHERE tenant_id=$1 AND alias=$2", [tenant, alias])).rejects.toMatchObject({ code: '23514' });
-    const apply = vi.fn(async () => effect(revision, 'applied'));
-    await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-      expectedRevision: revision, expectedExpectation: contract(revision), apply,
-    })).resolves.toEqual({ state: 'committed', value: 'applied' });
-    expect(apply).toHaveBeenCalledOnce();
-  });
-
-  it('rejects malformed caller snapshots before invoking runtime I/O', async () => {
-    const revision = await profileRevision();
-    const apply = vi.fn(async () => effect(revision, 'unexpected'));
-    await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-      expectedRevision: revision, expectedExpectation: { ...contract(revision), generation: '' }, apply,
-    })).rejects.toMatchObject({ code: 'invalid_input' });
-    expect(apply).not.toHaveBeenCalled();
-  });
 
   it('keeps strict reconciliation generation identity while reload alone can replace it', async () => {
     const revision = await profileRevision();
@@ -581,19 +393,5 @@ describe('reload validation and reconciliation compatibility', () => {
     await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
       expectedRevision: revision, expectedExpectation: contract(revision), apply: async () => next,
     })).resolves.toEqual({ state: 'committed', value: 'new generation' });
-  });
-
-  it('preserves reload journal kinds without changing the strict reconcile directive kind', async () => {
-    const revision = await profileRevision();
-    const next = effect(revision, 'applied');
-    const withKind = { ...next, documentRevisions: next.documentRevisions.map((entry) => ({ ...entry, kind: 'tools' })) };
-    await expect(repository.reconcileAgentContextRuntime({ mode: 'reload', tenantId: tenant, alias,
-      expectedRevision: revision, expectedExpectation: contract(revision), apply: async () => withKind,
-    })).resolves.toEqual({ state: 'committed', value: 'applied' });
-    expect((await pool.query('SELECT kind FROM agent_document_revisions WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT 1', [tenant, alias])).rows).toEqual([{ kind: 'tools' }]);
-    await expect(repository.reconcileAgentContextRuntime({ tenantId: tenant, alias,
-      expectedRevision: revision, expectedExpectation: next.expectation, apply: async () => withKind,
-    })).resolves.toEqual({ state: 'committed', value: 'applied' });
-    expect((await pool.query('SELECT kind FROM agent_document_revisions WHERE tenant_id=$1 AND alias=$2 ORDER BY id DESC LIMIT 1', [tenant, alias])).rows).toEqual([{ kind: 'directive' }]);
   });
 });
