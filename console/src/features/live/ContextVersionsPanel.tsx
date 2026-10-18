@@ -128,14 +128,14 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
           void saveDraft(rebased);
         }}
         onDiscard={() => { setDraft(undefined); setConflictDiffs(undefined); setError(''); }} /> : null}
-      <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={!writable || !draft} onClick={() => { if (draft) void saveDraft(draft); }}>Guardar nueva versión</Button>
+      <div className="flex flex-wrap items-center gap-2"><Button variant="primary" disabled={!writable || !draft} onClick={() => { if (draft) void saveDraft(draft); }}>Guardar nueva versión</Button>
         <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setConflictDiffs(undefined); setError(''); }}>Descartar borrador</Button></div>
     </> : null}
     <section aria-label="Historial de versiones"><h3>Historial</h3>
       {history.loading ? <p role="status">Leyendo historial…</p> : null}
       <ul className="m-0 grid list-none gap-2 p-0">{[...history.data?.entries ?? [], ...older?.entries ?? []].map(entry => <li key={entry.version} className="grid gap-2 border-b border-line py-2">
         <span>Versión {entry.version} · {ORIGEN[entry.source] ?? entry.source} · {entry.actor_alias || 'sin autor registrado'} · <Time value={entry.created_at} />{entry.restored_from == null ? '' : ` · restaurada de ${String(entry.restored_from)}`}</span>
-        <div className="flex gap-2"><Button size="sm" disabled={busy || !snapshot} onClick={() => { void compare(entry.version); }}>Ver diferencias de versión {entry.version}</Button>
+        <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy || !snapshot} onClick={() => { void compare(entry.version); }}>Ver diferencias de versión {entry.version}</Button>
           <Button size="sm" disabled={!writable || !!draft} onClick={() => { setRestoring(entry.version); }}>Restaurar versión {entry.version}</Button></div></li>)}</ul>
       {history.data && !history.data.entries.length ? <p>Aún no hay cambios registrados.</p> : null}
       {(older?.next_cursor ?? history.data?.next_cursor) != null ? <Button disabled={busy} onClick={() => { void loadOlder(); }}>Leer versiones anteriores</Button> : null}
@@ -144,8 +144,8 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       {diff.files.map(file => <details key={file.path} open><summary>{file.path} · {file.change === 'added' ? 'Añadido' : file.change === 'deleted' ? 'Eliminado' : 'Modificado'}</summary>
         <div className="grid gap-2 md:grid-cols-2"><div><h4>Antes</h4><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-3 text-xs">{file.before ?? 'No existía'}</pre></div>
           <div><h4>Después</h4><pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-3 text-xs">{file.after ?? 'Eliminado'}</pre></div></div></details>)}</section> : null}
-    {restoring !== undefined && snapshot ? <section aria-label="Confirmar restauración" className="grid gap-2 rounded-lg border border-line p-3"><p>Restaurar la versión {restoring} crea una nueva versión y conserva todo el historial.</p>
-      <div className="flex gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.restoreContextVersion(tenantId, alias, { expected_version: snapshot.version, version: restoring }), 'Restauración guardada como una versión nueva.', true); }}>Confirmar restauración</Button>
+    {restoring !== undefined && snapshot ? <section aria-label="Confirmar restauración" className="grid gap-3 rounded-lg border border-line p-4"><p className="m-0">Restaurar la versión {restoring} crea una nueva versión y conserva todo el historial.</p>
+      <div className="flex flex-wrap items-center gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.restoreContextVersion(tenantId, alias, { expected_version: snapshot.version, version: restoring }), 'Restauración guardada como una versión nueva.', true); }}>Confirmar restauración</Button>
         <Button disabled={busy} onClick={() => { setRestoring(undefined); }}>Cancelar</Button></div></section> : null}
   </section>;
 }

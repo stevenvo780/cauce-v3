@@ -133,7 +133,7 @@ export function AccountsInventory({ config, access, registry }: {
 
     <section aria-label="Inventario de cuentas">
       <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» acá significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2 className="m-0 text-sm font-semibold">Inventario</h2>
         <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>
       </div>
@@ -170,7 +170,7 @@ export function AccountsInventory({ config, access, registry }: {
                         ? <Badge tone="unknown">SIN DATO</Badge>
                         : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
                       <td data-label="Actualizada"><Time value={account.updatedAt} relativo /></td>
-                      <td data-label="Acciones" data-wide><span className="-ml-1 inline-flex flex-wrap gap-0.5">
+                      <td data-label="Acciones" data-wide><span className="-ml-1 inline-flex flex-wrap items-center gap-1">
                         <RowAction {...writeProps} label={`Editar «${account.id}»`} onClick={() => { open({ kind: 'edit', edit: editFrom(account) }); }}>
                           <PencilLine size={15} aria-hidden="true" />
                         </RowAction>

@@ -118,9 +118,9 @@ export function CompaniesPanel() {
       : api.updateCompany(company.id, { expected_version: company.version, state: change === 'disable' ? 'disabled' : 'enabled' }),
     'Estado de empresa actualizado.', 'update', company.id === authority?.home_company && (change === 'disable' || change === 'retire'));
   }
-  return <SectionCard level={3} title="Empresas" className="gap-2 p-3">
+  return <SectionCard level={3} title="Empresas">
     {authority ? <p className="text-xs text-muted">{COMPANY_ROLE_LABEL[authority.role]} · {authority.acting_company}</p> : null}
-    <div className="flex flex-wrap gap-2">{canCreate ? <Button disabled={busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button> : null}
+    <div className="flex flex-wrap items-center gap-2">{canCreate ? <Button disabled={busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button> : null}
       <ActionButton label="Releer empresas" disabled={busy} busy={resource.loading} announceError={false} action={() => resource.reload()} /></div>
     {resource.loading ? <p role="status">Leyendo empresas…</p> : null}
     {error || resource.error ? <Notice tone="danger" role="alert">{error || companyErrorText(resource.error, 'read')}</Notice> : null}
@@ -128,9 +128,9 @@ export function CompaniesPanel() {
     {purged ? <CompanyPurgeResult receipt={purged} /> : null}
     {blockers.length ? <CompanyPurgeBlockers blockers={blockers} /> : null}
     {!canSeeAdmins && resource.data ? <p className="m-0 text-xs text-muted">Solo dueños, administradores de empresa y la plataforma ven y asignan la autoridad de empresa.</p> : null}
-    <ul className="m-0 grid list-none gap-2 p-0">{resource.data?.companies.map(company => <li key={company.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2">
-      <div><strong>{company.name}</strong><p className="m-0 text-xs text-muted">{STATE_LABEL[company.state]} · versión {company.version}</p></div>
-      <div className="flex flex-wrap gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); setConflictDiffs(undefined); }}>Editar</Button>
+    <ul className="m-0 grid list-none gap-2 p-0">{resource.data?.companies.map(company => <li key={company.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-line py-2.5">
+      <div className="min-w-0"><strong>{company.name}</strong><p className="m-0 text-xs text-muted">{STATE_LABEL[company.state]} · versión {company.version}</p></div>
+      <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={!canEdit(company) || busy || !!resource.error} onClick={() => { setName(company.name); setEditing(company); setConflictDiffs(undefined); }}>Editar</Button>
         <Button size="sm" disabled={!canSeeAdmins || busy || !!resource.error} onClick={() => { setAdminsCompany(current => current === company.id ? undefined : company.id); }}>Autoridad de empresa</Button>
         {STATE_CHANGES[company.state].map(change => <Button key={change} size="sm" disabled={!canEdit(company) || busy || !!resource.error}
           onClick={() => { setPending({ company, change }); }}>{CHANGE_LABEL[change]}</Button>)}
@@ -138,9 +138,9 @@ export function CompaniesPanel() {
           onClick={() => { setPending({ company, change: 'purge' }); }}>Purgar definitivamente</Button> : null}</div>
     </li>)}</ul>
     {resource.data && !resource.data.companies.length ? <p>No hay empresas disponibles para esta sesión.</p> : null}
-    {editing ? <form className="grid gap-2" onSubmit={event => { event.preventDefault(); void saveCompanyName(); }}>
+    {editing ? <form className="grid gap-3" onSubmit={event => { event.preventDefault(); void saveCompanyName(); }}>
       <label>Nombre de empresa<input required maxLength={80} value={name} disabled={busy} onChange={event => { setName(event.target.value); }} /></label>
-      <div className="flex gap-2"><Button type="submit" disabled={busy || !name.trim()}>Guardar empresa</Button><Button type="button" disabled={busy} onClick={() => { setEditing(undefined); setConflictDiffs(undefined); }}>Cancelar</Button></div>
+      <div className="flex flex-wrap items-center gap-2"><Button type="submit" disabled={busy || !name.trim()}>Guardar empresa</Button><Button type="button" disabled={busy} onClick={() => { setEditing(undefined); setConflictDiffs(undefined); }}>Cancelar</Button></div>
     </form> : null}
     {editing && conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={busy}
       onRetry={() => { void saveCompanyName(); }}
@@ -159,13 +159,13 @@ function StateChangeConfirmation({ pending, ownHome, busy, confirm, cancel }: {
   const [typed, setTyped] = useState('');
   const { company, change } = pending;
   const typedConfirmation = change === 'disable' || change === 'retire' || change === 'purge';
-  return <section aria-label="Confirmar estado de empresa" className="grid gap-2">
+  return <section aria-label="Confirmar estado de empresa" className="grid gap-3">
     <p className="m-0">{changeText(pending)}</p>
     {typedConfirmation && ownHome ? <Notice tone="warn">Es tu empresa de origen: al confirmar perderás el acceso a la consola en ese mismo momento.
       {change === 'purge' ? ' Sus datos quedarán borrados definitivamente.' : 'Solo un administrador de plataforma puede volver a habilitarla o restaurarla.'}</Notice> : null}
     {typedConfirmation ? <label>Escribe el identificador <code>{company.id}</code> para confirmar
       <input value={typed} autoComplete="off" disabled={busy} onChange={event => { setTyped(event.target.value); }} /></label> : null}
-    <div className="flex gap-2"><Button variant={change === 'purge' ? 'danger' : 'secondary'} disabled={busy || (typedConfirmation && typed !== company.id)} onClick={() => { confirm(typed); }}>{change === 'purge' ? busy ? 'Purgando…' : 'Confirmar purga definitiva' : 'Confirmar cambio de empresa'}</Button>
+    <div className="flex flex-wrap items-center gap-2"><Button variant={change === 'purge' ? 'danger' : 'secondary'} disabled={busy || (typedConfirmation && typed !== company.id)} onClick={() => { confirm(typed); }}>{change === 'purge' ? busy ? 'Purgando…' : 'Confirmar purga definitiva' : 'Confirmar cambio de empresa'}</Button>
       <Button disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </section>;
 }
@@ -173,13 +173,13 @@ function StateChangeConfirmation({ pending, ownHome, busy, confirm, cancel }: {
 function CompanyCreateForm({ busy, save, cancel }: { busy: boolean; save: (input: RegistrationInput) => Promise<void>; cancel: () => void }) {
   const [draft, setDraft] = useState<RegistrationInput>({ email: '', name: '', password: '', company: { name: '', slug: '' } });
   const input = (key: 'email' | 'name' | 'password', value: string) => { setDraft(previous => ({ ...previous, [key]: value })); };
-  return <form aria-label="Crear empresa y dueño" className="grid gap-2" onSubmit={event => { event.preventDefault();
+  return <form aria-label="Crear empresa y dueño" className="grid gap-3" onSubmit={event => { event.preventDefault();
     void save(draft).finally(() => { setDraft(previous => ({ ...previous, password: '' })); }); }}>
     <label>Nombre de empresa<input required maxLength={80} value={draft.company.name} disabled={busy} onChange={event => { setDraft(previous => ({ ...previous, company: { ...previous.company, name: event.target.value } })); }} /></label>
     <label>Identificador de empresa<input required pattern={COMPANY_SLUG_PATTERN} maxLength={63} value={draft.company.slug} disabled={busy} onChange={event => { setDraft(previous => ({ ...previous, company: { ...previous.company, slug: event.target.value } })); }} /></label>
     <label>Nombre del dueño<input required maxLength={120} value={draft.name} disabled={busy} onChange={event => { input('name', event.target.value); }} /></label>
     <label>Correo del dueño<input required type="email" value={draft.email} disabled={busy} onChange={event => { input('email', event.target.value); }} /></label>
     <label>Contraseña inicial<input required type="password" minLength={12} maxLength={1024} autoComplete="new-password" value={draft.password} disabled={busy} onChange={event => { input('password', event.target.value); }} /></label>
-    <div className="flex gap-2"><Button type="submit" disabled={busy}>{busy ? 'Creando…' : 'Crear empresa y dueño'}</Button><Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
+    <div className="flex flex-wrap items-center gap-2"><Button type="submit" disabled={busy}>{busy ? 'Creando…' : 'Crear empresa y dueño'}</Button><Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }

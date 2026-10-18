@@ -139,7 +139,7 @@ export function AssignmentMatrix({ config, access, registry }: {
     </Notice> : null}
 
     <section aria-label="Techo por alias">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           <h2 className="m-0 text-sm font-semibold">Techo por alias</h2>
           <p className="m-0 mt-0.5 text-xs text-muted">Tocá una celda para asignar: cada cambio pasa por una vista previa.</p>

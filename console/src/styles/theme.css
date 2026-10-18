@@ -1,6 +1,9 @@
 /* Cauce brand tokens. Single source of colour, type and radius for the whole console.
    Light is the bare :root; dark is declared twice with the same values: once for the system
-   preference and once for the forced attribute written by ThemeControl / public/tema.js. */
+   preference and once for the forced attribute written by ThemeControl / public/tema.js.
+   Spacing uses the Tailwind scale (base --spacing: 0.25rem): buttons in one group take gap-2,
+   blocks inside a card take gap-3 with p-4 padding, and a card header aligns title and actions
+   with flex-wrap, justify-between and gap-x-4/gap-y-2 (see SectionCard in components/kit). */
 
 @custom-variant dark {
   @media (prefers-color-scheme: dark) {

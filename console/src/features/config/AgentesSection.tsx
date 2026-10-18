@@ -119,9 +119,9 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
             {visible.slice(first, first + PAGE_SIZE).map((agent) => <AgentRow key={agent.key} agent={agent} snapshot={snapshot}
               hosts={fleet.hosts} writeBlock={writeBlock} retireBlock={retireBlock} onOpen={(tab, kind) => { open(agent, tab, kind); }} />)}
           </ul>}
-      {visible.length > PAGE_SIZE ? <nav aria-label="Páginas de agentes" className="flex flex-wrap items-center justify-between gap-2">
+      {visible.length > PAGE_SIZE ? <nav aria-label="Páginas de agentes" className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <p role="status" className="m-0 text-xs text-muted">Agentes {first + 1}–{Math.min(first + PAGE_SIZE, visible.length)} de {visible.length}</p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" disabled={currentPage === 0} onClick={() => { setPage(currentPage - 1); }}>Anterior</Button>
           <Button size="sm" disabled={currentPage === lastPage} onClick={() => { setPage(currentPage + 1); }}>Siguiente</Button>
         </div>
@@ -135,7 +135,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       <ul className="m-0 grid list-none gap-2 p-0" aria-label="Agentes retirados">
         {retired.map((agent) => <li key={agent.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
           <strong className="font-mono text-[13px]">{agent.tenantId}/{agent.alias}</strong>
-          <span className="flex flex-wrap gap-1.5">
+          <span className="flex flex-wrap items-center gap-2">
             <Button size="sm" aria-label={`Operar agente ${agent.tenantId}/${agent.alias}`}
               onClick={() => { open(agent, 'operacion'); }}>Operar</Button>
             <Button size="sm" variant="danger" disabled={Boolean(writeBlock)} title={writeBlock ?? 'Purga el registro retirado; no se puede deshacer'}
