@@ -4,20 +4,20 @@ Abre la consola de tu instalación e inicia sesión. Cada acción se limita a la
 
 ## Registrarte y entrar en tu empresa
 
-1. En la pantalla de acceso, abre el registro y completa tu nombre, correo, contraseña y los datos de tu empresa.
-2. Elige un identificador de empresa disponible. Al terminar se crean la empresa y tu acceso como dueño.
-3. Entra con ese correo y contraseña. Empieza en **Ajustes** para conectar un ordenador y añadir agentes.
+1. En la pantalla de acceso, pulsa **Crear cuenta y empresa**. Completa tu nombre, correo, contraseña (12 caracteres o más), el nombre de la empresa y un identificador libre: empieza por una letra y usa minúsculas, números o guiones.
+2. Al terminar se crean la empresa y tu acceso como dueño, y entras en el **Chat**.
+3. El chat ya lista dos agentes en borrador, sin ordenador: `owner` (con tu nombre, en la sala `office`) y `context-director`. El aviso «Borrador · sin ordenador» no es una caída. El espacio de la empresa tiene un identificador que empieza por `hub-`. Para conectar un ordenador y añadir agentes, abre **Ajustes**.
 
 Si administras la plataforma, el selector de empresa permite cambiar la empresa activa. Compruébala antes de crear o borrar recursos. Los demás usuarios trabajan dentro de su empresa y de los espacios autorizados.
 
 ## Invitar a una persona a tu empresa
 
-1. Abre **Ajustes → Acceso y roles → Personas → Administrar personas**.
-2. Pulsa **Crear persona**. Completa correo de acceso, nombre y permiso web: **Lector** u **Operador**.
+1. Abre **Ajustes → Acceso y roles → Personas → Administrar personas**. Si la tarjeta muestra **Invitar persona**, ese botón abre el mismo formulario.
+2. Pulsa **Crear persona** o **Invitar persona**, el que veas. Completa correo de acceso, nombre y permiso web: **Lector** u **Operador**.
 3. Elige el **Espacio de la persona**. En **Identidad de la persona**, puedes dejar **Crear identidad para este correo**: funciona aunque la empresa nueva aún no tenga agentes habilitados.
 4. Define una contraseña inicial, revisa **Habilitar acceso al crear** y pulsa **Crear cuenta de persona**. Entrega el acceso por un canal privado; este flujo crea la cuenta y no envía una invitación por correo.
 
-El permiso de operador no concede por sí solo administración de empresa. Para asignarla, abre **Ajustes → General → Empresas → Autoridad de empresa**. **Retirar** revoca el acceso y conserva su autoría; **Restaurar** permite iniciar una sesión nueva. La purga puede rechazarse si quedan dependencias históricas.
+El permiso de operador no concede por sí solo administración de empresa. Para asignarla, abre **Ajustes → General → Empresas → Autoridad de empresa**. **Retirar** revoca el acceso y conserva su autoría; **Restaurar** permite iniciar una sesión nueva. La purga puede rechazarse si quedan la membresía del alta o la auditoría del retiro: la cuenta queda retirada y sin acceso. Tras retirarla, el inicio de sesión puede decir **Correo o contraseña incorrectos**.
 
 ## Conectar un ordenador
 
@@ -30,10 +30,10 @@ El latido confirma conexión; el ejecutor listo confirma que puede operar agente
 
 ## Registrar una cuenta y ver su cuota
 
-1. Abre **Mis cuotas** y pulsa **Registrar cuenta**. Elige proveedor y nombre visible.
-2. En su tarjeta, pulsa **Iniciar sesión**. Si hay varios ordenadores compatibles, elige uno; Cauce prepara el entorno de consulta cuando falta.
+1. Abre **Mis cuotas** y pulsa **Registrar cuenta**. Ese botón abre el formulario. Elige proveedor, escribe el **Nombre de la cuenta** y pulsa el **Registrar cuenta** de dentro del formulario.
+2. En su tarjeta, pulsa **Iniciar sesión**. Si no hay un ordenador con ejecutor de cuotas, el botón queda deshabilitado: la tarjeta dice **Pendiente de autenticación** y **Sin datos**, y **Entornos de consulta** avisa que no hay ejecutor. No es cuota agotada. Conecta antes un ordenador en **Ajustes → Computadoras**. Si hay varios ordenadores compatibles, elige uno; Cauce prepara el entorno de consulta cuando falta.
 3. Completa el login del proveedor en la terminal web privada. Si exige autorización en su página, sigue las instrucciones que muestra el propio CLI. Cuando termine, pulsa **Verificar conexión** y espera la confirmación de identidad.
-4. En **Entornos de consulta**, usa **Consultar cuotas**. **Actualizar cuotas y entornos** relee el estado de la página. **Fijar cuenta** mantiene a mano las tarjetas que sigues.
+4. En **Entornos de consulta**, cuando ya exista un entorno, usa **Consultar cuotas**. Sin ordenador compatible, **Crear entorno** no se puede completar y **Consultar cuotas** todavía no aparece. **Actualizar cuotas y entornos** relee el estado de la página. **Fijar cuenta** mantiene a mano las tarjetas que sigues.
 
 Las ventanas, porcentajes disponibles y reinicios vienen del CLI del proveedor; cada proveedor puede informar ventanas distintas. Revisa la hora de lectura. **Sin datos**, **datos antiguos** y **error** son estados distintos de cuota agotada. Si la sesión vence, vuelve a **Iniciar sesión** y repite la consulta.
 
@@ -50,7 +50,15 @@ En la ficha del agente, abre **Registro → Cuentas de cuota**, elige la cuenta,
 3. En la revisión, pulsa **Previsualizar alta** y después **Crear registro**. El registro se crea deshabilitado; aún falta preparar su ejecución.
 4. Con una computadora asignada, pulsa **Preparar en la computadora**, revisa el plan y encola la operación. También puedes abrir la ficha, ir a **Operación** y elegir **Preparar agente**. Completa la autenticación del proveedor cuando se solicite.
 
-El asistente también ofrece **Solo preparar, sin desplegar**. Una operación en cola o en ejecución todavía no está completada: revisa sus pasos y el estado final antes de iniciar el trabajo. En **Espacios y salas** se administran salas y pertenencias; añadir una membresía por sí sola no crea el registro del agente. Operación y CLI: [gestión de espacios](v4-cli.md).
+El asistente también ofrece **Solo preparar, sin desplegar**. Una operación en cola o en ejecución todavía no está completada: revisa sus pasos y el estado final antes de iniciar el trabajo. Operación y CLI: [gestión de espacios](v4-cli.md).
+
+## Crear una sala
+
+1. Abre **Ajustes → Espacios y salas** y, en la tabla **Salas**, pulsa **Crear sala/grupo**.
+2. El espacio es el identificador `hub-…` de tu empresa. El de la sala lo eliges tú: minúsculas, números o guiones.
+3. Pulsa **Previsualizar cambio** y después **Confirmar creación**.
+4. Arriba, **Un solo recurso** crea lo mismo con otros nombres: en **Recurso** elige **Room**, en **Tenant** escribe el `hub-…` y en **Room** el identificador de la sala. **Membership** solo añade una pertenencia y no crea el agente.
+5. Para quitarla, en la misma tabla pulsa **Eliminar**, luego **Previsualizar cambio** y **Confirmar eliminación**. El aviso nombra la sala borrada. **Retirar** es una operación distinta.
 
 ## Editar, detener o eliminar un agente
 
@@ -83,13 +91,15 @@ Los contextos se publican en un repositorio privado compartido, separados por em
 
 ## Trabajar desde la oficina, el chat o la terminal
 
-En **Oficina**, abre un agente para consultar su estado, cuenta y cuota, o entrar en **Chat**, **Terminal** y **Perfil y contexto**. Las salas y sus agentes provienen de los recursos de la empresa. Si editas el plano, guarda y comprueba el resultado al volver a abrirlo. El cansancio representa disponibilidad de cuota; la falta de datos o un error se muestran por separado.
+En **Oficina**, abre un agente para consultar su estado, cuenta y cuota, o entrar en **Chat**, **Terminal** y **Perfil y contexto**. Las salas de la empresa salen de sus recursos. El campus añade lugares fijos del plano (cafetería, parque, residencia, recepción y taller): no son salas tuyas. Para editar el plano, pulsa **Plano editable**, guarda con **Guardar plano** y comprueba el resultado al volver a abrirlo. El cansancio representa disponibilidad de cuota; la falta de datos o un error se muestran por separado. **Sin datos** en un agente sin cuenta no es cuota agotada.
+
+En **Chat**, abre la tarjeta del agente aunque diga **Borrador · sin ordenador**. Escribe en **Mensaje para …** y pulsa Enter. Sin ordenador el envío queda en cola: verás **Lease sin dato · envío en cola** y **recibiendo…**. No es un fallo de la caja.
 
 En la terminal, confirma el agente y el modo permitido antes de escribir. Desde el CLI puedes iniciar tu sesión con `cauce login`, abrir `cauce <tenant>/<alias>` y salir con `Ctrl-]`. Si expira el acceso, usa `cauce login --renew`. Comandos y permisos: [CLI](v4-cli.md), [terminal](terminal-pty.md).
 
 ## Descargar y recuperar una copia del espacio
 
-En la ficha busca **Backup del espacio**, solicita la copia y espera a que esté lista antes de descargar. Revisa el tamaño, SHA-256 y las omisiones de `space-manifest.json`: las credenciales, sesiones, logs y temporales no viajan; los proyectos se copian sin `.git`.
+En **Perfil y contexto** está **Backup del espacio**. Pulsa **Crear backup del espacio** y espera a que esté lista antes de descargar. Revisa el tamaño, SHA-256 y las omisiones de `space-manifest.json`: las credenciales, sesiones, logs y temporales no viajan; los proyectos se copian sin `.git`.
 
 La restauración se hace con `cauce spaces restore` en un directorio nuevo o vacío, validando la identidad del agente. Luego se reautentican sus proveedores. Sigue los comandos del [runbook de copias](v4-runbook-copias.md).
 
