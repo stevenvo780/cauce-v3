@@ -209,6 +209,10 @@ export class AgentProfileRepository {
       profile.human_brief, [...profile.responsibilities], [...profile.restrictions],
       [...profile.tools], [...profile.operating_rules],
     ];
+    // The journal trigger attributes the row from these transaction-local settings; without
+    // them the history reads «no consta quién» while the context version names the same actor.
+    await client.query("SELECT set_config('cauce.actor_tenant',$1,true), set_config('cauce.actor_alias',$2,true)",
+      [actor.tenant_id, actor.alias]);
     const result = expectedRevision === null
       ? await client.query<ProfileRow>(
           `INSERT INTO agent_profiles
