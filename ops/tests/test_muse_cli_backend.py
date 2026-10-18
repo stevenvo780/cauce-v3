@@ -99,27 +99,6 @@ if MODE == 'nonzero':
         )
         return child
 
-    def write_launcher(self, child: pathlib.Path, timeout_seconds: float = 5.0) -> pathlib.Path:
-        launcher = self.directory / "launcher.py"
-        launcher.write_text(
-            f"""import functools, importlib.util, pathlib, sys
-spec = importlib.util.spec_from_file_location('test_muse_backend', {str(SOURCE)!r})
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-module.TIMEOUT_SECONDS = {timeout_seconds!r}
-original_read = module.read_prompt
-def input_ready(*args):
-    pathlib.Path({str(self.directory / 'input-ready')!r}).write_text('ready')
-    return original_read(*args)
-module.read_prompt = input_ready
-module.run_backend = functools.partial(module.run_backend, command_prefix=({sys.executable!r}, {str(child)!r}),
-                                      workspace={str(self.directory)!r}, timeout_seconds=5.0, kill_grace_seconds=0.15)
-raise SystemExit(module.main())
-""",
-            encoding="utf-8",
-        )
-        return launcher
 
     def invoke(self, mode: str = "completed", **options: object) -> dict[str, object]:
         child = self.fake_child(mode)

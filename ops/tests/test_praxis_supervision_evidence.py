@@ -172,13 +172,6 @@ class EvidenceContractTests(unittest.TestCase):
                                   "stderr": f"Ran {count} tests in 158.096s\n\nOK\n"}]}
             self.assertEqual(reader.executed_tests(report, command), expected)
 
-    def paused_progress(self, reason="no_measured_progress"):
-        supervisor = self.fixture.supervisor()
-        baseline = self.fixture.snapshot()
-        supervisor.state.update(phase="circuit_paused", pause_reason=reason,
-                                last_finished={"root": "causally-closed-root", "engineering": baseline})
-        supervisor.save()
-        return supervisor, baseline
 
 if __name__ == "__main__":
     unittest.main()

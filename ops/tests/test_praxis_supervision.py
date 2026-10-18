@@ -175,10 +175,6 @@ class PraxisSupervisionTests(unittest.TestCase):
         self.assertEqual(self.run_pass(NOW + 1501, progressed)["action"], "root_published")
         self.assertEqual(len(self.engineering_posts()), 2)
 
-    def snapshot_mock(self):
-        return {"goal_sha256": self.config["goal_sha256"], "git_head": HEAD,
-                "completion_candidate": False, "advanced_issues": [], "accepted_issues": [],
-                "accepted_roadmap": [], "valid_gates": []}
 
     def proof_fixture(self, head=HEAD, accepted=False):
         from test_praxis_supervision_evidence import proof_fixture

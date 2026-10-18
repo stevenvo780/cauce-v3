@@ -268,20 +268,7 @@ class SecurityTests(Scoped):
         self.streams = done.stdout + done.stderr
         return json.loads((self.copy / 'manifest.json').read_text())
 
-    def copied_bytes(self) -> bytes:
-        return b''.join(path.read_bytes() for path in self.copy.rglob('*') if path.is_file() and not path.is_symlink())
 
-    def bundle_bytes(self) -> bytes:
-        blob = bytearray()
-        for bundle in sorted(self.copy.rglob('*.bundle')):
-            dest = self.root / f'clon-{bundle.stem}'
-            done = subprocess.run(['git', 'clone', '-q', str(bundle), str(dest)], capture_output=True, text=True,
-                                  env={**os.environ, **GIT_ENV})
-            self.assertEqual(done.returncode, 0, done.stderr)
-            for path in dest.rglob('*'):
-                if path.is_file() and '.git' not in path.parts:
-                    blob += path.read_bytes()
-        return bytes(blob)
 
     def reseal(self, change) -> None:
         manifest = json.loads(self.original)

@@ -7,14 +7,11 @@ import json
 import os
 import pathlib
 import re
-import signal
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -118,46 +115,6 @@ class DisposableContainerExecutorTest(unittest.TestCase):
                           home_directory='/nonexistent', state_directory='/tmp/cauce-state/physical-one')
         self.save_policy()
 
-    def assert_vanished_inventory_is_absent(self, kind, owned):
-        global SWEEP
-        source = SWEEP
-        checkpoint = self.root / (kind + '-inventory-checkpoint.json')
-        runner = self.root / (kind + '-inventory-checkpoint.py')
-        runner.write_text('import json,linecache,os,pathlib,runpy,signal,sys\n'
-            f'source=pathlib.Path({str(source)!r});checkpoint=pathlib.Path({str(checkpoint)!r});owned={owned!r};kind={kind!r}\n'
-            'def trace(frame,event,argument):\n'
-            " if event=='line' and frame.f_code.co_name=='docker_json' and frame.f_locals.get('kind')==kind and not checkpoint.exists() and linecache.getline(str(source),frame.f_lineno).lstrip().startswith('inspected = subprocess.run('):\n"
-            "  assert any(owned.startswith(value) if kind=='container' else owned==value for value in frame.f_locals['names'])\n"
-            "  checkpoint.write_text(json.dumps({'pid':os.getpid(),'listed_owned':True}));os.kill(os.getpid(),signal.SIGSTOP)\n"
-            ' return trace\n'
-            "sys.argv=[str(source),*sys.argv[1:]];sys.settrace(trace);runpy.run_path(str(source),run_name='__main__')\n")
-        paused = None
-        SWEEP = runner
-        try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(sweep_owned_fleet, self.root / 'orphan-rows.json', [], self.container, self.container)
-                try:
-                    deadline = time.monotonic() + 10
-                    while not checkpoint.exists():
-                        if future.done():
-                            future.result()
-                            self.fail('sweep completed before its real inventory checkpoint')
-                        self.assertLess(time.monotonic(), deadline, 'real inventory checkpoint timed out')
-                        time.sleep(0.01)
-                    paused = json.loads(checkpoint.read_text())['pid']
-                    subprocess.run(['/usr/bin/docker', kind, 'rm', owned], capture_output=True, check=True)
-                    os.kill(paused, signal.SIGCONT)
-                    report = future.result(timeout=plazo(25))
-                    self.assertTrue(report['clean'], report)
-                    print(f'FLEET_ORPHAN_INVENTORY_RACE kind={kind} clean=true', flush=True)
-                finally:
-                    if paused is not None:
-                        try:
-                            os.kill(paused, signal.SIGCONT)
-                        except ProcessLookupError:
-                            pass
-        finally:
-            SWEEP = source
 
     def test_new_owned_container_process_and_stop_are_verified_with_real_docker(self):
         self.configure_container()

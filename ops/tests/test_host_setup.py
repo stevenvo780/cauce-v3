@@ -191,21 +191,6 @@ class HostSetupTests(unittest.TestCase):
             host_setup.setup(self.identity, self.install_base(), False)
         self.assertFalse((self.home / '.config').exists())
 
-    def bundle_package(self, digest=None):
-        runtime = pathlib.Path(__file__).resolve().parents[1] / 'container-runtime'
-        sys.path.insert(0, str(runtime))
-        from cauce_container_base import bundle_digest
-        sys.path.pop(0)
-        with tempfile.TemporaryDirectory() as scratch:
-            (pathlib.Path(scratch) / 'index.js').write_text('1\n')
-            (pathlib.Path(scratch) / 'index.js').chmod(0o644)
-            real = bundle_digest(scratch)
-        self.archive = release_tar({'ops/container-runtime/cauce_container_base.py': (runtime / 'cauce_container_base.py').read_bytes(),
-            'bundle/index.js': b'1\n'})
-        self.package_overrides = {'artifacts': [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(),
-            'size': len(self.archive)}],
-            'policy': {'bundles': {'codex': {'directory': '@release@/bundle', 'digest': digest or real, 'executable': '/x',
-                'executable_sha256': 'a' * 64, 'argv': []}}}}
 
     def test_second_company_for_the_same_system_user_is_rejected_and_first_unit_survives(self):
         host_setup.setup(self.identity, self.install_base(), False)

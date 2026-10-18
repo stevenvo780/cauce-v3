@@ -211,10 +211,6 @@ class PreflightTests(InstallFixture):
                          f'd {self.socket_directory} 0750 root {self.gateway_gid} -')
         self.assertNotIn('never-printed', self.output.getvalue())
 
-    def rendered_unit(self):
-        args = self.arguments()
-        unit = self.kit.desired_files(args, self.kit.controller_state(args))[args.unit][0].decode()
-        return dict(line.split('=', 1) for line in unit.splitlines() if '=' in line)
 
 class ApplyTests(InstallFixture):
     def test_apply_installs_private_files_starts_verifies_and_a_second_run_changes_nothing(self):
@@ -265,11 +261,6 @@ class ApplyTests(InstallFixture):
             raise lib.Abort('injected enable failure')
         return result
 
-    def fail_enable_and_disable(self, command, **options):
-        if command[:2] == ['systemctl', 'disable']:
-            self.host.events.append('disable')
-            return subprocess.CompletedProcess(command, 1, '', 'injected disable failure')
-        return self.fail_after_enable(command, **options)
 
 class LockTests(InstallFixture):
     def upgrade_kit(self):

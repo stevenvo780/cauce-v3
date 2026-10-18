@@ -124,30 +124,6 @@ class AuthRecoveryTests(unittest.TestCase):
         self.fixture.run_pass(NOW + 1800)
         self.assertEqual(len(self.fixture.engineering_posts()), 2)
 
-    def synthetic_wrapper(self, exit_code):
-        root = self.fixture.directory
-        binary = root / "bin"
-        binary.mkdir(exist_ok=True)
-        arguments = root / "docker-arguments.json"
-        docker = binary / "docker"
-        docker.write_text("#!/usr/bin/python3\nimport json,pathlib,sys\npathlib.Path(" + repr(str(arguments))
-                          + ").write_text(json.dumps(sys.argv[1:]))\nraise SystemExit(" + str(exit_code) + ")\n")
-        docker.chmod(0o700)
-        helper = root / "synthetic-state.py"
-        helper.write_text(HELPER.read_text() + "\ndef trusted_file(path, directory=False):\n"
-                          "    metadata = path.lstat()\n"
-                          "    valid = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)\n"
-                          "    if not valid or metadata.st_uid != os.getuid() or metadata.st_mode & 0o022:\n"
-                          "        raise SupervisionError('untrusted_control_file')\n")
-        wrapper = root / "synthetic-wrapper.sh"
-        content = WRAPPER.read_text().replace("[[ $EUID -ne 0 ]]", "[[ 1 -ne 1 ]]").replace("[[ ! -t 0 || ! -t 1 ]]", "[[ 1 -ne 1 ]]")
-        content = content.replace("/usr/local/sbin/praxis-supervision-state.py", str(helper))
-        destination = root / "control" / "RESUME.json"
-        content = content.replace("/var/lib/praxis-supervision/RESUME.json", str(destination))
-        wrapper.write_text(content)
-        result = subprocess.run(["bash", str(wrapper)], capture_output=True, text=True,
-                                env={"PATH": str(binary) + ":/usr/bin:/bin"}, timeout=10)
-        return result, arguments, destination
 
     def test_wrapper_requires_human_terminal_and_has_bounded_native_command(self):
         result = subprocess.run(["bash", str(WRAPPER)], capture_output=True, text=True, timeout=5)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import json
 import unittest
-from unittest import mock
 
 import test_praxis_supervision as fixtures
 import test_praxis_visual_review as visual_fixtures
@@ -26,42 +25,8 @@ class SupervisionContinuityTests(unittest.TestCase):
     def state(self):
         return json.loads(self.fixture.state_path.read_text())
 
-    def awaiting_review(self):
-        baseline, root, pending = self.visual.reserve_engineering()
-        self.fixture.run_pass(NOW + 1800, pending)
-        self.assertEqual(self.fixture.run_pass(NOW + 2100, pending)["action"], "review_contract_incomplete")
-        return baseline, root, pending
 
-    def current_review(self, implementation=None, independent=True):
-        if implementation is not None:
-            (self.fixture.workspace / "apps/web/app.js").write_text(implementation)
-        verification = proof_fixture(self.fixture, NEXT_HEAD)
-        image = self.fixture.workspace / "screen.png"
-        image.write_bytes(b"different independently inspected synthetic capture")
-        capture = {"path": "screen.png", "sha256": SUP.digest(image.read_bytes())}
-        path = self.fixture.workspace / "qa-proof.json"
-        qa = json.loads(path.read_text())
-        qa["runs"][0]["screenshots"] = [capture]
-        qa["inspected_images"] = [capture] if independent else []
-        qa["review"]["independent"] = independent
-        path.write_text(json.dumps(qa))
-        verification["gates"][2]["artifacts"][0]["sha256"] = SUP.digest(path.read_bytes())
-        self.fixture.write_json("verification.json", verification)
-        return self.fixture.snapshot(NEXT_HEAD)
 
-    def legacy_closed_review(self):
-        baseline, _, pending = self.visual.reserve_engineering()
-        self.fixture.run_pass(NOW + 1800, pending)
-        review_root = self.state()["active_root"]
-        with mock.patch.object(SUP.Supervisor, "review_contract_incomplete", autospec=True,
-                               side_effect=lambda supervisor, _: supervisor.finish("visual_review_pending")):
-            self.assertEqual(self.fixture.run_pass(NOW + 2100, pending)["action"], "visual_review_pending")
-        state = self.state()
-        self.assertEqual(state["visual_review_requests"][review_root["review_cohort"]]["status"], "closed")
-        self.assertNotIn("contract_status", state["visual_review_requests"][review_root["review_cohort"]])
-        self.assertNotIn("review_contract_failure", state)
-        self.assertEqual(len(self.fixture.api.posts), 2)
-        return baseline, pending, review_root
 
     def failed_review(self):
         baseline, original, pending = self.visual.reserve_engineering()
@@ -182,21 +147,6 @@ class SupervisionContinuityTests(unittest.TestCase):
         self.assertEqual(len(self.state()["readiness_recoveries"]), 1)
         self.assertEqual(self.fixture.engineering_posts(), [])
 
-    def bind_docs(self, verification, names):
-        sources = dict(verification["source_files"])
-        sources.update({name: SUP.digest((self.fixture.workspace / name).read_bytes()) for name in names})
-        verification["source_files"] = sources
-        for gate in verification["gates"]:
-            if gate.get("id") not in {"tests", "qa", "snapshot"}:
-                continue
-            gate["source_files"] = sources
-            artifact = gate["artifacts"][0]
-            path = self.fixture.workspace / artifact["path"]
-            report = json.loads(path.read_text())
-            report["source_files"] = sources
-            path.write_text(json.dumps(report))
-            artifact["sha256"] = SUP.digest(path.read_bytes())
-        self.fixture.write_json("verification.json", verification)
 
 if __name__ == "__main__":
     unittest.main()

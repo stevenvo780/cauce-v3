@@ -112,24 +112,6 @@ class PraxisProofTests(unittest.TestCase):
         return PROOF.install_evidence(self.workspace, self.args.output, self.args.artifact_prefix,
                                       self.read("proof.json"), PROOF.child_environment(self.root))
 
-    def old_qa(self, outcome="passed", stale=False):
-        sources = PROOF.source_hashes(self.workspace, list(self.files))
-        if stale:
-            sources["apps/api/store.py"] = "f" * 64
-        path = self.workspace / "docs/evidence/historical/qa.json"
-        path.parent.mkdir(parents=True)
-        report = {"schema_version": 2, "gate_id": "qa", "status": outcome,
-                  "source_commit": self.commit, "source_files": sources, "source_sha256": sources,
-                  "command": "synthetic-qa-command", "exit_code": 0 if outcome == "passed" else 1,
-                  "runs": [{"status": outcome}], "review": {"independent": False},
-                  "error": "synthetic failure" if outcome == "failed" else ""}
-        PROOF.write_json(path, report)
-        gate = {"id": "qa", "outcome": outcome, "exit_code": report["exit_code"],
-                "command": report["command"], "source_commit": self.commit, "source_files": sources,
-                "artifacts": [{"path": str(path.relative_to(self.workspace)), "sha256": PROOF.digest(path)}]}
-        self.previous["gates"] = [gate]
-        PROOF.write_json(self.verification, self.previous)
-        return gate
 
     def test_install_preserves_acceptance_and_only_writes_metadata(self):
         before = PROOF.source_hashes(self.workspace, list(self.files))

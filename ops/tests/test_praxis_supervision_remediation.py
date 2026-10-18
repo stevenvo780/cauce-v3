@@ -62,24 +62,6 @@ class QaRemediationTests(unittest.TestCase):
         self.fixture.write_json("verification.json", verification)
         return self.fixture.snapshot(NEXT_HEAD)
 
-    def wide_failed_review(self):
-        self.install_review()
-        path = self.fixture.workspace / "qa-proof.json"
-        report = json.loads(path.read_text())
-        captures = []
-        for index in range(100):
-            image = self.fixture.workspace / f"synthetic-screen-{index}.png"
-            image.write_bytes(f"synthetic verified capture {index}".encode())
-            captures.append({"path": image.name, "sha256": SUP.digest(image.read_bytes())})
-        report["runs"][0]["screenshots"] = captures
-        report["review"]["notes"] = "Current independently inspected mobile layout defects. " * 30
-        report["inspected_images"] = [dict(capture, observations="Mobile navigation overlaps schedule and configuration. " * 7)
-                                      for capture in captures]
-        path.write_text(json.dumps(report))
-        verification = json.loads((self.fixture.workspace / "verification.json").read_text())
-        verification["gates"][2]["artifacts"][0]["sha256"] = SUP.digest(path.read_bytes())
-        self.fixture.write_json("verification.json", verification)
-        return self.fixture.snapshot(NEXT_HEAD)
 
     def test_current_independent_failed_review_reserves_one_distinct_repair_without_credit(self):
         baseline, original = self.closed_review()

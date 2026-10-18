@@ -37,9 +37,6 @@ def texto(payload):
     return payload["body"]["text"]
 
 
-def nombres_del_digesto(payload):
-    return [linea.split(" ", 2)[2].split(":", 1)[0]
-            for linea in texto(payload).split("\n") if linea.startswith("- ")]
 
 
 class TestFiltrado(unittest.TestCase):

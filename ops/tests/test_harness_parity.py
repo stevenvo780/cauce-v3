@@ -24,22 +24,6 @@ def catalog_capabilities(source=None):
     return quoted(match.group(1)) if match else set()
 
 
-def catalog_write_checks(source=None):
-    """Both catalog writes (create and update) must validate against the published descriptor."""
-    source = (ROOT / HARNESS_MUTATIONS).read_text() if source is None else source
-    match = re.search(r'private async harness\((.*?)\n  private async ', source, re.S)
-    body = re.sub(r'/\*.*?\*/|//[^\n]*', '', match.group(1) if match else '', flags=re.S)
-    checks = []
-    if not match:
-        return [(HARNESS_MUTATIONS, 'harness catalog mutation not found')]
-    for statement in ('INSERT INTO harness_definitions', 'UPDATE harness_definitions'):
-        position = body.find(statement)
-        # The guard must run after the previous query and before the write's own query.
-        own = body.rfind('await client.query', 0, position) if position >= 0 else -1
-        previous = body.rfind('await client.query', 0, own) if own >= 0 else -1
-        if own < 0 or body.find('assertPublishedHarnessDefinition(mutation.id', max(previous, 0), own) < 0:
-            checks.append((HARNESS_MUTATIONS, f'{statement} must be preceded by assertPublishedHarnessDefinition(mutation.id, ...)'))
-    return checks
 
 
 
@@ -162,24 +146,6 @@ def store_quota_reader_contract_checks(source):
     return checks
 
 
-def quota_reader_contract_checks():
-    contracts = {
-        'ops/cli/fleet_executor_agent_quota.py': r'\bPROVIDERS\s*=\s*frozenset\s*\(\s*\{([^}]*)\}\s*\)',
-        'packages/protocol/src/agent-quota.ts':
-            r'\bAgentQuotaReceiptSchema\s*=\s*z\.discriminatedUnion\b.*?\bprovider:\s*z\.enum\(\[([^\]]*)\]\)',
-        'services/gateway/src/routes/console/quota-environments.ts':
-            r'\bAccountCreate\s*=\s*QuotaAccountCreateSchema\.extend\(\{\s*provider:\s*z\.enum\(\[([^\]]*)\]\)',
-    }
-    expected = quota_readers()
-    checks = store_quota_reader_contract_checks(text('packages/store/src/agent-quota-operations-model.ts'))
-    for path, pattern in contracts.items():
-        matches = re.findall(pattern, text(path), re.S)
-        if not matches:
-            checks.append((path, 'quota reader contract not found'))
-        for match in matches:
-            readers = quoted(match)
-            checks += set_parity_checks(path, readers, expected, 'descriptor quota reader contract')
-    return checks
 
 
 class HarnessParityTest(unittest.TestCase):
