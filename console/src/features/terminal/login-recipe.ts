@@ -1,13 +1,5 @@
 import type { TopologySnapshot } from '../../api/types';
-import claude from '../../../../packages/adapter-sdk/descriptors/claude.json';
-import codex from '../../../../packages/adapter-sdk/descriptors/codex.json';
-import fake from '../../../../packages/adapter-sdk/descriptors/fake.json';
-import fake2 from '../../../../packages/adapter-sdk/descriptors/fake2.json';
-import grok from '../../../../packages/adapter-sdk/descriptors/grok.json';
-import hermes from '../../../../packages/adapter-sdk/descriptors/hermes.json';
-import muse from '../../../../packages/adapter-sdk/descriptors/muse.json';
-import openclaw from '../../../../packages/adapter-sdk/descriptors/openclaw.json';
-import opencode from '../../../../packages/adapter-sdk/descriptors/opencode.json';
+import { PUBLISHED_HARNESS_DESCRIPTORS, type PublishedHarnessDescriptor } from '../harness-descriptors';
 
 /** The line is typed into a shell, so only the descriptor's own argv grammar is accepted. */
 const ARGV0 = /^\/usr\/local\/bin\/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$/u;
@@ -27,17 +19,6 @@ export interface HarnessLoginRecipe {
   readonly verifyDisabledReason: string | null;
 }
 
-interface DescriptorShape {
-  readonly harness: string;
-  readonly provider?: {
-    readonly authenticate_argv?: readonly string[];
-    readonly verify_argv?: readonly string[];
-    readonly fleet_module?: string | null;
-  };
-}
-
-const PUBLISHED: readonly DescriptorShape[] = [claude, codex, fake, fake2, grok, hermes, muse, openclaw, opencode];
-
 function safeArgv(value: readonly string[] | undefined): readonly string[] | null {
   if (!value || value.length < 1 || value.length > 8) return null;
   for (const [index, item] of value.entries()) {
@@ -47,7 +28,7 @@ function safeArgv(value: readonly string[] | undefined): readonly string[] | nul
   return value;
 }
 
-function recipeFor(descriptor: DescriptorShape | undefined, harnessId: string): HarnessLoginRecipe {
+function recipeFor(descriptor: PublishedHarnessDescriptor | undefined, harnessId: string): HarnessLoginRecipe {
   if (!descriptor) {
     const reason = `No hay un descriptor aprobado para el arnés ${harnessId}.`;
     return { authenticate: null, verify: null, authenticateDisabledReason: reason, verifyDisabledReason: reason };
@@ -63,7 +44,7 @@ function recipeFor(descriptor: DescriptorShape | undefined, harnessId: string): 
   };
 }
 
-const BY_HARNESS = new Map(PUBLISHED.map((descriptor) => [descriptor.harness, descriptor]));
+const BY_HARNESS = new Map(PUBLISHED_HARNESS_DESCRIPTORS.map((descriptor) => [descriptor.harness, descriptor]));
 
 export function harnessLoginRecipe(harnessId: string | null | undefined): HarnessLoginRecipe {
   if (!harnessId) {

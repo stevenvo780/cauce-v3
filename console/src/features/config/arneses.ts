@@ -17,6 +17,8 @@ interface ArnesReal {
   dondeSeToca: string;
 }
 
+const HARNESSES_WITHOUT_A_MEASURED_CARD = new Set(['fake', 'fake2', 'opencode']);
+
 /** The closed harness set currently recognized by the gateway document inventory. */
 export const ARNESES_REALES: readonly ArnesReal[] = [
   {
@@ -80,6 +82,27 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
       + 'aplicar el perfil canónico por lote a Hermes.',
   },
 ];
+
+export function arnesesEnLaConsola(
+  descriptors: readonly { readonly harness: string; readonly context?: { readonly native_document?: string } }[],
+): readonly ArnesReal[] {
+  const known = new Set(ARNESES_REALES.map((item) => item.id));
+  const extras: ArnesReal[] = [];
+  for (const descriptor of descriptors) {
+    if (known.has(descriptor.harness) || HARNESSES_WITHOUT_A_MEASURED_CARD.has(descriptor.harness)) continue;
+    const document = descriptor.context?.native_document;
+    extras.push({
+      id: descriptor.harness,
+      label: descriptor.harness,
+      directiva: document === undefined || document === 'none' || document === '' ? '' : document,
+      detalle: 'El descriptor declara este manual. La carpeta exacta la acredita el runtime; esta ficha no inventa una ruta.',
+      editableDesdeAjustes: false,
+      dondeSeToca: 'En «Perfil y contexto» del agente, cuando el runtime acredita la ruta.',
+    });
+  }
+  extras.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  return [...ARNESES_REALES, ...extras];
+}
 
 /** Explains the canonical source of the declared role and the read-only registry projection. */
 export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =

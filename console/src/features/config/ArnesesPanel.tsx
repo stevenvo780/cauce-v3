@@ -1,8 +1,8 @@
 import { FileText, Slash } from 'lucide-react';
 import { Notice, SectionCard } from '../../components/kit';
+import { PUBLISHED_HARNESS_DESCRIPTORS } from '../harness-descriptors';
 import {
-  ARNESES_REALES, DISTINCION_HERRAMIENTAS_Y_PERMISOS,
-  DONDE_SE_ESCRIBE_EL_ROL_DECLARADO,
+  DISTINCION_HERRAMIENTAS_Y_PERMISOS, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO, arnesesEnLaConsola,
 } from './arneses';
 
 /**
@@ -15,6 +15,7 @@ import {
  * each harness, and for none of them is it this screen.
  */
 export function ArnesesPanel() {
+  const arneses = arnesesEnLaConsola(PUBLISHED_HARNESS_DESCRIPTORS);
   return (
     <SectionCard
       level={3}
@@ -23,7 +24,7 @@ export function ArnesesPanel() {
     >
       <Notice role="note">{DISTINCION_HERRAMIENTAS_Y_PERMISOS}</Notice>
       <ul className="m-0 grid list-none gap-3 p-0 lg:grid-cols-2">
-        {ARNESES_REALES.map((arnes) => (
+        {arneses.map((arnes) => (
           <li key={arnes.id} className="grid content-start gap-2 rounded-lg border border-line p-3"
             data-sin-directiva={arnes.directiva === '' ? 'true' : undefined}>
             <header className="flex items-baseline justify-between gap-2">
