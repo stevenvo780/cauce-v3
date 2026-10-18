@@ -29,12 +29,12 @@ it('solo se elimina una computadora registrada y sin agentes', () => {
   expect(sePuedeEliminar({ ...base, agents: [{ tenant_id: 'A', alias: 'w', enabled: true, online: false }] })).toBe(false);
 });
 
-it('409 significa un duplicado al crear, un conflicto de versión al editar y también agentes al borrar', () => {
-  const conflicto = new ApiError('conflict', 409);
+it('409 distingue duplicado, edición concurrente y el motivo real de la baja', () => {
+  const conflicto = new ApiError('La computadora tiene consultas de cuota en curso.', 409);
   expect(mensajeDeEscritura(conflicto, 'alta')).toBe('Ya existe una computadora con ese identificador.');
   expect(mensajeDeEscritura(conflicto)).toBe('Otro operador cambió esta computadora; relee.');
   expect(mensajeDeEscritura(conflicto, 'edicion')).toBe('Otro operador cambió esta computadora; relee.');
-  expect(mensajeDeEscritura(conflicto, 'baja')).toBe('Otro operador cambió esta computadora o todavía tiene agentes; relee antes de reintentar.');
+  expect(mensajeDeEscritura(conflicto, 'baja')).toBe(conflicto.message);
   expect(mensajeDeEscritura(new ApiError('nf', 404))).toBe('Esta computadora ya no existe; relee la lista.');
   expect(mensajeDeEscritura(new ApiError('forbidden', 403))).toBe('Tu sesión no puede cambiar las computadoras.');
   expect(mensajeDeEscritura(new Error('red caída'))).toBe('red caída');

@@ -358,6 +358,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     ...(options.consoleOrigins === undefined ? {} : { allowedOrigins: options.consoleOrigins })
   }));
   if (options.authProvider instanceof OidcBffAuthProvider) registerOidcBff(app, options.authProvider);
+  const backupDirectory = options.spaceBackups?.directory ?? process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
+  const backupStorage = backupDirectory === undefined ? undefined : options.spaceBackups ?? { directory: backupDirectory,
+    projectRoot: process.env.CAUCE_PROJECT_ROOT ?? process.cwd(), python: process.env.CAUCE_SPACE_BACKUP_PYTHON ?? '/usr/bin/python3' };
   if (options.authProvider instanceof PasswordAuthProvider) {
     options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
@@ -370,12 +373,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerHostChannelRoutes(app, options.pool);
     if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication);
     if (agentAuthentication) registerAgentProviderAuthHostRoute(app, options.pool, agentAuthentication);
-    const backupDirectory = options.spaceBackups?.directory ?? process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
-    if (backupDirectory !== undefined) {
-      const storage = options.spaceBackups ?? { directory: backupDirectory,
-        projectRoot: process.env.CAUCE_PROJECT_ROOT ?? process.cwd(), python: process.env.CAUCE_SPACE_BACKUP_PYTHON ?? '/usr/bin/python3' };
-      registerSpaceBackupConsoleRoutes(app, options.authProvider, options.pool, storage);
-      registerSpaceBackupHostRoutes(app, options.pool, storage);
+    if (backupStorage !== undefined) {
+      registerSpaceBackupConsoleRoutes(app, options.authProvider, options.pool, backupStorage);
+      registerSpaceBackupHostRoutes(app, options.pool, backupStorage);
     }
     const repositoryRoot = options.contextVersion?.repositoryRoot ?? process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
     registerContextVersionRoutes(app, options.authProvider, options.pool, {
@@ -414,7 +414,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   } else {
     registerFleetCapabilityRoute(app, options.authProvider, { available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   }
-  registerFleetHostRoutes(app, options.authProvider, options.pool, fleetCapability);
+  registerFleetHostRoutes(app, options.authProvider, options.pool, fleetCapability, undefined, undefined, backupStorage);
 
   registerConsolePublishIntentRoutes(
     app, options, repository, consolePublishTelemetry,

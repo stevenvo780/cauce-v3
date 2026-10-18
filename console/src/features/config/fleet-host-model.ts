@@ -63,8 +63,7 @@ export function mensajeDeEscritura(error: unknown, accion: AccionDeEscritura = '
   const status = error instanceof ApiError ? error.status : undefined;
   if (status === 409) {
     if (accion === 'alta') return 'Ya existe una computadora con ese identificador.';
-    if (accion === 'baja' && error instanceof ApiError
-      && error.message === 'La computadora tiene copias de espacio registradas; no se puede dar de baja mientras existan.') return error.message;
+    if (accion === 'baja' && error instanceof ApiError && error.message) return error.message;
     return accion === 'baja'
       ? 'Otro operador cambió esta computadora o todavía tiene agentes; relee antes de reintentar.'
       : 'Otro operador cambió esta computadora; relee.';

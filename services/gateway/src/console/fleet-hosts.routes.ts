@@ -14,21 +14,28 @@ import {
 import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import { principal, replyError } from '../routes/shared.js';
 import type { FleetCapabilitySource } from './fleet-operations.routes.js';
+import { expireSpaceBackupCopies, type SpaceBackupStorage } from '../fleet/space-backup.files.js';
 
 /** Every call resolves the company role of the console person in its own transaction. */
 export interface FleetHostRepository {
   list(authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
   create(input: FleetHostCreate, authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
   update(hostId: string, input: FleetHostUpdate, authority: CompanyAuthoritySource, approvedHostIds: readonly string[]): Promise<unknown>;
-  delete(hostId: string, expectedVersion: number, authority: CompanyAuthoritySource): Promise<void>;
+  delete(hostId: string, expectedVersion: number, authority: CompanyAuthoritySource, deleteBackups?: boolean): Promise<void>;
 }
 
-function fleetHostRepository(pool: DatabasePool): FleetHostRepository {
+function fleetHostRepository(pool: DatabasePool, storage?: SpaceBackupStorage): FleetHostRepository {
   return {
     list: (authority, approvedHostIds) => listFleetHosts(pool, { authority, approvedHostIds }),
     create: (input, authority, approvedHostIds) => createFleetHost(pool, input, { authority, approvedHostIds }),
     update: (hostId, input, authority, approvedHostIds) => updateFleetHost(pool, hostId, input, { authority, approvedHostIds }),
-    delete: (hostId, expectedVersion, authority) => deleteFleetHost(pool, hostId, expectedVersion, { authority, approvedHostIds: [] }),
+    delete: (hostId, expectedVersion, authority, deleteBackups) => deleteFleetHost(pool, hostId, expectedVersion, {
+      authority, approvedHostIds: [], ...(deleteBackups ? { removeSpaceBackups: async rows => {
+        if (!storage) throw new StoreError('conflict', 'No se pueden borrar las copias: el almacenamiento no está disponible.');
+        try { await expireSpaceBackupCopies(storage, rows); }
+        catch { throw new StoreError('conflict', 'No se pudieron borrar todas las copias del servidor. La computadora sigue registrada; revisa el almacenamiento y reintenta.'); }
+      } } : {}),
+    }),
   };
 }
 
@@ -37,6 +44,7 @@ export type FleetHostHumanAccess = (request: FastifyRequest, reply: FastifyReply
 const ERROR_STATUS = { forbidden: 403, conflict: 409, not_found: 404, invalid_input: 422 } as const;
 const ExpectedVersionQuerySchema = z.object({
   expected_version: z.string().regex(/^[0-9]{1,9}$/u).transform(Number).pipe(FleetHostUpdateSchema.shape.expected_version),
+  delete_backups: z.literal('true').optional(),
 }).strict();
 
 function invalidReceipt(): never {
@@ -77,9 +85,12 @@ async function withHostAuthority<T>(
 export function registerFleetHostRoutes(
   app: FastifyInstance, authProvider: AuthProvider, pool: DatabasePool,
   capability: FleetCapability|FleetCapabilitySource = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
-  repository: FleetHostRepository = fleetHostRepository(pool),
+  repository?: FleetHostRepository,
   access: FleetHostHumanAccess = (request, reply) => consoleHumanAccess(authProvider, request, reply, 'read'),
+  storage?: SpaceBackupStorage,
 ): void {
+  repository ??= fleetHostRepository(pool, storage);
+  const hostRepository = repository;
   const path = '/v3/console/fleet/hosts';
   const approvedHosts=async(request:FastifyRequest,reply:FastifyReply):Promise<string[]>=>{
     const current=typeof capability==='function'?await capability(request,reply):capability;
@@ -91,7 +102,7 @@ export function registerFleetHostRoutes(
       requirePermission(actor, 'read');
       const approvedHostIds=await approvedHosts(request,reply);
       const hosts = z.array(z.unknown()).parse(await withHostAuthority(access, request, reply,
-        authority => repository.list(authority, approvedHostIds)));
+        authority => hostRepository.list(authority, approvedHostIds)));
       return { hosts: hosts.map(hostReceipt) };
     } catch (error) { hostError(reply, error); }
   });
@@ -102,7 +113,7 @@ export function registerFleetHostRoutes(
       requireOperatorPermission(actor, 'control');
       const input = FleetHostCreateSchema.parse(request.body);
       const approvedHostIds=await approvedHosts(request,reply);
-      const created = await withHostAuthority(access, request, reply, authority => repository.create(input, authority, approvedHostIds));
+      const created = await withHostAuthority(access, request, reply, authority => hostRepository.create(input, authority, approvedHostIds));
       return await reply.code(201).send(hostReceipt(created));
     } catch (error) { hostError(reply, error); }
   });
@@ -114,7 +125,7 @@ export function registerFleetHostRoutes(
       const hostId = FleetHostIdSchema.parse(request.params.host_id);
       const input = FleetHostUpdateSchema.parse(request.body);
       const approvedHostIds=await approvedHosts(request,reply);
-      const updated = await withHostAuthority(access, request, reply, authority => repository.update(hostId, input, authority, approvedHostIds));
+      const updated = await withHostAuthority(access, request, reply, authority => hostRepository.update(hostId, input, authority, approvedHostIds));
       return await reply.send(hostReceipt(updated));
     } catch (error) { hostError(reply, error); }
   });
@@ -124,8 +135,9 @@ export function registerFleetHostRoutes(
       const actor = await principal(request, authProvider);
       requireOperatorPermission(actor, 'control');
       const hostId = FleetHostIdSchema.parse(request.params.host_id);
-      const { expected_version: expectedVersion } = ExpectedVersionQuerySchema.parse(request.query);
-      await withHostAuthority(access, request, reply, authority => repository.delete(hostId, expectedVersion, authority));
+      const { expected_version: expectedVersion, delete_backups: deleteBackups } = ExpectedVersionQuerySchema.parse(request.query);
+      await withHostAuthority(access, request, reply, authority => deleteBackups
+        ? hostRepository.delete(hostId, expectedVersion, authority, true) : hostRepository.delete(hostId, expectedVersion, authority));
       return await reply.code(204).send();
     } catch (error) { hostError(reply, error); }
   });

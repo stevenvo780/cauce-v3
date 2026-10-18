@@ -8,7 +8,7 @@ export interface FleetHostsClient {
   listFleetHosts(): Promise<FleetHost[]>;
   createFleetHost(input: FleetHostCreate): Promise<FleetHost>;
   updateFleetHost(hostId: string, input: FleetHostUpdate): Promise<FleetHost>;
-  deleteFleetHost(hostId: string, expectedVersion: number): Promise<void>;
+  deleteFleetHost(hostId: string, expectedVersion: number, deleteBackups?: boolean): Promise<void>;
 }
 
 const path = '/v3/console/fleet/hosts';
@@ -26,9 +26,9 @@ export function fleetHostsClient(request: RequestFn): FleetHostsClient {
     updateFleetHost: async (hostId, input) => FleetHostSchema.parse(await request(hostPath(hostId), {
       method: 'PATCH', body: JSON.stringify(FleetHostUpdateSchema.parse(input)),
     })),
-    deleteFleetHost: async (hostId, expectedVersion) => {
+    deleteFleetHost: async (hostId, expectedVersion, deleteBackups) => {
       FleetHostUpdateSchema.shape.expected_version.parse(expectedVersion);
-      await request(`${hostPath(hostId)}?expected_version=${String(expectedVersion)}`, { method: 'DELETE' });
+      await request(`${hostPath(hostId)}?expected_version=${String(expectedVersion)}${deleteBackups ? '&delete_backups=true' : ''}`, { method: 'DELETE' });
     },
   };
 }

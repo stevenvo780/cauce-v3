@@ -35,6 +35,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   const borra = !soloLectura && hostPermission(snapshot, 'delete');
   const [editor, setEditor] = useState<Editor>();
   const [borrar, setBorrar] = useState<FleetHost>();
+  const [deleteBackups, setDeleteBackups] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
@@ -113,7 +114,8 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
 
   async function eliminar() {
     if (!borrar) return;
-    const ok = await escribir(() => api.deleteFleetHost(borrar.host_id, borrar.version), 'baja');
+    const ok = await escribir(() => deleteBackups ? api.deleteFleetHost(borrar.host_id, borrar.version, true)
+      : api.deleteFleetHost(borrar.host_id, borrar.version), 'baja');
     if (ok) setBorrar(undefined);
   }
 
@@ -124,7 +126,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   const resumen = resumenDeFlota(hosts);
   const tarjeta = (host: FleetHost) => <li key={host.host_id}>
     <ComputadoraCard host={host} escribe={escribe} crea={crea} borra={borra} busy={busy} bloqueada={editando === host.host_id}
-      onEditar={abrirEdicion} onAlternar={alternar} onEliminar={host => { setError(undefined); setBorrar(host); }} onRegistrar={abrirAlta} />
+      onEditar={abrirEdicion} onAlternar={alternar} onEliminar={host => { setError(undefined); setDeleteBackups(false); setBorrar(host); }} onRegistrar={abrirAlta} />
   </li>;
 
   return <div className="grid gap-4">
@@ -140,7 +142,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
         <span className="min-w-0 flex-1">{flota.error}</span>
         <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={flota.loading} done={false} announceError={false} action={() => flota.reload()} />
       </Notice> : null}
-    {error && !editor ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+    {error && !editor && !borrar ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 
     {flota.hosts ? <ul aria-label="Resumen de la flota"
       className="m-0 grid list-none grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line p-0 sm:grid-cols-3 lg:grid-cols-5">
@@ -190,6 +192,11 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
       title={borrar ? `Eliminar la computadora ${borrar.display_name}` : ''}
       confirmLabel="Eliminar" onConfirm={() => { void eliminar(); }} onCancel={() => { setBorrar(undefined); }}>
       <p>Se quita del registro de Cauce. No desinstala el ejecutor ni toca la máquina.</p>
+      <label className="flex items-start gap-2">
+        <input type="checkbox" checked={deleteBackups} disabled={busy} onChange={event => { setDeleteBackups(event.target.checked); }} />
+        <span>Eliminar también todas sus copias de espacio del servidor. Es irreversible; descarga antes las que quieras conservar.</span>
+      </label>
+      <p>Si hay copias en curso, espera a que terminen. Los agentes y entornos de cuota deben eliminarse antes.</p>
       {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     </ConfirmDialog>
   </div>;

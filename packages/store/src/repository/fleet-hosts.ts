@@ -3,6 +3,7 @@ import { assertPlatformAdmin, type CompanyAuthority } from '../company-authority
 import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { StoreError } from './errors.js';
 import { FleetOperationError } from './fleet-operation-contracts.js';
+import type { SpaceBackupRow } from '../space-backup-contracts.js';
 
 const CONTROLLER_FRESH_SECONDS = 90;
 
@@ -14,7 +15,10 @@ interface AgentRow { host_id: string; tenant_id: string; alias: string; enabled:
 
 /** Resolves the company authority of a verified console person inside the caller transaction. */
 export type CompanyAuthoritySource = (client: DatabaseClient) => Promise<CompanyAuthority>;
-export interface FleetHostScope { readonly authority: CompanyAuthoritySource; readonly approvedHostIds: readonly string[] }
+export interface FleetHostScope {
+  readonly authority: CompanyAuthoritySource; readonly approvedHostIds: readonly string[];
+  readonly removeSpaceBackups?: (rows: Pick<SpaceBackupRow, 'id' | 'claim_epoch'>[]) => Promise<void>;
+}
 
 /** Owners and administrators manage their company's computers; only the platform registers one without enrollment. */
 async function hostAuthority(client: DatabaseClient, scope: FleetHostScope, platform = false): Promise<CompanyAuthority> {
@@ -177,9 +181,20 @@ export async function deleteFleetHost(pool: DatabasePool, hostId: string, expect
         UNION ALL SELECT 3,'enrollment' FROM fleet_host_enrollments
           WHERE host_id=$1 AND company_id=$2 AND state='pending' AND expires_at>now()
         UNION ALL SELECT 4,'quota' FROM quota_environments WHERE host_id=$1 AND company_id=$2 AND status<>'deleted'
-        UNION ALL SELECT 5,'backups' FROM space_backups WHERE host_id=$1 AND company_id=$2
-      ) dependency ORDER BY rank LIMIT 1`, [hostId, company])).rows[0];
+        UNION ALL SELECT 5,'backups' FROM space_backups WHERE host_id=$1 AND company_id=$2 AND NOT $3::boolean
+      ) dependency ORDER BY rank LIMIT 1`, [hostId, company, scope.removeSpaceBackups !== undefined])).rows[0];
     if (blocker) throw new FleetOperationError('conflict', HOST_DEPENDENCY_MESSAGE[blocker.kind]);
+    if (scope.removeSpaceBackups) {
+      const backups = (await client.query<SpaceBackupRow & { unexpired: boolean }>(
+        'SELECT *,expires_at>now() AS unexpired FROM space_backups WHERE host_id=$1 AND company_id=$2 FOR UPDATE', [hostId, company])).rows;
+      if (backups.some(row => ['pending', 'running'].includes(row.status) && row.unexpired)) {
+        throw new FleetOperationError('conflict', 'La computadora tiene copias de espacio en curso; espera a que terminen antes de darla de baja.');
+      }
+      if (backups.length) {
+        await scope.removeSpaceBackups(backups);
+        await client.query('DELETE FROM space_backups WHERE host_id=$1 AND company_id=$2', [hostId, company]);
+      }
+    }
     await client.query(`UPDATE fleet_host_enrollments SET state='revoked'
       WHERE host_id=$1 AND company_id=$2 AND state='pending'`, [hostId, company]);
     await client.query(`DELETE FROM quota_environment_operations WHERE company_id=$2
