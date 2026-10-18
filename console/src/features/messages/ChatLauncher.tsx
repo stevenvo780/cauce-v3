@@ -75,8 +75,12 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
   const href = agentHref('messages', agent);
   const time = last ? haceCuanto(last.createdAt) : undefined;
   const chips = counters(salud);
-  const label = [`${agent.alias}, ${agent.tenantId}`, meta.label, ...chips.map((chip) => chip.text), time ? `último mensaje ${time}` : '']
-    .filter(Boolean).join(' · ');
+  const statusText = reason ?? (state ? 'Sin mensajes recientes' : UNKNOWN_STATE_META.hint);
+  const previewPlain = last?.text ? `${last.from ? `${last.from}: ` : ''}${last.text}` : statusText;
+  const label = [
+    `${agent.alias}, ${agent.tenantId}`, meta.label, last?.text ? '' : statusText,
+    ...chips.map((chip) => chip.text), time ? `último mensaje ${time}` : '',
+  ].filter(Boolean).join(' · ');
   const style = { '--i': index, '--h1': hue } as CSSProperties;
   const click = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -90,7 +94,8 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
   );
   const preview = last?.text ? (
     <>{last.from ? <span className="text-fg-2">{last.from}: </span> : null}{last.text}</>
-  ) : <span className="italic">{reason ?? (state ? 'Sin mensajes recientes' : UNKNOWN_STATE_META.hint)}</span>;
+  ) : <span className="italic">{statusText}</span>;
+  const previewClass = cn('text-[13px] text-muted', last?.text ? 'truncate' : 'whitespace-normal break-words');
   const badges = (
     <>
       {pill}
@@ -141,7 +146,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
             <span className="min-w-0 flex-1 truncate text-xs text-muted">{agent.tenantId}</span>
             {time ? <time dateTime={last?.createdAt} className="ml-auto shrink-0 text-[11px] text-muted">{time}</time> : null}
           </span>
-          <span className="truncate text-[13px] text-muted">{preview}</span>
+          <span className={previewClass} title={previewPlain}>{preview}</span>
           <span className="flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">{badges}</span>
         </span>
       </a>
@@ -160,7 +165,7 @@ function LauncherCard({ agent, index, state, reason, last, salud, layout, highli
           <span className="truncate text-xs text-muted">{agent.tenantId}</span>
         </span>
       </span>
-      <span className="truncate text-[13px] text-muted">{preview}</span>
+      <span className={previewClass} title={previewPlain}>{preview}</span>
       <span className="mt-auto flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap">
         {badges}
         <ArrowRight size={15} aria-hidden="true" className="cl-go ml-auto shrink-0 text-brand-ink" />
