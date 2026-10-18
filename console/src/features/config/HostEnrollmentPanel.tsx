@@ -4,6 +4,7 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ApiError } from '../../api/client/core';
 import { FormDialog } from '../../components/dialogs';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { useCompanyAuthority } from '../auth/company-authority';
@@ -91,7 +92,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
   for (const row of enrollments.data?.enrollments ?? []) if (row.executor_ready === true) wasReady.current.add(row.enrollment_id);
   return <section aria-label="Añadir ordenador" className="grid gap-3 rounded-xl border border-line bg-surface p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="m-0 text-sm font-semibold">Conectar un ordenador</h3>
-      <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy || enrollments.loading} onClick={() => { void enrollments.reload(); }}>Releer invitaciones</Button>
+      <div className="flex flex-wrap gap-2"><ActionButton size="sm" label="Releer invitaciones" disabled={busy} busy={enrollments.loading} announceError={false} action={() => enrollments.reload()} />
         <Button variant="primary" size="sm" disabled={!ready || !!currentInvitation} onClick={() => { setForm(true); }}>Añadir ordenador</Button></div></div>
     <p className="m-0 text-xs text-muted">Crea una invitación y úsala en el ordenador que vas a conectar. Allí se confirma su identidad y después se prepara el ejecutor con la política de tu empresa, sin pasar por la plataforma.</p>
     {!form && (error || enrollments.error) ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}

@@ -3,6 +3,7 @@ import { useRef, useState, type SyntheticEvent } from 'react';
 import { useApi } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { Plus } from 'lucide-react';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { ConfirmDialog } from '../../components/dialogs';
 import { EmptyState, LoadingState } from '../../components/ui';
@@ -137,7 +138,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     {flota.forbidden ? <Notice tone="info" role="note">Esta sesión no puede consultar las computadoras de esta empresa.</Notice>
       : flota.error ? <Notice tone="danger" role="alert" className="flex flex-wrap items-center gap-2">
         <span className="min-w-0 flex-1">{flota.error}</span>
-        <Button size="sm" disabled={flota.loading} onClick={() => { void flota.reload(); }}>Reintentar</Button>
+        <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={flota.loading} done={false} announceError={false} action={() => flota.reload()} />
       </Notice> : null}
     {error && !editor ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 

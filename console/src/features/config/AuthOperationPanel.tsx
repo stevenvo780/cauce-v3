@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FleetOperation } from '@cauce/protocol/fleet-operation';
 import type { ProviderAuthRequest } from '../../api/client/provider-auth-client';
+import { ActionButton } from '../../components/action-button';
 import { useApi } from '../../api/context';
 import { ProviderAuthPanel } from '../accounts/ProviderAuthPanel';
 
@@ -59,8 +60,8 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
     {!allowed ? <p>No se acreditó permiso para conectar la cuenta de esta operación.</p> : null}
     {permitted && !scope ? <p role="status">Leyendo autorización de la operación…</p> : null}
     {error ? <><p role="alert">{error}</p>
-      <button type="button" className="button secondary" disabled={!permitted || reading}
-        onClick={() => { setRetry(value => value + 1); }}>Releer autorización de conexión</button></> : null}
+      <ActionButton label="Releer autorización de conexión" disabled={!permitted || reading} done={false} announceError={false}
+        action={() => { setRetry(value => value + 1); }} /></> : null}
     {request ? <ProviderAuthPanel request={request} client={api} onAuthenticated={() => { void reread(); }} /> : null}
     {reading ? <p role="status">Releyendo la operación después de verificar la cuenta…</p> : null}
     {allowed && verified?.identity === identity ? <p role="status">Cuenta verificada. Operación releída en versión {verified.version}.

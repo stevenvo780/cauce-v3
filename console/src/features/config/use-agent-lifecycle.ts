@@ -45,12 +45,12 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget, onTermina
     });
     return () => { active = false; sequence.current += 1; };
   }, [api, open, targetKey]);
-  function accept(value: FleetOperation) {
+  function accept(value: FleetOperation): boolean {
     const previous = accepted.current;
     if (previous?.id === value.id && (value.version < previous.version || value.request_sha256 !== previous.request_sha256
       || JSON.stringify(value.target) !== JSON.stringify(previous.target) || value.kind !== previous.kind)) {
       setReadError('El servidor devolvió un estado distinto del recibo o una versión anterior.');
-      return;
+      return false;
     }
     accepted.current = value;
     if (previous?.id === value.id && previous.status !== value.status && TERMINAL.includes(value.status)) terminalRef.current?.();
@@ -60,16 +60,22 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget, onTermina
     // Updated in place: moving the row the operator just pressed would re-insert its button in the DOM and drop its focus.
     setHistory((rows) => rows?.some((entry) => entry.id === value.id)
       ? rows.map((entry) => entry.id === value.id ? value : entry) : [value, ...(rows ?? [])].slice(0, 100));
+    return true;
   }
   const refresh = useCallback(async () => {
-    if (!operation || busy) return;
+    if (!operation || busy) return undefined;
     const read = ++sequence.current;
     setBusy(true);
     try {
       const value = await api.getFleetOperation(operation.id);
-      if (read === sequence.current) accept(value);
-    } catch { if (read === sequence.current) setReadError('No se pudo releer el estado durable de la operación.'); }
-    finally { if (read === sequence.current) setBusy(false); }
+      if (read !== sequence.current) return undefined;
+      if (!accept(value)) return { error: new Error('El servidor devolvió un estado distinto del recibo o una versión anterior.') };
+      return undefined;
+    } catch {
+      const error = new Error('No se pudo releer el estado durable de la operación.');
+      if (read === sequence.current) setReadError(error.message);
+      return { error };
+    } finally { if (read === sequence.current) setBusy(false); }
   }, [api, busy, operation]);
   useEffect(() => {
     if (!open || busy || !pending(operation)) return undefined;

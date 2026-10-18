@@ -3,6 +3,7 @@ import type { FleetOperation, FleetTarget } from '@cauce/protocol/fleet-operatio
 import { RefreshCw } from 'lucide-react';
 import { useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SectionCard } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { cancellable, operationSummary, resumable } from './fleet-operation-text';
@@ -27,13 +28,19 @@ export function RecentFleetOperations() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const read = useCallback(async (isCurrent: () => boolean) => {
+  const read = useCallback(async (isCurrent: () => boolean): Promise<Error | undefined> => {
     setBusy(true); setError(undefined); setNotice(undefined);
     try {
       const operations = await api.listRecentFleetOperations(LIMIT);
       if (isCurrent()) setLoad(operations ? { state: 'ready', operations } : { state: 'unavailable' });
+      return undefined;
     } catch (failure) {
-      if (isCurrent()) { setError(failure instanceof Error ? failure.message : 'No se pudieron leer las operaciones.'); setLoad((previous) => previous.state === 'loading' ? { state: 'ready', operations: [] } : previous); }
+      const error = failure instanceof Error ? failure : new Error('No se pudieron leer las operaciones.');
+      if (isCurrent()) {
+        setError(error.message);
+        setLoad((previous) => previous.state === 'loading' ? { state: 'ready', operations: [] } : previous);
+      }
+      return isCurrent() ? error : undefined;
     } finally {
       if (isCurrent()) setBusy(false);
     }
@@ -70,7 +77,10 @@ export function RecentFleetOperations() {
   const operations = load.state === 'ready' ? load.operations : [];
   return <SectionCard level={3} title="Operaciones de flota recientes"
     description="Las últimas operaciones sobre agentes, grupos y espacios, de la más nueva a la más vieja."
-    actions={<Button size="sm" disabled={busy} onClick={() => { void read(() => true); }}><RefreshCw size={14} aria-hidden="true" />Releer</Button>}>
+    actions={<ActionButton size="sm" label="Releer" disabled={busy} announceError={false} icon={<RefreshCw size={14} aria-hidden="true" />} action={async () => {
+      const error = await read(() => true);
+      return error ? { error } : undefined;
+    }} />}>
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {load.state === 'loading' ? <p className="m-0 text-xs text-muted">Leyendo operaciones…</p>

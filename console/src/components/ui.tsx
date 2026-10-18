@@ -5,7 +5,8 @@ import type { ConsoleAccess, ConsolePermission } from '../api/types';
 import { display, haceCuanto, permissionState, timestamp, timestampExacto, NO_APLICA, TODAVIA_NO, UNKNOWN } from '../lib';
 import { cn } from '../cn';
 import { TONE_CLASS, type Tone } from '../status-tone';
-import { Button, Spinner, StateCard } from './kit';
+import { ActionButton } from './action-button';
+import { Spinner, StateCard } from './kit';
 import { PageHelp } from './PageHelp';
 import { useRovingTabs } from './use-roving-tabs';
 
@@ -167,9 +168,15 @@ export function ErrorState({ error, onRetry, reintentando = false }: {
           </p>
         ) : null}
       </div>
-      <Button onClick={onRetry}>
-        <RefreshCw size={16} aria-hidden="true" /> Reintentar
-      </Button>
+      <ActionButton
+        label="Reintentar"
+        pendingLabel="Reintentando…"
+        busy={reintentando}
+        done={false}
+        announceError={false}
+        icon={<RefreshCw size={16} aria-hidden="true" />}
+        action={() => { onRetry(); }}
+      />
     </StateCard>
   );
 }
@@ -183,15 +190,15 @@ export function RefreshButton({ onClick, loading = false, compact = false }: {
   loading?: boolean;
   compact?: boolean;
 }) {
-  const label = loading ? 'Actualizando…' : 'Actualizar';
   return (
-    <Button
-      onClick={onClick}
-      disabled={loading}
-      {...(compact ? { 'aria-label': label, title: label } : {})}
-    >
-      <RefreshCw size={16} aria-hidden="true" />{compact ? <span className="sr-only">{label}</span> : label}
-    </Button>
+    <ActionButton
+      label="Actualizar"
+      pendingLabel="Releyendo…"
+      size={compact ? 'sm' : 'md'}
+      busy={loading}
+      icon={<RefreshCw size={16} aria-hidden="true" />}
+      action={() => { onClick(); }}
+    />
   );
 }
 

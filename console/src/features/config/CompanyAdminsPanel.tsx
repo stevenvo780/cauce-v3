@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { CompanyAdmin } from '../../api/client/company-client';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 
 export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: string; canAssignPeople: boolean }) {
@@ -29,7 +30,11 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
   }
   const eligiblePeople = people.data?.items.filter(person => person.active) ?? [];
   return <section aria-label="Autoridad de empresa" className="grid gap-3 rounded-xl border border-line bg-subtle p-4">
-    <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><Button size="sm" disabled={busy || admins.loading || people.loading} onClick={() => { void admins.reload(); if (canAssignPeople) void people.reload(); }}>Releer autoridad</Button></div>
+    <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><ActionButton size="sm" label="Releer autoridad" disabled={busy} busy={admins.loading || people.loading} announceError={false} action={async () => {
+      const [adminResult, peopleResult] = await Promise.all([admins.reload(), canAssignPeople ? people.reload() : Promise.resolve(undefined)]);
+      const error = adminResult.error ?? peopleResult?.error;
+      return error ? { error } : undefined;
+    }} /></div>
     {admins.loading ? <p role="status">Leyendo autoridad…</p> : null}
     {canAssignPeople && people.loading ? <p role="status">Leyendo personas elegibles…</p> : null}
     {error || admins.error || people.error ? <Notice tone="danger" role="alert">{error || (admins.error?.message ?? people.error?.message)}</Notice> : null}

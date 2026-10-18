@@ -4,6 +4,7 @@ import type { CompanyRecord, RegistrationInput } from '../../api/client/company-
 import { CompanyPurgeBlockedError, type CompanyPurgeBlocker, type CompanyPurgeReceipt } from '../../api/client/company-purge';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
+import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SectionCard } from '../../components/kit';
 import { COMPANY_ROLE_LABEL, canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { REGISTRATION_INPUT_HINT, UNREACHABLE_SERVER } from '../auth/RegistrationForm';
@@ -120,7 +121,7 @@ export function CompaniesPanel() {
   return <SectionCard level={3} title="Empresas" className="gap-2 p-3">
     {authority ? <p className="text-xs text-muted">{COMPANY_ROLE_LABEL[authority.role]} · {authority.acting_company}</p> : null}
     <div className="flex flex-wrap gap-2">{canCreate ? <Button disabled={busy || resource.loading || !!resource.error} onClick={() => { setCreating(true); }}>Crear empresa</Button> : null}
-      <Button disabled={busy || resource.loading} onClick={() => { void resource.reload(); }}>Releer empresas</Button></div>
+      <ActionButton label="Releer empresas" disabled={busy} busy={resource.loading} announceError={false} action={() => resource.reload()} /></div>
     {resource.loading ? <p role="status">Leyendo empresas…</p> : null}
     {error || resource.error ? <Notice tone="danger" role="alert">{error || companyErrorText(resource.error, 'read')}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}

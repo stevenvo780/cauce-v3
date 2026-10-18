@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FleetOperationRequestSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
+import { ActionButton } from '../../components/action-button';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
 import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationSummary } from './fleet-operation-text';
@@ -101,7 +102,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
         intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
-        <button type="button" className="button secondary" disabled={busy} onClick={() => { void flow.refresh(); }}>Releer operación</button></> : null}
+        <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} /></> : null}
       <details open><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>{operationSummary(operation)}
@@ -109,7 +110,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
             onClick={() => { flow.accept(operation); }}>{operation.id}</button></li>)}</ul> : <p>No hay operaciones acreditadas en esta lectura.</p>}
       </details>
     </div><div className="config-modal-pie config-actions">
-      {reload ? <button type="button" className="button secondary" onClick={() => { void reload(); }}>Releer inventario</button> : null}
+      {reload ? <ActionButton label="Releer inventario" announceError={false} action={() => reload()} /> : null}
       <button type="button" className="button secondary" disabled={sending} onClick={onClose}>Cerrar retiro y recuperación</button>
     </div>
   </FormDialog>;

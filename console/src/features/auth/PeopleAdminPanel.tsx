@@ -5,6 +5,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { PeopleAdminForm } from './PeopleAdminForm';
 import { CompanySession } from './company-authority';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ActionButton } from '../../components/action-button';
 import { ConflictNotice } from '../../components/ConflictNotice';
 import './PeopleAdmin.css';
 
@@ -157,7 +158,10 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
   return <section className="people-admin" aria-label="Administración de personas">
     <div className="people-admin-heading"><div><h2>Personas y acceso web</h2>
       <p>Gestiona cuentas, identidad, rol y contraseña. Retirar conserva la autoría histórica y revoca acceso; purgar exige ausencia de dependencias.</p></div>
-      <button type="button" className="button secondary" disabled={loading || busy} onClick={() => { void reload(); }}>Releer personas y permisos</button></div>
+      <ActionButton label="Releer personas y permisos" disabled={busy} busy={loading} announceError={false} action={async () => {
+        const ok = await reload();
+        return ok ? undefined : { error: new Error('No se pudo acreditar el inventario.') };
+      }} /></div>
     {loading ? <p role="status">Leyendo personas y permisos…</p> : null}
     {error ? <p className="notice" role="alert">{error}</p> : null}
     {notice ? <p className="notice" role="status">{notice}</p> : null}

@@ -1,5 +1,6 @@
 import { Braces, RotateCcw, Save, SearchCheck } from 'lucide-react';
-import { Button, CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
+import { ActionButton } from '../../components/action-button';
+import { CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { FORM_GRID } from './config-ui';
@@ -44,8 +45,8 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
               <td data-label="Fecha"><Time value={revision.created_at} /></td>
               <td data-label="Rollback">{id && policy.allowed
                 ? <span className="inline-flex gap-1.5">
-                  <Button size="sm" disabled={soloLectura || busy} onClick={() => { void ctx.rollback(id, revision.operation, true); }}>Preview</Button>
-                  <Button size="sm" disabled={soloLectura || busy} onClick={() => { void ctx.rollback(id, revision.operation, false); }}><RotateCcw size={14} />Rollback</Button>
+                  <ActionButton size="sm" label="Preview" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy} action={() => ctx.rollback(id, revision.operation, true)} />
+                  <ActionButton size="sm" label="Rollback" pendingLabel="Revirtiendo…" done={false} announceError={false} disabled={soloLectura || busy} icon={<RotateCcw size={14} aria-hidden="true" />} action={() => ctx.rollback(id, revision.operation, false)} />
                 </span>
                 : id && !policy.allowed
                   ? <span className="text-xs text-muted">{policy.message}{policy.accountResource ? <> <a href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Abrir Cuentas</a>.</> : null}</span>
@@ -65,15 +66,15 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
       <section className="grid gap-3 border-t border-line p-4">
         <h3 className="m-0 text-sm font-semibold">Editor de mutaciones</h3>
         <p className="m-0 text-xs text-muted">Revisión esperada: {String(canalEditor.expectedRevision ?? 'UNKNOWN')}</p>
-        <form className="grid gap-3" onSubmit={(event) => void ctx.submit(event, false)}>
+        <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); }}>
           <div className={FORM_GRID}>
             <label>Resource<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Action<select disabled={soloLectura || busy} value={ctx.action} onChange={(event) => { ctx.selectTemplate(ctx.resource, event.target.value as ConfigAction); }}>{actionsFor(ctx.resource).map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
           <label>Mutación JSON<textarea aria-label="Mutación JSON" className="font-mono text-xs" disabled={soloLectura || busy} rows={12} value={ctx.editor} onChange={(event) => { ctx.editarMutacion(event.target.value); }} spellCheck={false} /></label>
           <div className="flex flex-wrap gap-2">
-            <Button disabled={soloLectura || busy} onClick={(event) => void ctx.submit(event, true)}><SearchCheck size={16} />Preview / dry-run</Button>
-            <Button type="submit" variant="primary" disabled={soloLectura || busy}><Save size={16} />Aplicar atómico</Button>
+            <ActionButton label="Preview / dry-run" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy} icon={<SearchCheck size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, true)} />
+            <ActionButton variant="primary" label="Aplicar atómico" pendingLabel="Aplicando…" done={false} announceError={false} disabled={soloLectura || busy} icon={<Save size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, false)} />
           </div>
         </form>
         {canalEditor.preview ? <pre className={PREVIEW} aria-label="Resultado de preview">{canalEditor.preview}</pre> : null}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { FleetOperationSubmissionSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
+import { ActionButton } from '../../components/action-button';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
@@ -112,9 +113,13 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     else setError('No se pudo acreditar la sesión actual. Reintenta la lectura de permisos.');
   }
   async function reloadSnapshot() {
-    if (!onReloaded) return;
-    try { onReloaded(await api.getConfiguration()); }
-    catch { setError('No se pudo releer el inventario. El recibo operativo se conserva.'); }
+    if (!onReloaded) return undefined;
+    try { onReloaded(await api.getConfiguration()); return undefined; }
+    catch {
+      const error = new Error('No se pudo releer el inventario. El recibo operativo se conserva.');
+      setError(error.message);
+      return { error };
+    }
   }
   const purgeAlias = target?.resource === 'agent' ? target.alias : '';
   const previewBlock = !canWrite ? 'No se acreditó permiso para operar agentes desde esta cuenta.' : scopeGap ?? (
@@ -173,8 +178,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
-        <button type="button" className="button secondary" disabled={busy} onClick={() => { void flow.refresh(); }}>Releer operación</button>
-        {onReloaded ? <button type="button" className="button secondary" onClick={() => { void reloadSnapshot(); }}>Releer inventario</button> : null}</> : null}
+        <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} />
+        {onReloaded ? <ActionButton label="Releer inventario" announceError={false} action={() => reloadSnapshot()} /> : null}</> : null}
       <details><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>
