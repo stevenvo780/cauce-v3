@@ -360,6 +360,10 @@ class Cut:
                   'directory': target['placement']['state_directory'] + '/space', 'require_new': self.legacy,
                   'migration_id': self.evidence.name, 'legacy': self.legacy}
         self.common = common
+        if self.legacy and self.plan.get('enrollment'):
+            from v4_mover_destino import prepare_destination
+            self.step('limpiar-destino-inactivo', lambda: prepare_destination(
+                self.fleet, self.plan, target, self.destination, common, self.evidence))
         destination = self.step('preflight-destino', lambda: self.destination.call('preflight', common))
         write_json(self.evidence / 'destination-host.json', destination['host'])
         if self.plan['destination'].get('machine_id_sha256', destination['host']['machineIdSha256']) != destination['host']['machineIdSha256']:

@@ -192,6 +192,9 @@ def dispatch(request):
         elif action == 'cleanup-destination':
             from v4_mover_legado import cleanup_destination
             print(json.dumps(cleanup_destination(request)))
+        elif action in {'inventory-destination', 'clean-idle-destination'}:
+            from v4_mover_destino import clean_destination, destination_inventory
+            print(json.dumps(destination_inventory(request) if action == 'inventory-destination' else clean_destination(request)))
         elif action == 'terminal-probe':
             from v4_mover_legado import terminal_probe
             print(json.dumps(terminal_probe(request)))
@@ -280,7 +283,7 @@ def dispatch(request):
 def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
-    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
+    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_mover_destino.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
              'v4_git_migracion.py', 'v4_alcance_copia.py', 'v4_medicion_migracion.py']
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
