@@ -58,7 +58,7 @@ describe('/queues?delivery= — the deep link landing', () => {
   it('filtra a la entrega pedida, la resalta y escribe su id completo', async () => {
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');
 
-    const tabla = await screen.findByRole('table', { name: /colas, retries y dead letters/i });
+    const tabla = await screen.findByRole('table', { name: /colas, reintentos y entregas muertas/i });
     const filas = within(tabla).getAllByRole('row').slice(1); // sin la cabecera
     expect(filas).toHaveLength(1);
     expect(filas[0]).toHaveAttribute('aria-current', 'true');
@@ -76,7 +76,7 @@ describe('/queues?delivery= — the deep link landing', () => {
     // there is no per-delivery query. It says both possibilities.
     expect(screen.getByText(/puede que ya no exista/)).toBeInTheDocument();
     expect(screen.getByText(/más antigua que las que caben/)).toBeInTheDocument();
-    expect(screen.queryByRole('table', { name: /colas, retries y dead letters/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /colas, reintentos y entregas muertas/i })).not.toBeInTheDocument();
     expect(screen.queryByText('zeus')).not.toBeInTheDocument();
     expect(screen.queryByText('kant')).not.toBeInTheDocument();
   });
@@ -84,7 +84,7 @@ describe('/queues?delivery= — the deep link landing', () => {
   it('sin el parámetro pinta la lista entera y no resalta ninguna fila', async () => {
     abrir('/queues');
 
-    const tabla = await screen.findByRole('table', { name: /colas, retries y dead letters/i });
+    const tabla = await screen.findByRole('table', { name: /colas, reintentos y entregas muertas/i });
     expect(within(tabla).getAllByRole('row').slice(1)).toHaveLength(3);
     expect(screen.queryByText(/Filtrado a la entrega/)).not.toBeInTheDocument();
     expect(tabla.querySelector('[aria-current]')).toBeNull();
@@ -93,12 +93,12 @@ describe('/queues?delivery= — the deep link landing', () => {
   it('«Ver todas las entregas» quita el filtro de la URL y devuelve las tres filas', async () => {
     const user = userEvent.setup();
     abrir('/queues?delivery=22222222-2222-4222-8222-222222222222');
-    await screen.findByRole('table', { name: /colas, retries y dead letters/i });
+    await screen.findByRole('table', { name: /colas, reintentos y entregas muertas/i });
 
     await user.click(screen.getByRole('button', { name: 'Ver todas las entregas' }));
 
     expect(window.location.search).toBe('');
-    expect(within(await screen.findByRole('table', { name: /colas, retries y dead letters/i })).getAllByRole('row').slice(1)).toHaveLength(3);
+    expect(within(await screen.findByRole('table', { name: /colas, reintentos y entregas muertas/i })).getAllByRole('row').slice(1)).toHaveLength(3);
   });
 
   it('vuelve a enfocar cuando llega un segundo enlace profundo sin cambiar de pathname', async () => {

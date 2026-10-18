@@ -33,8 +33,8 @@ export const ESTADOS_DEL_GRUPO: Record<Exclude<GrupoDeEstado, 'todas'>, Readonly
 
 export const ROTULO_DEL_GRUPO: Record<GrupoDeEstado, string> = {
   todas: 'todas las entregas',
-  revision: 'las que requieren revisión (dead y failed)',
-  retry: 'las que están en retry',
+  revision: 'las que requieren revisión',
+  retry: 'las que están en reintento',
   pendientes: 'las pendientes o en manos de un adaptador',
 };
 

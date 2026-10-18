@@ -190,11 +190,11 @@ export function DeliveryTable({
         <p>{pendiente?.accion === 'replay' ? EXPLICACION_REPLAY : EXPLICACION_CANCEL}</p>
       </ConfirmDialog>
 
-      {rows.length === 0 ? <EmptyState>{empty ?? 'No hay deliveries informadas.'}</EmptyState> : (
-        <Desplazable etiqueta={caption ?? 'Colas, retries y dead letters'} className={SCROLL}>
+      {rows.length === 0 ? <EmptyState>{empty ?? 'No hay entregas informadas.'}</EmptyState> : (
+        <Desplazable etiqueta={caption ?? 'Colas, reintentos y entregas muertas'} className={SCROLL}>
           <table className={CARD_TABLE}>
-            <caption className="sr-only">{caption ?? 'Colas, retries y dead letters'}</caption>
-            <thead><tr><th>Delivery</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
+            <caption className="sr-only">{caption ?? 'Colas, reintentos y entregas muertas'}</caption>
+            <thead><tr><th>Entrega</th><th>Destino</th><th>Carril</th><th>Estado</th><th>Intentos</th><th>Disponible</th><th>Último error</th><th>Acción</th></tr></thead>
             <tbody>
               {rows.map((item, index) => {
                 const policy = deliveryPolicy(item.state);
@@ -213,7 +213,7 @@ export function DeliveryTable({
                   className={enfocada ? 'fila-enfocada' : undefined}
                   aria-current={enfocada ? true : undefined}
                 >
-                  <td data-label="Delivery"><span className="mono">{compactId(deliveryId)}</span><small className="subline">msg {compactId(item.message_id)}</small></td>
+                  <td data-label="Entrega"><span className="mono">{compactId(deliveryId)}</span><small className="subline">mensaje {compactId(item.message_id)}</small></td>
                   <td data-label="Destino">
                     <div className="flex items-center gap-2">
                       {item.recipient_alias && item.tenant_id ? <AgentOrb seed={`${item.tenant_id}/${item.recipient_alias}`} size={20} /> : null}

@@ -51,7 +51,7 @@ function QueuesPageContent() {
   const verifiedAccess = access.error ? undefined : access.data;
   const dlqAccess = permissionState(verifiedAccess, 'dlq.resolve');
 
-  if (resource.loading && !resource.data) return <LoadingState label="Leyendo queues, retries y DLQ…" />;
+  if (resource.loading && !resource.data) return <LoadingState label="Leyendo colas, reintentos y entregas muertas…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
   const snapshot = resource.data;
   const foco = enfocarEntrega(items, pedida);
@@ -111,12 +111,12 @@ function QueuesPageContent() {
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
         <TarjetaFiltro
-          etiqueta="En retry" valor={totalDelGrupo(snapshot, 'retry')} tono="warning" detalle="backoff durable"
+          etiqueta="En reintento" valor={totalDelGrupo(snapshot, 'retry')} tono="warning" detalle="espera antes de otro intento"
           grupo="retry" activo={filtro.grupo === 'retry'} enPagina={porGrupo.retry}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
         <TarjetaFiltro
-          etiqueta="Dead letters" valor={totalDelGrupo(snapshot, 'revision')} tono="danger" detalle="requieren revisión"
+          etiqueta="Entregas muertas" valor={totalDelGrupo(snapshot, 'revision')} tono="danger" detalle="hay que revisarlas"
           grupo="revision" activo={filtro.grupo === 'revision'} enPagina={porGrupo.revision}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
@@ -155,7 +155,7 @@ function QueuesPageContent() {
         ) : null}
         {conFoco ? null : (
           <Toolbar>
-            <SearchField label="Buscar entrega" value={filtro.texto} placeholder="Alias, tenant, delivery id, message id o error"
+            <SearchField label="Buscar entrega" value={filtro.texto} placeholder="Alias, espacio, id de entrega, id de mensaje o error"
               onChange={(texto) => { setFiltro((previo) => ({ ...previo, texto })); }} />
             <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" role="status">
               <span>
@@ -180,7 +180,7 @@ function QueuesPageContent() {
             ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
             : filas.length === 0 && items.length > 0
               ? `Ninguna de las ${String(items.length)} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
-              : 'No hay deliveries informadas.'}
+              : 'No hay entregas informadas.'}
         />
       </ViewTabPanel>
 
