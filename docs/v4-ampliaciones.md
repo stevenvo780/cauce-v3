@@ -19,12 +19,16 @@ Una ampliación solo se aplica si la permiten **las dos** partes:
    - los tipos admitidos;
    - para `mount`, las raíces de host permitidas;
    - para `network`, los nombres de red permitidos.
+   - para `docker`, `docker_access`: `['read']` o `['read', 'control']`; ambos niveles sin duplicados y siempre con lectura. Si el campo falta, Docker queda denegado aunque su tipo esté admitido.
+   - `docker_daemon_dedicated`, booleano opcional: declara que el daemon es exclusivo de la empresa. Solo se marca cuando ese aislamiento existe realmente. Ausente o `false`, el executor comprueba las etiquetas de empresa de los contenedores y rechaza las ajenas; esa comprobación no acredita el origen de contenedores sin etiquetas.
 
    La edita el dueño de la empresa en Computadoras → *Permisos del ordenador* y viaja en el paquete de setup firmado. Un agente no puede pedir lo que su ordenador no admite. El executor rechaza la operación con el motivo.
 
 El executor sigue validando el contenedor **exactamente**. El conjunto esperado de montajes, redes, capacidades y límites se calcula como lo base más las ampliaciones. Cualquier diferencia con lo observado es un fallo, igual que hoy.
 
 Cambiar las ampliaciones de un agente obliga a recrear su contenedor. La consola lo avisa y hace el cambio como una operación de flota con vista previa: detener, recrear con los volúmenes conservados y arrancar.
+
+La operación debe enviar directamente `fleet update` con `parameters.extensions`; guardar antes una mutación de configuración perdería la declaración anterior necesaria para decidir la recreación. La mutación `host_extensions_allowed` rechaza retirar tipos, raíces, redes o niveles Docker que un agente aún declara. Primero se quita la ampliación y se completa su recreación; después se reduce el permiso del ordenador y se descarga su paquete de setup firmado actualizado.
 
 ## Tipos
 
