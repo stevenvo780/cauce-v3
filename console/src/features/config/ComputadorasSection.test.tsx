@@ -231,7 +231,7 @@ it('el vacío de computadoras dice cómo registrar la primera', async () => {
   flota([]);
   renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
 
-  expect(await screen.findByText(/Registra la primera con «Registrar computadora»/)).toBeInTheDocument();
+  expect(await screen.findByText(/Conecta la primera desde «Añadir ordenador»/)).toBeInTheDocument();
 });
 
 it('una computadora deshabilitada muestra una sola insignia y muchos agentes se pliegan', async () => {

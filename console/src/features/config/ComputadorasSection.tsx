@@ -128,7 +128,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
     </ul> : null}
 
     {flota.loading && !flota.hosts ? <LoadingState label="Leyendo computadoras…" /> : null}
-    {flota.hosts && hosts.length === 0 ? <EmptyState>No hay computadoras registradas ni conocidas todavía. Registra la primera con «Registrar computadora» o conecta una desde «Añadir ordenador».</EmptyState> : null}
+    {flota.hosts && hosts.length === 0 ? <EmptyState>No hay computadoras registradas ni conocidas todavía. Conecta la primera desde «Añadir ordenador».</EmptyState> : null}
 
     <section aria-labelledby="computadoras-registradas" className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -137,7 +137,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
           <Plus size={14} aria-hidden="true" />Registrar computadora
         </Button>
       </div>
-      {registradas.length ? <ul className={GRID_TARJETAS}>{registradas.map(tarjeta)}</ul> : hosts.length ? <EmptyState>Ninguna computadora registrada todavía. Registra la primera con «Registrar computadora».</EmptyState> : null}
+      {registradas.length ? <ul className={GRID_TARJETAS}>{registradas.map(tarjeta)}</ul> : hosts.length ? <EmptyState>{crea ? 'Ninguna computadora registrada todavía. Registra la primera con «Registrar computadora».' : 'Ninguna computadora registrada todavía. Conecta una desde «Añadir ordenador».'}</EmptyState> : null}
     </section>
 
     {detectadas.length ? <section aria-labelledby="computadoras-detectadas" className="grid gap-3">
