@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import socket
 import subprocess
@@ -26,10 +27,35 @@ with tempfile.TemporaryDirectory(prefix='cauce-move-') as work:
 '''
 
 
+def filtered_stderr(raw):
+    from v4_copia_migracion import fold_text, sensitive_bytes
+    value = raw.decode('utf-8', 'replace')
+    value = re.sub(r'-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|$)',
+                   '[redacted]', value, flags=re.S)
+    lines = []
+    for line in value.splitlines():
+        fields = r'''["']?[\w.-]*(?:password|passwd|passphrase|secret|token|credential|api[-_]?key|private[-_]?key|contrasena|clave)[\w.-]*["']?\s*[:=]'''
+        if sensitive_bytes(line.encode()) or re.search(fields, fold_text(line)) \
+                or re.search(r'\b(?:authorization|(?:set-)?cookie)\s*:|\bbearer(?:\s|[=:])', fold_text(line)):
+            lines.append('[redacted sensitive diagnostic]')
+            continue
+        line = re.sub(r'([a-z]+://[^\s?#]+)[?#][^\s]+', r'\1[redacted]', line, flags=re.I)
+        line = re.sub(r'[A-Za-z0-9_+/=-]{32,}', '[redacted]', line)
+        lines.append(''.join(character for character in line if character == '\t' or ord(character) >= 32))
+    return '\n'.join(lines)[-4096:]
+
+
+class RemoteFailure(RuntimeError):
+    def __init__(self, action, code, stderr):
+        self.remote_error = {'action': action, 'exit_code': code, 'stderr': filtered_stderr(stderr)}
+        detail = self.remote_error['stderr'].splitlines()
+        super().__init__('remote ' + action + ' failed' + (': ' + detail[-1][:160] if detail else ''))
+
+
 def checked(arguments, **kwargs):
     result = subprocess.run(arguments, check=False, stderr=subprocess.PIPE, **kwargs)
     if result.returncode:
-        raise RuntimeError('host effect failed: ' + arguments[0])
+        raise RemoteFailure('host effect ' + arguments[0], result.returncode, result.stderr)
     return result.stdout
 
 
@@ -286,5 +312,5 @@ class Remote:
             result = subprocess.run(command, stdin=incoming, stdout=destination or subprocess.PIPE,
                                     stderr=subprocess.PIPE, check=False, timeout=3600)
             if result.returncode:
-                raise RuntimeError('remote ' + action + ' failed')
+                raise RemoteFailure(action, result.returncode, result.stderr)
             return json.loads(result.stdout) if result.stdout else None

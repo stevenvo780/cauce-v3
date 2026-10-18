@@ -53,6 +53,13 @@ def write_json(path, value):
         temporary.unlink(missing_ok=True)
 
 
+def failure_details(error, step):
+    detail = {'type': type(error).__name__, 'step': step, 'message': str(error)[:240]}
+    if hasattr(error, 'remote_error'):
+        detail['remote_error'] = error.remote_error
+    return detail
+
+
 def load_plan(path, alias):
     if path.is_symlink():
         raise ValueError('el plan debe ser un archivo propio, sin enlaces')
@@ -438,15 +445,15 @@ class Cut:
             self.receipt.update(state='succeeded', verified=True)
             self.save()
         except BaseException as failure:
-            self.receipt['failure'] = {'type': type(failure).__name__, 'step': self.receipt['state'],
-                                       'message': str(failure)[:240]}
+            self.receipt['failure'] = failure_details(failure, self.receipt['state'])
             try:
                 self.rollback()
                 self.receipt['state'] = 'rolled_back'
             except BaseException as rollback_failure:
                 self.receipt.update(state='rollback_failed', rollback={**self.receipt.get('rollback', {}),
                                     'verified': False, 'error': type(rollback_failure).__name__,
-                                    'message': str(rollback_failure)[:240]})
+                                    'message': str(rollback_failure)[:240],
+                                    'failure': failure_details(rollback_failure, 'rollback')})
             self.save()
             raise
 
@@ -494,8 +501,7 @@ def main():
             cut.run()
         except BaseException as failure:
             if 'failure' not in cut.receipt:
-                cut.receipt['failure'] = {'type': type(failure).__name__, 'step': cut.receipt['state'],
-                                          'message': str(failure)[:240]}
+                cut.receipt['failure'] = failure_details(failure, cut.receipt['state'])
                 cut.save()
             print(json.dumps({'state': cut.receipt['state'], 'receipt': str(evidence / 'recibo.json')}))
             return 1
