@@ -4,6 +4,8 @@ interface ArnesReal {
   /** Same identifier as `HarnessKind` in the gateway document catalog. */
   id: string;
   label: string;
+  /** One sentence for the person choosing: which program this card is, before any path. */
+  aporta: string;
   /** Exact location from which the harness reads its effective manual. */
   directiva: string;
   /** Why this path is authoritative, so nobody "fixes" it from registry guesses. */
@@ -24,6 +26,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'claude',
     label: 'Claude Code',
+    aporta: 'El agente ya corre Claude Code. Esta tarjeta no lo cambia: dice qué manual lee.',
     directiva: '<HOME>/.claude/CLAUDE.md',
     detalle: 'Si el proceso lleva `CLAUDE_CONFIG_DIR`, el fichero se mueve con él — y ese ajuste '
       + 'arrastra también el `.claude.json` de los MCP, no sólo el manual.',
@@ -34,6 +37,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'codex',
     label: 'Codex',
+    aporta: 'El agente ya corre Codex. Esta tarjeta no lo cambia: dice qué manual lee.',
     directiva: '<HOME>/.codex/AGENTS.md',
     detalle: 'Si el proceso lleva `CODEX_HOME`, la directiva es la de ESA carpeta. Hay alias con las '
       + 'dos, del mismo tamaño, y la de `~/.codex` es la que abriría un resolutor ingenuo.',
@@ -44,6 +48,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'openclaw',
     label: 'OpenClaw',
+    aporta: 'El agente ya corre OpenClaw. El manual está en su espacio de trabajo, no en la carpeta personal.',
     directiva: '<WORKSPACE_OPENCLAW>/AGENTS.md',
     detalle: 'El perfil canónico se proyecta en ficheros Markdown separados del workspace. '
       + '`openclaw.json` conserva auth, secrets y configuración sensible y no se sirve en el navegador.',
@@ -54,6 +59,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'grok',
     label: 'Grok',
+    aporta: 'El agente ya corre Grok. El manual sólo cuenta si el runtime midió su espacio de trabajo.',
     directiva: '<WORKSPACE_GROK>/AGENTS.md',
     detalle: 'El inventario sólo acredita el manual con `grok_workspace` medido en el runtime. '
       + 'La carpeta de autenticación de Grok no demuestra cuál es el proyecto del agente.',
@@ -64,6 +70,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'muse',
     label: 'Muse',
+    aporta: 'El agente ya corre Muse. El manual sólo cuenta si el runtime midió su espacio de trabajo.',
     directiva: '<WORKSPACE_MUSE>/AGENTS.md',
     detalle: 'El inventario sólo acredita el manual con `muse_workspace` medido en el runtime. '
       + 'Un proceso Muse en modo puente sin workspace no acredita una ruta de manual.',
@@ -74,6 +81,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'hermes',
     label: 'Hermes',
+    aporta: 'El agente ya corre Hermes. Puede leer un manual; el perfil por lote no se le aplica.',
     directiva: '<HOME>/AGENTS.md',
     detalle: 'El inventario puede resolver ese manual con hechos medidos, pero el perfil canónico '
       + 'por lote no declara soporte para Hermes. Son capacidades distintas.',
@@ -94,6 +102,7 @@ export function arnesesEnLaConsola(
     extras.push({
       id: descriptor.harness,
       label: descriptor.harness,
+      aporta: 'Programa que esta consola todavía no ficha. La tarjeta muestra el manual declarado, sin inventar una ruta.',
       directiva: document === undefined || document === 'none' || document === '' ? '' : document,
       detalle: 'El descriptor declara este manual. La carpeta exacta la acredita el runtime; esta ficha no inventa una ruta.',
       editableDesdeAjustes: false,
@@ -104,15 +113,18 @@ export function arnesesEnLaConsola(
   return [...ARNESES_REALES, ...extras];
 }
 
-/** Explains the canonical source of the declared role and the read-only registry projection. */
+/** The choice this screen does not offer: the running program is already the harness. */
+export const DECISION_DEL_ARNES =
+  'No eliges el programa aquí. Es el que ya está corriendo el agente. Cada tarjeta dice qué archivo '
+  + 'de instrucciones lee ese programa y dónde se edita: en «Perfil y contexto» del agente, no en esta pantalla.';
+
+/** The declared self-description is written on the agent profile, never from this catalog. */
 export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =
-  '`agents.role_brief` es una proyección diagnóstica de sólo lectura y el editor genérico rechaza '
-  + 'mutarla. El rol declarado se redacta una sola vez en «Perfil y contexto» del agente, sobre '
-  + '`agent_profiles.role_summary`. El servidor lo lee con `selfRoleFromProfile` y lo publica como '
-  + '`self_role`; la aplicación a ficheros depende del soporte acreditado de cada arnés.';
+  'El texto con el que el agente se presenta tampoco se escribe aquí. Se redacta una sola vez en '
+  + '«Perfil y contexto». Esta pantalla sólo muestra la copia de diagnóstico, y no siempre llega al archivo del programa.';
 
 /** Declared tools are authored guidance; they are never an authorization or runtime capability grant. */
 export const DISTINCION_HERRAMIENTAS_Y_PERMISOS =
-  'Las herramientas declaradas en «Perfil y contexto» son instrucciones para el agente: no habilitan '
-  + 'binarios, MCP ni permisos. Las capacidades acreditadas salen del runtime; la autorización '
-  + 'sale de membresías, role_policies, ACL y RBAC. Son planos distintos.';
+  'Lo que declares como herramientas en «Perfil y contexto» es una instrucción para el agente. '
+  + 'No enciende programas ni concede permisos. Lo que puede hacer de verdad lo mide el programa en marcha. '
+  + 'Quién puede hablar con quién se decide en «Acceso y roles».';

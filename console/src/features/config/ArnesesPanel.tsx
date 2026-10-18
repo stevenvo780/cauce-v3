@@ -2,7 +2,7 @@ import { FileText, Slash } from 'lucide-react';
 import { Notice, SectionCard } from '../../components/kit';
 import { PUBLISHED_HARNESS_DESCRIPTORS } from '../harness-descriptors';
 import {
-  DISTINCION_HERRAMIENTAS_Y_PERMISOS, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO, arnesesEnLaConsola,
+  DECISION_DEL_ARNES, DISTINCION_HERRAMIENTAS_Y_PERMISOS, DONDE_SE_ESCRIBE_EL_ROL_DECLARADO, arnesesEnLaConsola,
 } from './arneses';
 
 /**
@@ -20,9 +20,9 @@ export function ArnesesPanel() {
     <SectionCard
       level={3}
       title="Qué lee cada arnés de verdad"
-      description="Contexto declarado, capacidades del runtime y permisos no son lo mismo"
+      description="El programa ya está elegido. Aquí ves qué archivo lee y dónde se edita."
     >
-      <Notice role="note">{DISTINCION_HERRAMIENTAS_Y_PERMISOS}</Notice>
+      <Notice role="note">{DECISION_DEL_ARNES}</Notice>
       <ul className="m-0 grid list-none gap-3 p-0 lg:grid-cols-2">
         {arneses.map((arnes) => (
           <li key={arnes.id} className="grid content-start gap-2 rounded-lg border border-line p-3"
@@ -31,6 +31,7 @@ export function ArnesesPanel() {
               <h4 className="m-0 text-sm font-semibold">{arnes.label}</h4>
               <code className="text-xs text-muted">{arnes.id}</code>
             </header>
+            <p className="m-0 text-[13px]">{arnes.aporta}</p>
             {/* The path is the piece of data the visitor came for, so it goes first and in monospace. When
                 none is set, it is SAID in letters: an empty row reads as "we don't know", which is the
                 opposite of what happens with an agent that reads no file. */}
@@ -54,6 +55,7 @@ export function ArnesesPanel() {
       </ul>
       {/* The close: where the declared role is written, which here also is not. A panel that only says
           "not here" sends the operator to another screen without saying which one. */}
+      <Notice role="note">{DISTINCION_HERRAMIENTAS_Y_PERMISOS}</Notice>
       <Notice role="note">{DONDE_SE_ESCRIBE_EL_ROL_DECLARADO}</Notice>
     </SectionCard>
   );

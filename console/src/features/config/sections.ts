@@ -54,9 +54,9 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   {
     id: 'arneses',
     label: 'Arneses',
-    proposito: 'Qué lee de verdad cada arnés y las definiciones de arnés registradas.',
-    detalle: 'Contexto declarado, capacidades del runtime y permisos no son lo mismo. Las definiciones de arnés '
-      + 'son un catálogo declarado; el arnés en ejecución se mide dentro del contenedor.',
+    proposito: 'El programa del agente ya corre. Aquí ves qué archivo de instrucciones lee y dónde se edita.',
+    detalle: 'No se elige el arnés en esta pantalla. El que vale es el programa en ejecución. Las definiciones '
+      + 'de abajo son el catálogo declarado.',
   },
   {
     id: 'acceso',
