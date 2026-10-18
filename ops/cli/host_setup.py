@@ -576,6 +576,8 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
             local_images[item['image_id']] = local_id
     policy = compose_policy(package, host_id, root, release, channel.directory, local_images=local_images)
     verify_bundles(policy, release)
+    if 'quota_environments' in policy:
+        private_directory(root / 'roots' / 'runtime' / 'quota-login').chmod(0o700)
     changed = write_if_changed(paths['policy'], json.dumps(policy, indent=2, sort_keys=True) + '\n', 0o600)
     report = capabilities_report(release, paths['policy'])
     if not report['available'] or report['templates'] == 0:
