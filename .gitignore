@@ -88,9 +88,8 @@ ordenes-locales/
 interno/
 accesos.md
 
-# Binario de Antigravity preparado solo para construir la imagen de cuotas.
-ops/cuotas/bin/*
-!ops/cuotas/bin/.gitkeep
-
 # Third-party CLI binaries for the quota image are fetched at build time, never versioned.
 ops/cuotas/bin/
+
+# Private access notes for the owner, never versioned.
+ACCESOS-*.txt
