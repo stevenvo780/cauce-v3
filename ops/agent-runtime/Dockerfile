@@ -17,7 +17,7 @@ ARG MUSE_AARCH64_LINUX_SHA256=2e5afa5e8560c1565185249af2d27b3e97aaf351d3d32275b8
 ARG MUSE_BRIDGE_SHA256=fc70c1d96a08abdc75e77ec90ba1a84a2134748691d9fa2ee675a09ca503ee84
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl git ripgrep python3 \
+ && apt-get install -y --no-install-recommends ca-certificates curl git openssh-client ripgrep python3 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
