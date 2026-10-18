@@ -7,7 +7,7 @@ export function officeRooms(topology?: TopologySnapshot, available?: readonly { 
   const savable = available && new Set(available.map(room => officeRoomKey(room.tenant_id, room.room_id)));
   return (topology?.tenants ?? []).flatMap(tenant => tenant.id ? (tenant.rooms ?? []).flatMap(room => room.id ? [{
     tenant: tenant.id ?? '', id: room.id, label: (room.label?.trim() ?? '') || room.id,
-    agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false && member.agent_enabled !== false)
+    agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false)
       .map(member => `${tenant.id ?? ''}/${member.alias ?? ''}`),
   }] : []) : []).filter(room => !savable || savable.has(officeRoomKey(room.tenant, room.id)));
 }

@@ -14,6 +14,7 @@ import { HUD_BUTTON, HUD_PANEL, HUD_TEXT } from '../office/hud-style';
 import { OfficeDialog } from '../office/OfficeDialog';
 import { OfficeGame, type OfficeAgent } from '../office/OfficeGame';
 import { OfficeWorkspace } from '../office/OfficeWorkspace';
+import { officeRooms } from '../office/office-layout';
 import { groupDirectory, membershipsOf } from '../office/teams';
 import { useOfficeChat } from '../office/use-office-chat';
 import { RECENT_VISITOR_MS, useMcpVisitors } from '../office/visitors';
@@ -103,6 +104,23 @@ export function LiveFleetPage() {
     [views, filter],
   );
 
+  const topologyMembers = useMemo(() => {
+    const members = new Map<string, { registered: boolean | null }>();
+    for (const room of officeRooms(topology.data)) {
+      for (const key of room.agents) if (!members.has(key)) members.set(key, { registered: null });
+    }
+    for (const tenant of topology.data?.tenants ?? []) {
+      if (!tenant.id) continue;
+      for (const room of tenant.rooms ?? []) {
+        if (!room.id) continue;
+        for (const member of room.members ?? []) {
+          if (!member.alias || member.enabled === false) continue;
+          members.set(`${tenant.id}/${member.alias}`, { registered: member.registered ?? null });
+        }
+      }
+    }
+    return members;
+  }, [topology.data]);
   const appearances = useAgentPreferences()?.appearances;
   const directory = useMemo(() => groupDirectory(topology.data), [topology.data]);
   const groups = useMemo(() => [...directory.order.keys()].map((id) => ({ id, label: directory.labels.get(id) ?? id, hue: directory.hues.get(id) ?? 0 })), [directory]);
@@ -175,6 +193,14 @@ export function LiveFleetPage() {
   const connected = views.length - tally.down;
   const unknown = verdict.tone === 'desconocido';
   const selected = views.find((view) => view.key === selectedKey) ?? null;
+  const requestedMember = selectedKey ? topologyMembers.get(selectedKey) : undefined;
+  const requestedMissing = selectedKey && !selected
+    ? requestedMember?.registered === false
+      ? `«${selectedKey}» solo aparece como miembro de una sala: no tiene registro de agente, por eso no tiene ficha en la oficina. Registralo desde Agentes si tiene que trabajar.`
+      : requestedMember
+        ? `«${selectedKey}» está en una sala pero todavía no tiene actividad en la oficina: sin entregas abiertas ni lease reciente no se puede abrir su ficha acá.`
+        : `No se encontró el agente «${selectedKey}» en esta empresa. Puede haberse retirado o el enlace es de otra empresa.`
+    : null;
   const talking = officeAgents.find((agent) => agent.id === talkKey);
   const summary = `Oficina con ${String(views.length)} agentes: ${ORDEN_VIVO
     .filter((state) => tally[state] > 0)
@@ -255,10 +281,22 @@ export function LiveFleetPage() {
             <Button size="sm" onClick={() => { void topology.reload(); }}>Reintentar</Button>
           </Notice>
         ) : null}
-        {views.length === 0 ? (
+        {views.length === 0 && topologyMembers.size === 0 ? (
           <Notice tone="info" role="status" className="m-2 flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">Todavía no hay agentes en esta empresa. Registra el primero para verlo en el campus y en el plano.</span>
             <a href="/config?seccion=agentes" onClick={(event) => { onNavClick(event, '/config?seccion=agentes'); }} className="text-brand-ink underline underline-offset-2">Registrar un agente</a>
+          </Notice>
+        ) : null}
+        {views.length === 0 && topologyMembers.size > 0 ? (
+          <Notice tone="info" role="status" className="m-2 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">Hay {topologyMembers.size} {topologyMembers.size === 1 ? 'miembro en las salas' : 'miembros en las salas'} pero ningún agente registrado con actividad: revisá el registro y las asignaciones en el plano.</span>
+            <a href="/config?seccion=agentes" onClick={(event) => { onNavClick(event, '/config?seccion=agentes'); }} className="text-brand-ink underline underline-offset-2">Ver agentes</a>
+          </Notice>
+        ) : null}
+        {requestedMissing ? (
+          <Notice tone="warn" role="status" className="m-2 flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">{requestedMissing}</span>
+            <Button size="sm" onClick={deselect}>Ver la oficina</Button>
           </Notice>
         ) : null}
         <div className="min-h-0 flex-1">
