@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
+import json
 import os
 import pathlib
 import re
@@ -123,6 +125,23 @@ def assert_shared_start(policy: dict, agent: dict):
     identity = agent['_placement']['aliases'][agent['runtime_key']]
     if agent.get('primary_account_id') is None or agent['primary_account_id'] != identity.get('account_id'):
         raise SafeFailure('shared runtime start requires its approved existing provider account')
+
+
+def shared_generation(observed: dict, python: str) -> str:
+    from fleet_executor_container import docker
+    from fleet_executor_policy import SafeFailure, path
+    start = docker('exec', '--user', '0', observed['Id'], str(path(python)), '-B', '-c',
+        'raw=open("/proc/1/stat",encoding="utf-8").read();print(raw[raw.rfind(")")+2:].split()[19])').decode().strip()
+    current = json.loads(docker('inspect', observed['Id']))
+    if not re.fullmatch(r'[0-9]+', start) or int(start) <= 0 or not isinstance(current, list) or len(current) != 1:
+        raise SafeFailure('shared container generation is unavailable')
+    current = current[0]
+    if any(current.get(field) != observed.get(field) for field in ('Id', 'Image', 'RestartCount')) \
+            or any(current['State'].get(field) != observed['State'].get(field) for field in ('StartedAt', 'Running', 'Pid')) \
+            or current['State']['Running'] is not True or current['State']['Pid'] <= 0:
+        raise SafeFailure('shared container generation changed during observation')
+    return hashlib.sha256('\0'.join((observed['Id'], observed['State']['StartedAt'],
+        str(observed['RestartCount']), start)).encode()).hexdigest()
 
 
 def remove_owned(directory: pathlib.Path, uid: int):

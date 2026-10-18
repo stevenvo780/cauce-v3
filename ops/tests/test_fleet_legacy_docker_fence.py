@@ -54,7 +54,7 @@ class DockerPhysicalFenceTests(unittest.TestCase):
         started = inspect['State']['StartedAt']
         restart = inspect['RestartCount']
         init = self.docker('exec', self.container, '/usr/bin/python3', '-c', "import pathlib;raw=pathlib.Path('/proc/1/stat').read_text();print(raw[raw.rfind(')')+2:].split()[19])")
-        generation = hashlib.sha256((f'{self.container}\0{started}\0{restart}\0{init}\0').encode()).hexdigest()
+        generation = hashlib.sha256((f'{self.container}\0{started}\0{restart}\0{init}').encode()).hexdigest()
         bundle = self.docker('exec', self.container, '/usr/bin/python3', '/lifecycle/cauce-container-runtime.py', 'bundle-digest', '/bundle')
         runtime_user = self.docker('exec', self.container, '/usr/bin/python3', '-c', 'import pwd;print(pwd.getpwuid(1000).pw_name)')
         node_hash = self.docker('exec', self.container, '/usr/bin/sha256sum', '/usr/local/bin/node').split()[0]

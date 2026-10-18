@@ -36,12 +36,10 @@ def container(packet: dict) -> dict:
     observed = json.loads(subprocess.check_output(["/usr/bin/docker", "inspect", binding["container_id"]], timeout=10))[
         0
     ]
-    generation = hashlib.sha256((observed["Id"] + "\0" + observed["State"]["StartedAt"]).encode()).hexdigest()
     agent = packet["agent"]
     if (
         observed["Id"] != binding["container_id"]
         or observed["Image"] != binding["image_digest"]
-        or generation != binding["generation"]
         or observed["State"]["Running"] is not True
         or binding.get("ownership") != "shared" and (
             observed["Config"]["Labels"].get("cauce.fleet.runtime_key") != agent["runtime_key"]
@@ -54,6 +52,12 @@ def container(packet: dict) -> dict:
         raise ValueError("container interpreter is not approved")
     if binding.get("ownership") == "shared":
         shared_container_identity(packet, observed)
+        from fleet_executor_legacy import shared_generation
+        generation = shared_generation(observed, interpreter)
+    else:
+        generation = hashlib.sha256((observed["Id"] + "\0" + observed["State"]["StartedAt"]).encode()).hexdigest()
+    if generation != binding["generation"]:
+        raise ValueError("container identity changed")
     script = "/cauce/executor/fleet-provider-hook.py"
     result = subprocess.run(
         [

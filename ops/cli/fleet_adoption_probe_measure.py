@@ -58,7 +58,7 @@ def observe_local(row: dict, container: dict | None = None) -> dict:
             raise ProbeFailure('runtime_user_changed')
         if container is not None:
             generation = hashlib.sha256(('\0'.join([container['id'], container['started_at'],
-                str(container['restart_count']), str(proc.proc_stat(1)['starttime'])]) + '\0').encode()).hexdigest()
+                str(container['restart_count']), str(proc.proc_stat(1)['starttime'])])).encode()).hexdigest()
             if document['containerId'] != container['id'] or document['containerGeneration'] != generation:
                 raise ProbeFailure('container_generation_changed')
         bundle = base.bundle_digest(observation['bundle_directory'])

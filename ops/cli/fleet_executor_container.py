@@ -181,7 +181,11 @@ def ensure_container(policy: dict, agent: dict, operation_id: str | None = None)
 
 def identity_for(agent: dict, observed: dict) -> dict:
     generation = hashlib.sha256((observed['Id'] + '\0' + observed['State']['StartedAt']).encode()).hexdigest()
-    return {'container_id': observed['Id'], 'generation': generation,
+    login_generation = generation
+    if agent['_placement'].get('ownership') == 'shared':
+        from fleet_executor_legacy import shared_generation
+        generation = shared_generation(observed, agent['_placement']['python'])
+    return {'container_id': observed['Id'], 'generation': generation, 'login_generation': login_generation,
             'control': pathlib.Path(agent['_placement'].get('control_root', '/run/cauce-fleet')) / agent['runtime_key']}
 
 

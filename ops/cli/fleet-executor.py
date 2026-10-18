@@ -26,6 +26,7 @@ def approved_binding(policy: dict, context: dict) -> dict:
     if agent['runtime_mode'] == 'container':
         agent, identity = container_binding(policy, agent)
         receipt['runtime_binding'] = {key: identity[key] for key in ('container_id', 'generation')}
+        receipt['runtime_binding']['generation'] = identity['login_generation']
         receipt['runtime_binding'].update(image_digest=agent['_placement']['image'],
             python=agent['_placement']['python'], helper='/cauce/executor/provider-login.py')
     return receipt
