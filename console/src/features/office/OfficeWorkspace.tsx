@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ActionButton } from '../../components/action-button';
+import { diffConflictFields, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { Button, Notice } from '../../components/kit';
 import { ErrorNotice } from '../../components/ErrorNotice';
 import type { Failure } from '../../api/error-message';
@@ -31,6 +33,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
   const [draft, setDraft] = useState<{ version: number; base: OfficeRoom[]; rooms: OfficeRoom[]; conflicted?: boolean; introduced?: readonly string[] }>();
   const [roomKey, setRoomKey] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
   // The campus reads the saved plan once when it mounts: a new key after each save makes it read the new one.
   const [planSaves, setPlanSaves] = useState(0);
   const [error, setError] = useState<Failure>();
@@ -71,6 +74,19 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     setNotice(undefined); setDraft({ ...draft, version: draft?.version ?? layout.data.version, base: draft?.base ?? shown,
       rooms: shown.map(current => officeRoomKey(current.tenant_id, current.room_id) === officeRoomKey(room.tenant_id, room.room_id) ? room : current) });
   }
+  function roomSummary(room: OfficeRoom): string {
+    const parts = room.parts.map(part => part.label).join(', ');
+    return `posición (${String(room.x)}, ${String(room.y)}) · tamaño ${String(room.width)}×${String(room.height)} · partes: ${parts || 'ninguna'}`;
+  }
+  function planDiffs(mine: readonly OfficeRoom[], theirs: readonly OfficeRoom[]): ConflictFieldDiff[] {
+    const byKey = (list: readonly OfficeRoom[]) => Object.fromEntries(list.map(room => [officeRoomKey(room.tenant_id, room.room_id), roomSummary(room)]));
+    const labels = Object.fromEntries([...mine, ...theirs].map(room => {
+      const key = officeRoomKey(room.tenant_id, room.room_id);
+      const info = rooms.find(value => officeRoomKey(value.tenant, value.id) === key);
+      return [key, `${room.tenant_id}/${info?.label ?? room.room_id}`];
+    }));
+    return diffConflictFields(byKey(mine), byKey(theirs), labels);
+  }
   async function save() {
     if (!writable || !draft || draft.conflicted) return;
     const problem = officeLayoutProblem(shown);
@@ -80,11 +96,18 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       await api.saveOfficeLayout({ expected_version: draft.version, rooms: shown });
     } catch (cause) {
       setError(officeFailure(cause));
-      if (officeVersionConflict(cause)) setDraft(current => current ? { ...current, conflicted: true } : current);
+      if (officeVersionConflict(cause)) {
+        setDraft(current => current ? { ...current, conflicted: true } : current);
+        const reread = await layout.reload();
+        if (reread.data) {
+          const freshRooms = officeRooms(topology, reread.data.available);
+          setConflictDiffs(planDiffs(shown, reconcileOfficeLayoutIncludingSaved(freshRooms, reread.data.rooms)));
+        } else setConflictDiffs([]);
+      }
       setBusy(false);
       return;
     }
-    setDraft(undefined); setPlanSaves(count => count + 1);
+    setDraft(undefined); setConflictDiffs(undefined); setPlanSaves(count => count + 1);
     const reread = await layout.reload();
     if (reread.error) {
       const failure = officeFailure(reread.error);
@@ -115,6 +138,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     const reread = await plan;
     if (reread.data) {
       setError(undefined);
+      setConflictDiffs(undefined);
       if (choice === 'theirs') {
         setDraft(undefined);
         setNotice({ tone: 'ok', text: 'Se cargó el plano que guardó la otra persona y se descartó tu borrador.' });
@@ -161,17 +185,14 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
       <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="m-0 text-lg">Plano de oficina</h2>
         <div className="flex flex-wrap gap-2"><ActionButton label="Releer plano y cuotas" disabled={busy || !!draft} busy={layout.loading} announceError={false} action={() => rereadPlan()} />
           <Button variant="primary" disabled={!writable || !draft || draft.conflicted} onClick={() => { void save(); }}>Guardar plano</Button>
-          <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
+          <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setConflictDiffs(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
       {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
       {failure ? <ErrorNotice failure={failure} /> : null}
-      {draft?.conflicted ? <Notice tone="warn" role="group" aria-label="Conflicto con otra versión del plano" className="grid gap-2">
-        <p>Nada se sobrescribe hasta que elijas. Al reaplicar se conserva lo que cambió la otra persona; si ambos cambiaron lo mismo, gana tu borrador y se indica dónde antes de guardar.</p>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={busy || layout.loading} onClick={() => { void resolveConflict('theirs'); }}>Cargar su versión y descartar mi borrador</Button>
-          <Button size="sm" disabled={busy || layout.loading} onClick={() => { void resolveConflict('reapply'); }}>Reaplicar mi borrador sobre su versión</Button>
-        </div>
-      </Notice> : null}
+      {draft?.conflicted ? <ConflictNotice title="Otra persona guardó una versión nueva del plano."
+        diffs={conflictDiffs} busy={busy || layout.loading}
+        onRetry={() => { void resolveConflict('reapply'); }}
+        onDiscard={() => { void resolveConflict('theirs'); }} /> : null}
       {quotaFailure ? <ErrorNotice failure={quotaFailure} /> : null}
       {notice ? <Notice tone={notice.tone} role="status">{notice.text}</Notice> : null}
       {!topology ? <p role="status" className="m-0 text-xs">Leyendo salas…</p> : null}

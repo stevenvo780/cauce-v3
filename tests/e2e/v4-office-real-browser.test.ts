@@ -397,12 +397,12 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     expect(committed.rooms.find(room => room.room_id === roomId)?.parts).toEqual([{ ...originalPart, label: editedPartLabel, width: 145 }]);
     expect(officeWrites.at(-1)).toMatchObject({ label: 'owner-a-concurrent', status: 200, input: { expected_version: before.version } });
     const save = page.getByRole('button', { name: 'Guardar plano', exact: true });
-    const choice = (target: V4Page) => target.getByRole('group', { name: 'Conflicto con otra versión del plano', exact: true });
+    const choice = (target: V4Page) => target.getByRole('group', { name: 'Conflicto de versión', exact: true });
     const conflictOn = async (target: V4Page, label: string) => {
       allowHttp(label, layoutPath, 409); errors.expectHttpError(layoutPath, 409);
       await target.getByRole('button', { name: 'Guardar plano', exact: true }).click();
       await choice(target).waitFor({ timeout: 20_000 });
-      expect(await choice(target).innerText()).toContain('Nada se sobrescribe hasta que elijas.');
+      expect(await choice(target).innerText()).toContain('Tu borrador se conserva en el formulario');
       expect(await target.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).isDisabled()).toBe(true);
     };
     let persisted = committed;
@@ -416,7 +416,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       expect(await savedLayout()).toEqual(committed); const conflicted = officeWrites.at(-1);
       expect(conflicted).toMatchObject({ label: 'owner-a', status: 409, input: { expected_version: before.version } });
       expect(conflicted?.input.rooms.find(room => room.room_id === roomId)?.parts[0]?.label).toBe(draftPartLabel);
-      await choice(page).getByRole('button', { name: 'Reaplicar mi borrador sobre su versión', exact: true }).click();
+      await choice(page).getByRole('button', { name: 'Releer y reintentar con mis cambios', exact: true }).click();
       const notice = page.getByRole('status').filter({ hasText: 'Tu borrador se reaplicó sobre la versión nueva.' }); await notice.waitFor({ timeout: 20_000 });
       expect(await notice.innerText()).toContain(`En ${hubA}/${renamedRoomLabel} tu cambio sustituye al de la otra persona`);
       await expect.poll(() => save.isDisabled(), { timeout: 20_000 }).toBe(false); expect(await choice(page).count()).toBe(0);
@@ -434,7 +434,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       const writes = officeWrites.length;
       await conflictOn(second, 'owner-a-concurrent');
       expect(officeWrites.slice(writes)).toMatchObject([{ label: 'owner-a-concurrent', status: 409, input: { expected_version: committed.version } }]);
-      await choice(second).getByRole('button', { name: 'Cargar su versión y descartar mi borrador', exact: true }).click();
+      await choice(second).getByRole('button', { name: 'Descartar mis cambios', exact: true }).click();
       await second.getByRole('status').filter({ hasText: 'Se cargó el plano que guardó la otra persona y se descartó tu borrador.' }).waitFor({ timeout: 20_000 });
       await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${discardedPartLabel}`, { exact: true }).count()).toBe(0);
       expect(await second.getByText('Plano sin guardar', { exact: true }).count()).toBe(0); expect(officeWrites).toHaveLength(writes + 1);

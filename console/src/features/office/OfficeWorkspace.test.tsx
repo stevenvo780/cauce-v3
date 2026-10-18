@@ -72,7 +72,7 @@ it.each([
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(message);
   expect(alert.textContent).not.toMatch(/Otra persona/u);
-  expect(screen.queryByRole('group', { name: 'Conflicto con otra versión del plano' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Conflicto de versión' })).not.toBeInTheDocument();
   expect(within(alert).getByText(code, { selector: 'code' })).toBeVisible();
   expect(screen.getByText('Plano sin guardar')).toBeVisible();
   expect(screen.getByText('Guarda o descarta los cambios de plano antes de releerlo.')).toBeVisible();
@@ -106,8 +106,8 @@ async function conflictedDraft(user: ReturnType<typeof userEvent.setup>) {
   expect(screen.getByText('Guarda o descarta los cambios de plano antes de releerlo.')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/Otra persona guardó una versión nueva del plano.*elige si cargas su versión o reaplicas tu borrador/u);
-  const choice = screen.getByRole('group', { name: 'Conflicto con otra versión del plano' });
-  expect(choice).toHaveTextContent('Nada se sobrescribe hasta que elijas.');
+  const choice = screen.getByRole('group', { name: 'Conflicto de versión' });
+  expect(choice).toHaveTextContent('Tu borrador se conserva en el formulario');
   expect(screen.getByRole('button', { name: 'Releer plano y cuotas' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
   return within(choice);
@@ -116,10 +116,10 @@ it('tras un conflicto reaplica sólo lo que cambió el borrador y conserva lo qu
   const writes = conflictingServer([{ tenant_id: 'One', room_id: 'general', x: 600, y: 300, width: 300, height: 200, parts: [] }]);
   const user = userEvent.setup(); renderWithApi(workspace());
   const choice = await conflictedDraft(user);
-  await user.click(choice.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
+  await user.click(choice.getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
   await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
   expect(screen.getByRole('status')).toHaveTextContent('Tu borrador se reaplicó sobre la versión nueva sin tocar lo que cambió la otra persona.');
-  expect(screen.queryByRole('group', { name: 'Conflicto con otra versión del plano' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('group', { name: 'Conflicto de versión' })).not.toBeInTheDocument();
   expect(screen.getByText('Plano sin guardar')).toBeVisible();
   expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
   expect(screen.getByRole('region', { name: 'Sala Two/General' })).toHaveStyle({ left: '760px' });
@@ -180,7 +180,7 @@ it('una sala reaplicada que la topología ya listó no vuelve al guardarse si lu
     }));
   const user = userEvent.setup(); const view = renderWithApi(workspace());
   const choice = await conflictedDraft(user);
-  await user.click(choice.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
+  await user.click(choice.getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
   await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
   expect(screen.getByRole('region', { name: 'Sala One/nueva' })).toBeVisible();
   const listed = { tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] },
@@ -200,7 +200,7 @@ it('tras un conflicto puede cargar la versión de la otra persona y descartar el
   const writes = conflictingServer([{ tenant_id: 'Two', room_id: 'general', x: 500, y: 40, width: 300, height: 260, parts: [] }]);
   const user = userEvent.setup(); renderWithApi(workspace());
   const choice = await conflictedDraft(user);
-  await user.click(choice.getByRole('button', { name: 'Cargar su versión y descartar mi borrador' }));
+  await user.click(choice.getByRole('button', { name: 'Descartar mis cambios' }));
   await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
   expect(screen.getByRole('status')).toHaveTextContent('Se cargó el plano que guardó la otra persona y se descartó tu borrador.');
   expect(screen.queryByText('Plano sin guardar')).not.toBeInTheDocument();
@@ -228,16 +228,15 @@ it('una relectura fallida tras el conflicto conserva el aviso y el borrador hast
   await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('La versión cambió');
-  const reapply = screen.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' });
+  const reapply = screen.getByRole('button', { name: 'Releer y reintentar con mis cambios' });
   expect(reapply).toBeEnabled(); expect(screen.getByRole('button', { name: 'Releer plano y cuotas' })).toBeDisabled();
-  await user.click(reapply);
-  await waitFor(() => { expect(reads).toBe(2); expect(screen.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' })).toBeEnabled(); });
+  await waitFor(() => { expect(reads).toBe(2); });
   expect(screen.getByRole('alert')).toHaveTextContent('La versión cambió');
   expect(screen.getByText('Plano sin guardar')).toBeVisible(); expect(screen.getByLabelText('Parte Nueva parte')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled(); expect(writes).toHaveLength(1);
   expect(screen.queryByText('Plano de oficina guardado para esta empresa.')).not.toBeInTheDocument();
   expect(screen.queryByText(/El plano se guardó/u)).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Reaplicar mi borrador sobre su versión' }));
+  await user.click(reapply);
   await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
   expect(screen.getByText('Plano sin guardar')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
