@@ -222,7 +222,7 @@ it('el poller existente actualiza la tarjeta cuando acaba la consulta automátic
   if (typeof tick !== 'function') throw new Error('No se registró el poller existente.');
   phase = 'running'; act(() => { tick(); });
   await waitFor(() => { expect(accountsRead).toHaveBeenCalledTimes(2); });
-  await screen.findByText(/Consultar cuotas · En ejecución/u);
+  await screen.findByText(/Consultar las cuotas de Consulta GPT/u);
   expect(card.getByRole('status')).toHaveTextContent('Actualizando…');
   phase = 'done'; act(() => { tick(); });
   await waitFor(() => { expect(card.getByRole('meter')).toHaveAttribute('value', '72'); });

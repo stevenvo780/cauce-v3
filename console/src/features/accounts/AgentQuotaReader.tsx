@@ -96,8 +96,12 @@ export function AgentQuotaReader({ tenant, alias, quota, notRunning = false }: {
     {data ? <>
       {data.captured_at || !notRunning ? <p className="m-0 text-xs text-muted">{data.captured_at ? <>Última medición: <Time value={data.captured_at} /></> : 'Todavía no hay una medición persistida.'}</p> : null}
       {data.sample ? <QuotaMeasurement data={data} /> : null}
-      {data.operation?.status === 'failed' ? <Notice tone="danger" className="wrap-anywhere">{describeOperationError(data.operation.error_code ?? '')}
-        {data.operation.error_code ? <> <span className="text-xs whitespace-nowrap">Código: <code>{data.operation.error_code}</code></span></> : null}</Notice> : null}
+      {data.operation?.status === 'failed' ? <div className="grid gap-1">
+        <Notice tone="danger" className="wrap-anywhere">{describeOperationError(data.operation.error_code ?? '')}</Notice>
+        <p className="m-0 text-xs text-muted">Puedes volver a consultar cuando la computadora responda.</p>
+        {data.operation.error_code ? <details><summary className="cursor-pointer text-xs text-muted">Detalles técnicos</summary>
+          <p className="m-0 mt-1 text-xs break-words">Operación: <code>{data.operation.id}</code> · Código: <code>{data.operation.error_code}</code></p></details> : null}
+      </div> : null}
       {queryUnavailable ? <p className="m-0 text-xs text-muted">{queryUnavailable}</p> : null}
     </> : null}
     <div className="flex flex-wrap gap-2">

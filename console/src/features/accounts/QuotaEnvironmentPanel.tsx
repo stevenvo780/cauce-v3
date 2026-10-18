@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
+import { CheckCircle2, Clock, KeyRound, Loader2, X } from 'lucide-react';
 import type { QuotaAccount, QuotaEnvironment, QuotaEnvironmentAction, QuotaEnvironmentOperation, QuotaEnvironmentsSnapshot } from '../../api/client/my-quotas-client';
 import { useApi } from '../../api/context';
-import { Button, Notice } from '../../components/kit';
+import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { quotaEnvironmentActionBlock, quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
@@ -12,7 +13,24 @@ import { ConflictNotice } from '../../components/ConflictNotice';
 
 const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Iniciar sesión', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
-const OPERATION_LABEL: Record<QuotaEnvironmentOperation['status'], string> = { pending: 'Pendiente', running: 'En ejecución', awaiting_auth: 'Esperando autenticación', done: 'Completada', failed: 'Fallida' };
+const OPERATION_META: Record<QuotaEnvironmentOperation['status'], { label: string; tone: 'ok' | 'info' | 'warn' | 'danger' | 'neutral' }> = {
+  pending: { label: 'En cola', tone: 'neutral' }, running: { label: 'En curso', tone: 'info' },
+  awaiting_auth: { label: 'Esperando tu acción', tone: 'warn' }, done: { label: 'Terminada', tone: 'ok' }, failed: { label: 'Falló', tone: 'danger' },
+};
+function quotaOperationTitle(operation: QuotaEnvironmentOperation, environment: QuotaEnvironment): string {
+  if (operation.action === 'create') return `Crear el entorno ${environment.label} en ${environment.host_id}`;
+  if (operation.action === 'authenticate') return `Iniciar sesión en ${environment.provider} (${environment.label})`;
+  if (operation.action === 'query') return `Consultar las cuotas de ${environment.label}`;
+  if (operation.action === 'update_cli') return `Actualizar el CLI de ${environment.label}`;
+  return `Eliminar el entorno ${environment.label}`;
+}
+function QuotaOperationIcon({ status }: { status: QuotaEnvironmentOperation['status'] }) {
+  if (status === 'done') return <CheckCircle2 size={12} aria-hidden="true" />;
+  if (status === 'failed') return <X size={12} aria-hidden="true" />;
+  if (status === 'awaiting_auth') return <KeyRound size={12} aria-hidden="true" />;
+  if (status === 'running') return <Loader2 size={12} aria-hidden="true" className="animate-spin" />;
+  return <Clock size={12} aria-hidden="true" />;
+}
 
 export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, reload }: {
   snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; reload: () => Promise<void>;
@@ -109,8 +127,15 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, r
           <Button size="sm" disabled={!canEdit(environment)} title={editBlock(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); setEnvConflict(false); }}>Editar entorno</Button>
           <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} title={actionBlock(environment, 'delete')} onClick={() => { setConfirm(environment); }}>Eliminar entorno</Button>
         </div>
-        {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {cancelled ? 'Cancelada' : OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
-          {operation.error_code ? <Notice tone={cancelled ? 'info' : 'danger'}>{describeOperationError(operation.error_code)}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
+        {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2">
+          <p className="m-0 flex flex-wrap items-center gap-2 text-sm font-semibold">{quotaOperationTitle(operation, environment)}
+            <Pill tone={cancelled ? 'neutral' : OPERATION_META[operation.status].tone}><QuotaOperationIcon status={operation.status} />{cancelled ? 'Cancelada' : OPERATION_META[operation.status].label}</Pill></p>
+          <p className="m-0 text-xs text-muted"><Time value={operation.updated_at} relativo /> · <Time value={operation.updated_at} /></p>
+          {operation.status === 'awaiting_auth' ? <p className="m-0 text-sm">Esperando que inicies sesión desde la tarjeta de la cuenta.</p> : null}
+          {operation.status === 'pending' || operation.status === 'running' ? <p className="m-0 text-sm">Esta operación está en curso.</p> : null}
+          {operation.error_code ? <Notice tone={cancelled ? 'info' : 'danger'}>{describeOperationError(operation.error_code)}</Notice> : null}
+          <QuotaCommandResult result={operation.result} operation={operation} />
+        </section> : null}
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
@@ -136,13 +161,18 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, r
   </section>;
 }
 
-function QuotaCommandResult({ result }: { result: Record<string, unknown> | null }) {
+function QuotaCommandResult({ result, operation }: { result: Record<string, unknown> | null; operation?: QuotaEnvironmentOperation }) {
   if (!result) return null;
   const url = typeof result.login_url === 'string' ? result.login_url : undefined;
   let safeUrl: string | undefined;
   try { if (url && new URL(url).protocol === 'https:' && !new URL(url).username && !new URL(url).password) safeUrl = url; } catch { /* Invalid login links stay unavailable. */ }
+  const hasDetail = typeof result.output === 'string' || !!operation;
   return <>{safeUrl ? <a href={safeUrl} target="_blank" rel="noreferrer">Abrir autorización del proveedor</a> : null}
     {typeof result.user_code === 'string' ? <p className="m-0 text-sm">Código de autorización: <code>{result.user_code}</code></p> : null}
     {typeof result.expires_at === 'string' ? <p className="m-0 text-xs">Vence <Time value={result.expires_at} /></p> : null}
-    {typeof result.output === 'string' ? <pre aria-label="Salida del comando permitido" className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-3 text-xs">{result.output}</pre> : null}</>;
+    {hasDetail ? <details><summary className="cursor-pointer text-xs text-muted">Detalles técnicos</summary>
+      <div className="mt-2 grid gap-1 text-xs break-words">
+        {operation ? <p className="m-0">Operación: <code>{operation.id}</code></p> : null}
+        {typeof result.output === 'string' ? <pre aria-label="Salida del comando permitido" className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-subtle p-3 text-xs">{result.output}</pre> : null}
+      </div></details> : null}</>;
 }

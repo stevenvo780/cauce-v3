@@ -145,6 +145,7 @@ export function ComputadorasSection({ snapshot, soloLectura, onReloaded }: { sna
         <span className="min-w-0 flex-1">{flota.error}</span>
         <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" busy={flota.loading} done={false} announceError={false} action={() => flota.reload()} />
       </Notice> : null}
+    {busy ? <Notice tone="info" role="status">Hay una operación en curso en Computadoras. Espera a que termine para seguir.</Notice> : null}
     {error && !editor && !borrar ? <Notice tone="danger" role="alert">{error}</Notice> : null}
 
     {flota.hosts ? <ul aria-label="Resumen de la flota"
