@@ -101,6 +101,18 @@ def digest_stream(read, private: bool = False) -> str:
     return digest.hexdigest()
 
 
+def regenerable_plugin_link(parent: int, name: str, source: int, info: os.stat_result) -> bool:
+    if name != 'browser-automation' or not stat.S_ISLNK(info.st_mode):
+        return False
+    root = os.readlink(f'/proc/self/fd/{source}')
+    if os.path.basename(root) != '.openclaw' or os.readlink(f'/proc/self/fd/{parent}') != os.path.join(root, 'plugin-skills'):
+        return False
+    return os.readlink(name, dir_fd=parent) in (
+        '/usr/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
+        '/usr/local/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
+    )
+
+
 def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
     entries, omissions, identities = [], [], {}
 
@@ -108,7 +120,7 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
         info = os.stat(name, dir_fd=parent, follow_symlinks=False)
         identities[path] = fingerprint(info)
         folded = fold_text(name)
-        reason = 'git-metadata' if folded == '.git' else 'credential' if credential_name(name) else 'regenerable' if stat.S_ISDIR(info.st_mode) and folded in REGENERABLE else None
+        reason = 'git-metadata' if folded == '.git' else 'credential' if credential_name(name) else 'regenerable' if regenerable_plugin_link(parent, name, source, info) or stat.S_ISDIR(info.st_mode) and folded in REGENERABLE else None
         if reason:
             omissions.append({'path': path, 'reason': reason})
             return
