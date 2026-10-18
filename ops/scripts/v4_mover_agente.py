@@ -378,15 +378,17 @@ class Cut:
         self.stopped_at = time.monotonic()
         try:
             self.stop_attempted = True
-            self.step('detener-origen', lambda: self.legacy_control('stop') if self.legacy
-                      else self.fleet.operation('stop', alias, {}, timeout=timeout))
+            stopped = self.step('detener-origen', lambda: self.legacy_control('stop') if self.legacy
+                                else self.fleet.operation('stop', alias, {}, timeout=timeout))
+            if self.legacy:
+                write_json(self.evidence / 'origen-detenido.json', stopped)
             self.step('comprobar-alcance-final', lambda: self.source.call('preflight-source', {**common,
                 'original': self.original, 'config': json.loads(self.alias_config.read_text())}))
             archive = self.evidence / 'copia-integral.tar'
             with archive.open('xb') as writer:
                 os.chmod(archive, 0o600)
                 self.step('copiar-integral', lambda: self.source.call('pack', {**common,
-                    'config': json.loads(self.alias_config.read_text())}, destination=writer))
+                    'source': self.plan['source'], 'config': json.loads(self.alias_config.read_text())}, destination=writer))
                 writer.flush()
                 os.fsync(writer.fileno())
             self.data_staged = True

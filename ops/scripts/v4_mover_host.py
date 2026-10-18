@@ -203,6 +203,9 @@ def dispatch(request):
             print(json.dumps({'verified': True, 'host': observed_host()}))
         elif action == 'pack':
             from v4_copia_integral import main
+            if request.get('legacy'):
+                from v4_mover_legado import legacy_unit
+                legacy_unit(request, 'stopped')
             config = pathlib.Path(work) / 'aliases.json'
             config.write_text(json.dumps(request['config']))
             archive = pathlib.Path(work) / 'copy.tar'
@@ -218,6 +221,8 @@ def dispatch(request):
                         raise ValueError('copy did not verify')
             finally:
                 sys.argv = previous
+            if request.get('legacy'):
+                legacy_unit(request, 'stopped')
             with archive.open('rb') as reader:
                 shutil.copyfileobj(reader, sys.stdout.buffer)
         elif action == 'restore':

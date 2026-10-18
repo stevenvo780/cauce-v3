@@ -1,4 +1,4 @@
-"""Control the pinned legacy unit without changing its container or provider profile."""
+"""Quiesce an exclusive pinned legacy container and recover its unit on rollback."""
 from __future__ import annotations
 
 import json
@@ -31,11 +31,15 @@ def legacy_unit(request, action):
     unit = source['legacy_unit']
     pin = source['container_id']
     info = json.loads(docker('inspect', entry['container']))[0]
-    if action not in {'status', 'stop', 'start'}:
+    if action not in {'status', 'stopped', 'stop', 'start'}:
         raise ValueError('invalid legacy unit action')
-    if not re.fullmatch(r'[0-9a-f]{64}', pin) or info['Id'] != pin \
-            or action != 'start' and info['State']['Running'] is not True:
-        raise ValueError('legacy container differs from its running original')
+    siblings = [other for other, item in request['config']['aliases'].items() if other != alias
+                and item.get('container') == entry['container']
+                and item.get('dockerHost', 'local') == entry.get('dockerHost', 'local')]
+    if siblings:
+        raise ValueError('legacy container is shared; stopping it requires an alias-only consistency plan')
+    if not re.fullmatch(r'[0-9a-f]{64}', pin) or info['Id'] != pin:
+        raise ValueError('legacy container differs from its pinned original')
     if scope == 'system':
         command = ['systemctl', '--system'] if os.geteuid() == 0 else ['sudo', '-n', '--', 'systemctl', '--system']
     else:
@@ -53,19 +57,32 @@ def legacy_unit(request, action):
             raise RuntimeError('legacy unit ' + args[0] + ' failed')
         return result.stdout.strip()
 
+    def inspect():
+        current = json.loads(docker('inspect', entry['container']))[0]
+        if current['Id'] != pin:
+            raise ValueError('legacy container differs from its pinned original')
+        return current
+
     if scope == 'system' and run('show', '--property=User', '--value', unit) not in {'', 'root'}:
         raise ValueError('legacy system unit does not run as root')
+    if action == 'start':
+        if info['State']['Running'] is not True:
+            docker('start', pin)
+        if inspect()['State']['Running'] is not True:
+            raise ValueError('legacy container did not start before its unit')
     if action in {'stop', 'start'}:
         run(action, unit)
     state = run('show', '--property=ActiveState', '--value', unit)
-    expected = 'inactive' if action == 'stop' else 'active'
+    expected = 'inactive' if action in {'stop', 'stopped'} else 'active'
     if state != expected:
         raise ValueError('legacy unit did not reach ' + expected)
-    running = json.loads(docker('inspect', pin))[0]['State']['Running']
-    if running is not (action != 'stop'):
+    if action == 'stop' and inspect()['State']['Running'] is True:
+        docker('stop', pin)
+    running = inspect()['State']['Running']
+    if running is not (action not in {'stop', 'stopped'}):
         raise ValueError('legacy container did not reach the requested running state')
     return {'verified': True, 'unit': unit, 'systemd_user': user, 'systemd_scope': scope, 'active_state': state, 'container_id': pin,
-            'container_running': running}
+            'container_running': running, 'container_exclusive': True}
 
 
 def cleanup_destination(request):
