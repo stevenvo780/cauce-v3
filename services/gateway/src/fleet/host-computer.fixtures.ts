@@ -103,9 +103,10 @@ const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/s
 const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
 const AGENT_FORWARDER = `import { writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
-const [socketPath, target] = process.argv.slice(2);
+const [socketPath, target, listen = '9443'] = process.argv.slice(2);
 const port = Number(target);
-if (!socketPath || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid transport target');
+const listenPort = Number(listen);
+if (!socketPath || [port, listenPort].some(value => !Number.isInteger(value) || value < 1 || value > 65535)) throw new Error('Invalid transport target');
 createServer(client => {
   client.pause();
   const upstream = createConnection(socketPath);
@@ -137,7 +138,8 @@ createServer(client => {
   };
   upstream.on('data', receive);
   upstream.once('connect', () => { upstream.write(Buffer.from([5, 1, 0])); });
-}).listen(9443, '0.0.0.0', () => { writeFileSync('/tmp/transport-ready', '9443'); });
+}).on('error', error => { writeFileSync('/tmp/transport-error', error.code ?? 'unknown'); })
+  .listen(listenPort, '0.0.0.0', () => { writeFileSync('/tmp/transport-ready', String(listenPort)); });
 `;
 
 export interface CommandResult { code: number; stdout: string; stderr: string }
@@ -215,16 +217,23 @@ async function startAgentForwarder(transport: Awaited<ReturnType<typeof createAg
   if (!socket.isSocket() || socket.uid !== process.getuid?.() || (socket.mode & 0o777) !== 0o600) {
     throw new Error('Agent transport socket ownership or mode differs');
   }
+  await startTransportListener(transport, bootstrapPort);
+}
+
+async function startTransportListener(transport: { user: string; container: string }, targetPort: number, listenPort = 9443) {
   await docker(['exec', '-d', '--user', transport.user, transport.container, '/usr/local/bin/node', '/transport/forwarder.mjs',
-    '/transport/proxy.sock', String(bootstrapPort)]);
+    '/transport/proxy.sock', String(targetPort), String(listenPort)]);
   const readiness = `import { readFile } from 'node:fs/promises';
 for (let attempt = 0; attempt < 50; attempt++) {
-  try { if (await readFile('/tmp/transport-ready', 'utf8') === '9443') process.exit(0); }
+  try { if (await readFile('/tmp/transport-ready', 'utf8') === process.argv[1]) process.exit(0); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   await new Promise(resolve => setTimeout(resolve, 100));
 }
-throw new Error('Agent transport did not become ready');`;
-  await docker(['exec', '--user', transport.user, transport.container, '/usr/local/bin/node', '--input-type=module', '-e', readiness]);
+let observed; let failure;
+try { observed = await readFile('/tmp/transport-ready', 'utf8'); } catch {}
+try { failure = await readFile('/tmp/transport-error', 'utf8'); } catch {}
+throw new Error('Agent transport did not become ready: '+JSON.stringify({expected:process.argv[1],observed,failure}));`;
+  await docker(['exec', '--user', transport.user, transport.container, '/usr/local/bin/node', '--input-type=module', '-e', readiness, String(listenPort)]);
 }
 
 async function buildRelease(work: string, tree: string, agentImage: string, providers: string[]) {
@@ -351,10 +360,11 @@ async function buildComputerImage(work: string, image: string, providerLogin: bo
 
 export async function startComputerHarness(options: {
   prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string };
+  workRoot?: string; dockerSocket?: string;
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
-    const work = await mkdtemp(`/var/tmp/${prefix}-`); owned.work = work;
+    const work = await mkdtemp(join(options.workRoot ?? '/var/tmp', `${prefix}-`)); owned.work = work;
     await chmod(work, 0o755); await mkdir(join(work, 'install'));
     const tree = join(work, 'tree'); await mkdir(tree);
     const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
@@ -427,7 +437,8 @@ export async function startComputerHarness(options: {
     const container = prefix;
     const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
       '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
-      '-v', '/var/run/docker.sock:/var/run/docker.sock', '-v', `${join(work, 'install')}:${join(work, 'install')}`, built.computer]);
+      ...(options.dockerSocket !== undefined && transport !== undefined ? ['--mount', `type=bind,src=${join(work, 'transport')},dst=/transport,readonly`] : []),
+      '-v', `${options.dockerSocket ?? '/var/run/docker.sock'}:/var/run/docker.sock`, '-v', `${join(work, 'install')}:${join(work, 'install')}`, built.computer]);
     if (started.code !== 0) throw new Error(`computer did not start: ${started.stderr}`);
     owned.container = container;
     const onComputer = (args: string[], input?: string) => command('docker', ['exec', '-i', ...AS_USER, container, ...args], input);
@@ -436,7 +447,10 @@ export async function startComputerHarness(options: {
     };
     await settle(async () => ['running', 'degraded'].includes(
       (await command('docker', ['exec', container, 'systemctl', 'is-system-running', '--wait'])).stdout.trim()));
-    const dockerGroup = String((await stat('/var/run/docker.sock')).gid);
+    if (options.dockerSocket !== undefined && transport !== undefined) {
+      await startTransportListener({ ...transport, container }, Number(new URL(gatewayUrl).port), Number(new URL(gatewayUrl).port));
+    }
+    const dockerGroup = String((await stat(options.dockerSocket ?? '/var/run/docker.sock')).gid);
     await docker(['exec', container, 'groupadd', '-g', dockerGroup, 'fixture-docker']);
     await docker(['exec', container, 'usermod', '-aG', 'fixture-docker', 'cauce']);
     await docker(['exec', container, 'chown', 'cauce:cauce', join(work, 'install')]);
