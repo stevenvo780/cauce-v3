@@ -5,8 +5,8 @@ import { LoginPathSchema } from './provider-login.js';
 
 const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
 // Same pinned OpenClaw release and provider-agnostic auth-list source for every flow (ops/cli/fleet_provider_openclaw.py).
-const Pinned = { version: z.literal('2026.6.6'), auth_list_source: LoginPathSchema,
-  auth_list_sha256: z.literal('31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'),
+const Pinned = { version: z.literal('2026.7.1-2'), auth_list_source: LoginPathSchema,
+  auth_list_sha256: z.literal('3ef2fa38f32ce786f0bc499bae897aba68ad9c7595ef3064994b1634d13d1373'),
   node_command: LoginPathSchema, node_command_sha256: Hash, bridge: LoginPathSchema, bridge_sha256: Hash };
 /** The paying binding decides the OpenClaw provider; a binding provider without a flow here is refused. */
 export const OPENCLAW_PROVIDER_BY_BINDING: Readonly<Record<string, 'openai' | 'anthropic' | 'xai'>> = Object.freeze({ codex: 'openai', claude: 'anthropic', grok: 'xai' });

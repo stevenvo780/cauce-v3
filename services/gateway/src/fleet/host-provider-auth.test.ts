@@ -110,9 +110,9 @@ async function configureOpenClaw(): Promise<void> {
   const command = join(directory, 'openclaw.mjs'); const bridge = join(directory, 'bridge.mjs');
   const authSource = join(directory, 'auth-list.js');
   await writeFile(command, 'export const cli = true;', { mode: 0o600 }); await writeFile(bridge, 'export const bridge = true;', { mode: 0o600 });
-  await writeFile(authSource, await readFile(join(config.projectRoot, 'ops/tests/fixtures/openclaw-auth-list-2026.6.6.txt')), { mode: 0o600 });
+  await writeFile(authSource, await readFile(join(config.projectRoot, 'ops/tests/fixtures/openclaw-auth-list-2026.7.1-2.txt')), { mode: 0o600 });
   profile.command = command; profile.command_sha256 = await fingerprint(command);
-  profile.openclaw = OpenClawDriver.parse({ provider_id: 'openai', method_id: 'device-code', version: '2026.6.6',
+  profile.openclaw = OpenClawDriver.parse({ provider_id: 'openai', method_id: 'device-code', version: '2026.7.1-2',
     auth_list_source: authSource, auth_list_sha256: await fingerprint(authSource), node_command: '/usr/bin/node',
     node_command_sha256: await fingerprint('/usr/bin/node'), bridge, bridge_sha256: await fingerprint(bridge) });
   policy.logins.openclaw = { method: 'device', command: ['/usr/bin/node', command, 'models', 'auth', 'login'],

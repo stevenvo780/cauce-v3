@@ -1,15 +1,13 @@
 import { P as timestampMsToIsoString } from "./number-coercion-CJQ8TR--.js";
-import { g as shortenHomePath } from "./utils-CCC-BEJH.js";
-import { r as writeRuntimeJson } from "./runtime-B4lgFmsS.js";
-import "./agent-scope-MrLta7Pq.js";
-import { a as resolveAgentDir, c as resolveDefaultAgentId } from "./agent-scope-config-CgCYpZfK.js";
-import { r as resolveProviderIdForAuth } from "./provider-auth-aliases-BNZrcvHv.js";
-import { c as resolveAuthStatePathForDisplay } from "./runtime-snapshots-CGKcj2Tz.js";
-import { n as ensureAuthProfileStore } from "./store-C8spD0DG.js";
-import { i as resolveAuthProfileDisplayLabel } from "./auth-profiles-84rzaGag.js";
-import { r as externalCliDiscoveryForProviderAuth } from "./external-cli-discovery-Cr-vJMRB.js";
-import { c as resolveKnownAgentId } from "./shared-B3B7qn2l.js";
-import { t as loadModelsConfig } from "./load-config-BBaPFZx-.js";
+import { _ as shortenHomePath } from "./utils-CRO4LGEB.js";
+import { i as writeRuntimeJson } from "./runtime-Bz6o617W.js";
+import { r as resolveProviderIdForAuth } from "./provider-auth-aliases-Cp2PXhsh.js";
+import { c as resolveAuthStatePathForDisplay } from "./runtime-snapshots-D6VA-VN8.js";
+import { n as ensureAuthProfileStore } from "./store-DH33UrUj.js";
+import { i as resolveAuthProfileDisplayLabel } from "./auth-profiles-BFnI-y_7.js";
+import { n as externalCliDiscoveryForProviderAuth } from "./external-cli-discovery-BA28IiyS.js";
+import { u as resolveModelsTargetAgent } from "./shared-D0zComE5.js";
+import { t as loadModelsConfig } from "./load-config-mhW1fUy4.js";
 //#region src/commands/models/auth-list.ts
 /** Command helpers for listing saved model auth profiles. */
 function resolveProviderFilter(rawProvider) {
@@ -23,16 +21,6 @@ function resolveProviderFilter(rawProvider) {
 		provider,
 		externalCliProvider: provider,
 		matches: (profile) => profile.provider === provider
-	};
-}
-function resolveTargetAgent(cfg, raw) {
-	const agentId = resolveKnownAgentId({
-		cfg,
-		rawAgentId: raw
-	}) ?? resolveDefaultAgentId(cfg);
-	return {
-		agentId,
-		agentDir: resolveAgentDir(cfg, agentId)
 	};
 }
 function formatTimestamp(value) {
@@ -74,7 +62,7 @@ async function modelsAuthListCommand(opts, runtime) {
 		commandName: "models auth list",
 		runtime
 	});
-	const { agentId, agentDir } = resolveTargetAgent(cfg, opts.agent);
+	const { agentId, agentDir } = resolveModelsTargetAgent(cfg, opts.agent);
 	const providerFilter = resolveProviderFilter(opts.provider);
 	const store = ensureAuthProfileStore(agentDir, providerFilter.externalCliProvider ? { externalCli: externalCliDiscoveryForProviderAuth({
 		cfg,

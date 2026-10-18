@@ -11,8 +11,8 @@ import sys
 import uuid
 from datetime import UTC, datetime
 
-VERSION = '2026.6.6'
-AUTH_LIST_SHA256 = '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'
+VERSION = '2026.7.1-2'
+AUTH_LIST_SHA256 = '3ef2fa38f32ce786f0bc499bae897aba68ad9c7595ef3064994b1634d13d1373'
 FIELDS = {'provider_id', 'method_id', 'version', 'auth_list_source', 'auth_list_sha256',
           'node_command', 'node_command_sha256', 'bridge', 'bridge_sha256'}
 INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
@@ -198,7 +198,7 @@ def measured_definition(binding: dict) -> bool:
                 'runtime_key': 'capability-probe', 'state_directory': directory, 'home_directory': directory}}
             command = provider_command(pinned_packet(packet))
             version = command_output([binding['openclaw']['node_command'], command, '--version'], packet, timeout=5).decode().strip()
-            return version in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (8c802aa)'}
+            return version in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         return False
 
@@ -251,7 +251,7 @@ def authenticated_openclaw(packet: dict) -> bool:
         command = provider_command(pinned_packet(packet))
         prefix = [driver['node_command'], command]
         version = command_output([*prefix, '--version'], packet).decode().strip()
-        if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (8c802aa)'}:
+        if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}:
             return False
         meta = json.loads(command_output([*prefix, 'models', 'auth', 'list', '--agent', agent['runtime_key'],
                                           '--provider', binding['openclaw']['provider_id'], '--json'], packet))

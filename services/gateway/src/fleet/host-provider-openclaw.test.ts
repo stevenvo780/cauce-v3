@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { OpenClawDriver, openClawCompatible, openClawLogin } from './host-provider-openclaw.js';
 
-const source = '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90';
-const driver = { provider_id: 'openai', method_id: 'device-code', version: '2026.6.6', auth_list_source: '/usr/lib/openclaw/dist/auth-list.js',
+const source = '3ef2fa38f32ce786f0bc499bae897aba68ad9c7595ef3064994b1634d13d1373';
+const driver = { provider_id: 'openai', method_id: 'device-code', version: '2026.7.1-2', auth_list_source: '/usr/lib/openclaw/dist/auth-list.js',
   auth_list_sha256: source, node_command: '/usr/bin/node', node_command_sha256: 'a'.repeat(64), bridge: '/bundle/bridge.mjs', bridge_sha256: 'b'.repeat(64) } as const;
 const profile = { provider: 'codex', path: '/home/dev/profiles/runtime-one/account', command: '/usr/lib/openclaw/openclaw.mjs',
   command_sha256: 'c'.repeat(64), openclaw: driver };

@@ -62,7 +62,7 @@ codex_native=$(docker run --rm --network none --entrypoint sh "$image" -c \
 [[ $codex_native == /usr/local/lib/node_modules/@openai/codex/*/bin/codex && $codex_native != *$'\n'* ]] || {
   echo "expected one native Codex binary in $image, found: ${codex_native:-none}" >&2; exit 1;
 }
-openclaw_auth_list=/usr/local/lib/node_modules/openclaw/dist/auth-list-oJF2Bhcx.js
+openclaw_auth_list=/usr/local/lib/node_modules/openclaw/dist/auth-list-DlV7Wk-6.js
 openclaw_auth_list_sha=$(docker run --rm --network none --entrypoint sha256sum "$image" "$openclaw_auth_list" | cut -d' ' -f1)
 muse_bridge_sha=$(docker run --rm --network none --entrypoint sha256sum "$image" /usr/local/bin/muse-cauce | cut -d' ' -f1)
 python3 ops/scripts/host-release.py pack --stage "$stage" --out "$target" --revision "$revision" --epoch "$epoch" \

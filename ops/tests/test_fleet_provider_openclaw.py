@@ -19,7 +19,7 @@ SCRIPT = '''import fs from 'node:fs';
 const argv=process.argv.slice(2);
 const root=process.env.OPENCLAW_HOME;
 const mode=fs.existsSync(root+'/mode')?fs.readFileSync(root+'/mode','utf8'):'';
-if(argv.includes('--version')) { console.log(mode==='version'?'2026.1.1':'OpenClaw 2026.6.6 (8c802aa)'); }
+if(argv.includes('--version')) { console.log(mode==='version'?'2026.1.1':'OpenClaw 2026.7.1-2 (0790d9f)'); }
 else if(argv.includes('list')) {
  let meta={agentId:'runtime-one',provider:'openai',profiles:[{id:'cauce:account-one',provider:'openai',type:'oauth',email:'observed@fixture.invalid',expiresAt:'2099-01-01T00:00:00Z'}]};
  if(mode.startsWith('anthropic')) { meta.provider='anthropic'; meta.profiles[0].provider='anthropic'; }
@@ -60,7 +60,7 @@ class OpenClawProviderTest(unittest.TestCase):
         self.command.write_text(SCRIPT)
         self.command.chmod(0o600)
         self.source = self.root / 'auth-list.js'
-        self.source.write_bytes((CLI.parent / 'tests/fixtures/openclaw-auth-list-2026.6.6.txt').read_bytes())
+        self.source.write_bytes((CLI.parent / 'tests/fixtures/openclaw-auth-list-2026.7.1-2.txt').read_bytes())
         self.source.chmod(0o600)
         self.bridge = self.root / 'bridge.mjs'
         self.bridge.write_text('export const bridge=true;')

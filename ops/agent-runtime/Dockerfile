@@ -10,7 +10,7 @@ FROM node:22-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a
 ARG CLAUDE_CODE_VERSION=2.1.296
 ARG CODEX_VERSION=0.160.1
 ARG GROK_VERSION=1.0.41
-ARG OPENCLAW_VERSION=2026.6.6
+ARG OPENCLAW_VERSION=2026.7.1-2
 ARG MUSE_VERSION=1.4.10-R6427.1
 ARG MUSE_X86_LINUX_SHA256=decefc0fb33c48ee43419c3e72ac2dbc781743868611074c7292807f5960dfcf
 ARG MUSE_AARCH64_LINUX_SHA256=2e5afa5e8560c1565185249af2d27b3e97aaf351d3d32275b8e410be702dce35
@@ -30,8 +30,8 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && codex --version | grep -q "${CODEX_VERSION}" \
  && grok --version | grep -q "${GROK_VERSION}" \
  && openclaw --version | grep -q "${OPENCLAW_VERSION}" \
- && printf '%s  %s\n' '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90' \
-      /usr/local/lib/node_modules/openclaw/dist/auth-list-oJF2Bhcx.js | sha256sum -c -
+ && printf '%s  %s\n' '3ef2fa38f32ce786f0bc499bae897aba68ad9c7595ef3064994b1634d13d1373' \
+      /usr/local/lib/node_modules/openclaw/dist/auth-list-DlV7Wk-6.js | sha256sum -c -
 
 # Muse: same pinned binary and digests as ops/cuotas/Dockerfile, installed
 # directly as /usr/local/bin/muse (the bash launcher would break the login
