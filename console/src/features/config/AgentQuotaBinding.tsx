@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ConfigLeafMutation, ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { Button, Notice } from '../../components/kit';
+import { onNavClick } from '../../router';
 import { bindingMutation, ceilingMutation, readRegistry } from '../accounts/registry';
 import { useSnapshotRunner } from './use-snapshot-runner';
 import { canUseConfigForm } from './config-form-access';
@@ -59,6 +60,8 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
         </option>)}
       </select>
     </label>
+    {available && !eligible.length ? <Notice tone="info">No hay cuentas habilitadas disponibles para este agente. Registra y autentica una cuenta propia, o habilita una existente, desde{' '}
+      <a href="/my-quotas" onClick={event => { onNavClick(event, '/my-quotas'); }}>Mis cuotas</a>.</Notice> : null}
     {selected && binding?.enabled ? <p className="m-0 text-xs text-muted">Esta cuenta ya está vinculada.</p> : null}
     {dirty && priority > 32767 ? <Notice role="note">No queda un orden de respaldo disponible para esta cuenta.</Notice> : null}
     {!runner.canWrite || !canAssign ? <Notice role="note">No tienes permiso para cambiar las cuentas de cuota.</Notice> : null}
