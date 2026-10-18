@@ -64,6 +64,9 @@ class SharedContainerExecutorTest(unittest.TestCase):
             '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'FOWNER', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
             '--security-opt', 'no-new-privileges', *arguments, '--entrypoint', '/bin/sleep', self.image, 'infinity'],
             capture_output=True, check=True)
+        subprocess.run(['docker', 'exec', self.container, '/usr/local/bin/python3.12', '-c',
+            'import os;os.mkdir("/run/shared-provider",0o700);os.chown("/run/shared-provider",65534,65534)'],
+            capture_output=True, check=True)
         observed = self.inspect()
         self.policy['shared_containers'] = {self.container: {'container_id': observed['Id'], 'image': self.image,
             'runtime_user': 'nobody', 'runtime_uid': 65534, 'runtime_gid': 65534, 'systemd_user': self.user,

@@ -205,7 +205,12 @@ class ContainerTemplateProfileTest(unittest.TestCase):
         measured = subprocess.run(['docker', 'exec', '--user', '65534:65534', self.container, '/usr/local/bin/python3.12', '-c',
             'import os,json;d=' + repr(self.profile) + ';s=os.stat(d);print(json.dumps([s.st_uid,s.st_mode&511,os.listdir(d)]))'],
             capture_output=True, text=True, check=True).stdout
-        self.assertEqual(json.loads(measured), [65534, 0o700, []])
+        self.assertEqual(json.loads(measured), [65534, 0o700, ['cauce-extension-receipt.json']])
+        receipt = subprocess.run(['docker', 'exec', '--user', '65534:65534', self.container, '/usr/local/bin/python3.12', '-c',
+            'import json,pathlib;p=pathlib.Path(' + repr(self.profile + '/cauce-extension-receipt.json') + ');'
+            's=p.stat();print(json.dumps([s.st_uid,s.st_mode&511,json.loads(p.read_text())]))'],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(receipt), [65534, 0o600, {'extensions_sha256': hashlib.sha256(b'[]').hexdigest()}])
         self.assertFalse(pathlib.Path(self.profile).exists())
         metadata = json.loads(subprocess.run(['docker', 'exec', self.container, 'cat',
             '/run/cauce-fleet/' + self.key + '/cauce-v3-adapter.json'], capture_output=True, text=True, check=True).stdout)
