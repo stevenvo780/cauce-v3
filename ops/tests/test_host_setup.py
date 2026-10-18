@@ -90,10 +90,13 @@ class HostSetupTests(unittest.TestCase):
             found = self.docker_images.get(command[-1])
             if found is None:
                 return subprocess.CompletedProcess(command, 1, b'', b'Error response from daemon: No such image: ' + command[-1].encode())
-            out = found.encode() + b'\n'
+            out = (json.dumps({'Id': found, 'Descriptor': {'annotations': {'config.digest': self.image_id}}}).encode()
+                if command[4] == '{{json .}}' else found.encode()) + b'\n'
         if command[0] == host_setup.DOCKER and command[1] == 'load':
             self.assertEqual(hashlib.sha256(pathlib.Path(command[-1]).read_bytes()).hexdigest(), hashlib.sha256(self.image).hexdigest())
-            self.docker_images[self.image_id] = self.loaded_as
+            self.docker_images.update({self.loaded_as: self.loaded_as, 'fixture-agent:latest': self.loaded_as})
+        if command[0] == host_setup.DOCKER and command[1:3] == ['image', 'tag']:
+            self.docker_images[command[-1]] = self.docker_images[command[-2]]
         return subprocess.CompletedProcess(command, 0, out, b'')
 
     def artifacts(self) -> list[dict]:
@@ -220,13 +223,27 @@ class HostSetupTests(unittest.TestCase):
 
     def test_login_recipe_and_agent_image_arrive_in_one_setup(self):
         self.login_package()
-        self.image = os.urandom(50_000)
+        config = stable_json({'architecture': 'amd64', 'os': 'linux', 'rootfs': {'type': 'layers', 'diff_ids': []}, 'config': {}})
+        self.image_id = 'sha256:' + hashlib.sha256(config).hexdigest()
+        self.loaded_as = 'sha256:' + 'f' * 64
+        config_file = self.image_id.removeprefix('sha256:') + '.json'
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode='w') as archive:
+            for name, body in {config_file: config, 'manifest.json': stable_json([
+                    {'Config': config_file, 'RepoTags': ['fixture-agent:latest'], 'Layers': []}])}.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(body)
+                archive.addfile(info, io.BytesIO(body))
+        self.image = buffer.getvalue()
         self.package_overrides['policy']['container_templates'] = [{'harness_id': 'codex', 'image': self.image_id}]
         actions = host_setup.setup(self.identity, self.install_base(), True)['actions']
         self.assertEqual(actions[:4], ['download and extract release', 'download and load agent image ' + self.image_id,
             'write executor policy', 'write provider auth policy'])
         receipt = host_setup.setup(self.identity, self.install_base(), False)
         self.assertEqual((receipt['image_loaded'], receipt['provider_auth']), (True, True))
+        self.assertEqual((receipt['image_id'], receipt['local_image_id']), (self.image_id, self.loaded_as))
+        policy = json.loads((self.install_base() / 'company-a/local-a/executor-policy.json').read_text())
+        self.assertEqual(policy['container_templates'][0]['image'], self.loaded_as)
         self.assertEqual(self.requests, ['release@0', 'agent-image@0'])
         self.assertIn('CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE=', (self.home / '.config/systemd/user' / self.unit_name).read_text())
 

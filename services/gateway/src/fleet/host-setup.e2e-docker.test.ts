@@ -24,7 +24,7 @@ describe('a clean computer prepares its executor without the platform administra
   }, 120_000);
 
   it('enrolls with the console invitation, installs the user service and reports executor_ready', async () => {
-    const { app, cli, onComputer, pool, packager, container, gatewayUrl, installRoot, agentImage } = computer();
+    const { app, cli, onComputer, pool, packager, container, gatewayUrl, installRoot, agentImage, configImage } = computer();
     expect((await onComputer(['docker', 'image', 'inspect', agentImage])).code).not.toBe(0);
     const invitation = await inviteSetupHost(app, ownerA, 'setupe2e-laptop');
     expect(invitation.setup_signer_fingerprint).toBe(packager.signerFingerprint);
@@ -34,7 +34,7 @@ describe('a clean computer prepares its executor without the platform administra
     const prepared = await cli(['setup', '--install-root', installRoot]);
     expect(prepared.code, prepared.stderr).toBe(0);
     expect(JSON.parse(prepared.stdout)).toMatchObject({ host_id: 'setupe2e-laptop', service_active: true, linger: true, templates: 1,
-      image_id: agentImage, image_present: false, image_loaded: true });
+      image_id: configImage, local_image_id: agentImage, image_present: false, image_loaded: true });
     expect(await docker(['image', 'inspect', '--format', '{{.Id}}', agentImage])).toBe(agentImage);
     const repeated = await cli(['setup', '--install-root', installRoot]);
     expect(repeated.code, repeated.stderr).toBe(0);

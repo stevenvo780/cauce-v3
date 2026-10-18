@@ -11,6 +11,7 @@ import { privateBytes } from './signed-source.js';
 const Hex = z.string().regex(/^[a-f0-9]{64}$/u);
 const Name = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Revision = z.string().regex(/^[a-f0-9]{40}$/u);
+/** Releases pin the config digest from docker save; setup resolves it to the client's immutable Docker Id. */
 const ImageId = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 /** The computer refuses larger releases and files (`MAX_ARTIFACT` in `ops/cli/host_setup.py`); the agent image is a `docker save`. */
 const MAX_ARTIFACT = 512 * 1024 * 1024;

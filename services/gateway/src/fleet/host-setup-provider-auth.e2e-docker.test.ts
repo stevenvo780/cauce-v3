@@ -53,7 +53,8 @@ describe('a computer prepared with setup logs its agents into the provider from 
       WHERE action='fleet_host.setup.artifact' AND company_id=$1 ORDER BY metadata->>'name'`, [COMPANY]);
     expect(downloads.rows.map(row => row.name)).toEqual(['agent-image', 'fleet-ca', 'release']);
     const policy = JSON.parse((await onComputer(['cat', `${installRoot}/${COMPANY}/${HOST}/executor-policy.json`])).stdout) as {
-      profile_templates: { command: string; command_sha256: string; login?: unknown }[] };
+      container_templates: { image: string }[]; profile_templates: { command: string; command_sha256: string; login?: unknown }[] };
+    expect(policy.container_templates[0]?.image).toBe(agentImage);
     const template = policy.profile_templates[0];
     expect(template?.command).toMatch(/^\/usr\/local\/bin\//u);
     expect(template?.login).toEqual({ method: 'device', command: [template?.command, 'login', '--device-auth'], sha256: template?.command_sha256 });

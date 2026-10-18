@@ -34,7 +34,7 @@ ops/scripts/build-adapter-release.sh "$stage/adapter" ${approvals:+"$approvals"}
 chmod -R u+w "$stage/adapter"
 find "$stage/adapter" \( -name .modules.yaml -o -path '*/node_modules/.bin' \) -prune -exec rm -rf {} +
 image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16)"
-# Without attestations and with a fixed creation time, a cached rebuild keeps the Id and computers skip the download.
+# Without attestations and with a fixed creation time, cached rebuilds preserve the portable config digest pinned from docker save.
 docker build -q --provenance=false --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
   -t "$image" ops/agent-runtime >/dev/null
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \

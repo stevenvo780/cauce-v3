@@ -51,6 +51,7 @@ instalar cli cauce-spaces
 instalar cli host_enrollment.py
 instalar cli host_channel_client.py
 instalar cli host_setup.py
+instalar cli host_image.py
 instalar cli context_client.py
 instalar cli context_native.py
 instalar cli space_archive.py

@@ -21,7 +21,7 @@ import { inviteSetupHost, type SetupOwnerSession } from './host-setup.fixtures.j
  * bootstrap gateway, a release built from the tracked tree and a systemd container that shares the host Docker.
  * The release and the agent image go through `ops/scripts/host-release.py pack` and the gateway serves both; the
  * agent image is removed before the computer starts, so `setup` has to load it.
- * Every Docker resource it creates, including the agents the executor creates later, starts with `prefix`.
+ * Resource names start with `prefix`; setup's config-digest tag is tracked separately for cleanup.
  */
 const execute = promisify(execFile);
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -131,8 +131,9 @@ export async function dockerInventory(prefix: string): Promise<DockerInventory> 
 
 export interface ComputerHarness {
   readonly prefix: string; readonly installRoot: string; readonly pool: DatabasePool; readonly databaseUrl: string;
-  /** Id of the agent image the gateway serves; Docker does not have it until `setup` loads it. */
+  /** Immutable local Docker Id of the agent image; absent until `setup` loads it. */
   readonly agentImage: string;
+  readonly configImage: string;
   readonly app: Awaited<ReturnType<typeof buildGateway>>; readonly gatewayUrl: string; readonly packager: HostSetupPackager;
   /** Name of the computer container; agent containers are `${prefix}-${runtime_key}`. */
   readonly container: string;
@@ -144,7 +145,7 @@ export interface ComputerHarness {
 
 interface Owned {
   work?: string; database?: TestDatabase; current?: EmptyTestDatabase; pool?: DatabasePool; container?: string; image?: string;
-  agentImage?: string; app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
+  agentImage?: string; imageReference?: string; app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
   bridge?: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>>;
 }
 
@@ -236,6 +237,11 @@ async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory
   await attempt(async () => owned.bootstrapApp?.close());
   await attempt(async () => owned.bridge?.close());
   const agentImage = owned.agentImage;
+  const imageReference = owned.imageReference;
+  if (imageReference && agentImage) {
+    const tagged = await command('docker', ['image', 'inspect', '--format', '{{.Id}}', imageReference]);
+    if (tagged.code === 0 && tagged.stdout.trim() === agentImage) await attempt(() => docker(['image', 'rm', imageReference]));
+  }
   if (agentImage && (await command('docker', ['image', 'inspect', agentImage])).code === 0) await attempt(() => docker(['image', 'rm', agentImage]));
   if (owned.image) await attempt(() => docker(['image', 'rm', owned.image ?? '']));
   const after = await dockerInventory(prefix);
@@ -292,6 +298,12 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     const [built, authority] = await Promise.all([images(), signedAuthority(work, pool, owned)]);
     // With the login fixture the pack measures the provider CLI inside the agent image, as the real build does.
     const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`]);
+    const imageReference = `cauce-host-image:${release.manifest.image.id.replace(/^sha256:/u, '')}`;
+    const previous = await command('docker', ['image', 'inspect', imageReference]);
+    if (previous.code !== 0) {
+      if (!/no such image|not found/iu.test(previous.stderr)) throw new Error(`cannot inspect setup image reference: ${previous.stderr}`);
+      owned.imageReference = imageReference;
+    }
     await docker(['image', 'rm', built.agent]);
     if (loginCli !== undefined && release.manifest.pins.codex_command_sha256 !== loginCli) {
       throw new Error(`the release measured another login CLI in the agent image: ${JSON.stringify(release.manifest.pins)}`);
@@ -344,7 +356,9 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
     await docker(['exec', container, 'chown', 'cauce:cauce', join(work, 'install')]);
     await docker(['exec', container, 'loginctl', 'enable-linger', 'cauce']);
     await settle(async () => (await onComputer(['systemctl', '--user', 'is-system-running'])).stdout.trim() === 'running');
-    return { prefix, installRoot: join(work, 'install'), agentImage: release.manifest.image.id, pool, databaseUrl: owned.current.url, app,
+    if (!owned.agentImage) throw new Error('agent image absent');
+    return { prefix, installRoot: join(work, 'install'), agentImage: owned.agentImage, configImage: release.manifest.image.id,
+      pool, databaseUrl: owned.current.url, app,
       gatewayUrl, packager, container,
       onComputer, cli: (args, input) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input),
       close: () => closeOwned(owned, prefix) };

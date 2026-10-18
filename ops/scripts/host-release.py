@@ -23,6 +23,7 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'ops/cli'), str(ROOT / 'ops/container-runtime')]
 from cauce_container_base import bundle_digest  # noqa: E402
+from host_image import archive_image  # noqa: E402
 from host_setup import MAX_ARTIFACT, MAX_IMAGE, REQUIRED_IN_RELEASE, extract_release  # noqa: E402
 
 MANIFEST = 'host-release.json'
@@ -156,12 +157,13 @@ def pack(arguments: argparse.Namespace) -> dict:
     manifest = {'version': 1, 'revision': arguments.revision,
         'release': {'file': RELEASE, 'sha256': sha256_file(out / RELEASE), 'size': (out / RELEASE).stat().st_size}}
     if arguments.image:
-        image_id = docker('image', 'inspect', '--format', '{{.Id}}', arguments.image)
-        if IMAGE_ID.fullmatch(image_id) is None:
+        builder_image_id = docker('image', 'inspect', '--format', '{{.Id}}', arguments.image)
+        if IMAGE_ID.fullmatch(builder_image_id) is None:
             raise ReleaseError(f'{arguments.image} has no content-addressed Id')
         sha256, size = save_image(arguments.image, out / IMAGE)
+        image_id = archive_image(out / IMAGE, builder_image_id)['id']
         manifest['image'] = {'file': IMAGE, 'sha256': sha256, 'size': size, 'id': image_id, 'reference': arguments.image}
-        pins.update(image=image_id, **measure_providers(arguments.image, arguments.provider))
+        pins.update(image=image_id, **measure_providers(builder_image_id, arguments.provider))
     for item in arguments.pin:
         name, _, value = item.partition('=')
         if PIN.fullmatch(name) is None or not value or name in pins:
@@ -196,6 +198,8 @@ def verify_directory(directory: pathlib.Path, revision: str | None = None) -> di
             raise ReleaseError(f'{path} differs from host-release.json')
     if 'image' in manifest and (IMAGE_ID.fullmatch(manifest['image'].get('id', '')) is None or manifest['pins'].get('image') != manifest['image']['id']):
         raise ReleaseError('the image pin differs from the image Id')
+    if 'image' in manifest:
+        archive_image(directory / manifest['image']['file'], manifest['image']['id'])
     if not all(PIN.fullmatch(name) and isinstance(value, str) and value for name, value in manifest.get('pins', {}).items()):
         raise ReleaseError('host-release.json pins are invalid')
     return manifest

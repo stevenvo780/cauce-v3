@@ -27,6 +27,7 @@ from host_channel_client import (
     save_private,
     stable_json,
 )
+from host_image import ImageFailure, archive_image
 
 UNIT_PREFIX = 'cauce-v3-host-executor-'
 SAFE_ID = re.compile(r'[A-Za-z0-9_.-]{1,128}')
@@ -225,14 +226,58 @@ def docker_image(image_id: str) -> str | None:
         'comprueba que este usuario está en el grupo docker')
 
 
-def ensure_image(channel: HostChannel, item: dict, scratch: pathlib.Path) -> bool:
-    """Loads the signed agent image unless Docker already has it; returns whether it loaded it now."""
-    if docker_image(item['image_id']) == item['image_id']:
-        return False
+def image_reference(image_id: str) -> str:
+    return 'cauce-host-image:' + image_id.removeprefix('sha256:')
+
+
+def verified_image(reference: str, config_id: str, scratch: pathlib.Path) -> str | None:
+    result = runner([DOCKER, 'image', 'inspect', '--format', '{{json .}}', reference], 60)
+    if result.returncode:
+        detail = result.stderr.decode('utf-8', 'replace')
+        if 'no such image' in detail.lower() or 'not found' in detail.lower():
+            return None
+        raise HostFailure('Docker no pudo inspeccionar la imagen de agentes: ' + detail.strip()[-200:])
+    observed = json.loads(result.stdout)
+    local_id = observed.get('Id')
+    if not isinstance(local_id, str) or IMAGE_ID.fullmatch(local_id) is None:
+        raise HostFailure('Docker no devolvió un Id inmutable para la imagen de agentes')
+    if local_id == config_id:
+        return local_id
+    config = (observed.get('Descriptor') or {}).get('annotations', {}).get('config.digest')
+    if config is not None:
+        return local_id if config == config_id else None
+    # Older containerd APIs omit config.digest; inspect a save of the immutable Id instead of trusting a tag.
+    saved = scratch / 'inspect-image.tar'
+    try:
+        result = runner([DOCKER, 'image', 'save', '--output', str(saved), local_id], DOCKER_LOAD_SECONDS)
+        if result.returncode:
+            raise HostFailure('Docker no pudo verificar la configuración de la imagen de agentes')
+        return local_id if archive_image(saved)['id'] == config_id else None
+    except ImageFailure as error:
+        raise HostFailure(str(error)) from None
+    finally:
+        saved.unlink(missing_ok=True)
+
+
+def installed_image(image_id: str) -> str | None:
+    if docker_image(image_id) == image_id:
+        return image_id
+    with tempfile.TemporaryDirectory() as temporary:
+        return verified_image(image_reference(image_id), image_id, pathlib.Path(temporary))
+
+
+def ensure_image(channel: HostChannel, item: dict, scratch: pathlib.Path) -> tuple[bool, str]:
+    """Verifies the signed archive and resolves its portable pin to this Docker's immutable image Id."""
+    present = installed_image(item['image_id'])
+    if present is not None:
+        return False, present
     archive = scratch / (item['name'] + '.tar.gz')
     download(channel, item, archive)
     try:
+        metadata = archive_image(archive, item['image_id'])
         result = runner([DOCKER, 'load', '--input', str(archive)], DOCKER_LOAD_SECONDS)
+    except ImageFailure as error:
+        raise HostFailure(str(error)) from None
     except subprocess.TimeoutExpired:
         raise HostFailure(f'docker load no terminó en {DOCKER_LOAD_SECONDS // 60} minutos; repite cauce hosts setup') from None
     finally:
@@ -240,11 +285,14 @@ def ensure_image(channel: HostChannel, item: dict, scratch: pathlib.Path) -> boo
     if result.returncode:
         detail = result.stderr.decode('utf-8', 'replace').strip()[-200:] or 'sin detalle'
         raise HostFailure(f'docker load rechazó la imagen de agentes ({detail}); revisa el espacio en disco. No se arrancó el servicio')
-    loaded = docker_image(item['image_id'])
-    if loaded != item['image_id']:
-        raise HostFailure(f'la imagen cargada tiene el Id {loaded}, no el {item["image_id"]} que fija la plantilla: este Docker guarda '
-            'las imágenes en otro almacén (containerd o clásico) que la plataforma. No se arrancó el servicio')
-    return True
+    for reference in (metadata['id'], item['image_id'], *metadata['references']):
+        loaded = verified_image(reference, metadata['id'], scratch)
+        if loaded is not None:
+            tagged = runner([DOCKER, 'image', 'tag', loaded, image_reference(metadata['id'])], 60)
+            if tagged.returncode:
+                raise HostFailure('Docker no pudo conservar la referencia a la imagen verificada; no se arrancó el servicio')
+            return True, loaded
+    raise HostFailure('la imagen cargada no tiene la configuración del tar firmado; no se arrancó el servicio')
 
 
 def extract_release(archive: pathlib.Path, target: pathlib.Path) -> None:
@@ -286,7 +334,8 @@ def substitute(value, replacements: dict[str, str]):
     return value
 
 
-def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, release: pathlib.Path, identity: pathlib.Path) -> dict:
+def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, release: pathlib.Path, identity: pathlib.Path,
+                   local_image: str | None = None) -> dict:
     user = pwd.getpwuid(os.geteuid()).pw_name
     roots = {name: str(install_root / 'roots' / name) for name in ('state', 'runtime', 'pki', 'tokens', 'identities')}
     base = {'schemaVersion': 1, 'host_id': host_id, 'executor_user': user, 'roots': roots,
@@ -299,6 +348,14 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
     if 'native' in supplied and supplied['native'] != []:
         raise HostFailure('setup policy cannot add native runtimes')
     supplied.pop('native', None)
+    if local_image is not None:
+        image_id = next(item['image_id'] for item in package['artifacts'] if item['kind'] == 'image')
+        # Executor templates and provider bindings compare Docker's immutable local Id, never a mutable tag.
+        for template in supplied.get('container_templates', []):
+            template['image'] = local_image
+        quota = supplied.get('quota_environments')
+        if isinstance(quota, dict) and quota.get('image') == image_id:
+            quota['image'] = local_image
     return {**base, **supplied}
 
 
@@ -471,7 +528,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         'policy_file': str(paths['policy']), 'unit': str(paths['unit']), 'linger': linger_enabled(user),
         'artifacts': [item['name'] for item in package['artifacts']]}
     if image_item is not None:
-        plan.update(image_id=image_item['image_id'], image_present=docker_image(image_item['image_id']) == image_item['image_id'])
+        plan.update(image_id=image_item['image_id'], image_present=installed_image(image_item['image_id']) is not None)
     if dry_run:
         plan['actions'] = [step for step, needed in (
             ('download and extract release', not plan['release_installed']),
@@ -487,6 +544,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         private_directory(root / sub)
     for name in ('state', 'runtime', 'pki', 'tokens', 'identities'):
         private_directory(root / 'roots' / name)
+    local_image = None
     with tempfile.TemporaryDirectory(dir=private_directory(root)) as scratch:
         if not plan['release_installed']:
             archive = pathlib.Path(scratch) / 'release.tar'
@@ -501,8 +559,9 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
                     download(channel, item, pathlib.Path(scratch) / item['name'])
                     os.replace(pathlib.Path(scratch) / item['name'], target)
         if image_item is not None:
-            plan['image_loaded'] = ensure_image(channel, image_item, pathlib.Path(scratch))
-    policy = compose_policy(package, host_id, root, release, channel.directory)
+            plan['image_loaded'], local_image = ensure_image(channel, image_item, pathlib.Path(scratch))
+            plan['local_image_id'] = local_image
+    policy = compose_policy(package, host_id, root, release, channel.directory, local_image)
     verify_bundles(policy, release)
     changed = write_if_changed(paths['policy'], json.dumps(policy, indent=2, sort_keys=True) + '\n', 0o600)
     report = capabilities_report(release, paths['policy'])
