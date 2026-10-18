@@ -27,6 +27,19 @@ PROVIDER_FLOWS = {
             'profile_types': {'oauth'}, 'expiry_required': True},
 }
 PROVIDER_BY_BINDING = {flow['binding_provider']: provider for provider, flow in PROVIDER_FLOWS.items()}
+# Inventory stored `codex/<model>`; OpenClaw's measured id for that binding is `openai/<model>`.
+HISTORICAL_MODEL_PREFIX = {'codex': 'openai'}
+
+
+def canonical_model(model: object) -> str:
+    if not isinstance(model, str) or re.fullmatch(
+            r'[a-z][a-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None:
+        raise ValueError('OpenClaw activation requires an explicit measured provider model: <provider>/<model>')
+    prefix, _, name = model.partition('/')
+    prefix = HISTORICAL_MODEL_PREFIX.get(prefix, prefix)
+    if PROVIDER_FLOWS.get(prefix) is None:
+        raise ValueError('OpenClaw activation requires an explicit measured provider model: <provider>/<model>')
+    return prefix + '/' + name
 
 
 def provider_flow(provider: str) -> tuple[str, dict]:
@@ -55,11 +68,7 @@ def validate_definition(value: dict, provider: str) -> None:
 def validate_execution_selection(agent: dict) -> None:
     if agent.get('harness_id') != 'openclaw':
         return
-    model = agent.get('model_id')
-    if not isinstance(model, str) or re.fullmatch(
-            r'[a-z][a-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None \
-            or PROVIDER_FLOWS.get(model.partition('/')[0]) is None:
-        raise ValueError('OpenClaw activation requires an explicit measured provider model: <provider>/<model>')
+    canonical_model(agent.get('model_id'))
     if agent.get('reasoning_effort') not in {None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
         raise ValueError('OpenClaw reasoning effort is not supported by the measured driver')
 
@@ -67,8 +76,7 @@ def validate_execution_selection(agent: dict) -> None:
 def validate_binding(binding: dict, agent: dict) -> None:
     validate_definition(binding.get('openclaw'), binding.get('provider'))
     provider_id = PROVIDER_BY_BINDING[binding['provider']]
-    model = agent.get('model_id')
-    if not isinstance(model, str) or not model.startswith(provider_id + '/'):
+    if not canonical_model(agent.get('model_id')).startswith(provider_id + '/'):
         raise ValueError('OpenClaw model provider differs from its binding provider')
 
 
@@ -156,7 +164,7 @@ def prepare(binding: dict, agent: dict) -> None:
             read_config(binding, agent)
             return
         try:
-            model = agent.get('model_id')
+            model = canonical_model(agent['model_id']) if agent.get('model_id') is not None else None
             config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
                                           'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
                       'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}
@@ -268,8 +276,8 @@ def authenticated_openclaw(packet: dict) -> bool:
             expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
             if expires <= datetime.now(UTC):
                 return False
-        model = agent.get('model_id')
-        if not isinstance(model, str) or not model.startswith(driver['provider_id'] + '/'):
+        model = canonical_model(agent.get('model_id'))
+        if not model.startswith(driver['provider_id'] + '/'):
             return False
         expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
         args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
