@@ -42,6 +42,8 @@ it('shows dependencies and preserves the exact room target without adding alias'
   expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('worker');
   expect(screen.getByLabelText('Solicitud de retiro')).toHaveTextContent('"room_id": " Sala "');
   expect(screen.getByLabelText('Solicitud de retiro')).not.toHaveTextContent('"alias"');
+  expect(screen.getByRole('button', { name: 'Encolar retiro' })).toBeDisabled();
+  await user.type(screen.getByRole('textbox'), ' Sala ');
   expect(screen.getByRole('button', { name: 'Encolar retiro' })).toBeEnabled();
 });
 it('keeps a host failure and partial fence visible and requires a current CAS version to resume', async () => {
@@ -59,6 +61,7 @@ it('keeps a host failure and partial fence visible and requires a current CAS ve
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Previsualizar retiro' }));
   await screen.findByLabelText('Previsualización operativa');
+  await user.type(screen.getByRole('textbox'), ' Sala ');
   await user.click(screen.getByRole('button', { name: 'Encolar retiro' }));
   await screen.findByLabelText('Operación de flota');
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
@@ -71,9 +74,9 @@ it('blocks purge when dependencies are present', async () => {
   renderDialog('purge');
   server.use(preview(false));
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Previsualizar eliminación definitiva' }));
+  await user.click(await screen.findByRole('button', { name: 'Previsualizar purga' }));
   expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Bloquea esta operación');
-  expect(screen.getByRole('button', { name: 'Encolar eliminación definitiva' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Encolar purga' })).toBeDisabled();
 });
 it('fails closed when capability is missing even with config.write', async () => {
   renderDialog('retire', [], false);

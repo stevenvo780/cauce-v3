@@ -1,11 +1,11 @@
-import { Pencil, Plus, RotateCcw, Trash2, Users } from 'lucide-react';
+import { Pencil, Plus, Trash2, Users } from 'lucide-react';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { Button, Pill, SectionCard } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import { retiredConfigRows } from './config-form-access';
 import { type ConfigFormTarget } from './config-form-model';
 import { teamBlock } from './team-access';
-import { groupHasRuntime, groupOperationTarget } from './GroupMembershipModel';
+import { groupOperationTarget } from './GroupMembershipModel';
 import type { ConfigWrites } from './use-config-writes';
 
 type Row = Record<string, unknown>;
@@ -57,13 +57,10 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
             const names = members(snapshot, room);
             const solos = soloMembers(snapshot, room);
             const fleetTarget = groupOperationTarget('rooms', room);
-            const runtime = Boolean(fleetTarget && groupHasRuntime(snapshot, fleetTarget));
             const edit: ConfigFormTarget = { collection: 'rooms', action: 'update', row: room };
-            const remove: ConfigFormTarget = { collection: 'rooms', action: 'delete', row: room };
             const editBlock = block(edit);
             const retire: ConfigFormTarget = { collection: 'rooms', action: 'retire', row: room };
             const retireBlock = block(retire);
-            const removeBlock = runtime ? retireBlock : block(remove);
             return <li key={id} data-team={id} className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-line bg-surface px-3 py-2.5 shadow-card">
               <div className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
                 <Users size={16} aria-hidden="true" className="shrink-0 text-muted" />
@@ -83,16 +80,10 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
               <div className="flex shrink-0 flex-wrap gap-1.5">
                 <Button size="sm" disabled={Boolean(editBlock) || ctx.busy} title={editBlock} aria-label={`Editar equipo ${id}`}
                   onClick={() => { open(edit); }}><Pencil size={12} aria-hidden="true" />Editar</Button>
-                {fleetTarget ? <Button size="sm" disabled={Boolean(retireBlock) || ctx.busy} title={retireBlock ?? 'Retirar, restaurar o purgar el equipo'}
-                  aria-label={`Retiro y recuperación del equipo ${id}`}
-                  onClick={() => { open(retire); }}>
-                  <RotateCcw size={12} aria-hidden="true" />Retiro</Button> : null}
-                <Button size="sm" variant="danger" disabled={Boolean(removeBlock) || ctx.busy}
-                  title={removeBlock ?? (runtime ? 'Tiene agentes con ejecución: se retira primero y la purga es el segundo paso.' : undefined)}
-                  aria-label={`Eliminar equipo ${id}`}
-                  onClick={() => {
-                    open(runtime ? retire : remove);
-                  }}><Trash2 size={12} aria-hidden="true" />Eliminar</Button>
+                {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(retireBlock) || ctx.busy} title={retireBlock ?? 'Retirar el equipo: primer paso para borrarlo; después podrás purgarlo'}
+                  aria-label={`Retirar equipo ${id}`}
+                  onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'retire' }); }}>
+                  <Trash2 size={12} aria-hidden="true" />Retirar equipo</Button> : null}
               </div>
             </li>;
           })}
@@ -109,9 +100,9 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
             <span className="flex gap-1.5">
               {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(restoreBlock) || ctx.busy}
                 title={restoreBlock ?? 'Paso 2: borra la configuración retirada; los mensajes quedan como historial'}
-                aria-label={`Eliminar definitivamente el equipo ${id}`}
+                aria-label={`Purgar equipo ${id}`}
                 onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'purge' }); }}>
-                <Trash2 size={12} aria-hidden="true" />Eliminar definitivamente</Button> : null}
+                <Trash2 size={12} aria-hidden="true" />Purgar equipo</Button> : null}
               <Button size="sm" disabled={Boolean(restoreBlock) || ctx.busy}
                 title={restoreBlock} aria-label={`Restaurar equipo ${id}`}
                 onClick={() => { open({ collection: 'rooms', action: 'restore', row: room }); }}>Restaurar</Button>

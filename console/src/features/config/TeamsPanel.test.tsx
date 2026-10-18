@@ -57,7 +57,7 @@ it('«Nuevo equipo» opens the typed form in a dialog and sends the existing roo
   expect(sink[0]).toMatchObject({ dry_run: true, mutation: { resource: 'room', action: 'create', tenant_id: 'Miguel', id: 'grp.nuevo' } });
 });
 
-it('«Editar» opens the team editor with its members, and «Eliminar» the delete confirmation', async () => {
+it('«Editar» opens the team editor with its members, and «Retirar equipo» the guided removal', async () => {
   serveTeams();
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
@@ -70,22 +70,22 @@ it('«Editar» opens the team editor with its members, and «Eliminar» the dele
   await user.click(dialog.getByRole('button', { name: 'Cancelar' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
 
-  await user.click(screen.getByRole('button', { name: 'Eliminar equipo Miguel/ops.miguel' }));
+  await user.click(screen.getByRole('button', { name: 'Retirar equipo Miguel/ops.miguel' }));
   dialog = within(await screen.findByRole('dialog'));
-  expect(dialog.getByRole('heading', { name: 'Eliminar equipo' })).toBeInTheDocument();
-  expect(dialog.getByText(/El servidor comprueba sus dependencias/)).toBeInTheDocument();
-  expect(dialog.getByRole('button', { name: 'Confirmar eliminación' })).toBeDisabled();
+  expect(dialog.getByRole('heading', { name: 'Retirar grupo' })).toBeInTheDocument();
+  expect(dialog.getByText(/terminan sus entregas pendientes/)).toBeInTheDocument();
+  expect(dialog.getByRole('button', { name: 'Encolar retiro' })).toBeDisabled();
 });
 
-it('«Eliminar» on a team with running agents goes through the retirement dialog, never a generic delete', async () => {
+it('«Retirar equipo» on a team with running agents goes through the retirement dialog, never a generic delete', async () => {
   serveTeams({ agents: [{ tenant_id: 'Miguel', alias: 'janus', runtime_key: 'janus', primary_room_id: 'grp.miguel' }] });
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  const remove = await screen.findByRole('button', { name: 'Eliminar equipo Miguel/grp.miguel' });
+  const remove = await screen.findByRole('button', { name: 'Retirar equipo Miguel/grp.miguel' });
   await waitFor(() => { expect(remove).toBeEnabled(); });
-  expect(remove).toHaveAttribute('title', expect.stringContaining('se retira primero'));
+  expect(remove).toHaveAttribute('title', expect.stringContaining('primer paso para borrarlo'));
   await user.click(remove);
-  expect(await screen.findByRole('dialog')).toHaveTextContent('Retirar o eliminar grupo');
+  expect(await screen.findByRole('dialog')).toHaveTextContent('Retirar grupo');
   expect(screen.getByRole('button', { name: 'Previsualizar retiro' })).toBeInTheDocument();
 });
 
@@ -94,7 +94,7 @@ it('the team buttons are disabled with the permission reason when the account ca
   renderWithApi(<ConfigPage />);
   const create = await screen.findByRole('button', { name: 'Nuevo equipo' });
   await waitFor(() => { expect(create).toBeDisabled(); expect(create).toHaveAttribute('title', expect.stringMatching(/permiso|control/i)); });
-  for (const name of ['Editar equipo Miguel/grp.miguel', 'Eliminar equipo Miguel/grp.miguel', 'Retiro y recuperación del equipo Miguel/grp.miguel']) {
+  for (const name of ['Editar equipo Miguel/grp.miguel', 'Retirar equipo Miguel/grp.miguel']) {
     expect(screen.getByRole('button', { name })).toBeDisabled();
   }
 });
@@ -144,7 +144,7 @@ it('retire and purge buttons follow the retire/restore capability, not just read
   renderWithApi(<ConfigPage />);
   const edit = await screen.findByRole('button', { name: 'Editar equipo Miguel/grp.miguel' });
   await waitFor(() => { expect(edit).toBeEnabled(); });
-  for (const name of ['Retiro y recuperación del equipo Miguel/grp.miguel', 'Eliminar definitivamente el equipo Miguel/old', 'Restaurar equipo Miguel/old']) {
+  for (const name of ['Retirar equipo Miguel/grp.miguel', 'Purgar equipo Miguel/old', 'Restaurar equipo Miguel/old']) {
     const button = screen.getByRole('button', { name });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', expect.stringContaining('no acredita'));

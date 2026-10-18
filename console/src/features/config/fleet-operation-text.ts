@@ -19,8 +19,15 @@ export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string
   CANCELLED: 'La operación se canceló.',
 };
 const TABLES: Record<string, string> = { agent_profiles: 'perfil del agente', agent_appearances: 'apariencia', agent_account_bindings: 'cuentas vinculadas',
-  agent_sealing_keys: 'llaves de sellado', alias_routing_ceiling: 'techos de ruteo', egress_destinations: 'destinos de salida',
-  console_agent_favorites: 'favoritos', memberships: 'membresías', messages: 'mensajes', deliveries: 'entregas', rooms: 'grupo' };
+  agent_sealing_keys: 'llaves de sellado', alias_routing_ceiling: 'techos de ruteo', egress_destinations: 'destinos de aviso',
+  egress_contacts: 'contactos de aviso', console_agent_favorites: 'favoritos', memberships: 'membresías en grupos', messages: 'mensajes', deliveries: 'entregas',
+  rooms: 'grupos', tenants: 'espacio', agents: 'agentes', acl_edges: 'permisos entre clientes', audit_events: 'auditoría',
+  adapter_outbox: 'avisos en espera de envío', dead_letters: 'avisos sin entregar', outbox_dead_letters: 'avisos sin entregar',
+  delivery_lane_fairness: 'reparto de entregas', agent_output_materializations: 'resultados guardados', channel_bridge_cursors: 'puentes de canal',
+  egress_notifications: 'avisos de salida', telegram_egress_effects: 'avisos de Telegram', agent_chain_closures: 'cierres de cadenas',
+  agent_failure_notice_events: 'avisos de fallo', agent_failure_notices: 'avisos de fallo', idempotency_keys: 'claves ya usadas',
+  terminal_sessions: 'sesiones de terminal', connection_leases: 'conexiones activas', terminal_control_holds: 'controles de terminal',
+  agent_profiles_history: 'historial del equipo' };
 
 /** One line per operation for history lists: action, status and, when it failed, where and why. */
 export function operationSummary(operation: FleetOperation): string {
@@ -34,7 +41,7 @@ export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 
     const [kind, verb, table] = entry.type.split('.');
     if (kind !== 'purge' || verb !== action || !table) return [];
     const count = typeof entry.identity.kind === 'string' ? entry.identity.kind.replace(' rows', '') : '?';
-    return [`${TABLES[table] ?? table} (${count})`];
+    return [`${TABLES[table] ?? 'historial del equipo'} (${count})`];
   });
 }
 
@@ -45,7 +52,7 @@ export function purgeBlockers(preview: FleetOperationPreview): PurgeBlocker[] {
     const [kind, verb, table] = entry.type.split('.');
     if (kind !== 'purge' || verb !== 'blocked' || !table) return [];
     const count = typeof entry.identity.kind === 'string' ? entry.identity.kind.replace(' rows', '') : '?';
-    return [{ table, label: TABLES[table] ?? table, count }];
+    return [{ table, label: TABLES[table] ?? 'trabajo activo del equipo', count }];
   });
 }
 

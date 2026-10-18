@@ -10,7 +10,7 @@ import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
 type RemovalKind = 'retire' | 'restore' | 'purge';
-const LABELS = { retire: 'retiro', restore: 'restauración', purge: 'eliminación definitiva' };
+const LABELS = { retire: 'retiro', restore: 'restauración', purge: 'purga' };
 export function RemovalDialog({ target, kind: initialKind, revision, onClose, reload }: {
   target: FleetTarget; kind: RemovalKind; revision: number | undefined; onClose: () => void; reload?: () => Promise<unknown>;
 }) {
@@ -23,6 +23,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const [sending, setSending] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [sessionInvalid, setSessionInvalid] = useState(false);
+  const [typed, setTyped] = useState('');
   const flow = useAgentLifecycle(true, target, () => { void reload?.(); });
   const sequence = useRef(0);
   const revisionSeen = useRef(revision);
@@ -37,6 +38,11 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const current = useRef(fingerprint);
   current.current = fingerprint;
   const valid = !!request && !!validated && fingerprint === JSON.stringify(validated.request);
+  const equipo = target.resource === 'tenant';
+  const noun = equipo ? 'equipo' : 'grupo';
+  const confirmName = target.resource === 'tenant' ? target.tenant_id : target.resource === 'room' ? target.room_id : '';
+  const nameConfirmed = kind === 'restore' || typed === confirmName;
+  const retireDone = flow.operation?.kind === 'retire' && flow.operation.status === 'succeeded';
   useEffect(() => () => { sequence.current += 1; }, []);
   useEffect(() => api.onAuthGenerationChange(() => {
     sequence.current += 1; setSessionInvalid(true); setValidated(undefined); setError('La sesión cambió. Cierra y relee los permisos antes de operar.');
@@ -58,51 +64,61 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     finally { setSending(false); setPreviewing(false); }
   }
   async function enqueue() {
-    if (!valid || !validated.preview.can_apply || !canWrite || !available || busy || inProgress || blocked) return;
+    if (!valid || !validated.preview.can_apply || !canWrite || !available || busy || inProgress || blocked || !nameConfirmed) return;
     const read = ++sequence.current;
     setSending(true); setError(undefined);
     try {
       const operation = await api.enqueueFleetOperation(validated.request);
-      if (read === sequence.current) { flow.accept(operation); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); }
+      if (read === sequence.current) { flow.accept(operation); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); setTyped(''); }
     } catch (cause) { if (read === sequence.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se confirmó el encolado. El reintento conserva su clave.'); }
     finally { setSending(false); }
   }
-  const previewBlock = !canWrite ? 'No se acreditó autoridad actual para operar este grupo o espacio.'
+  function goPurge() {
+    sequence.current += 1; setKind('purge'); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); setTyped(''); setError(undefined);
+  }
+  const previewBlock = !canWrite ? 'No se acreditó autoridad actual para operar este equipo o grupo.'
     : !available ? `El servidor no acredita esta acción: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
       : !request ? 'Falta una revisión o identidad válida para esta operación.'
         : blocked ? blockingText(flow.operation, kind)
           : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
             : busy ? 'Espera a que termine la operación en curso.' : undefined;
   const enqueueBlock = previewBlock ?? (!valid ? 'Previsualiza la operación para poder encolarla.'
-    : !validated.preview.can_apply ? 'La previsualización no permite aplicar esta operación. Revisa los motivos de la previsualización.' : undefined);
-  return <FormDialog open wide anchorTop busy={sending} onClose={onClose}
-    title={`Retirar o eliminar ${target.resource === 'tenant' ? 'espacio' : 'grupo'}`}>
+    : !validated.preview.can_apply ? 'La vista previa no permite aplicar esta operación. Revisa los motivos de la vista previa.'
+      : !nameConfirmed ? `Escribe ${confirmName} para confirmar.` : undefined);
+  const title = kind === 'restore' ? `Restaurar ${noun}` : kind === 'purge' ? `Purgar ${noun}` : `Retirar ${noun}`;
+  return <FormDialog open wide anchorTop busy={sending} onClose={onClose} title={title}>
     <div className="config-modal-cuerpo agent-lifecycle-panel">
-      <p>Identidad exacta: <code>{JSON.stringify(target)}</code></p>
-      <p>Eliminar un {target.resource === 'tenant' ? 'espacio' : 'grupo'} lleva dos pasos. <strong>1. Retirar</strong>: cierra sus entregas y detiene
-        los runtimes de sus agentes; se conserva todo y se puede restaurar. <strong>2. Eliminar definitivamente</strong>: borra la configuración
-        retirada y conserva los mensajes ya enviados como historial; no se puede deshacer.</p>
-      <label>Tipo de operación<select value={kind} disabled={busy || inProgress} onChange={(event) => {
-        setKind(event.target.value as RemovalKind); setValidated(undefined); setKey(`fleet_${crypto.randomUUID()}`); sequence.current += 1;
-      }}><option value="retire">Retirar</option><option value="restore">Restaurar</option><option value="purge">Eliminar definitivamente</option></select></label>
+      <p>{equipo ? <>Equipo <code>{target.tenant_id}</code>.</> : <>Grupo <code>{target.resource === 'room' ? target.room_id : ''}</code> del equipo <code>{target.tenant_id}</code>.</>}</p>
+      {kind === 'retire' ? <p><strong>Paso 1 de 2 · Retirar.</strong> Se deshabilita el {noun}, se revocan sus permisos con otros espacios,
+        se quitan sus membresías y grupos, se revocan sus sesiones de terminal y se terminan sus entregas pendientes.
+        El historial (mensajes, entregas cerradas y auditoría) se conserva y todavía se puede restaurar.</p> : null}
+      {kind === 'purge' ? <p><strong>Paso 2 de 2 · Purgar.</strong> Se borra la configuración retirada (perfiles, cuentas vinculadas y destinos de aviso)
+        y se conservan los mensajes, las entregas cerradas y la auditoría como historial. No se puede deshacer.</p> : null}
       {kind === 'restore' ? <p>Los agentes conservan la admisión deshabilitada hasta que una operación individual verifique su ejecución.</p> : null}
-      {kind === 'purge' ? <p className="notice">Exige que el retiro haya terminado. La previsualización muestra qué se borra y qué se conserva.</p> : null}
-      {!canWrite ? <p className="notice">No se acreditó autoridad actual para operar este grupo o espacio.</p> : null}
+      {kind === 'purge' ? <p className="notice">Hace falta que el retiro haya terminado. La vista previa dice, en palabras simples, qué se borra y qué se conserva como historial.</p> : null}
+      {!canWrite ? <p className="notice">No se acreditó autoridad actual para operar este equipo o grupo.</p> : null}
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : !flow.capability ? <p role="status">Leyendo capacidades operativas…</p>
         : !available ? <p className="notice">El servidor no acredita esta acción: {fleetCapabilityReasonText(flow.capability.reason)}.</p> : null}
       {!request ? <p className="notice">Falta una revisión o identidad válida para esta operación.</p> : null}
       <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress || blocked} title={previewBlock}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : `Previsualizar ${LABELS[kind]}`}</button>
-        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply} title={enqueueBlock}
+        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply || !nameConfirmed} title={enqueueBlock}
           onClick={() => { void enqueue(); }}>Encolar {LABELS[kind]}</button></div>
       {!valid && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
+      {valid && kind !== 'restore' ? <label>Escribe <code>{confirmName}</code> para confirmar
+        <input value={typed} autoComplete="off" disabled={busy || inProgress} onChange={(event) => { setTyped(event.target.value); }} /></label> : null}
       {error ? <p className="notice" role="alert">{error}</p> : null}
-      {valid ? <><AgentFleetPreview preview={validated.preview} /><pre aria-label={`Solicitud de ${LABELS[kind]}`}>{JSON.stringify(validated.request, null, 2)}</pre></> : null}
+      {valid ? <><AgentFleetPreview preview={validated.preview} />
+        <details><summary>Detalle técnico de la solicitud</summary><pre aria-label={`Solicitud de ${LABELS[kind]}`}>{JSON.stringify(validated.request, null, 2)}</pre></details></> : null}
       {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}
         intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
         <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} /></> : null}
+      {retireDone && kind === 'retire' ? <section className="notice" aria-label="Retiro terminado">
+        <p>El retiro terminó. Ya puedes purgar el {noun}: se borrará su configuración y el historial quedará conservado.</p>
+        <button type="button" className="button primary" disabled={busy} onClick={goPurge}>Continuar a purgar</button>
+      </section> : null}
       <details open><summary>Historial operativo durable</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>{operationSummary(operation)}
@@ -111,7 +127,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
       </details>
     </div><div className="config-modal-pie config-actions">
       {reload ? <ActionButton label="Releer inventario" announceError={false} action={() => reload()} /> : null}
-      <button type="button" className="button secondary" disabled={sending} onClick={onClose}>Cerrar retiro y recuperación</button>
+      <button type="button" className="button secondary" disabled={sending} onClick={onClose}>Cerrar</button>
     </div>
   </FormDialog>;
 }
