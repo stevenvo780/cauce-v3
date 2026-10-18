@@ -180,6 +180,17 @@ def validate_templates(policy: dict):
         identities.add(identity)
 
 
+def account_awaiting_auth(agent: dict) -> bool:
+    """The durable account exists and is consented, but its quota registration has no
+    authenticated session yet: the agent must pause for its terminal login instead of failing."""
+    account = agent.get('primary_account_id')
+    if account is None:
+        return False
+    matches = [row for row in agent.get('_trusted_accounts', []) if row['id'] == account]
+    return len(matches) == 1 and matches[0]['enabled'] is not True and (
+        matches[0]['payer_tenant_id'] == agent['tenant_id'] or matches[0]['shared_with_pool'] is True)
+
+
 def resolve_profile(policy: dict, agent: dict) -> dict | None:
     account = agent.get('primary_account_id')
     if account is None:
