@@ -22,8 +22,6 @@ sys.path.insert(0, str(HERE))
 from v4_mover_host import Remote  # noqa: E402
 
 REAL_ALIASES = ('gaia', 'hades', 'argos', 'hegel')
-STEPS = ['medir-antes', 'detener-origen', 'copiar-integral', 'restaurar-espacio',
-         'reubicar-flota', 'verificar-nonce-terminal-contexto-host-cuenta', 'medir-despues']
 
 
 def write_json(path, value):
@@ -275,17 +273,19 @@ def main():
     parser.add_argument('--plan', type=pathlib.Path)
     parser.add_argument('--alias-config', type=pathlib.Path, default=HERE.parent / 'container-aliases.json')
     parser.add_argument('--recibos', type=pathlib.Path, default=ROOT / '.delegados/v4/recibos/migraciones')
+    parser.add_argument('--inventario', type=pathlib.Path, help='snapshot público reciente de configuración y capacidad para simular')
+    parser.add_argument('--copia', type=pathlib.Path, help='copia preliminar local cuyo manifiesto y bytes se comprueban al simular')
     args = parser.parse_args()
     if args.alias not in REAL_ALIASES and not re.fullmatch(r'zz-canary-[a-z0-9-]+', args.alias):
         parser.error('alias permitido: gaia, hades, argos, hegel o zz-canary-* propio')
     plan_path = args.plan or ROOT / '.delegados/v4/migracion' / (args.alias + '.json')
     if not args.ejecutar:
-        print(json.dumps({'alias': args.alias, 'simular': True, 'changes': False, 'network': False,
-                          'plan': str(plan_path), 'steps': STEPS, 'rollback': 'cancelar y asentar operación; update inverso + nonce desde origen',
-                          'prerequisites': ['sesión Cauce propia con empresa activa', 'server2 enrolado y cuenta/harness habilitados',
-                                            'plan con raíces exclusivas y mapas al espacio estándar', 'copia cifrada externa antes de retirar origen'],
-                          'outage': 'desde stop hasta nonce, contexto y terminal verificados; se mide en recibo.json'}, ensure_ascii=False, indent=2))
-        return 0
+        from v4_simular_traslado import simulate
+        result = simulate(args, plan_path, load_plan, target_parameters)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 2 if result['blockers'] else 0
+    if args.inventario or args.copia:
+        parser.error('--inventario y --copia solo se admiten en simulación')
     from v4_mover_flota import Fleet
     plan = {**load_plan(plan_path, args.alias), 'alias': args.alias}
     os.umask(0o077)
