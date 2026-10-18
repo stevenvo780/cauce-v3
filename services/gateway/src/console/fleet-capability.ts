@@ -47,8 +47,10 @@ export async function assertFleetProviderAccount(pool: DatabasePool, capability:
   if (request.kind !== 'create' && request.kind !== 'update') return;
   const accountId = request.parameters.primary_account_id;
   if (!accountId) throw new FleetOperationError('forbidden', 'runtime requires an explicit provider account');
+  // Same pending-registration predicate as fleet operation authority: the account is enabled only after provider login.
   const result = await pool.query<{ provider: string }>(`SELECT provider FROM provider_accounts
-    WHERE id=$1 AND enabled AND ${providerAccountConsentSql('provider_accounts', '$2')}`, [accountId, request.target.tenant_id]);
+    WHERE id=$1 AND (enabled OR (quota_registration_key IS NOT NULL AND quota_identity_hash IS NULL))
+      AND ${providerAccountConsentSql('provider_accounts', '$2')}`, [accountId, request.target.tenant_id]);
   const provider = result.rows[0]?.provider;
   if (result.rows.length !== 1 || !provider || !matchingFleetRuntime(capability, request, provider)) {
     throw new FleetOperationError('forbidden', 'provider account is outside the approved runtime capability');
