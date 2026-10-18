@@ -257,7 +257,7 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
   - [x] [local real] Concurrencia con CAS sin descartar contenido; guardado, Git y sincronización separados con fallo recuperable; historial, diff y restauración; identidad estable y aislamiento en el repo.
   - [ ] Espacios reales con la estructura estándar; repo con las carpetas reales; edición por todas las vías; aplicación con turno real; recuperación ensayada en producción.
 
-- [ ] **7. Copias, recuperación y diagnóstico comprobados.** Se puede descargar una copia del contenido de un espacio y restaurarla en un entorno de prueba. Los fallos relevantes dejan un rastro útil para encontrar su causa. La eliminación de componentes de auditoría innecesarios no ha roto funciones ni suprimido controles necesarios.
+- [x] **7. Copias, recuperación y diagnóstico comprobados.** Se puede descargar una copia del contenido de un espacio y restaurarla en un entorno de prueba. Los fallos relevantes dejan un rastro útil para encontrar su causa. La eliminación de componentes de auditoría innecesarios no ha roto funciones ni suprimido controles necesarios.
   - [x] [local real] Restauración en entorno de prueba con datos sintéticos.
   - [x] El dueño descarga desde la consola la copia de un espacio real y la restaura siguiendo `docs/v4-runbook-copias.md`. **18-oct [prod]:** QA qk1 en producción con kratos como ordenador: dos copias pedidas desde «Perfil y contexto → Backup del espacio», ZIP descargado, SHA-256 igual al recibo y a la pantalla, restauradas y comparadas archivo a archivo; el historial Git ya no puede colar secretos (cp2).
   - [x] [local real] Rastro útil de fallos y poda de auditoría sin romper nada.
