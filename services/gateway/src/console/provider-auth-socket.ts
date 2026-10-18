@@ -56,9 +56,10 @@ export async function attachProviderAuthSocket(
         if (isEnded()) return;
         await currentHuman();
         await manager.consumeSocketTicket(actor, id(), ticket);
+        // The 10s bound is only for a socket that never presents a ticket. PTY start has its own budget.
+        clearTimeout(timer);
         channel = await manager.attach(actor, id(), output);
         if (isEnded() || socket.readyState !== 1) { await channel.close(); return; }
-        clearTimeout(timer);
         socket.send(JSON.stringify({ type: 'ready' }));
         let checking = false;
         revalidate = setInterval(() => {

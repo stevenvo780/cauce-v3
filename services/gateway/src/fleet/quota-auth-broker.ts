@@ -155,7 +155,9 @@ export class QuotaAuthBroker {
   private command(entry: Entry, command: QuotaAuthCommand): Promise<boolean> {
     if (entry.commands.size >= 32 || entry.finished && command.type !== 'close' && command.type !== 'cancel') return Promise.reject(unavailable());
     return new Promise(resolve => {
-      const timer = setTimeout(() => { entry.commands.delete(command.id); resolve(false); }, command.type === 'verify' ? 120_000 : 15_000);
+      // start waits for the helper's started event (60s on a cold container) and must not resolve first.
+      const budget = command.type === 'verify' ? 120_000 : command.type === 'start' ? 90_000 : 15_000;
+      const timer = setTimeout(() => { entry.commands.delete(command.id); resolve(false); }, budget);
       timer.unref(); entry.commands.set(command.id, { command, resolve, timer });
     });
   }

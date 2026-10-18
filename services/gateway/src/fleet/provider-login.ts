@@ -176,7 +176,7 @@ class HostProviderLogin implements ProviderAuthLogin {
     const starting = new Promise<void>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
     const invalid = () => { this.verifiedStop = false; rejectStart(unavailable()); kill(child); };
     const abort = () => { void this.close(); };
-    const timer = setTimeout(invalid, this.config.startTimeoutMs ?? 10_000);
+    const timer = setTimeout(invalid, this.config.startTimeoutMs ?? 60_000);
     this.completed = new Promise<void>(resolve => {
       child.once('close', () => { clearTimeout(timer); this.signal.removeEventListener('abort', abort);
         if (!this.started) rejectStart(unavailable()); resolve(); });
