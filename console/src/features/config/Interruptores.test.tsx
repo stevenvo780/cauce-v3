@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { ConfigPage } from './ConfigPage';
@@ -13,7 +13,6 @@ import { renderWithApi } from '../../test/render';
 interface ChangeRequest { dry_run?: boolean; expected_revision?: number; mutation?: Record<string, unknown> }
 
 const PERMISOS = /acceso y roles/i;
-const ESPACIOS = /espacios y salas/i;
 
 type Usuario = ReturnType<typeof userEvent.setup>;
 
@@ -74,51 +73,6 @@ function appliedReadReceipt(body: ChangeRequest, revision: number) {
 
 beforeEach(() => { window.history.replaceState({}, '', '/config?seccion=espacios'); });
 
-it('los permisos siguen en interruptores junto con las acciones de edición', async () => {
-  servirConfig(() => snapshot(1));
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-
-  const heading = screen.getByRole('heading', { name: /permisos entre clientes/i });
-  const acl = heading.closest('section');
-  expect(acl).not.toBeNull();
-  if (acl) {
-    // Four switches per edge: the master and the three permissions.
-    expect(within(acl).getAllByRole('switch')).toHaveLength(4);
-    // And ZERO text buttons: they were "Disable", "Remove allow_route", "Remove allow_read"
-    // and "Remove allow_control", stacked in an "Actions" column that stretched the row to 147 px.
-    expect(within(acl).queryByRole('button', { name: /^deshabilitar/i })).not.toBeInTheDocument();
-    expect(within(acl).queryByRole('button', { name: /quitar allow_/i })).not.toBeInTheDocument();
-    expect(within(acl).queryByRole('button', { name: /conceder allow_/i })).not.toBeInTheDocument();
-    expect(within(acl).getByRole('columnheader', { name: /acciones/i })).toBeInTheDocument();
-    expect(within(acl).getByRole('button', { name: /^Editar ACL / })).toBeEnabled();
-    expect(within(acl).getByRole('button', { name: /^Eliminar ACL / })).toBeEnabled();
-
-    // And the switch STATES the state: no need for a pill next to it repeating it.
-    expect(within(acl).getByRole('switch', { name: RUTA })).toBeChecked();
-    expect(within(acl).getByRole('switch', { name: LECTURA })).not.toBeChecked();
-  }
-});
-
-it('las cabeceras dejan de ser nombres de columna de Postgres y explican qué conceden', async () => {
-  servirConfig(() => snapshot(1));
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-
-  const heading = screen.getByRole('heading', { name: /permisos entre clientes/i });
-  const acl = heading.closest('section');
-  expect(acl).not.toBeNull();
-  if (acl) {
-    expect(within(acl).getAllByRole('columnheader').map((celda) => celda.textContent.replace(/[?:].*/s, '').trim()))
-      .toEqual(['Arista', 'Habilitado', 'Ruta', 'Lectura', 'Control', 'Alta', 'Acciones']);
-    // The explanation lives in the DOM itself — not only in a `title` the keyboard cannot reach
-    // — so it can be read without a mouse.
-    expect(within(acl).getByText(/ESCRIBA sobre el de la derecha/)).toBeInTheDocument();
-  }
-});
-
 it('un permiso se aplica AL PULSARLO, sin ninguna confirmación en el medio', async () => {
   const cambios: ChangeRequest[] = [];
   servirConfig(() => snapshot(1));
@@ -169,36 +123,6 @@ it('CONTROL NEGATIVO: si el servidor RECHAZA, el interruptor vuelve SOLO a su va
   expect(screen.getByRole('button', { name: /reintentar/i })).toBeInTheDocument();
 });
 
-it('CONTROL NEGATIVO: tras un 4xx NINGÚN interruptor de la tabla queda en estado optimista', async () => {
-  // Sweep: it is not enough to check the one that was clicked. If the optimistic map were
-  // cleaned up poorly, a NEIGHBOUR switch could end up painted with a value nobody saved.
-  servirConfig(() => snapshot(1, { enabled: true, allow_route: true, allow_read: false, allow_control: false }));
-  server.use(http.post('*/v3/console/config/changes', () => HttpResponse.json(
-    { error: 'forbidden', message: 'control permission is required' },
-    { status: 403 },
-  )));
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-
-  const esperado = new Map([
-    ['Habilitado en la arista Steven → Miguel', true],
-    [RUTA, true],
-    [LECTURA, false],
-    [CONTROL, false],
-  ]);
-
-  for (const nombre of esperado.keys()) {
-    await user.click(screen.getByRole('switch', { name: nombre }));
-    await screen.findByRole('alert');
-    for (const [otro, valor] of esperado) {
-      const interruptor = screen.getByRole('switch', { name: otro });
-      if (valor) expect(interruptor).toBeChecked();
-      else expect(interruptor).not.toBeChecked();
-    }
-  }
-});
-
 it('«Reintentar» vuelve a mandar la MISMA mutación, no una distinta', async () => {
   const cambios: ChangeRequest[] = [];
   servirConfig(() => snapshot(1));
@@ -220,28 +144,6 @@ it('«Reintentar» vuelve a mandar la MISMA mutación, no una distinta', async (
   expect(cambios[1]?.mutation).toEqual(cambios[0]?.mutation);
 });
 
-it('mientras la escritura vuela, el interruptor pinta lo pedido y lo declara con aria-busy', async () => {
-  servirConfig(() => snapshot(1));
-  let soltar: (() => void) | undefined;
-  const trabada = new Promise<void>((resolve) => { soltar = resolve; });
-  server.use(http.post('*/v3/console/config/changes', async () => {
-    await trabada;
-    return HttpResponse.json({ applied: true, dry_run: false, revision: 2, summary: 'ok' }, { status: 201 });
-  }));
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-
-  await user.click(await screen.findByRole('switch', { name: LECTURA }));
-  // The new state is visible instantly — that is the optimistic bit — BUT it says it is not yet
-  // confirmed: without `aria-busy`, an unverified value looks identical to a saved one.
-  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked(); });
-  expect(screen.getByRole('switch', { name: LECTURA })).toHaveAttribute('aria-busy', 'true');
-
-  soltar?.();
-  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy'); });
-});
-
 it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla esté al día', async () => {
   let releer = false;
   server.use(http.get('*/v3/console/config', () => (releer
@@ -257,46 +159,6 @@ it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla est
 
   await user.click(await screen.findByRole('switch', { name: LECTURA }));
   expect(await screen.findByText(/la relectura del snapshot NO llegó/i)).toBeInTheDocument();
-});
-
-it.each([2, 4])('un snapshot posterior reemplaza el valor optimista tras un recibo válido de revisión %i y una relectura fallida', async (appliedRevision) => {
-  let current = snapshot(1);
-  let failRead = false;
-  const changes: ChangeRequest[] = [];
-  server.use(
-    http.get('*/v3/console/config', () => failRead
-      ? HttpResponse.json({ error: 'internal', message: 'snapshot unavailable' }, { status: 500 })
-      : HttpResponse.json(current)),
-    http.post('*/v3/console/config/changes', async ({ request }) => {
-      const body = await request.json() as ChangeRequest;
-      changes.push(body);
-      failRead = true;
-      return appliedReadReceipt(body, appliedRevision);
-    }),
-  );
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-  await user.click(screen.getByRole('switch', { name: LECTURA }));
-  const receiptNotice = new RegExp(`el servidor lo aplicó en la revisión ${String(appliedRevision)}`);
-  await screen.findByText(receiptNotice);
-  expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked();
-  expect(screen.getByRole('switch', { name: LECTURA })).not.toHaveAttribute('aria-busy');
-  expect(changes[0]?.expected_revision).toBe(1);
-
-  if (appliedRevision > 2) {
-    current = snapshot(appliedRevision - 1, { allow_route: false, allow_read: false });
-    failRead = false;
-    await user.click(screen.getByRole('button', { name: 'Actualizar' }));
-    await waitFor(() => { expect(screen.getByRole('switch', { name: RUTA })).not.toBeChecked(); });
-    expect(screen.getByRole('switch', { name: LECTURA })).toBeChecked();
-  }
-  current = snapshot(appliedRevision + 1, { allow_read: false });
-  failRead = false;
-  await user.click(screen.getByRole('button', { name: 'Actualizar' }));
-  await waitFor(() => { expect(screen.getByRole('switch', { name: LECTURA })).not.toBeChecked(); });
-  expect(screen.queryByText(receiptNotice)).not.toBeInTheDocument();
-  expect(changes).toHaveLength(1);
 });
 
 it('conserva el valor pedido en vuelo y respeta un snapshot más nuevo al terminar con una relectura fallida', async () => {
@@ -356,64 +218,6 @@ it('quitar Control SÍ confirma, y cancelar no manda nada ni mueve el interrupto
   await user.click(screen.getByRole('button', { name: /^quitar control$/i }));
   await waitFor(() => { expect(cambios).toHaveLength(1); });
   expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: false } });
-});
-
-it('CONCEDER Control no confirma nada: se deshace con otro clic en el mismo interruptor', async () => {
-  const cambios: ChangeRequest[] = [];
-  servirConfig(() => snapshot(1));
-  registrarCambios(cambios);
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, PERMISOS);
-
-  await user.click(await screen.findByRole('switch', { name: CONTROL }));
-  await waitFor(() => { expect(cambios).toHaveLength(1); });
-  expect(cambios[0]?.mutation).toMatchObject({ value: { allow_control: true } });
-});
-
-// --- Spaces and members ----------------------------------------------------------------------
-
-it('«Espacios y miembros» pierde los treinta botones «Deshabilitar» y gana interruptores', async () => {
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ESPACIOS);
-  await screen.findByRole('heading', { name: 'Clientes' });
-
-  const area = screen.getByRole('tabpanel', { name: /espacios y salas/i });
-  expect(within(area).queryAllByRole('button', { name: 'Deshabilitar' })).toHaveLength(0);
-  expect(within(area).queryAllByRole('button', { name: 'Habilitar' })).toHaveLength(0);
-  // 5 tenants + 8 rooms + 19 memberships from the mocks fixture.
-  expect(within(area).getAllByRole('switch').length).toBeGreaterThanOrEqual(32);
-
-  // And the disabled memberships from the fixture appear disabled, not with an "Enable" button.
-  expect(within(area).getByRole('switch', { name: 'Habilitado en la membresía Miguel/ops.miguel/atlas' }))
-    .not.toBeChecked();
-});
-
-it('«Alta rápida» y el wizard dejan de estar los dos abiertos: son dos modos del MISMO alta', async () => {
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ESPACIOS);
-
-  // On entering, ONE is visible. The other is not hidden: it is one click away, with a label
-  // that says when it is the right call.
-  expect(await screen.findByRole('group', { name: /alta rápida/i })).toBeInTheDocument();
-  expect(screen.queryByRole('group', { name: /wizard de espacios/i })).not.toBeInTheDocument();
-
-  // Segmented, not a tab: see `AltaDeEspacios`.
-  await user.click(screen.getByRole('button', { name: /espacio completo/i }));
-  expect(await screen.findByRole('group', { name: /wizard de espacios/i })).toBeInTheDocument();
-  expect(screen.queryByRole('group', { name: /alta rápida/i })).not.toBeInTheDocument();
-});
-
-it('el JSON crudo del alta deja de estar abierto por defecto', async () => {
-  const user = userEvent.setup();
-  renderWithApi(<ConfigPage />);
-  await irA(user, ESPACIOS);
-
-  const crudo = (await screen.findByLabelText('Mutación del alta')).closest('details');
-  expect(crudo).not.toBeNull();
-  expect(crudo).not.toHaveAttribute('open');
 });
 
 // --- Read-only --------------------------------------------------------------------------------

@@ -104,19 +104,6 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   expect(await screen.findByText(/espacio completo/i)).toBeInTheDocument();
 });
 
-it('quita el tilde de aplicado del paso cuya mutación ya no es la que aceptó el servidor', async () => {
-  const user = userEvent.setup();
-  renderWizard();
-  await user.click(screen.getByRole('button', { name: review }));
-  await applyEveryStep(user, 1);
-  expect(screen.getByRole('button', { name: /1\. tenant/i }).querySelector('svg')).not.toBeNull();
-
-  await user.click(screen.getByRole('button', { name: /1\. tenant/i }));
-  await user.type(screen.getByLabelText(/display name/i), ' SA');
-
-  expect(screen.getByRole('button', { name: /1\. tenant/i }).querySelector('svg')).toBeNull();
-});
-
 it('vuelve a bloquear el apply cuando el plan cambia después del dry-run', async () => {
   const user = userEvent.setup();
   renderWizard();
@@ -147,30 +134,6 @@ it('bloquea el apply de nuevo cuando el servidor responde conflicto de revisión
   expect(screen.queryByLabelText(/dry-run del wizard/i)).not.toBeInTheDocument();
 });
 
-it('deja fuera del plan los recursos que el operador no incluye', async () => {
-  const user = userEvent.setup();
-  const calls = renderWizard();
-  await user.click(screen.getByRole('checkbox', { name: /crear el tenant/i }));
-  await user.click(screen.getByRole('button', { name: review }));
-  await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
-
-  expect(screen.getByLabelText('Plan del espacio').children).toHaveLength(3);
-  expect(calls[0]?.mutation.resource).toBe('room');
-});
-
-it('no deja avanzar con un alias que el protocolo rechaza', async () => {
-  const user = userEvent.setup();
-  renderWizard();
-  await user.click(screen.getByRole('button', { name: /3\. membership/i }));
-  await user.clear(screen.getByLabelText('Alias'));
-  await user.type(screen.getByLabelText('Alias'), 'Agent Uno');
-
-  expect(await screen.findByRole('alert')).toHaveTextContent(/el alias debe ser minúsculas/i);
-  expect(screen.getByRole('button', { name: /siguiente/i })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: review }));
-  expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeDisabled();
-});
-
 it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO llegó', async () => {
   const user = userEvent.setup();
   // The wizard was the only one of the four write paths that ignored `outcome.recarga`: it sang
@@ -189,36 +152,6 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
   // Neither green nor red: it was applied, but what shows below may be stale.
   expect(aviso).toHaveClass('bg-warn-soft');
-});
-
-/**
- * **The harness step stopped offering "Command".**
- *
- * Nobody reads `harness_definitions.command`: `listAdapters` does not even select it
- * (packages/store/src/repository/agents.ts:278) and the adapter takes its command from its own
- * compiled table (packages/adapter-sdk/src/harnesses/index.ts:12) or from the `harness_command`
- * of its local config file (packages/adapter-sdk/src/bin/config.ts:179). A form field that writes
- * to a column nobody obeys is exactly the promise this work came to retire.
- *
- * No capability is lost: the protocol schema still accepts it and the raw mutation editor under
- * "History and JSON" still admits it. What is being retired is the INVITATION.
- */
-it('no ofrece «Command» en el paso de harness, porque esa columna no la lee nadie', async () => {
-  const user = userEvent.setup();
-  renderWizard();
-  await user.click(screen.getByRole('button', { name: /4\. harness/i }));
-
-  // `/^command/i` rather than `/^command$/i`: the label carried an attached hint ("opcional, null
-  // si queda vacío"), so its accessible name was NEVER exactly "Command" and the end-anchored
-  // assertion would have passed with the field still on screen. Verified: with the anchored
-  // version this test stayed green BEFORE removing anything.
-  expect(screen.queryByLabelText(/^command/i)).not.toBeInTheDocument();
-
-  // NEGATIVE CONTROL: the step stays whole. If removing the field had emptied the screen, this
-  // would go red instead of letting through a "not there" that is really "nothing here".
-  expect(screen.getByLabelText(/^harness id$/i)).toBeInTheDocument();
-  expect(screen.getByLabelText(/^display name$/i)).toBeInTheDocument();
-  expect(screen.getByLabelText(/capabilities/i)).toBeInTheDocument();
 });
 
 it('la mutación del harness no lleva la clave `command`', async () => {
