@@ -244,6 +244,7 @@ class AccountBindings:
     def __init__(self, path: str | None):
         self.path = path
         self.map: dict[tuple[str, str], str] = {}
+        self.publish_unbound = True
         self.load_error: str | None = None
         if not path:
             self.load_error = 'CAUCE_QUOTA_ACCOUNT_BINDINGS_FILE no esta configurado'
@@ -257,6 +258,8 @@ class AccountBindings:
             self.load_error = f'archivo de bindings ilegible ({path}): {exc}'
             return
         entries = raw.get('bindings') if isinstance(raw, dict) else None
+        if isinstance(raw, dict) and raw.get('publish_unbound') is False:
+            self.publish_unbound = False
         if not isinstance(entries, list):
             self.load_error = f"'{path}' no tiene una lista 'bindings'"
             return
@@ -268,6 +271,21 @@ class AccountBindings:
             account_id = entry.get('account_id')
             if provider and account_id:
                 self.map[(sanitize_provider(provider), sanitize_key(group_key, 'default'))] = str(account_id)
+
+    def binds_provider(self, provider: str) -> bool:
+        return any(bound == provider for bound, _ in self.map)
+
+    def bound_note(self, provider: str, note: str | None) -> str | None:
+        """Keeps only the '<group>: reason' parts of a provider note whose group is bound, without the
+        prefix: with publish_unbound off, a note about an unregistered account is not published."""
+        if note is None or self.publish_unbound:
+            return note
+        kept = []
+        for part in note.split('; '):
+            group, separator, reason = part.partition(': ')
+            if separator and (provider, sanitize_key(group, 'default')) in self.map:
+                kept.append(reason)
+        return trim('; '.join(kept), 512)
 
     def resolve(self, provider: str, group_key: str) -> tuple[str | None, str | None]:
         account_id = self.map.get((provider, group_key))
@@ -386,6 +404,8 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
     flat_windows = []
     for group_key, windows in groups.items():
         account_id, binding_note = bindings.resolve(name, group_key)
+        if account_id is None and not bindings.publish_unbound:
+            continue
         for window in windows:
             flat_windows.append({
                 **window,
@@ -394,7 +414,7 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
                 'binding_note': binding_note,
             })
 
-    note = trim(pick(raw, 'note', 'nota', 'error'), 512)
+    note = bindings.bound_note(name, trim(pick(raw, 'note', 'nota', 'error'), 512))
     if dropped:
         extra = f'{len(dropped)} ventana(s) descartada(s): {"; ".join(dropped[:3])}'
         note = f'{note} | {extra}' if note else trim(extra, 512)
@@ -457,6 +477,8 @@ def build_payload(
     providers = []
     for raw_name, raw_provider in providers_raw.items():
         name = sanitize_provider(raw_name)
+        if not bindings.publish_unbound and not bindings.binds_provider(name):
+            continue
         if not isinstance(raw_provider, dict):
             providers.append(failed_provider_entry(
                 name, f'entrada de proveedor invalida (no es un objeto): {type(raw_provider).__name__}', captured_at))

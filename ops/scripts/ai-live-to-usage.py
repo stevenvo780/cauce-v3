@@ -50,7 +50,7 @@ def normalize(data: object, now: float, max_age: float) -> dict:
         elif stamp is None or stamp > now + 30 or now - stamp > max_age:
             reason = 'medición sin fecha válida o caducada'
         if reason:
-            entry['notes'].append(f"{account.get('label', 'cuenta')}: {reason}")
+            entry['notes'].append(f"{group_slug(account)}: {reason}")
             continue
         windows = account.get('windows')
         if not isinstance(windows, list):
@@ -75,7 +75,7 @@ def normalize(data: object, now: float, max_age: float) -> dict:
                 'label': str(account.get('label') or group_slug(account)),
             })
         if not valid:
-            entry['notes'].append(f"{account.get('label', 'cuenta')}: sin ventanas válidas")
+            entry['notes'].append(f"{group_slug(account)}: sin ventanas válidas")
             continue
         entry['windows'].extend(valid)
         entry['observations'].append(stamp)
