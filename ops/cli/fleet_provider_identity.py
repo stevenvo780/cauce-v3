@@ -785,8 +785,11 @@ def assert_public_result(profile: pathlib.Path, result: dict) -> None:
 
 
 def extensions_sha256(rows: list) -> str:
-    body = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
-    return hashlib.sha256(body).hexdigest()
+    from host_channel_client import HostFailure, stable_json
+    try:
+        return hashlib.sha256(stable_json(rows)).hexdigest()
+    except HostFailure:
+        raise ProviderProofError('extension hash canonicalization is unavailable') from None
 
 
 def public_receipt(rows: list, result: dict) -> dict:
