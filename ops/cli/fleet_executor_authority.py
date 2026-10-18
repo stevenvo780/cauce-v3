@@ -102,6 +102,22 @@ def signed_call(configuration: dict, payload: dict) -> dict:
         if not isinstance(result, dict):
             raise SafeFailure('signed authority returned no bounded object')
         return result
+    except urllib.error.HTTPError as error:
+        code = 'unverified_response'
+        try:
+            with error:
+                raw = error.read(4097)
+            body = json.loads(raw) if len(raw) <= 4096 else None
+            candidate = body.get('error') if isinstance(body, dict) else None
+            if candidate in ('AUTHORITY_REVOKED', 'AUTHORITY_UNAVAILABLE', 'INVALID_REQUEST',
+                             'forbidden', 'conflict', 'invalid_input'):
+                code = candidate
+        except (OSError, ValueError):
+            pass
+        status = error.code if type(error.code) is int and 100 <= error.code <= 599 else 'unverified'
+        raise SafeFailure(f'signed authority rejected request: HTTP {status} ({code})') from None
+    except SafeFailure:
+        raise
     except (HostFailure, OSError, ValueError, urllib.error.URLError):
         raise SafeFailure('signed authority effect is unverified') from None
 
@@ -397,6 +413,8 @@ def present_inventory(observed: dict, principal: dict, proof: dict, token_hash: 
 def prepare(policy: dict, context: dict, agent: dict, snapshot: pathlib.Path, manifest: pathlib.Path, *, bootstrap: bool) -> dict:
     try:
         return prepare_locked(policy, context, agent, snapshot, manifest, bootstrap)
+    except SafeFailure:
+        raise
     except (OSError, ValueError, KeyError):
         raise SafeFailure('central credential preparation is unverified') from None
 
