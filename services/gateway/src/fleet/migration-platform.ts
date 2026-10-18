@@ -268,7 +268,7 @@ async function migrationMessageAccess(pool: DatabasePool, source: CompanyAuthori
         AND (($2::boolean AND tenant.id=$3 AND member.alias=$4) OR (NOT $2::boolean AND tenant.is_hub))
         AND member.enabled AND member.retired_at IS NULL AND policy.allow_route AND policy.allow_read
         AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL
-        AND agent.enabled AND agent.retired_at IS NULL AND agent.purged_at IS NULL
+        AND agent.retired_at IS NULL AND agent.purged_at IS NULL
       ORDER BY member.tenant_id,member.alias,member.room_id LIMIT 1 FOR SHARE OF member,policy,tenant,room,agent`,
     [authority.actingCompany, authority.homeCompany === authority.actingCompany, authority.homeTenant, authority.alias])).rows[0];
     if (!actor) conflict('the selected company has no active migration routing actor');
