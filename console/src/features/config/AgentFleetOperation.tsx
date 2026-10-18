@@ -1,14 +1,14 @@
 import type { FleetEvidence, FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
 import { FLEET_ACTION_LABELS } from './agent-lifecycle-model';
 import { AuthOperationPanel } from './AuthOperationPanel';
-import { blockingOperation, blockingText, cancellable, ERRORS, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
+import { blockingOperation, blockingText, cancellable, ERRORS, purgeBlockers, purgeEntries, resumable, STALE_RESUME_TEXT, STATUS, STEP_STATUS, STEPS } from './fleet-operation-text';
 
 const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio' };
 
 export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview }) {
   const deleted = purgeEntries(preview, 'delete');
   const kept = purgeEntries(preview, 'preserve');
-  const blocked = purgeEntries(preview, 'blocked');
+  const blockers = purgeBlockers(preview);
   const other = preview.dependencies.filter((entry) => !/^purge\.(?:delete|preserve|blocked)\.[a-z0-9_]+$/u.test(entry.type));
   return <section aria-label="Previsualización operativa" className="agent-fleet-receipt">
     <p>Acción: {FLEET_ACTION_LABELS[preview.kind]} · Revisión esperada: {preview.expected_revision}</p>
@@ -25,7 +25,12 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
         ? 'El historial conserva la identidad de este agente: su alias seguirá reservado y no se podrá usar para un agente nuevo.'
         : 'Sin historial que conserve su identidad, el alias quedará libre para otro agente.'}
     </p> : null}
-    {blocked.length ? <p className="notice">Impide la purga: {blocked.join(', ')}.</p> : null}
+    {blockers.length ? <section aria-label="Qué bloquea la purga" className="notice">
+      <p>Qué bloquea la purga:</p>
+      <ul>{blockers.map((blocker) => <li key={blocker.table}>
+        {blocker.label} ({blocker.count}): quedan filas que la purga no puede borrar. Resolvé esta dependencia y volvé a previsualizar.
+      </li>)}</ul>
+    </section> : null}
     {other.length ? <ul aria-label="Dependencias operativas">{other.map((entry, index) =>
       <li key={index}>{entry.type} · {JSON.stringify(entry.identity)} · {entry.blocking ? 'Bloquea esta operación' : 'Referencia informativa'}</li>)}</ul>
       : !preview.dependencies.length ? <p>El servidor no informó dependencias en esta previsualización.</p> : null}

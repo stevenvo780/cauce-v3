@@ -1,6 +1,17 @@
 import type { CompanyPurgeBlocker, CompanyPurgeReceipt } from '../../api/client/company-purge';
 import { Notice } from '../../components/kit';
 
+const BLOCKER_REASON: Record<string, string> = {
+  agent: 'Queda un agente de la empresa sin purgar',
+  quota_environment: 'Queda un entorno de cuotas sin eliminar',
+  fleet_operation: 'Hay una operación de flota sin terminar',
+  quota_operation: 'Hay una operación de cuotas sin terminar',
+  agent_quota_operation: 'Hay una consulta de cuota de un agente sin terminar',
+  connection: 'Hay un agente todavía conectado',
+  space_backup: 'Hay una copia de un espacio sin terminar',
+  foreign_reference: 'Otra empresa todavía referencia un recurso de esta empresa',
+};
+
 const BLOCKER_ACTION: Record<string, string> = {
   agent: 'Purga el agente y sus recursos desde Flota.',
   quota_environment: 'Elimina el entorno desde Mis cuotas y espera a que termine.',
@@ -13,9 +24,10 @@ const BLOCKER_ACTION: Record<string, string> = {
 };
 
 export function CompanyPurgeBlockers({ blockers }: { blockers: CompanyPurgeBlocker[] }) {
-  return <Notice tone="danger" role="alert"><p>La empresa conserva recursos o referencias pendientes:</p>
+  return <Notice tone="danger" role="alert"><p>Qué bloquea la purga de la empresa:</p>
     <ul>{blockers.map((blocker, index) => <li key={`${blocker.kind}:${blocker.id}:${String(index)}`}>
-      <code>{blocker.kind}</code> · <code>{blocker.id}</code>: {BLOCKER_ACTION[blocker.kind] ?? 'Revisa este recurso con un administrador de plataforma antes de reintentar.'}
+      {BLOCKER_REASON[blocker.kind] ?? 'Hay un recurso o una referencia sin resolver'} (<code>{blocker.kind}</code> · <code>{blocker.id}</code>).{' '}
+      {BLOCKER_ACTION[blocker.kind] ?? 'Revisa este recurso con un administrador de plataforma antes de reintentar.'}
     </li>)}</ul></Notice>;
 }
 

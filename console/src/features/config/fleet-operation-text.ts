@@ -38,6 +38,17 @@ export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 
   });
 }
 
+export interface PurgeBlocker { table: string; label: string; count: string }
+
+export function purgeBlockers(preview: FleetOperationPreview): PurgeBlocker[] {
+  return preview.dependencies.flatMap((entry) => {
+    const [kind, verb, table] = entry.type.split('.');
+    if (kind !== 'purge' || verb !== 'blocked' || !table) return [];
+    const count = typeof entry.identity.kind === 'string' ? entry.identity.kind.replace(' rows', '') : '?';
+    return [{ table, label: TABLES[table] ?? table, count }];
+  });
+}
+
 type OperationKind = FleetOperation['kind'];
 const UNRESOLVED_STATUSES: readonly FleetOperation['status'][] = ['failed', 'queued', 'running', 'awaiting_auth', 'cancelling'];
 const KIND_NOUNS: Record<OperationKind, string> = { create: 'preparación', update: 'actualización', start: 'inicio', stop: 'detención',
