@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import type userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
@@ -13,6 +13,8 @@ export type Usuario = ReturnType<typeof userEvent.setup>;
 
 export async function irA(user: Usuario, pestana: RegExp) {
   await user.click(await screen.findByRole('tab', { name: pestana }));
+  // Sections load lazily: the panel is only usable once its chunk has arrived.
+  await waitFor(() => { expect(screen.queryAllByText(/cargando sección/i)).toHaveLength(0); });
 }
 
 export const MEMBERSHIP_JANUS = 'Habilitado en la membresía Miguel/grp.miguel/janus';

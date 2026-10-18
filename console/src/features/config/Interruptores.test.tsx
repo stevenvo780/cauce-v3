@@ -18,6 +18,8 @@ type Usuario = ReturnType<typeof userEvent.setup>;
 
 async function irA(user: Usuario, pestana: RegExp) {
   await user.click(await screen.findByRole('tab', { name: pestana }));
+  // Sections load lazily: the panel is only usable once its chunk has arrived.
+  await waitFor(() => { expect(screen.queryAllByText(/cargando sección/i)).toHaveLength(0); });
 }
 
 /** The snapshot these tests serve. A single edge, so the table stays readable. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { QuotaAccount, QuotaEnvironment, QuotaEnvironmentReceipt, QuotaEnvironmentsSnapshot } from '../../api/client/my-quotas-client';
 import type { ProviderAuthRequest } from '../../api/client/provider-auth-client';
 import { useApi } from '../../api/context';
@@ -6,7 +6,8 @@ import { usePolling } from '../../api/use-polling';
 import { FormDialog } from '../../components/dialogs';
 import { Button, Notice } from '../../components/kit';
 import { randomUuid } from '../../random-id';
-import { ProviderAuthPanel } from './ProviderAuthPanel';
+/* The auth terminal pulls in xterm: load it only when a login actually starts. */
+const ProviderAuthPanel = lazy(async () => ({ default: (await import('./ProviderAuthPanel')).ProviderAuthPanel }));
 import { quotaHostSupports } from './quota-environment-capabilities';
 import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
 
@@ -142,8 +143,10 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
       description={`${account.provider}${hostName ? ` · ${hostName}` : ''}`} onClose={close}>
       {progress ? <p className="m-0 text-sm" role="status">{progress}</p> : null}
       {activeScope?.error ? <Notice tone="danger" role="alert">{activeScope.error}</Notice> : null}
-      {activeScope?.request ? <ProviderAuthPanel key={activeScope.operation} request={activeScope.request} client={api} autoStart
-        onAuthenticated={authenticated} /> : null}
+      {activeScope?.request ? <Suspense fallback={<p className="m-0 text-sm" role="status">Cargando terminal de autenticación…</p>}>
+        <ProviderAuthPanel key={activeScope.operation} request={activeScope.request} client={api} autoStart
+          onAuthenticated={authenticated} />
+      </Suspense> : null}
     </FormDialog>
   </section>;
 }

@@ -2,7 +2,7 @@ import './admin-ui.css';
 import { PageFreshness } from '../../components/PageFreshness';
 import { Tabs } from '@base-ui/react/tabs';
 import { ShieldOff } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConsoleAccess } from '../../api/types';
 import { LinkButton, Notice } from '../../components/kit';
@@ -14,18 +14,20 @@ import {
   onNavClick, useRouteSearch,
 } from '../../router';
 import { useMediaQuery } from '../../shell/use-media-query';
-import { AccesoSection } from './AccesoSection';
-import { AgentesSection } from './AgentesSection';
-import { ArnesesSection } from './ArnesesSection';
-import { ComputadorasSection } from './ComputadorasSection';
-import { AvanzadoSection } from './AvanzadoSection';
 import { esNegativaDePermiso } from './config-change';
 import { RemovalDialog } from './RemovalDialog';
 import { TablasDeSeccion } from './ConfigTables';
-import { EspaciosSection } from './EspaciosSection';
-import { GeneralSection } from './GeneralSection';
 import { CONFIG_SECTIONS, SECCION_POR_DEFECTO, type ConfigSectionId } from './sections';
 import { useConfigWrites } from './use-config-writes';
+
+/* One chunk per section: opening Ajustes downloads only the section on screen, not all seven. */
+const GeneralSection = lazy(async () => ({ default: (await import('./GeneralSection')).GeneralSection }));
+const EspaciosSection = lazy(async () => ({ default: (await import('./EspaciosSection')).EspaciosSection }));
+const AgentesSection = lazy(async () => ({ default: (await import('./AgentesSection')).AgentesSection }));
+const ComputadorasSection = lazy(async () => ({ default: (await import('./ComputadorasSection')).ComputadorasSection }));
+const ArnesesSection = lazy(async () => ({ default: (await import('./ArnesesSection')).ArnesesSection }));
+const AccesoSection = lazy(async () => ({ default: (await import('./AccesoSection')).AccesoSection }));
+const AvanzadoSection = lazy(async () => ({ default: (await import('./AvanzadoSection')).AvanzadoSection }));
 
 /** Ajustes: a left sub-navigation of sections, one visible at a time. */
 export function ConfigPage() {
@@ -130,8 +132,10 @@ function ConfigPageContent() {
         className={cn('hidden gap-1 md:flex', 'md:sticky md:top-4 md:flex-col')}>
         {CONFIG_SECTIONS.map((section) => <Tabs.Tab key={section.id} value={section.id} className={NAV_TAB}>{section.label}</Tabs.Tab>)}
       </Tabs.List>
-      {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} keepMounted className="min-w-0 outline-none">
-        {contenido[section.id]}
+      {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} className="min-w-0 outline-none">
+        <Suspense fallback={<p className="muted" role="status">Cargando sección…</p>}>
+          {contenido[section.id]}
+        </Suspense>
       </Tabs.Panel>)}
     </Tabs.Root>
   </div>;
