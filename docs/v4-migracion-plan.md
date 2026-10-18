@@ -431,3 +431,56 @@ python3 ops/tests/test-cauce-cli-dynamic.py recorrido hades   # o hegel; Gaia y 
 ```
 
 Imprime `{"alias", "exit", "sawSession", "detached", "seconds"}` y sale con 0 solo si entró, vio `cauce-<alias>` y salió desacoplado.
+
+## 7. Corte coordinado en una orden
+
+`ops/scripts/v4-mover-agente.sh gaia` y `--simular` describen el recorrido sin red ni escrituras. El corte explícito es:
+
+```sh
+ops/scripts/v4-mover-agente.sh gaia --ejecutar
+```
+
+Lee el plan privado `.delegados/v4/migracion/gaia.json`; `--plan`, `--alias-config` y `--recibos` permiten elegir sus ubicaciones. No instala ni despliega Cauce. Reutiliza las operaciones V4 y la sesión nominal creada con `cauce login`; no copia credenciales de proveedor ni cambia de cuenta. Los prerrequisitos se preparan una vez antes de la ventana: server2 enrolado, ejecutor y plantilla del harness disponibles, imagen aprobada cargada, cuenta original vinculada y autenticada en destino, contexto inicial versionado y terminal operativa. El origen debe estar bajo control de V4, con sus supervisores legados retirados de la escritura. El prechequeo rechaza colocaciones, bindings y alcances inválidos antes de detener; la autenticación efectiva del destino se comprueba durante la operación V4 y, si falla, inicia la vuelta atrás.
+
+Esqueleto del plan de Gaia, que el orquestador completa con las rutas y el digest de la instalación aprobada:
+
+```json
+{
+  "company": "humanizar",
+  "tenant": "Miguel",
+  "session_file": "/ruta/privada/sesion-cauce.json",
+  "source": {"route": "ssh:usuario@host-prod", "machine_id_sha256": "HUELLA_16_HEX_DEL_ORIGEN"},
+  "destination": {
+    "route": "ssh:server@server2",
+    "host_id": "server2",
+    "machine_id_sha256": "HUELLA_16_HEX_DEL_DESTINO",
+    "mode": "container",
+    "image": "sha256:DIGEST_DE_LA_IMAGEN_APROBADA"
+  },
+  "roots": [
+    {"name": "clawd", "path": "/datos/raiz-propia/clawd", "target": "projects/gaia-clawd"},
+    {"name": "openclaw", "path": "/datos/raiz-propia/.openclaw", "target": "data/openclaw"}
+  ],
+  "timeout": 300
+}
+```
+
+El plan es propio y no escribible por otros usuarios. No contiene contraseñas, cookies ni tokens. `session_file` referencia la sesión local existente, nunca una sesión exportada de otro runtime. `ca_file` permite usar una CA privada ya instalada. Las huellas son los primeros 16 caracteres hexadecimales del SHA-256 de `/etc/machine-id`, como en los recibos de medición. Para Hades, Argos y Hegel cambian las raíces exclusivas y sus mapas según §2; no se incluye `/workspace` compartido. Hegel necesita su inventario de repos resuelto. El copiador aplica los límites de alias y tenant de `container-aliases.json` y los montajes observados, también en contenedores compartidos. Antes y después de detener comprueba que las raíces declaradas cubren todas las raíces de datos propias; un subdirectorio que deje fuera SQLite no acredita copia completa.
+
+El comando ejecuta y conserva un recibo privado por corte:
+
+1. Resuelve la colocación y conserva identidad, harness, cuenta, modelo, esfuerzo y membresías; comprueba destino, imagen y volúmenes. Compara identidades físicas para impedir trasladar los agentes reales al mismo ordenador.
+2. Mide la VPS con `v4-medicion-migracion.sh` y acredita primero nonce, contexto y terminal del origen, necesarios para verificar una reversión.
+3. Detiene únicamente el alias por V4 y realiza la copia integral antes de iniciar el destino. Conserva Git completo, índice, cambios locales, archivos ignorados, sesiones de trabajo y SQLite con sus acompañantes WAL/SHM. Compara inventarios y hashes antes y después: una escritura concurrente invalida la copia.
+4. Restaura en `state_directory/space`, con los siete directorios estándar y los mapas declarados. En Docker usa el volumen de estado con las mismas etiquetas que exige el ejecutor y el UID/GID del runtime. No escribe sobre un destino ocupado. Conserva un manifiesto de ruta antigua, ruta nueva y hash.
+5. Envía `update` con la colocación nueva por la flota V4; exige recibos terminales y autenticación de la cuenta original. Aplica los topes de §5: Gaia 1 GiB/1,5 CPU, Hades 1 GiB/1 CPU, Argos 3 GiB/2 CPU y Hegel 2 GiB/2 CPU.
+6. Reaplica el contexto mediante la recarga existente si su contrato todavía pertenece a la generación anterior, sin cambiar su revisión; después exige nonce respondido por el agente a través de Cauce, contexto versionado aplicado, adopción viva del perfil, host/cuenta/harness visibles en el inventario y terminal WebSocket abierta por el CLI existente. En terminal de shell comprueba además un nonce escrito y leído en la sesión.
+7. Mide otra vez la VPS con el alcance sellado del «antes» y guarda la comparación. No elimina el origen, sus imágenes ni sus datos.
+
+La copia integral se transporta por SSH y permanece privada, con archivo `0600` y directorio `0700`. Excluye credenciales por rutas concretas y cachés regenerables, con motivo en el manifiesto; nombres de código como `auth.ts`, `token.py` o sesiones de trabajo no son credenciales. Si detecta un secreto de formato inequívoco fuera de esas rutas, aborta para que el dueño lo separe: no omite silenciosamente SQLite ni otros datos. Rechaza enlaces fuera del alcance, almacenamiento Git externo y archivos especiales no regenerables. Esta copia de corte complementa las copias filtradas de §6.3; no las convierte retrospectivamente en respaldos completos.
+
+La parada dura desde el inicio de `stop` hasta terminar las verificaciones del destino; `recibo.json.outage_seconds` registra su duración real. Incluye inventario, transferencia, restauración, activación y respuesta del proveedor: no se promete el tiempo del ensayo para los datos reales. Los pasos y operaciones conservan sus duraciones e identificadores. Un fallo posterior al corte, incluidos SIGINT/SIGTERM, cancela y espera cualquier operación pendiente y ejecuta `update` inverso antes de verificar nonce, contexto y terminal desde el origen. Si el fallo ocurre antes de la relocalización, ejecuta `start` en origen. La aceptación desconocida o una cancelación no acreditada detienen la recuperación para evitar dos consumidores; el recibo queda `rollback_failed`, sin afirmar éxito.
+
+Ensayo local del comando: traslado del agente desechable con parada de **12,674 s** y copia de **0,209 s**; fallo real de la shell de destino (`/bin/false`) con recuperación automática verificada en **22,212 s**. Se usaron PostgreSQL, gateway, enrolamiento, autoridad, flota, SDK y terminal reales, con dos colocaciones lógicas en el mismo ordenador y un proveedor sintético. Los hashes y SQLite quedaron comprobados. Los recibos están en `.delegados/v4/recibos/20261017T204657-mover-agente-un-paso/`. Este ensayo acredita el encadenado y la reversión; las mediciones del contenedor auxiliar no acreditan ahorro de RAM de los agentes reales ni un traslado físico a server2.
+
+Para el canario Gaia: preparar enrolamiento, binding, autenticación privada y contexto inicial; comprobar que el origen ya depende exclusivamente del controlador V4; completar el plan con los dos montajes inventariados en su informe preparatorio; ejecutar primero la simulación y luego la orden de corte. Revisar `recibo.json`, restauración, nonce, terminal, contexto y mediciones. Contrastar además la cuenta/cuota y el host en la consola, y verificar una edición N+1. El origen se conserva al menos siete días y se obtiene copia cifrada externa antes de retirarlo. La orden no acredita por sí sola esa réplica externa, una cuota fresca del proveedor ni un despliegue productivo. Un SIGKILL o pérdida del host del operador exige recuperar usando el diario y la historia durable de operaciones; no hay un supervisor de migración nuevo.
