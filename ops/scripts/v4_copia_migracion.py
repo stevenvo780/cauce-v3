@@ -20,6 +20,7 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v4_alcance_copia import check_sources, host_containers, tenant_scope  # noqa: E402
+from v4_git_migracion import alternate_entries, init_repository, shallow_boundaries, valid_boundaries  # noqa: E402
 
 SCHEMA = 'cauce.v4-migracion-copia/1'
 CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'container-aliases.json')
@@ -111,40 +112,6 @@ def relative(value) -> str:
 
 def under(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(prefix + '/')
-
-
-def alternate_entries(raw: bytes) -> list[bytes]:
-    """Git 2.56 parse_alternates. A '#' entry is a comment. A C quote consumes one extra byte, the separator."""
-    simple = {97: 7, 98: 8, 102: 12, 110: 10, 114: 13, 116: 9, 118: 11, 92: 92, 34: 34}
-    entries, i, n = [], 0, len(raw)
-
-    def unquote(start: int) -> tuple[bytes, int] | None:
-        out, j = bytearray(), start + 1
-        while j < n and raw[j] != 34:
-            if raw[j] != 92:
-                out.append(raw[j])
-                j += 1
-            elif (esc := raw[j + 1] if j + 1 < n else -1) in simple:
-                out.append(simple[esc])
-                j += 2
-            elif 48 <= esc <= 51 and j + 3 < n and raw[j + 2] in b'01234567' and raw[j + 3] in b'01234567':
-                out.append(((esc - 48) << 6) | ((raw[j + 2] - 48) << 3) | (raw[j + 3] - 48))
-                j += 4
-            else:
-                return None
-        return (bytes(out), j + 1) if j < n and raw[j] == 34 else None
-    while i < n:
-        if raw[i] == 35:
-            found = raw.find(b'\n', i)
-            i = n if found < 0 else found + 1
-        elif raw[i] == 34 and (quoted := unquote(i)):
-            entries.append(quoted[0])
-            i = quoted[1] + 1 if quoted[1] < n else n
-        else:
-            found = raw.find(b'\n', i)
-            entries.append(raw[i:] if found < 0 else raw[i:found])
-            i = n if found < 0 else found + 1
-    return [entry for entry in entries if entry]
 
 
 def escapes(path: str, target: str) -> bool:
@@ -341,6 +308,11 @@ class Copier:
         object_format = git(path, 'rev-parse', '--show-object-format', check=False, fd=directory).strip() or 'sha1'
         if object_format not in ('sha1', 'sha256'):
             raise Failure(f'unsupported git object format in {path}')
+        shallow_path = git(path, 'rev-parse', '--git-path', 'shallow', fd=directory).strip()
+        shallow_path = os.path.join(os.readlink(f'/proc/self/fd/{directory}'), shallow_path)
+        if not self.inside_roots(shallow_path):
+            raise Failure(f'shallow metadata leaves the copied space: {path}')
+        shallow = shallow_boundaries(shallow_path, object_format)
         branch = git(path, 'symbolic-ref', '-q', '--short', 'HEAD', check=False, fd=directory).strip() or None
         remotes, dropped = {}, []
         for line in git(path, 'remote', '-v', fd=directory).splitlines():
@@ -356,6 +328,8 @@ class Copier:
         os.makedirs(os.path.join(self.output, 'repos'), mode=0o700, exist_ok=True)
         git(path, 'bundle', 'create', '-q', bundle_path, 'HEAD', '--all', fd=directory)
         git(path, 'bundle', 'verify', '-q', bundle_path, fd=directory)
+        if shallow_boundaries(shallow_path, object_format) != shallow:
+            raise Failure(f'shallow history changed while copied: {path}')
         tracked = {}
         for record in git(path, 'ls-files', '-s', '-z', fd=directory).split('\0'):
             if record:
@@ -369,7 +343,7 @@ class Copier:
         finally:
             os.close(reader)
         self.repositories[path] = {'path': path, 'head': head, 'branch': branch if branch and BRANCH_RE.fullmatch(branch) else None,
-                                   'objectFormat': object_format, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(refs),
+                                   'objectFormat': object_format, 'shallow': shallow, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(refs),
                                    'bundle': bundle, 'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
         self.tracked[path] = tracked
 
@@ -521,6 +495,8 @@ def validate(manifest: dict) -> dict:
         relative(item['path'])
     for repo in manifest['repositories']:
         relative(repo['path'])
+        if not valid_boundaries(repo.get('shallow', []), repo.get('objectFormat', 'sha1')):
+            raise Failure(f'invalid shallow history metadata: {repo["path"]}')
         if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or not HEX_RE.fullmatch(str(repo.get('head'))) or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) or (repo.get('branch') is not None and not BRANCH_RE.fullmatch(str(repo['branch']))):
             raise Failure(f'manifest repository is invalid: {repo["path"]}')
         for name, url in repo.get('remotes', {}).items():
@@ -560,10 +536,12 @@ def check(copy_directory: str) -> dict:
             missing.append(repo['bundle'])
             continue
         with tempfile.TemporaryDirectory(prefix='cauce-v4-bundle-') as scratch:
-            git(scratch, 'init', '-q')
+            init_repository(scratch, repo, git)
             git(scratch, 'bundle', 'verify', '-q', bundle)
             git(scratch, 'fetch', '-q', bundle, 'HEAD')
             if git(scratch, 'rev-parse', 'FETCH_HEAD').strip() != repo['head']:
+                missing.append(repo['bundle'])
+            if shallow_boundaries(os.path.join(scratch, '.git', 'shallow'), repo.get('objectFormat', 'sha1')) != repo.get('shallow', []):
                 missing.append(repo['bundle'])
     if missing:
         raise Failure(f'copy is not recoverable: {len(missing)} blobs or bundles differ, first {missing[0]}')
@@ -632,7 +610,7 @@ class Restorer:
     def repository(self, repo: dict) -> None:
         target = self.place(repo['path'])
         os.makedirs(target, mode=0o700, exist_ok=True)
-        git(target, 'init', '-q')
+        init_repository(target, repo, git)
         bundle = os.path.join(self.copy_directory, repo['bundle'])
         git(target, 'fetch', '-q', '--update-head-ok', bundle, '+refs/*:refs/*')
         git(target, 'fetch', '-q', bundle, 'HEAD')
@@ -739,9 +717,11 @@ def verify_restore(manifest: dict, base: str, apply, layout_rules: dict, skipped
     for path, repo in sorted(repos.items()):
         if git(os.path.join(base, path), 'rev-parse', 'HEAD').strip() != repo['head']:
             problems.append(path + ' (HEAD)')
+        if shallow_boundaries(os.path.join(base, path, '.git', 'shallow'), repo.get('objectFormat', 'sha1')) != repo.get('shallow', []):
+            problems.append(path + ' (shallow)')
     receipt = {'schema': RESTORE_SCHEMA, 'manifest': manifest['sha256'], 'alias': manifest['alias'],
                'restoredAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), **layout_rules,
-               'repositories': [{'from': r['path'], 'to': p, 'head': r['head']} for p, r in sorted(repos.items())],
+               'repositories': [{'from': r['path'], 'to': p, 'head': r['head'], 'shallow': r.get('shallow', [])} for p, r in sorted(repos.items())],
                'layout': layout, 'excludedByLayout': sorted(skipped), 'extrasUnderOmissions': extras, 'problems': problems, 'verified': not problems}
     receipt['sha256'] = seal(receipt)
     return receipt
