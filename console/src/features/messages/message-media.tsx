@@ -3,6 +3,7 @@ import { Download, FileText, Image, LoaderCircle, Music2, RotateCw, Video, X } f
 import { cauceApi, type CauceApi } from '../../api/client';
 import { ApiError } from '../../api/client/core';
 import { spanishWithReason } from '../../api/error-message';
+import { formatFileSize } from './chat-attachments';
 import { messageMediaKind, safeAttachmentName, type AttachmentSummary, type MessageMediaKind } from './message-attachment-list';
 
 interface MediaResource {
@@ -184,7 +185,7 @@ export function MessageMedia({
     <div className="flex min-w-0 items-center gap-2.5">
       <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted-bg text-muted">{icon}</span>
       <span className="grid min-w-0"><strong className="text-[13px] font-medium [overflow-wrap:anywhere]">{attachment.name}</strong><small className="text-[11px] text-muted">
-        {attachment.size === undefined ? 'Tamaño no disponible' : `${new Intl.NumberFormat('es', { maximumFractionDigits: 1 }).format(attachment.size / 1_000)} kB`}
+        {attachment.size === undefined ? 'Tamaño no disponible' : formatFileSize(attachment.size)}
       </small></span>
     </div>
     {resource && playable ? kind === 'audio'

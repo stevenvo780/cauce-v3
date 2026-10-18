@@ -9,7 +9,7 @@ it('renders metadata without exposing its digest or requesting hidden media', ()
   render(<MessageAttachments messageId="m-1" files={[{ name: 'informe.pdf', mime_type: 'application/pdf', file_size: 1_500, sha256: 'f'.repeat(64) }]} />);
   expect(screen.getByRole('list', { name: 'Archivos del mensaje' })).toBeVisible();
   expect(screen.getByText('informe.pdf')).toBeVisible();
-  expect(screen.getByText('1,5 kB')).toBeVisible();
+  expect(screen.getByText('1,5 KB')).toBeVisible();
   expect(document.body.textContent).not.toContain('f'.repeat(64));
   expect(fetchAttachment).not.toHaveBeenCalled();
   fetchAttachment.mockRestore();
