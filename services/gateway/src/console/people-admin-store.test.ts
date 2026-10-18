@@ -142,12 +142,25 @@ describe('human administration on PostgreSQL', () => {
     await expect(repository.list(actor)).rejects.toMatchObject({ code: 'forbidden' });
     expect((await pool.query("SELECT 1 FROM console_users WHERE email_normalized='target@example.test'")).rowCount).toBe(0);
   });
-  it('rejects missing effective aliases, private extra fields and duplicate emails without partial rows', async () => {
-    await expect(repository.create(actor, { ...person(), alias: 'missing-alias' })).rejects.toMatchObject({ code: 'conflict' });
+  it('provisions a missing alias, rejects a stranded agent, and refuses private fields or duplicate emails without partial rows', async () => {
+    await pool.query("INSERT INTO agents(tenant_id,alias) VALUES('Steven','stranded-alias')");
+    await expect(repository.create(actor, { ...person(), alias: 'stranded-alias', email: 'stranded@example.test' })).rejects.toMatchObject({ code: 'conflict' });
+    expect((await pool.query("SELECT 1 FROM memberships WHERE alias='stranded-alias'")).rowCount).toBe(0);
+    expect((await pool.query<{ n: number }>('SELECT count(*)::integer AS n FROM console_users')).rows[0]?.n).toBe(1);
+    const fresh = await repository.create(actor, { ...person(), alias: 'missing-alias', email: 'fresh@example.test' });
+    expect(fresh.alias).toBe('missing-alias');
+    expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE tenant_id='Steven' AND alias='missing-alias'")).rows[0]).toEqual({ enabled: false });
+    const membership = (await pool.query<{ room_id: string; role: string; enabled: boolean }>(
+      "SELECT room_id, role, enabled FROM memberships WHERE tenant_id='Steven' AND alias='missing-alias'")).rows[0];
+    const firstRoom = (await pool.query<{ id: string }>(`SELECT room.id FROM rooms room JOIN tenants tenant ON tenant.id=room.tenant_id
+      WHERE room.tenant_id='Steven' AND room.enabled AND tenant.enabled AND room.retired_at IS NULL AND tenant.retired_at IS NULL
+        AND room.purged_at IS NULL AND tenant.purged_at IS NULL
+      ORDER BY (room.id='office') DESC, room.id LIMIT 1`)).rows[0];
+    expect(membership).toEqual({ room_id: firstRoom?.id, role: 'operator', enabled: true });
     await expect(repository.create(actor, { ...person(), password_hash: '$scrypt$forged' })).rejects.toMatchObject({ code: 'invalid_request' });
     await repository.create(actor, person());
     await expect(repository.create(actor, { ...person(), email: 'TARGET@example.test' })).rejects.toMatchObject({ code: 'conflict' });
-    expect((await pool.query<{ n: number }>('SELECT count(*)::integer AS n FROM console_users')).rows[0]?.n).toBe(2);
+    expect((await pool.query<{ n: number }>('SELECT count(*)::integer AS n FROM console_users')).rows[0]?.n).toBe(3);
   });
   it('revokes OAuth access, refresh and client declarations permanently without deleting identities or history', async () => {
     const created = await repository.create(actor, person()); const oauth = await seedPeopleOAuth(pool, created);

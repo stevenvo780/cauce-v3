@@ -1,3 +1,4 @@
+import { isReservedAlias } from '@cauce/protocol';
 import { lockCompanyAuthority, StoreError, type CompanyAuthority, type DatabaseClient } from '@cauce/store';
 import { normalizeEmail } from '../console-users.js';
 import { PeopleAdminError, type PeopleAdminActor, type PeopleAdminPerson } from './people-admin-schema.js';
@@ -68,4 +69,50 @@ export async function assertPeopleAlias(client: DatabaseClient, value: Pick<Peop
     WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL AND tenant.enabled AND member.enabled AND room.enabled
     FOR SHARE OF agent,tenant,member,room,policy`, [value.tenant_id, value.alias]);
   if (!result.rows.some(row => row.read) || (value.role === 'operator' && !result.rows.some(row => row.control))) throw new PeopleAdminError('conflict');
+}
+
+const LIVE_ROOM = `SELECT room.id FROM rooms room JOIN tenants tenant ON tenant.id=room.tenant_id
+  WHERE room.tenant_id=$1 AND room.enabled AND tenant.enabled
+    AND room.retired_at IS NULL AND tenant.retired_at IS NULL
+    AND room.purged_at IS NULL AND tenant.purged_at IS NULL
+  ORDER BY (room.id='office') DESC, room.id LIMIT 1 FOR SHARE OF room, tenant`;
+
+/**
+ * A person must reference an agent that already has a live membership. A new company has no enabled
+ * agent, so a missing alias may be provisioned. An alias that already exists and does not qualify is not repaired.
+ */
+export async function peopleIdentityDisposition(
+  client: DatabaseClient, value: Pick<PeopleAdminPerson, 'tenant_id' | 'alias' | 'role'>,
+): Promise<'ready' | 'provision'> {
+  try {
+    await assertPeopleAlias(client, value);
+    return 'ready';
+  } catch (error) {
+    if (!(error instanceof PeopleAdminError) || error.code !== 'conflict') throw error;
+  }
+  if (isReservedAlias(value.alias)) throw new PeopleAdminError('invalid_request');
+  const existing = await client.query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [value.tenant_id, value.alias]);
+  if ((existing.rowCount ?? 0) > 0) throw new PeopleAdminError('conflict');
+  const room = await client.query(LIVE_ROOM, [value.tenant_id]);
+  if ((room.rowCount ?? 0) === 0) throw new PeopleAdminError('conflict');
+  const policy = await client.query<{ allow_read: boolean; allow_control: boolean }>(
+    "SELECT allow_read, allow_control FROM role_policies WHERE role='operator' FOR SHARE");
+  const operator = policy.rows[0];
+  if (!operator?.allow_read || !operator.allow_control) throw new PeopleAdminError('conflict');
+  return 'provision';
+}
+
+/** Inserts a disabled draft and an operator membership only when no agent row exists for the alias. */
+export async function ensurePeopleIdentity(
+  client: DatabaseClient, value: Pick<PeopleAdminPerson, 'tenant_id' | 'alias' | 'role' | 'display_name'>,
+): Promise<void> {
+  if (await peopleIdentityDisposition(client, value) === 'ready') return;
+  await client.query('INSERT INTO agents(tenant_id, alias, display_name, enabled) VALUES ($1,$2,$3,false)',
+    [value.tenant_id, value.alias, value.display_name]);
+  const room = await client.query<{ id: string }>(LIVE_ROOM, [value.tenant_id]);
+  const roomId = room.rows[0]?.id;
+  if (!roomId) throw new PeopleAdminError('conflict');
+  await client.query("INSERT INTO memberships(tenant_id, room_id, alias, role, enabled) VALUES ($1,$2,$3,'operator',true)",
+    [value.tenant_id, roomId, value.alias]);
+  await assertPeopleAlias(client, value);
 }
