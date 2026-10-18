@@ -80,7 +80,7 @@ def extension_packet(agent: dict, binding: dict) -> bytes:
 
 
 def accept_extension_receipt(agent: dict, raw: bytes) -> dict:
-    from fleet_provider_identity import RECEIPT_KEYS, extensions_sha256
+    from fleet_provider_identity import RECEIPT_KEYS, extensions_sha256, public_receipt
     if len(raw) > 8192:
         raise ValueError('extension receipt exceeds its bound')
     receipt = json.loads(raw)
@@ -92,11 +92,16 @@ def accept_extension_receipt(agent: dict, raw: bytes) -> dict:
     text = raw.decode()
     if 'PRIVATE KEY' in text or 'BEGIN ' in text:
         raise ValueError('extension receipt contains private key material')
+    try:
+        public = public_receipt(rows, receipt)
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('extension receipt is outside its public shape') from None
+    if public != receipt:
+        raise ValueError('extension receipt is outside its public shape')
     return receipt
 
 
-def remember_extension_receipt(policy: dict, agent: dict, receipt: dict) -> None:
-    operation_id = agent.get('_operation_id')
+def remember_extension_receipt(policy: dict, receipt: dict, operation_id: str | None) -> None:
     root = policy.get('roots', {}).get('state') if isinstance(policy.get('roots'), dict) else None
     if not isinstance(operation_id, str) or OPERATION_ID.fullmatch(operation_id) is None or not isinstance(root, str):
         return
@@ -110,7 +115,7 @@ def remember_extension_receipt(policy: dict, agent: dict, receipt: dict) -> None
     os.replace(temporary, directory / 'extension-receipt.json')
 
 
-def run_extension_prepare(policy: dict, agent: dict, binding: dict, identity: dict | None = None) -> dict:
+def run_extension_prepare(policy: dict, agent: dict, binding: dict, identity: dict | None = None, *, operation_id: str | None = None) -> dict:
     """Prepare every harness before the adapter starts. The timeout is independent of the probe deadline."""
     packet = extension_packet(agent, binding)
     script = pathlib.Path(__file__).with_name('fleet_provider_identity.py')
@@ -140,11 +145,11 @@ def run_extension_prepare(policy: dict, agent: dict, binding: dict, identity: di
             runtime['container_id'], agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_identity.py',
             '--prepare-extensions'], input_data=packet, timeout=PREPARE_EXTENSION_TIMEOUT)
         receipt = accept_extension_receipt(agent, stdout)
-    remember_extension_receipt(policy, agent, receipt)
+    remember_extension_receipt(policy, receipt, operation_id)
     return receipt
 
 
-def prepare_profile(policy: dict, raw_agent: dict):
+def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None = None):
     from fleet_executor_policy import approve_agent
     from fleet_executor_templates import resolve_profile, resolved_template
     agent = approve_agent(policy, raw_agent)
@@ -156,7 +161,7 @@ def prepare_profile(policy: dict, raw_agent: dict):
     binding = resolve_profile(policy, agent)
     dynamic = account not in policy['profiles']
     if not dynamic and 'openclaw' not in binding:
-        return run_extension_prepare(policy, agent, binding)
+        return run_extension_prepare(policy, agent, binding, operation_id=operation_id)
     template = resolved_template(policy, agent, binding['provider']) if dynamic else None
     if agent['runtime_mode'] == 'native':
         from fleet_runtime_materialization import external_directory
@@ -166,7 +171,7 @@ def prepare_profile(policy: dict, raw_agent: dict):
             prepare_empty_profile(template['path_root'], binding['path'], user.pw_uid, user.pw_gid,
                 **({'provider': 'muse'} if binding['provider'] == 'muse' else {}))
         prepare_openclaw(binding, agent)
-        return run_extension_prepare(policy, agent, binding)
+        return run_extension_prepare(policy, agent, binding, operation_id=operation_id)
     from fleet_executor_container import (
         DOCKER,
         EXECUTOR_DESTINATION,
@@ -189,7 +194,7 @@ def prepare_profile(policy: dict, raw_agent: dict):
         checked_command([DOCKER, 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
             agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_openclaw.py', '--prepare'],
             input_data=json.dumps({'profile_binding': binding, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')}}).encode())
-    return run_extension_prepare(policy, agent, binding, identity)
+    return run_extension_prepare(policy, agent, binding, identity, operation_id=operation_id)
 
 
 def prepare_openclaw(binding: dict, agent: dict):

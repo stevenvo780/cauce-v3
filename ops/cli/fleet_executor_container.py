@@ -430,7 +430,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     if managed:
         helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', workspace, '--uid', uid, '--gid', gid)
     from fleet_executor_profiles import prepare_profile
-    prepare_profile(policy, {**agent, '_operation_id': operation_id} if operation_id is not None else agent)
+    prepare_profile(policy, agent, operation_id=operation_id)
     helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
     view = pathlib.Path('/run/cauce-credentials') / agent['runtime_key'] / ('bootstrap' if bootstrap else 'normal')
     checked_command([DOCKER, 'exec', '-i', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
