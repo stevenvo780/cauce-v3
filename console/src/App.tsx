@@ -99,6 +99,7 @@ const routes: Route[] = NAV_ENTRIES.map((entry) => ({
 /** Redirects of obsolete or consolidated routes to their canonical views. */
 const ROUTE_ALIASES: Partial<Record<string, string>> = {
   '': 'messages',
+  office: 'live',
   overview: 'live',
   licenses: 'accounts',
   quotas: 'accounts',
