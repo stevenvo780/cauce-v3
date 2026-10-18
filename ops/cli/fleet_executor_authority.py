@@ -247,10 +247,13 @@ def inventory(result: dict, agent: dict | None = None, *, absent: bool = False) 
         raise SafeFailure('central authority inventory is not complete')
     ids = set()
     for row in result['authorities']:
-        if not isinstance(row, dict) or set(row) != {'id', 'sha256', 'matching_records'} or row['id'] not in AUTHORITIES \
+        if not isinstance(row, dict) or set(row) not in ({'id', 'sha256', 'matching_records'}, {'id', 'sha256', 'matching_records', 'preserved'}) \
+                or row['id'] not in AUTHORITIES \
                 or row['id'] in ids or not isinstance(row['sha256'], str) or HEX.fullmatch(row['sha256']) is None \
                 or not isinstance(row['matching_records'], list) or len(row['matching_records']) > 64:
             raise SafeFailure('central authority inventory pins differ')
+        if 'preserved' in row and (row['preserved'] is not True or not row['id'].startswith('base_')):
+            raise SafeFailure('central authority preservation scope differs')
         ids.add(row['id'])
         field = 'certificate_sha256' if row['id'].endswith('mtls') else 'token_sha256'
         for record in row['matching_records']:
@@ -266,9 +269,23 @@ def inventory(result: dict, agent: dict | None = None, *, absent: bool = False) 
                     raise ValueError
             except ValueError:
                 raise SafeFailure('central authority inventory expiry is invalid') from None
-        if absent and row['matching_records']:
+        if absent and row['matching_records'] and not row.get('preserved'):
             raise SafeFailure('Cauce credentials reappeared in the central authority')
     return result
+
+
+def revocation_scope(policy: dict, context: dict, agent: dict) -> tuple[dict, dict]:
+    if 'authority' not in policy:
+        return policy, agent
+    configuration = validate_authority(policy['authority'], policy['host_id'])
+    observed = inventory(call(configuration, scope_for(policy, context, agent), 'inventory'), agent)
+    preserved = {row['id'] for row in observed['authorities'] if row.get('preserved')}
+    if not preserved:
+        return policy, agent
+    if preserved != {'base_mtls', 'base_token'}:
+        raise SafeFailure('central legacy preservation is incomplete')
+    legacy = {key: value for key, value in policy.get('legacy_credentials', {}).items() if key != agent['runtime_key']}
+    return {**policy, 'legacy_credentials': legacy}, {**agent, 'fleet_baseline': False}
 
 
 def stable_scope(scope: dict) -> dict:

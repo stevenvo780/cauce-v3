@@ -242,6 +242,10 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     except SafeFailure:
         helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
     helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', agent['state_directory'], '--uid', uid, '--gid', gid)
+    workspace = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
+    managed = agent['_placement'].get('ownership') != 'shared'
+    if managed:
+        helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', workspace, '--uid', uid, '--gid', gid)
     from fleet_executor_profiles import prepare_profile
     prepare_profile(policy, agent)
     helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
@@ -260,7 +264,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
     arguments = [f'{key}={value}' for key, value in environment.items()]
     try:
-        docker('exec', '-d', '--user', '0', identity['container_id'], '/usr/bin/env', '-i', *arguments, agent['_placement']['python'],
+        docker('exec', '-d', '--user', '0', *(['--workdir', workspace] if managed else []), identity['container_id'], '/usr/bin/env', '-i', *arguments, agent['_placement']['python'],
                f'{HELPER_DESTINATION}/{HELPER.name}', 'run', *lifecycle_arguments(agent, identity),
                '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', uid, '--runtime-gid', gid,
                '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'], bundle['executable'], *bundle['argv'])

@@ -104,8 +104,8 @@ export async function validateFleetTarget(
   let relocation = false;
   if (target.resource === 'agent') {
     const agent = (await client.query<{ host_id: string | null; runtime_key: string | null; primary_room_id: string | null; harness_id: string;
-      purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string }>(
-      `SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at,retired_at,enabled,lifecycle_state
+      purged_at: Date | null; retired_at: Date | null; enabled: boolean; lifecycle_state: string; runtime_mode: string | null }>(
+      `SELECT host_id,runtime_key,primary_room_id,harness_id,purged_at,retired_at,enabled,lifecycle_state,runtime_mode
          FROM agents WHERE tenant_id=$1 AND alias=$2`, [target.tenant_id, target.alias])).rows[0];
     if (agent?.purged_at) throw new FleetOperationError('conflict', 'purged agent identity is permanent');
     if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
@@ -136,8 +136,11 @@ export async function validateFleetTarget(
         if (source?.company_id !== tenant.company_id) throw new FleetOperationError('forbidden', 'relocation source belongs to another company');
         relocation = true;
       }
-      if (request.kind === 'create' && !prepared && (await client.query('SELECT 1 FROM fleet_runtime_identities WHERE runtime_key=$1 OR (tenant_id=$2 AND alias=$3)',
-        [parameters.runtime_key, target.tenant_id, target.alias])).rowCount) throw new FleetOperationError('conflict', 'physical runtime identity is reserved');
+      if (request.kind === 'create' && !prepared && (await client.query(`SELECT 1 FROM fleet_runtime_identities
+        WHERE (runtime_key=$1 OR (tenant_id=$2 AND alias=$3))
+          AND NOT ($4::boolean AND runtime_key=$1 AND tenant_id=$2 AND alias=$3)`,
+      [parameters.runtime_key, target.tenant_id, target.alias, agent !== undefined && isRegistryDraft(agent)
+        && agent.runtime_key === parameters.runtime_key])).rowCount) throw new FleetOperationError('conflict', 'physical runtime identity is reserved');
       for (const membership of parameters.memberships) {
         const room = (await client.query<{ allow_route: boolean }>(`SELECT policy.allow_route FROM rooms room JOIN role_policies policy ON policy.role=$3
           WHERE room.id=$1 AND room.tenant_id=$2 AND room.enabled AND room.retired_at IS NULL AND room.purged_at IS NULL FOR SHARE OF room,policy`,

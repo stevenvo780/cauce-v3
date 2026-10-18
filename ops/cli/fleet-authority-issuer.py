@@ -160,13 +160,17 @@ def validate_packet(packet):
             or re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', agent['tenant_id']) is None or WIRE.fullmatch(agent['alias']) is None:
         raise AuthorityError('authority scope is invalid')
     required = {'action', 'scope', 'agent'}
+    if 'preserve_legacy' in packet:
+        if packet['preserve_legacy'] is not True:
+            raise AuthorityError('invalid legacy preservation authority')
+        required.add('preserve_legacy')
     fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
               'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'}}
     if packet['action'] not in fields or set(packet) != required | fields[packet['action']]:
         raise AuthorityError('authority request is invalid')
 
 
-def inventory(registries, owners, agent):
+def inventory(registries, owners, agent, preserve_legacy=False):
     rows = []
     for name in AUTHORITIES:
         raw, original = read(registries[name], owners=owners[registries[name]])
@@ -178,7 +182,8 @@ def inventory(registries, owners, agent):
         matching = [row for row in document['identities'] if target(agent, row)]
         if len(matching) > 64:
             raise AuthorityError('authority target inventory exceeds limit')
-        rows.append((name, document, original, {'id': name, 'sha256': digest(raw), 'matching_records': matching}))
+        rows.append((name, document, original, {'id': name, 'sha256': digest(raw), 'matching_records': matching,
+            **({'preserved': True} if preserve_legacy and name.startswith('base_') else {})}))
     return rows
 
 
@@ -309,7 +314,8 @@ def perform(policy, packet):
             if details.st_uid != os.geteuid() or not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_mode & 0o077:
                 raise AuthorityError('authority registry lock is unsafe')
             fcntl.flock(descriptor, fcntl.LOCK_EX)
-        binding = {'scope': packet['scope'], 'agent': packet['agent']}
+        binding = {'scope': packet['scope'], 'agent': packet['agent'],
+                   **({'preserve_legacy': True} if packet.get('preserve_legacy') else {})}
         journal_path = state / (digest(json.dumps(packet['scope'], sort_keys=True).encode()) + '.json')
         try:
             raw, journal_stat = read(journal_path, private=True)
@@ -318,7 +324,7 @@ def perform(policy, packet):
             journal, journal_stat = {'binding': binding}, None
         if journal.get('binding') != binding:
             raise AuthorityError('authority journal scope changed')
-        rows = inventory(registries, owners, packet['agent'])
+        rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False))
         action = packet['action']
         if action == 'inventory':
             return observation(rows)
@@ -334,7 +340,7 @@ def perform(policy, packet):
                 if any(any(record not in planned[name] for record in row[3]['matching_records'])
                        for row in rows for name in [row[0]]):
                     raise AuthorityError('authority records changed after revocation preparation')
-                if journal.get('revoke_complete') and any(row[3]['matching_records'] for row in rows):
+                if journal.get('revoke_complete') and any(row[3]['matching_records'] for row in rows if not row[3].get('preserved')):
                     raise AuthorityError('credentials reappeared after observed revocation')
             else:
                 if expected != actual:
@@ -343,14 +349,16 @@ def perform(policy, packet):
                 journal['revoke_records'] = {row[0]: row[3]['matching_records'] for row in rows}
                 publish(journal_path, journal, journal_stat)
             for name, document, original, _ in rows:
+                if packet.get('preserve_legacy') and name.startswith('base_'):
+                    continue
                 kept = [row for row in document['identities'] if not target(packet['agent'], row)]
                 if kept != document['identities']:
                     publish(registries[name], {**document, 'identities': kept}, original, owners[registries[name]])
-            rows = inventory(registries, owners, packet['agent'])
+            rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False))
             journal['revoke_complete'] = True
             _, current_stat = read(journal_path, private=True)
             publish(journal_path, journal, current_stat)
-        if any(row[3]['matching_records'] for row in rows):
+        if any(row[3]['matching_records'] for row in rows if not row[3].get('preserved')):
             raise AuthorityError('authority absence was not observed')
         return observation(rows)
 

@@ -45,10 +45,20 @@ def load_plan(path, alias):
     if info.st_uid != os.geteuid() or info.st_mode & 0o022:
         raise ValueError('el plan debe ser propio y no escribible por otros usuarios')
     plan = json.loads(path.read_text())
-    if not isinstance(plan, dict) or not {'company', 'tenant', 'session_file', 'source', 'destination', 'roots'} <= plan.keys():
-        raise ValueError('el plan requiere company, tenant, session_file, source, destination y roots')
-    if not all(isinstance(plan[key], str) and plan[key] for key in ('company', 'tenant', 'session_file')):
+    if not isinstance(plan, dict) or not {'company', 'tenant', 'source', 'destination', 'roots'} <= plan.keys():
+        raise ValueError('el plan requiere company, tenant, source, destination y roots')
+    if bool(plan.get('session_file')) == bool(plan.get('platform_gateway')):
+        raise ValueError('el plan requiere una sesión o la autoridad interna del gateway')
+    if not all(isinstance(plan[key], str) and plan[key] for key in ('company', 'tenant')):
         raise ValueError('identidad de empresa, tenant o sesión inválida')
+    if plan.get('session_file') and not isinstance(plan['session_file'], str):
+        raise ValueError('session_file debe ser una ruta')
+    if plan.get('platform_gateway'):
+        from v4_mover_plataforma import PlatformClient, PlatformFailure
+        try:
+            PlatformClient(plan['platform_gateway'], plan['company'], plan['tenant'])
+        except PlatformFailure as error:
+            raise ValueError(str(error)) from None
     if not isinstance(plan['roots'], list) or any(not isinstance(item, dict) or not all(
             isinstance(item.get(field), str) and item[field] for field in ('name', 'path', 'target')) for item in plan['roots']):
         raise ValueError('cada raíz debe declarar name, path y target')
@@ -90,6 +100,34 @@ def load_plan(path, alias):
     if not names:
         raise ValueError('el plan no declara datos para copiar')
     return plan
+
+
+def migration_parameters(fleet, row, plan):
+    if row.get('runtime_mode') is not None:
+        return fleet.parameters(row)
+    source = plan['source']
+    if not plan.get('platform_gateway'):
+        raise ValueError('el traslado heredado requiere autoridad de plataforma dentro del gateway')
+    if not all(isinstance(source.get(key), str) and source[key]
+               for key in ('legacy_unit', 'systemd_user', 'container_id')):
+        raise ValueError('el origen heredado requiere unidad, usuario de manager e ID de contenedor medidos')
+    if plan['destination'].get('mode', 'container') != 'container':
+        raise ValueError('el traslado heredado requiere un contenedor propio en destino')
+    values = dict(row)
+    overrides = plan.get('agent', {})
+    if not isinstance(overrides, dict) or set(overrides) - {'runtime_key', 'primary_account_id', 'model_id', 'primary_room_id'}:
+        raise ValueError('agent solo admite identidad de runtime, cuenta, modelo y sala primaria')
+    for key, value in overrides.items():
+        if row.get(key) is not None and row[key] != value:
+            raise ValueError('el plan no puede sustituir la cuenta, modelo o identidad existentes')
+        values[key] = value
+    if values.get('primary_room_id') is None:
+        rooms = [member['room_id'] for member in row['memberships'] if member.get('enabled', True)]
+        if len(rooms) == 1:
+            values['primary_room_id'] = rooms[0]
+    if not values.get('model_id') or not values.get('primary_room_id'):
+        raise ValueError('el traslado heredado requiere modelo y sala primaria explícitos')
+    return fleet.parameters(values)
 
 
 def target_parameters(fleet, original, plan):
@@ -134,6 +172,8 @@ class Cut:
         self.stop_attempted = self.relocation_attempted = False
         self.stopped_at = None
         self.recovering = False
+        self.legacy = self.legacy_prepared = self.create_attempted = self.data_staged = False
+        self.original_row = self.common = None
         self.fleet.on_operation = lambda _row: self.save()
 
     def save(self):
@@ -173,6 +213,8 @@ class Cut:
         self.save()
         # Cancelling must settle before the inverse update can grant authority to the original host.
         self.fleet.settle_pending(timeout=self.plan.get('timeout', 300))
+        if self.legacy:
+            return self.rollback_legacy()
         if self.relocation_attempted:
             self.fleet.rollback(self.plan['alias'], self.original, timeout=self.plan.get('timeout', 300))
         else:
@@ -185,16 +227,61 @@ class Cut:
         self.receipt['outage_seconds'] = round(time.monotonic() - self.stopped_at, 3)
         self.save()
 
+    def legacy_control(self, action):
+        return self.source.call('legacy-' + action, {'alias': self.plan['alias'], 'source': self.plan['source'],
+                               'config': json.loads(self.alias_config.read_text())})
+
+    def rollback_legacy(self):
+        alias, timeout = self.plan['alias'], self.plan.get('timeout', 300)
+        cleanup_failure = None
+        if self.create_attempted:
+            current = self.fleet.agent(alias)
+            if current.get('runtime_mode') is not None:
+                self.fleet.operation('retire', alias, {}, timeout=timeout)
+        if self.data_staged:
+            self.common['create_operation_id'] = self.receipt.get('create_operation_id')
+            try:
+                self.receipt['destination_cleanup'] = self.destination.call('cleanup-destination', self.common)
+            except BaseException as error:
+                if self.create_attempted:
+                    raise
+                cleanup_failure = error
+                self.receipt['destination_cleanup'] = {'verified': False, 'error': type(error).__name__}
+        if self.legacy_prepared:
+            self.receipt['registry_rollback'] = self.fleet.restore_legacy(alias, self.original_row, self.receipt['target'])
+        row = self.fleet.agent(alias)
+        fields = ('host_id', 'runtime_mode', 'container_name', 'runtime_user', 'home_directory', 'state_directory',
+                  'systemd_user', 'harness_id', 'primary_room_id', 'primary_account_id', 'model_id',
+                  'reasoning_effort', 'enabled', 'lifecycle_state')
+        if any(row.get(key) != self.original_row.get(key) for key in fields):
+            raise ValueError('la reversión no restauró el registro legado')
+        unit = self.legacy_control('start')
+        proof = {'verified': cleanup_failure is None, 'unit': unit, 'registry_restored': True, 'source_restarted': True,
+                 'retained_runtime_key': row.get('runtime_key')}
+        write_json(self.evidence / 'rollback-verificacion.json', proof)
+        self.receipt['rollback'] = proof
+        self.receipt['outage_seconds'] = round(time.monotonic() - self.stopped_at, 3)
+        self.save()
+        if cleanup_failure is not None:
+            raise RuntimeError('el origen se recuperó; queda pendiente limpiar el volumen de destino') from cleanup_failure
+
     def run(self):
         alias, timeout = self.plan['alias'], self.plan.get('timeout', 300)
-        self.original = self.fleet.parameters(self.fleet.agent(alias))
+        self.original_row = self.fleet.agent(alias)
+        self.legacy = self.original_row.get('runtime_mode') is None
+        self.original = migration_parameters(self.fleet, self.original_row, self.plan)
         self.receipt['original'] = self.original
+        self.receipt['legacy'] = self.legacy
+        if self.legacy:
+            self.receipt['original_registry'] = self.original_row
         target = target_parameters(self.fleet, self.original, self.plan)
         self.receipt['target'] = target
         self.save()
         common = {**self.plan['destination'], 'alias': alias, 'tenant': self.plan['tenant'], 'runtime_key': target['runtime_key'],
                   'placement': target['placement'], 'roots': self.plan['roots'],
-                  'directory': target['placement']['state_directory'] + '/space'}
+                  'directory': target['placement']['state_directory'] + '/space', 'require_new': self.legacy,
+                  'migration_id': self.evidence.name, 'legacy': self.legacy}
+        self.common = common
         destination = self.step('preflight-destino', lambda: self.destination.call('preflight', common))
         write_json(self.evidence / 'destination-host.json', destination['host'])
         if self.plan['destination'].get('machine_id_sha256', destination['host']['machineIdSha256']) != destination['host']['machineIdSha256']:
@@ -214,12 +301,14 @@ class Cut:
             if any(destination_path.is_relative_to(item['path']) or pathlib.PurePosixPath(item['path']).is_relative_to(destination_path)
                    for item in self.plan['roots']):
                 raise ValueError('el destino se solapa con los datos del origen')
-        baseline = self.step('verificar-origen', lambda: self.fleet.verify(alias, self.original, timeout=timeout))
+        baseline = self.step('verificar-origen', lambda: self.legacy_control('status') if self.legacy
+                             else self.fleet.verify(alias, self.original, timeout=timeout))
         write_json(self.evidence / 'origen-verificacion.json', baseline)
         self.stopped_at = time.monotonic()
         try:
             self.stop_attempted = True
-            self.step('detener-origen', lambda: self.fleet.operation('stop', alias, {}, timeout=timeout))
+            self.step('detener-origen', lambda: self.legacy_control('stop') if self.legacy
+                      else self.fleet.operation('stop', alias, {}, timeout=timeout))
             self.step('comprobar-alcance-final', lambda: self.source.call('preflight-source', {**common,
                 'original': self.original, 'config': json.loads(self.alias_config.read_text())}))
             archive = self.evidence / 'copia-integral.tar'
@@ -229,12 +318,25 @@ class Cut:
                     'config': json.loads(self.alias_config.read_text())}, destination=writer))
                 writer.flush()
                 os.fsync(writer.fileno())
+            self.data_staged = True
             restore = self.step('restaurar-espacio', lambda: self.destination.call('restore', common, source=archive))
             if restore.get('verified') is not True:
                 raise ValueError('la restauración no acredita igualdad')
             write_json(self.evidence / 'restauracion.json', restore)
-            self.relocation_attempted = True
-            self.step('reubicar-flota', lambda: self.fleet.operation('update', alias, target, timeout=timeout))
+            if self.legacy:
+                self.legacy_prepared = True
+                checkpoint = self.step('registrar-borrador-heredado', lambda: self.fleet.prepare_legacy(alias, self.original_row, target))
+                self.receipt['legacy_checkpoint'] = checkpoint
+                self.create_attempted = True
+                try:
+                    created = self.step('preparar-flota-v4', lambda: self.fleet.operation('create', alias, target, timeout=timeout))
+                    self.receipt['create_operation_id'] = created['id']
+                finally:
+                    if self.fleet.last_operation_id:
+                        self.receipt['create_operation_id'] = self.fleet.last_operation_id
+            else:
+                self.relocation_attempted = True
+                self.step('reubicar-flota', lambda: self.fleet.operation('update', alias, target, timeout=timeout))
             if target['placement']['mode'] == 'container':
                 defaults = {'gaia': (1024**3, 1.5), 'hades': (1024**3, 1), 'argos': (3 * 1024**3, 2), 'hegel': (2 * 1024**3, 2)}
                 memory, cpus = defaults.get(alias, (1024**3, 1))
@@ -242,6 +344,9 @@ class Cut:
             self.step('aplicar-contexto-destino', lambda: self.fleet.refresh_context(alias,
                 'Aplicar el contexto del agente en su nuevo ordenador tras el traslado.', timeout=timeout))
             proof = self.step('verificar', lambda: self.fleet.verify(alias, target, timeout=timeout))
+            if self.plan.get('platform_gateway'):
+                terminal = self.step('verificar-terminal-destino', lambda: self.destination.call('terminal-probe', common))
+                proof['terminal'] = {**proof.get('terminal', {}), **terminal}
             write_json(self.evidence / 'verificacion.json', proof)
             self.receipt['outage_seconds'] = round(time.monotonic() - self.stopped_at, 3)
             self.step('medir-despues', lambda: self.measure('despues'))
@@ -259,7 +364,9 @@ class Cut:
                 self.rollback()
                 self.receipt['state'] = 'rolled_back'
             except BaseException as rollback_failure:
-                self.receipt.update(state='rollback_failed', rollback={'verified': False, 'error': type(rollback_failure).__name__})
+                self.receipt.update(state='rollback_failed', rollback={**self.receipt.get('rollback', {}),
+                                    'verified': False, 'error': type(rollback_failure).__name__,
+                                    'message': str(rollback_failure)[:240]})
             self.save()
             raise
 
@@ -295,7 +402,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         evidence = args.recibos / (args.alias + '-' + uuid.uuid4().hex)
         evidence.mkdir(mode=0o700)
-        fleet = Fleet(plan.get('gateway'), plan['session_file'], plan['company'], ca_file=plan.get('ca_file'))
+        fleet = Fleet(plan.get('gateway'), plan.get('session_file'), plan['company'], ca_file=plan.get('ca_file'),
+                      platform_gateway=plan.get('platform_gateway'))
         fleet.tenant = plan['tenant']
         cut = Cut(fleet, plan, evidence, args.alias_config)
         def interrupted(_number, _frame):

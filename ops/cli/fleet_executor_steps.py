@@ -242,7 +242,9 @@ class Executor:
         revoked = self.journal.setdefault('revoked', {})
         for row in rows:
             stop(self.policy, row)
-            references = credential_references(self.policy, row)
+            from fleet_executor_authority import revocation_scope
+            revocation_policy, scoped = revocation_scope(self.policy, self.context, row)
+            references = credential_references(revocation_policy, scoped)
             key = row['runtime_key']
             if key in revoked and (references.get('legacy') != revoked[key].get('legacy')
                     or references['credentials'] and references != {name: value for name, value in revoked[key].items() if name != 'central'}):
@@ -253,7 +255,7 @@ class Executor:
             else:
                 remove_registry_principals(self.policy, row, script)
             if key not in revoked or references.get('legacy') is not None:
-                observed = invoke_revoke(self.policy, self.context, row, references)
+                observed = invoke_revoke(revocation_policy, self.context, scoped, references)
                 if observed.get('revocation_verified') is not True:
                     raise SafeFailure('old Cauce credentials were not observed rejected')
                 if references.get('legacy') is not None and 'authority' not in self.policy:
@@ -448,7 +450,9 @@ class Executor:
             return {'stopped_verified': True, 'revocation_verified': True}
         revoked = self.journal.setdefault('compensated', {})
         for row in rows:
-            references = credential_references(self.policy, row)
+            from fleet_executor_authority import revocation_scope
+            revocation_policy, scoped = revocation_scope(self.policy, self.context, row)
+            references = credential_references(revocation_policy, scoped)
             key = row['runtime_key']
             if key in revoked and references.get('legacy') is None:
                 if 'authority' in self.policy:
@@ -464,7 +468,7 @@ class Executor:
             else:
                 remove_registry_principals(self.policy, row, script)
             if references['credentials'] or references.get('legacy') is not None or 'central' in references:
-                observed = invoke_revoke(self.policy, self.context, row, references)
+                observed = invoke_revoke(revocation_policy, self.context, scoped, references)
                 if observed.get('revocation_verified') is not True:
                     raise SafeFailure('compensation credential rejection was not observed')
                 if references.get('legacy') is not None and 'authority' not in self.policy:

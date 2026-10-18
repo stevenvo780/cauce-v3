@@ -96,7 +96,8 @@ export async function assertFleetHostAccess(
   const agents = await readFleetGroupAgents(client, request);
   if (agents.length > 1000) conflict('fleet host scope exceeds its bound');
   for (const agent of agents) {
-    if (request.kind === 'create' && isRegistryDraft({ runtime_key: agent.runtime_key as string | null, retired_at: null,
+    if (request.kind === 'create' && isRegistryDraft({ runtime_key: agent.runtime_key as string | null,
+      runtime_mode: agent.runtime_mode as string | null, primary_room_id: agent.primary_room_id as string | null, retired_at: null,
       enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) })) continue;
     assertPlacement(agent, request);
     if (coordinatorEnabled && !registered.has(String(agent.host_id))) conflict('fleet host scope has no registered host transport');
@@ -145,7 +146,8 @@ export function planFleetHostSlices(row: FleetOperationRow, agents: Record<strin
   });
 }
 function adoptedDraft(agent: Record<string, unknown>): boolean {
-  return isRegistryDraft({ runtime_key: agent.runtime_key as string | null, retired_at: null,
+  return isRegistryDraft({ runtime_key: agent.runtime_key as string | null,
+    runtime_mode: agent.runtime_mode as string | null, primary_room_id: agent.primary_room_id as string | null, retired_at: null,
     enabled: agent.enabled === true, lifecycle_state: String(agent.lifecycle_state) });
 }
 export async function loadFleetHostSlices(client: DatabaseClient, row: FleetOperationRow): Promise<FleetHostSlice[]> {

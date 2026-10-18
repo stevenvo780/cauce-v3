@@ -47,6 +47,8 @@ def volume(request, create=False):
     labels = {'cauce.fleet.runtime_key': request['runtime_key'], 'cauce.fleet.tenant': request['tenant'],
               'cauce.fleet.alias': request['alias'], 'cauce.fleet.host': placement['host_id'],
               'cauce.fleet.owner': placement['systemd_user']}
+    if request.get('require_new'):
+        labels['cauce.migration.cut'] = request['migration_id']
     listed = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     if name not in listed:
         if not create:
@@ -67,6 +69,8 @@ def idle_destination(request):
     if image['Id'] != request['image']:
         raise ValueError('destination image differs from its pin')
     volume(request)
+    if request.get('require_new') and volume(request) is not None:
+        raise ValueError('legacy migration requires a new destination volume')
 
 
 def unpack(request, work):
@@ -128,11 +132,20 @@ def dispatch(request):
     with tempfile.TemporaryDirectory(prefix='cauce-move-data-') as work:
         if action == 'identity':
             print(json.dumps(observed_host()))
+        elif action.startswith('legacy-'):
+            from v4_mover_legado import legacy_unit
+            print(json.dumps(legacy_unit(request, action.removeprefix('legacy-'))))
+        elif action == 'cleanup-destination':
+            from v4_mover_legado import cleanup_destination
+            print(json.dumps(cleanup_destination(request)))
+        elif action == 'terminal-probe':
+            from v4_mover_legado import terminal_probe
+            print(json.dumps(terminal_probe(request)))
         elif action == 'preflight-source':
             from v4_alcance_copia import check_sources, host_containers, tenant_scope, under
             scope = tenant_scope(request['config'], request['alias'], request['tenant'], host_containers())
             placement = request['original']['placement']
-            if placement['mode'] == 'container' and placement['container_name'] != scope['container']:
+            if (placement.get('mode') == 'container' or request.get('legacy')) and placement.get('container_name') != scope['container']:
                 raise ValueError('copy scope differs from the current original runtime')
             roots = {item['name']: item['path'] for item in request['roots']}
             check_sources(roots, scope)
@@ -202,7 +215,8 @@ def dispatch(request):
 def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
-    names = ['v4_mover_host.py', 'v4_copia_integral.py', 'v4_copia_migracion.py', 'v4_git_migracion.py', 'v4_alcance_copia.py']
+    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
+             'v4_git_migracion.py', 'v4_alcance_copia.py']
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
             archive.writestr(name, (root / name).read_bytes())

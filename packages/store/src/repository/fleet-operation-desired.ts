@@ -51,8 +51,9 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
     throw new FleetOperationError('invalid_input', 'agent preparation requires declarative parameters');
   }
   const { target, parameters } = request;
-  const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null; runtime_key: string | null; enabled: boolean; lifecycle_state: string }>(
-    'SELECT retired_at,purged_at,runtime_key,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
+  const prior = (await client.query<{ retired_at: Date | null; purged_at: Date | null; runtime_key: string | null; runtime_mode: string | null;
+    primary_room_id: string | null; enabled: boolean; lifecycle_state: string }>(
+    'SELECT retired_at,purged_at,runtime_key,runtime_mode,primary_room_id,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2 FOR UPDATE',
     [target.tenant_id, target.alias])).rows[0];
   if (prior?.purged_at) throw new FleetOperationError('conflict', 'purged identity cannot be reused');
   if (prior?.retired_at) throw new FleetOperationError('conflict', 'restore the retired agent before updating it');

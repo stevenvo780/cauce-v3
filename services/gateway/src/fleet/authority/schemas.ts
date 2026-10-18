@@ -15,7 +15,9 @@ export const AuthorityInventoryPinsSchema = z.array(z.object({ id: AuthorityIdSc
 export const AuthorityInventorySchema = z.object({ authorities: z.array(z.object({
   id: AuthorityIdSchema, sha256: AuthorityDigestSchema,
   matching_records: z.array(z.record(z.string(), z.unknown())).max(64),
-}).strict()).length(4).refine(rows => new Set(rows.map(row => row.id)).size === 4) }).strict();
+  preserved: z.literal(true).optional(),
+}).strict().refine(row => row.preserved === undefined || row.id.startsWith('base_'))).length(4)
+  .refine(rows => new Set(rows.map(row => row.id)).size === 4) }).strict();
 export const AuthorityIssueSchema = z.object({
   phase: z.enum(['bootstrap', 'normal']), csr_pem: z.string().min(1).max(16_384), csr_sha256: AuthorityDigestSchema,
   idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),

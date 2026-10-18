@@ -23,7 +23,9 @@ def scoped_agents(policy: dict, context: dict) -> list[dict]:
     target = context['request']['target']
     rows = context['previous_agents']
     if context['request']['kind'] == 'create':
-        rows = [row for row in rows if not (isinstance(row, dict) and row.get('runtime_key') is None
+        rows = [row for row in rows if not (isinstance(row, dict)
+                and (row.get('runtime_key') is None or 'runtime_mode' in row and row['runtime_mode'] is None
+                     and isinstance(row.get('primary_room_id'), str))
                 and row.get('lifecycle_state') == 'draft' and row.get('enabled') is not True)]
     if not rows and target['resource'] == 'agent':
         from fleet_executor_policy import target_agent

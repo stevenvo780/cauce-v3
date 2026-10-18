@@ -55,9 +55,9 @@ def simulate(args, plan_path, load_plan, target_parameters):
                          'interval': 'desde solicitar stop hasta verificar nonce, contexto y terminal',
                          'estimate': 'no medible sin copia consistente, red y autenticación reales'},
               'rollback': 'cancelar y asentar operación; update inverso, contexto y nonce desde origen',
-              'pending': ['empresa activa y sesión Cauce nominal válida',
+              'pending': ['empresa activa y autoridad Cauce vigente (sesión o administrador de plataforma en gateway)',
                           'identidad física, imagen, capacidad y espacio destino vacíos',
-                          'control exclusivo V4 del origen sin supervisores legados escritores',
+                          'control exclusivo del origen; unidad legada fijada o colocación V4 verificada',
                           'autenticación de la misma cuenta en destino por el canal privado del dueño',
                           'contexto inicial versionado y adopción efectiva',
                           'copia consistente nueva tras stop; copia cifrada externa antes de retirar origen']}
@@ -66,10 +66,13 @@ def simulate(args, plan_path, load_plan, target_parameters):
     try:
         plan = {**load_plan(plan_path, args.alias), 'alias': args.alias}
         checks['plan_valid'] = True
-        info = pathlib.Path(plan['session_file']).lstat()
-        checks['session_file_private'] = stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o077
-        if not checks['session_file_private']:
-            blockers.append('session_file_not_private')
+        if plan.get('platform_gateway'):
+            checks['authority'] = 'platform_gateway'
+        else:
+            info = pathlib.Path(plan['session_file']).lstat()
+            checks['session_file_private'] = stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and not info.st_mode & 0o077
+            if not checks['session_file_private']:
+                blockers.append('session_file_not_private')
     except (OSError, ValueError, KeyError, TypeError):
         blockers.append('plan_or_session_missing_or_invalid')
     try:
@@ -102,14 +105,20 @@ def simulate(args, plan_path, load_plan, target_parameters):
                                                            'runtime_mode', 'lifecycle_state', 'primary_account_id', 'model_id')}
             if row.get('enabled') is not True:
                 blockers.append('source_agent_not_enabled')
-            if row.get('lifecycle_state') != 'ready':
+            legacy = row.get('runtime_mode') is None
+            if row.get('lifecycle_state') != 'ready' and not (legacy and row.get('lifecycle_state') in {'verifying', 'draft'}):
                 blockers.append('source_agent_not_ready')
-            if row.get('runtime_mode') not in ('native', 'container'):
-                blockers.append('source_placement_requires_adoption')
-            if not row.get('primary_account_id'):
+            if row.get('runtime_mode') not in (None, 'native', 'container'):
+                blockers.append('source_runtime_mode_invalid')
+            selected = {**(plan.get('agent', {}) if plan else {}), **{key: value for key, value in row.items() if value is not None}}
+            if not selected.get('primary_account_id'):
                 blockers.append('original_account_not_bound')
-            if row.get('harness_id') == 'openclaw' and not row.get('model_id'):
+            if row.get('harness_id') == 'openclaw' and not selected.get('model_id'):
                 blockers.append('openclaw_model_not_selected')
+            if legacy:
+                checks['legacy_create'] = True
+                result['steps'][6:7] = ['registrar-borrador-heredado', 'preparar-flota-v4']
+                result['rollback'] = 'asentar operación, retirar y purgar solo runtime destino, restaurar registro y arrancar unidad legada'
             host = plan['destination']['host_id'] if plan else 'server2'
             placements = [item for item in evidence['capability']['placements'] if item['host_id'] == host]
             runtimes = [item for placement in placements for item in placement.get('runtimes', [])]
@@ -120,14 +129,15 @@ def simulate(args, plan_path, load_plan, target_parameters):
                 blockers.append('executor_capability_unavailable')
             if not any(item['harness_id'] == row['harness_id'] for item in runtimes):
                 blockers.append('destination_harness_template_missing')
-            if row.get('primary_account_id'):
-                provider = fleet.account_provider(row['primary_account_id'])
+            if selected.get('primary_account_id'):
+                provider = fleet.account_provider(selected['primary_account_id'])
                 checks['account_provider'] = provider
                 if not any(item['harness_id'] == row['harness_id'] and item['provider'] == provider for item in runtimes):
                     blockers.append('destination_provider_template_missing')
             if plan:
                 try:
-                    target_parameters(fleet, fleet.parameters(row), plan)
+                    from v4_mover_agente import migration_parameters
+                    target_parameters(fleet, migration_parameters(fleet, row, plan), plan)
                     checks['target_parameters_valid'] = True
                 except (ValueError, FleetFailure):
                     blockers.append('target_parameters_invalid')

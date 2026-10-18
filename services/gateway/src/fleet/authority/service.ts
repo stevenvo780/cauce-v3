@@ -12,6 +12,22 @@ export interface FleetAuthorityService {
   execute(input: unknown): Promise<unknown>;
   executeInTransaction(client: DatabaseClient, input: unknown): Promise<unknown>;
 }
+async function preservesLegacy(client: DatabaseClient, row: FleetOperationRow, scope: AuthorityScope): Promise<boolean> {
+  return (await client.query(`SELECT 1 FROM audit_events marker
+    JOIN config_revisions checkpoint ON checkpoint.id::text=marker.metadata->>'checkpoint_revision' AND checkpoint.company_id=marker.company_id
+    LEFT JOIN fleet_operations original ON original.id::text=marker.metadata->>'create_operation_id'
+    WHERE marker.action='fleet.migration.preserve_legacy' AND marker.decision='allow' AND marker.company_id=$1
+      AND marker.actor_human_id::text=$2 AND marker.metadata->>'idempotency_key'=$3 AND marker.metadata->>'kind'=$4
+      AND marker.metadata->'target'=$5::jsonb AND marker.metadata->>'runtime_key'=$6 AND marker.metadata->>'host_id'=$7
+      AND ($4='create' OR (original.company_id=$1 AND original.target=$5::jsonb AND original.kind='create'
+        AND original.request->'parameters'->>'runtime_key'=$6 AND original.request->'parameters'->'placement'->>'host_id'=$7))
+      AND checkpoint.operation->>'resource'='fleet_migration' AND checkpoint.operation->>'action'='prepare_legacy'
+      AND checkpoint.operation->'target'->>'tenant_id'=$8 AND checkpoint.operation->'target'->>'alias'=$9
+      AND checkpoint.operation->'before'->'runtime_mode'='null'::jsonb LIMIT 1`,
+  [row.company_id, row.actor_subject?.slice('console:'.length), row.request.idempotency_key, row.kind,
+    JSON.stringify(row.target), scope.runtime_key, scope.host_id, row.target.tenant_id,
+    row.target.resource === 'agent' ? row.target.alias : null])).rowCount === 1;
+}
 async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, request: AuthorityRequest, host: string) {
   if (scope.host_id !== host) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   await lockFleetRevision(client);
@@ -83,9 +99,10 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     if (request.action === 'issue' && createHash('sha256').update(request.csr_pem).digest('hex') !== request.csr_sha256) {
       throw new FleetAuthorityError('INVALID_REQUEST');
     }
-    const { agent } = await authority(client, request.scope, request, host);
+    const { agent, row } = await authority(client, request.scope, request, host);
+    const preserveLegacy = await preservesLegacy(client, row, request.scope);
     const { scope, ...action } = request;
-    const packet = { ...action, scope: { operation_id: scope.operation_id, host_id: host,
+    const packet = { ...action, ...(preserveLegacy ? { preserve_legacy: true } : {}), scope: { operation_id: scope.operation_id, host_id: host,
       scope_sha256: scope.scope_sha256, runtime_key: scope.runtime_key },
     agent: { tenant_id: agent.tenant_id, alias: agent.alias } };
     const output = await runAuthorityCommand(options.command, packet);
@@ -94,9 +111,13 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     if (request.action === 'issue' && 'token' in result
         && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
     if (request.action === 'verify_absent' || request.action === 'revoke') {
-      if (!('authorities' in result) || result.authorities.some(row => row.matching_records.length > 0)) {
+      if (!('authorities' in result) || result.authorities.some(item => item.preserved === true ? !preserveLegacy
+        : item.matching_records.length > 0)) {
         throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
       }
+    }
+    if ('authorities' in result && result.authorities.some(item => item.preserved === true && !preserveLegacy)) {
+      throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
     }
     return result;
   };

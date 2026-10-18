@@ -15,6 +15,7 @@ import uuid
 CLI = pathlib.Path(__file__).resolve().parents[1] / 'cli'
 sys.path.insert(0, str(CLI))
 session_client = importlib.import_module('context_client')
+platform_client = importlib.import_module('v4_mover_plataforma')
 OPERATIONS = '/v3/console/fleet/operations'
 TERMINAL = frozenset({'succeeded', 'failed', 'cancelled'})
 STATUSES = TERMINAL | {'queued', 'running', 'awaiting_auth', 'cancelling'}
@@ -55,11 +56,14 @@ def parameters(row: dict) -> dict:
 class Fleet:
     parameters = staticmethod(parameters)
 
-    def __init__(self, base_url: str, session_file: str, company: str, *, ca_file: str | None = None):
+    def __init__(self, base_url: str | None, session_file: str | None, company: str, *,
+                 ca_file: str | None = None, platform_gateway: dict | None = None):
         if not isinstance(company, str) or not IDENTIFIER.fullmatch(company):
             raise FleetFailure('invalid company identifier')
-        self.client = session_client.ConsoleSessionClient(session_file, gateway=base_url, ca_file=ca_file)
-        self.session_file = str(session_file)
+        self.platform = platform_gateway is not None
+        self.client = platform_client.PlatformClient(platform_gateway, company) if self.platform else \
+            session_client.ConsoleSessionClient(session_file, gateway=base_url, ca_file=ca_file)
+        self.session_file = str(session_file) if session_file else None
         self.company = company
         self.last_operation_id: str | None = None
         self.last_operation: dict | None = None
@@ -68,14 +72,19 @@ class Fleet:
         self.targets: dict[str, dict] = {}
         self.operations: list[dict] = []
         self.pending_request: dict | None = None
-        state = self.client.request('GET', '/v3/auth/session')
-        authority = state.get('authority', {}) if isinstance(state, dict) else {}
-        if authority.get('acting_company') != company:
-            raise FleetFailure('console session must already select the requested company')
+        if not self.platform:
+            state = self.client.request('GET', '/v3/auth/session')
+            authority = state.get('authority', {}) if isinstance(state, dict) else {}
+            if authority.get('acting_company') != company:
+                raise FleetFailure('console session must already select the requested company')
 
     def request(self, method: str, path: str, payload=None):
         try:
+            if self.platform:
+                self.client.tenant = getattr(self, 'tenant', None)
             return self.client.request(method, path, payload)
+        except platform_client.PlatformFailure as error:
+            raise FleetFailure(str(error), status_code=error.status_code) from error
         except (session_client.ContextFailure, OSError, ValueError) as error:
             status = re.search(r'with HTTP ([0-9]{3})', str(error))
             raise FleetFailure('fleet gateway request could not be verified',
@@ -88,14 +97,17 @@ class Fleet:
             raise FleetFailure('fleet configuration snapshot is invalid')
         return snapshot
 
-    def agent(self, alias: str) -> dict:
+    def agent(self, alias: str, *, include_retired: bool = False) -> dict:
         tenant, selected = self._identity(alias)
         if getattr(self, 'tenant', None) is not None:
             if tenant is not None and tenant != self.tenant:
                 raise FleetFailure('agent tenant differs from the requested migration scope')
             tenant = self.tenant
         snapshot = self.snapshot()
-        rows = [row for row in snapshot['agents'] if isinstance(row, dict) and row.get('alias') == selected
+        inventory = snapshot['agents']
+        if include_retired:
+            inventory = [*inventory, *(snapshot.get('retired') or {}).get('agents', [])]
+        rows = [row for row in inventory if isinstance(row, dict) and row.get('alias') == selected
                 and (tenant is None or row.get('tenant_id') == tenant)]
         if len(rows) != 1:
             raise FleetFailure('agent must identify exactly one active inventory row')
@@ -163,7 +175,7 @@ class Fleet:
 
     def _cancel_and_settle(self, row: dict, timeout: float) -> dict:
         deadline = time.monotonic() + timeout
-        while row['status'] not in TERMINAL:
+        while row['status'] not in {'succeeded', 'cancelled'}:
             if row['status'] != 'cancelling':
                 try:
                     result = self.request('POST', OPERATIONS + '/' + row['id'] + '/cancel',
@@ -171,7 +183,7 @@ class Fleet:
                     row = self._receipt(result, row['target'], row['kind'], row['id'])
                 except FleetFailure:
                     row = self._read_operation(row)
-            if row['status'] in TERMINAL:
+            if row['status'] in {'succeeded', 'cancelled'}:
                 break
             if time.monotonic() >= deadline:
                 raise FleetFailure('fleet cancellation has not settled; recovery must wait', row, settled=False)
@@ -189,7 +201,7 @@ class Fleet:
             history = self.request('GET', OPERATIONS + '?' + query)
             rows = history.get('operations', []) if isinstance(history, dict) else []
             matches = [row for row in rows if isinstance(row, dict) and row.get('request_sha256') == digest(request)]
-            if not matches and error.status_code in {400, 401, 403}:
+            if not matches and error.status_code in {400, 401, 403, 409}:
                 self.acceptance_unknown = False
                 self.pending_request = None
                 raise error
@@ -208,7 +220,7 @@ class Fleet:
         return row
 
     def operation(self, kind: str, alias: str, parameters: dict, timeout: float = 300) -> dict:
-        if kind not in {'update', 'start', 'stop'} or not isinstance(parameters, dict) \
+        if kind not in {'create', 'update', 'start', 'stop', 'retire'} or not isinstance(parameters, dict) \
                 or not math.isfinite(timeout) or timeout <= 0:
             raise FleetFailure('invalid migration operation')
         agent = self.agent(alias)
@@ -242,6 +254,20 @@ class Fleet:
             raise FleetFailure('fleet operation ended without completing the migration effect', row)
         return row
 
+    def prepare_legacy(self, alias: str, original_row: dict, target: dict | None = None) -> dict:
+        current = self.agent(alias)
+        if current['tenant_id'] != original_row.get('tenant_id') or current['alias'] != original_row.get('alias'):
+            raise FleetFailure('legacy preparation target differs from its snapshot')
+        return self.request('POST', '/internal/migration/prepare-legacy',
+                            {'original': original_row, 'target': target, 'expected_revision': current['revision']})
+
+    def restore_legacy(self, alias: str, original_row: dict, target: dict) -> dict:
+        current = self.agent(alias, include_retired=True)
+        if current['tenant_id'] != original_row.get('tenant_id') or current['alias'] != original_row.get('alias'):
+            raise FleetFailure('legacy rollback target differs from its snapshot')
+        return self.request('POST', '/internal/migration/restore-legacy',
+                            {'original': original_row, 'target': target, 'expected_revision': current['revision']})
+
     def rollback(self, alias: str, original_parameters: dict, timeout: float = 300) -> dict:
         self.settle_pending(max(30, min(timeout, 180)))
         return self.operation('update', alias, original_parameters, timeout)
@@ -262,7 +288,7 @@ class Fleet:
                 if len(matches) > 1 or time.monotonic() >= deadline:
                     raise FleetFailure('operation acceptance is unknown; recovery must inspect durable history', settled=False)
                 time.sleep(min(0.5, max(0, deadline - time.monotonic())))
-        if self.last_operation and self.last_operation.get('status') not in TERMINAL:
+        if self.last_operation and self.last_operation.get('status') not in {'succeeded', 'cancelled'}:
             return self._cancel_and_settle(self.last_operation, timeout)
         return self.last_operation
 
@@ -272,6 +298,12 @@ class Fleet:
 
     def _nonce(self, row: dict, timeout: float) -> dict:
         nonce = 'CAUCE_MOVE_' + uuid.uuid4().hex
+        if self.platform:
+            receipt = self.request('POST', '/internal/migration/nonce',
+                                   {'tenant_id': row['tenant_id'], 'alias': row['alias'], 'nonce': nonce})
+            if not isinstance(receipt, dict) or not isinstance(receipt.get('message_id'), str):
+                raise FleetFailure('internal migration nonce has no durable publication receipt')
+            return self._nonce_delivery(row, nonce, receipt, timeout)
         command = {'room_id': row['primary_room_id'], 'recipients': [{'tenant_id': row['tenant_id'], 'alias': row['alias']}],
                    'body': {'text': 'Reply with exactly this nonce and no other text: ' + nonce}, 'lane': 'interactive', 'priority': 0}
         prepared = self.request('POST', '/v3/console/publish-intents', {**command, 'intent_nonce': str(uuid.uuid4())})
@@ -287,6 +319,9 @@ class Fleet:
         if not isinstance(confirmed, dict) or confirmed.get('confirmed') is not True \
                 or any(confirmed.get(key) != value for key, value in confirmation.items()):
             raise FleetFailure('nonce publish confirmation is invalid')
+        return self._nonce_delivery(row, nonce, receipt, timeout)
+
+    def _nonce_delivery(self, row: dict, nonce: str, receipt: dict, timeout: float) -> dict:
         deadline = time.monotonic() + timeout
         while True:
             detail = self.request('GET', '/v3/console/messages/' + receipt['message_id'])
@@ -302,6 +337,8 @@ class Fleet:
             time.sleep(min(0.5, max(0, deadline - time.monotonic())))
 
     def _terminal_ticket(self, row: dict) -> dict:
+        if self.platform:
+            return {'ticket_verified': False, 'websocket_verified': False, 'verification': 'external_required'}
         targets = self.request('GET', '/v3/console/terminal/targets')
         items = targets.get('items', []) if isinstance(targets, dict) else []
         selected = [item for item in items if isinstance(item, dict) and item.get('tenant_id') == row['tenant_id']
@@ -341,6 +378,25 @@ class Fleet:
                 and profile.get('revision') is not None and profile.get('revision') == profile.get('applied_revision') \
                 and profile.get('runtime_adoption'):
             return {'reloaded': False, 'state': 'applied', 'revision': profile['revision'], 'generation': measured.get('generation')}
+        if self.platform:
+            operation = self.last_operation
+            if not operation or operation.get('status') != 'succeeded' \
+                    or operation.get('kind') not in {'create', 'update', 'start', 'restore'} \
+                    or operation.get('target') != {'resource': 'agent', 'tenant_id': row['tenant_id'], 'alias': row['alias']} \
+                    or any(not any(step.get('name') == name and step.get('status') == 'succeeded'
+                                   for step in operation.get('steps', [])) for name in ('profile', 'verify')):
+                raise FleetFailure('context refresh requires the exact successful canonical fleet profile and verification')
+            bootstrap = profile.get('bootstrap_verification') or {}
+            if bootstrap.get('verified') is True and bootstrap.get('operation_id') == operation['id'] \
+                    and bootstrap.get('profile_revision') == profile.get('revision') and bootstrap.get('documents'):
+                return {'reloaded': False, 'state': 'pending_session_refresh', 'revision': profile['revision'],
+                        'operation_id': operation['id'], 'evidence': 'fleet_bootstrap_normal_awaiting_delivery'}
+            if measured.get('revision') != profile.get('revision') or not measured.get('generation') \
+                    or not measured.get('documents'):
+                raise FleetFailure('canonical fleet operation has not projected the desired migration profile')
+            return {'reloaded': False, 'state': 'pending_session_refresh', 'revision': profile['revision'],
+                    'generation': measured['generation'], 'operation_id': operation['id'],
+                    'evidence': 'fleet_profile_projection_awaiting_delivery'}
         deadline = time.monotonic() + timeout
         while True:
             targets = self.request('GET', '/v3/console/terminal/targets')
@@ -398,6 +454,11 @@ class Fleet:
             profile_ready = isinstance(profile, dict) and profile.get('runtime_state') == 'applied' \
                 and profile.get('revision') is not None and profile.get('revision') == profile.get('applied_revision') \
                 and (profile.get('runtime_verification') or {}).get('state') == 'current' and profile.get('runtime_adoption')
+            bootstrap = profile.get('bootstrap_verification') or {} if isinstance(profile, dict) else {}
+            if self.platform and bootstrap.get('verified') is True and bootstrap.get('evidence') == 'fleet_bootstrap_normal' \
+                    and bootstrap.get('profile_revision') == profile.get('revision') and bootstrap.get('documents') \
+                    and self.last_operation and bootstrap.get('operation_id') == self.last_operation['id']:
+                profile_ready = True
             if version_ready and profile_ready:
                 break
             if time.monotonic() >= deadline:
@@ -406,4 +467,5 @@ class Fleet:
         return {'host_id': observed['placement']['host_id'], 'harness_id': observed['harness_id'],
                 'primary_account_id': observed['primary_account_id'], 'context_version': version,
                 'context_digest': context['digest'], 'profile_revision': profile['revision'],
+                'profile_evidence': 'fleet_bootstrap_normal' if self.platform and bootstrap.get('verified') is True else 'adapter_delivery',
                 'roundtrip': roundtrip, 'terminal': self._terminal_ticket(row)}
