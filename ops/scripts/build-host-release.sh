@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds what `cauce hosts setup` downloads from the gateway: release.tar (executor, host process, real adapter),
-# agent-image.tar.gz (ops/agent-runtime with the pinned provider CLIs) and host-release.json with their pins.
+# agent-image.tar.gz, quota-image.tar.gz and host-release.json with their pins.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -37,6 +37,22 @@ image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16
 # Without attestations and with a fixed creation time, cached rebuilds preserve the portable config digest pinned from docker save.
 docker build -q --provenance=false --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
   -t "$image" ops/agent-runtime >/dev/null
+agy_version=$(sed -n 's/^ARG AGY_VERSION=//p' ops/cuotas/Dockerfile)
+agy_sha=$(sed -n 's/^ARG AGY_X86_64_SHA256=//p' ops/cuotas/Dockerfile)
+agy_filename="agy-${agy_version}-linux-x86-64"
+agy_source="${CAUCE_QUOTA_AGY_CONTEXT:+${CAUCE_QUOTA_AGY_CONTEXT}/$agy_filename}"
+agy_source=${agy_source:-$HOME/.local/bin/agy}
+mkdir "$work/agybin"
+if [[ -f $agy_source && $(sha256sum "$agy_source" | cut -d' ' -f1) == "$agy_sha" ]]; then
+  install -m 0555 "$agy_source" "$work/agybin/$agy_filename"
+elif [[ -n ${CAUCE_QUOTA_AGY_CONTEXT:-} ]]; then
+  echo "quota agy context must contain $agy_filename with the Dockerfile SHA-256" >&2; exit 1
+else
+  echo 'quota image: pinned agy binary unavailable; agy will not be advertised' >&2
+fi
+quota_image="cauce-quota-runtime:$(sha256sum ops/cuotas/Dockerfile | cut -c1-16)-$(find "$work/agybin" -type f | wc -l)"
+docker build -q --provenance=false --build-context "agybin=$work/agybin" \
+  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/cuotas/Dockerfile)" -t "$quota_image" ops/cuotas >/dev/null
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \
   /cauce/lifecycle/cauce-container-runtime.py bundle-digest /cauce/lifecycle >/dev/null
 # `codex` on PATH is a Node launcher; the provider login pins its argv[0] with O_NOFOLLOW, so the pin names the native binary.
@@ -46,4 +62,4 @@ codex_native=$(docker run --rm --network none --entrypoint sh "$image" -c \
   echo "expected one native Codex binary in $image, found: ${codex_native:-none}" >&2; exit 1;
 }
 python3 ops/scripts/host-release.py pack --stage "$stage" --out "$target" --revision "$revision" --epoch "$epoch" \
-  --image "$image" --provider "codex=$codex_native" --provider claude=claude --provider grok=grok
+  --image "$image" --quota-image "$quota_image" --provider "codex=$codex_native" --provider claude=claude --provider grok=grok

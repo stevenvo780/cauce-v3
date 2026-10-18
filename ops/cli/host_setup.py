@@ -147,14 +147,19 @@ def fetch_package(channel: HostChannel) -> tuple[dict, str]:
                 or image and IMAGE_ID.fullmatch(str(item['image_id'])) is None:
             raise HostFailure('setup package artifact is invalid')
         names.add(item['name'])
-    images = [item['image_id'] for item in artifacts if item['kind'] == 'image']
-    if len(images) > 1:
-        raise HostFailure('setup package must carry at most one agent image')
+    images = [item for item in artifacts if item['kind'] == 'image']
+    if len(images) > 2 or len(images) == 2 and {item['name'] for item in images} != {'agent-image', 'quota-image'}:
+        raise HostFailure('setup package may carry one agent image and one quota image')
+    agent_image = next((item for item in images if item['name'] != 'quota-image'), None)
     for template in package['policy'].get('container_templates') or []:
-        if images and (not isinstance(template, dict) or template.get('image') != images[0]):
+        if agent_image is not None and (not isinstance(template, dict) or template.get('image') != agent_image['image_id']):
             harness = template.get('harness_id') if isinstance(template, dict) else None
-            raise HostFailure(f'la plantilla de contenedor {harness} no usa la imagen de agentes que trae el paquete ({images[0]}); '
+            raise HostFailure(f'la plantilla de contenedor {harness} no usa la imagen de agentes que trae el paquete ({agent_image["image_id"]}); '
                 'no se instaló nada')
+    quota = package['policy'].get('quota_environments')
+    quota_image = next((item for item in images if item['name'] == 'quota-image'), agent_image)
+    if quota is not None and (not isinstance(quota, dict) or quota_image is None or quota.get('image') != quota_image['image_id']):
+        raise HostFailure('quota environments do not use the quota image signed by the package; nothing was installed')
     return package, reply['signer_public_key']
 
 
@@ -335,7 +340,7 @@ def substitute(value, replacements: dict[str, str]):
 
 
 def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, release: pathlib.Path, identity: pathlib.Path,
-                   local_image: str | None = None) -> dict:
+                   local_image: str | None = None, local_images: dict[str, str] | None = None) -> dict:
     user = pwd.getpwuid(os.geteuid()).pw_name
     roots = {name: str(install_root / 'roots' / name) for name in ('state', 'runtime', 'pki', 'tokens', 'identities')}
     base = {'schemaVersion': 1, 'host_id': host_id, 'executor_user': user, 'roots': roots,
@@ -348,14 +353,17 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
     if 'native' in supplied and supplied['native'] != []:
         raise HostFailure('setup policy cannot add native runtimes')
     supplied.pop('native', None)
+    resolved = dict(local_images or {})
     if local_image is not None:
-        image_id = next(item['image_id'] for item in package['artifacts'] if item['kind'] == 'image')
-        # Executor templates and provider bindings compare Docker's immutable local Id, never a mutable tag.
-        for template in supplied.get('container_templates', []):
-            template['image'] = local_image
-        quota = supplied.get('quota_environments')
-        if isinstance(quota, dict) and quota.get('image') == image_id:
-            quota['image'] = local_image
+        image_id = next(item['image_id'] for item in package['artifacts'] if item['kind'] == 'image' and item['name'] != 'quota-image')
+        resolved[image_id] = local_image
+    # Executor templates and quota bindings compare Docker's immutable local Id, never a mutable tag.
+    for template in supplied.get('container_templates', []):
+        if template.get('image') in resolved:
+            template['image'] = resolved[template['image']]
+    quota = supplied.get('quota_environments')
+    if isinstance(quota, dict) and quota.get('image') in resolved:
+        quota['image'] = resolved[quota['image']]
     return {**base, **supplied}
 
 
@@ -470,7 +478,8 @@ def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dic
     placements = report.get('placements') if isinstance(report, dict) else None
     templates = sum(len(item.get('runtimes', [])) for item in placements or [] if isinstance(item, dict))
     return {'available': bool(isinstance(report, dict) and report.get('available') is True), 'templates': templates,
-        'reason': report.get('reason') if isinstance(report, dict) else 'executor_unreadable'}
+        'reason': report.get('reason') if isinstance(report, dict) else 'executor_unreadable',
+        'quota_environments': report.get('quota_environments') if isinstance(report, dict) else None}
 
 
 def systemctl(*arguments: str) -> subprocess.CompletedProcess:
@@ -521,21 +530,23 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     pin_signer(channel.directory, signer, not dry_run, signer_fingerprint)
     host_id, root = channel.identity['host_id'], paths['install_root']
     release_item = next(item for item in package['artifacts'] if item['kind'] == 'release')
-    image_item = next((item for item in package['artifacts'] if item['kind'] == 'image'), None)
+    images = [item for item in package['artifacts'] if item['kind'] == 'image']
     release = root / 'release' / release_item['sha256']
     user = pwd.getpwuid(os.geteuid()).pw_name
     plan = {'host_id': host_id, 'dry_run': dry_run, 'release': str(release), 'release_installed': (release / '.verified').is_file(),
         'policy_file': str(paths['policy']), 'unit': str(paths['unit']), 'linger': linger_enabled(user),
         'artifacts': [item['name'] for item in package['artifacts']]}
-    if image_item is not None:
-        plan.update(image_id=image_item['image_id'], image_present=installed_image(image_item['image_id']) is not None)
+    for item in images:
+        key = 'quota_image' if item['name'] == 'quota-image' else 'image'
+        plan.update({key + '_id': item['image_id'], key + '_present': installed_image(item['image_id']) is not None})
     if dry_run:
-        plan['actions'] = [step for step, needed in (
-            ('download and extract release', not plan['release_installed']),
-            ('download and load agent image ' + str(plan.get('image_id')), image_item is not None and not plan['image_present']),
+        image_actions = [('download and load ' + ('quota' if item['name'] == 'quota-image' else 'agent') + ' image ' + item['image_id'],
+            not plan[('quota_image' if item['name'] == 'quota-image' else 'image') + '_present']) for item in images]
+        plan['actions'] = [step for step, needed in [
+            ('download and extract release', not plan['release_installed']), *image_actions,
             ('write executor policy', True), ('write provider auth policy', provider_login_approved(package['policy'])),
             ('install user unit ' + paths['unit_name'], True),
-            ('enable linger for ' + user, not plan['linger']), ('enable and start the service', True)) if needed]
+            ('enable linger for ' + user, not plan['linger']), ('enable and start the service', True)] if needed]
         return plan
     for directory in (install_base, install_base / channel.identity['company_id'], root):
         directory.mkdir(parents=True, exist_ok=True)
@@ -544,7 +555,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         private_directory(root / sub)
     for name in ('state', 'runtime', 'pki', 'tokens', 'identities'):
         private_directory(root / 'roots' / name)
-    local_image = None
+    local_images = {}
     with tempfile.TemporaryDirectory(dir=private_directory(root)) as scratch:
         if not plan['release_installed']:
             archive = pathlib.Path(scratch) / 'release.tar'
@@ -558,10 +569,12 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
                     private_directory(target.parent)
                     download(channel, item, pathlib.Path(scratch) / item['name'])
                     os.replace(pathlib.Path(scratch) / item['name'], target)
-        if image_item is not None:
-            plan['image_loaded'], local_image = ensure_image(channel, image_item, pathlib.Path(scratch))
-            plan['local_image_id'] = local_image
-    policy = compose_policy(package, host_id, root, release, channel.directory, local_image)
+        for item in images:
+            key = 'quota_image' if item['name'] == 'quota-image' else 'image'
+            loaded, local_id = ensure_image(channel, item, pathlib.Path(scratch))
+            plan.update({key + '_loaded': loaded, 'local_' + key + '_id': local_id})
+            local_images[item['image_id']] = local_id
+    policy = compose_policy(package, host_id, root, release, channel.directory, local_images=local_images)
     verify_bundles(policy, release)
     changed = write_if_changed(paths['policy'], json.dumps(policy, indent=2, sort_keys=True) + '\n', 0o600)
     report = capabilities_report(release, paths['policy'])
@@ -581,7 +594,8 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
     if changed:
         systemctl('restart', paths['unit_name'])
     plan.update(release_installed=True, service_active=systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
-        policy_changed=changed, templates=report['templates'], provider_auth=auth_file is not None)
+        policy_changed=changed, templates=report['templates'], provider_auth=auth_file is not None,
+        quota_environments=report['quota_environments'])
     if not plan['linger']:
         plan['warning'] = f'enable linger so the service survives logout: sudo loginctl enable-linger {user}'
     return plan
@@ -603,6 +617,7 @@ def status(identity_directory: pathlib.Path, install_base: pathlib.Path) -> dict
             report = capabilities_report(mentioned[0], paths['policy'])
             result['templates'] = report['templates']
             result['executor_ready'] = report['available'] and report['templates'] > 0 and result['service_active']
+            result['quota_environments'] = report['quota_environments']
             result['reason'] = None if result['executor_ready'] else report['reason'] or 'service_inactive'
     result.setdefault('reason', 'setup_required')
     return result

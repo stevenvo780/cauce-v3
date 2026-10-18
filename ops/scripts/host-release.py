@@ -29,6 +29,7 @@ from host_setup import MAX_ARTIFACT, MAX_IMAGE, REQUIRED_IN_RELEASE, extract_rel
 MANIFEST = 'host-release.json'
 RELEASE = 'release.tar'
 IMAGE = 'agent-image.tar.gz'
+QUOTA_IMAGE = 'quota-image.tar.gz'
 DOCKER = '/usr/bin/docker'
 REVISION = re.compile(r'[a-f0-9]{40}')
 HEX = re.compile(r'[a-f0-9]{64}')
@@ -135,6 +136,27 @@ def measure_providers(reference: str, providers: list[str]) -> dict[str, str]:
     return pins
 
 
+def pack_image(reference: str, directory: pathlib.Path, filename: str) -> tuple[dict, str]:
+    builder_id = docker('image', 'inspect', '--format', '{{.Id}}', reference)
+    if IMAGE_ID.fullmatch(builder_id) is None:
+        raise ReleaseError(f'{reference} has no content-addressed Id')
+    sha256, size = save_image(reference, directory / filename)
+    image_id = archive_image(directory / filename, builder_id)['id']
+    return {'file': filename, 'sha256': sha256, 'size': size, 'id': image_id, 'reference': reference}, builder_id
+
+
+def quota_providers(reference: str) -> list[str]:
+    providers = ['claude', 'codex', 'grok', 'muse']
+    for provider in providers:
+        docker('run', '--rm', '--network', 'none', '--entrypoint', provider, reference, '--version')
+    try:
+        docker('run', '--rm', '--network', 'none', '--entrypoint', 'agy', reference, '--version')
+        providers.append('agy')
+    except ReleaseError:
+        pass
+    return providers
+
+
 def pack(arguments: argparse.Namespace) -> dict:
     stage, out = arguments.stage.resolve(), arguments.out
     if REVISION.fullmatch(arguments.revision) is None:
@@ -157,13 +179,12 @@ def pack(arguments: argparse.Namespace) -> dict:
     manifest = {'version': 1, 'revision': arguments.revision,
         'release': {'file': RELEASE, 'sha256': sha256_file(out / RELEASE), 'size': (out / RELEASE).stat().st_size}}
     if arguments.image:
-        builder_image_id = docker('image', 'inspect', '--format', '{{.Id}}', arguments.image)
-        if IMAGE_ID.fullmatch(builder_image_id) is None:
-            raise ReleaseError(f'{arguments.image} has no content-addressed Id')
-        sha256, size = save_image(arguments.image, out / IMAGE)
-        image_id = archive_image(out / IMAGE, builder_image_id)['id']
-        manifest['image'] = {'file': IMAGE, 'sha256': sha256, 'size': size, 'id': image_id, 'reference': arguments.image}
-        pins.update(image=image_id, **measure_providers(builder_image_id, arguments.provider))
+        manifest['image'], builder_id = pack_image(arguments.image, out, IMAGE)
+        pins.update(image=manifest['image']['id'], **measure_providers(builder_id, arguments.provider))
+    if reference := getattr(arguments, 'quota_image', None):
+        manifest['quota_image'], builder_id = pack_image(reference, out, QUOTA_IMAGE)
+        manifest['quota_image']['providers'] = quota_providers(builder_id)
+        pins['quota_image'] = manifest['quota_image']['id']
     for item in arguments.pin:
         name, _, value = item.partition('=')
         if PIN.fullmatch(name) is None or not value or name in pins:
@@ -188,7 +209,7 @@ def verify_directory(directory: pathlib.Path, revision: str | None = None) -> di
         raise ReleaseError('host-release.json is not a version 1 manifest')
     if revision is not None and manifest['revision'] != revision:
         raise ReleaseError(f'the host release is {manifest["revision"]}, not the deployed {revision}')
-    entries = [('release', MAX_ARTIFACT)] + ([('image', MAX_IMAGE)] if 'image' in manifest else [])
+    entries = [('release', MAX_ARTIFACT)] + [(key, MAX_IMAGE) for key in ('image', 'quota_image') if key in manifest]
     for key, limit in entries:
         item = manifest[key]
         path = directory / item['file']
@@ -196,10 +217,17 @@ def verify_directory(directory: pathlib.Path, revision: str | None = None) -> di
         if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022 or not info.st_mode & 0o004 or info.st_size != item['size'] \
                 or not 0 < item['size'] <= limit or sha256_file(path) != item['sha256']:
             raise ReleaseError(f'{path} differs from host-release.json')
-    if 'image' in manifest and (IMAGE_ID.fullmatch(manifest['image'].get('id', '')) is None or manifest['pins'].get('image') != manifest['image']['id']):
-        raise ReleaseError('the image pin differs from the image Id')
-    if 'image' in manifest:
-        archive_image(directory / manifest['image']['file'], manifest['image']['id'])
+    for key in ('image', 'quota_image'):
+        if key in manifest:
+            if IMAGE_ID.fullmatch(manifest[key].get('id', '')) is None or manifest['pins'].get(key) != manifest[key]['id']:
+                raise ReleaseError(f'the {key} pin differs from the image Id')
+            archive_image(directory / manifest[key]['file'], manifest[key]['id'])
+    if 'quota_image' in manifest:
+        providers = manifest['quota_image'].get('providers')
+        if not isinstance(providers, list) or not providers \
+                or any(provider not in ('claude', 'codex', 'grok', 'muse', 'agy') for provider in providers) \
+                or len(providers) != len(set(providers)):
+            raise ReleaseError('the quota image providers are invalid')
     if not all(PIN.fullmatch(name) and isinstance(value, str) and value for name, value in manifest.get('pins', {}).items()):
         raise ReleaseError('host-release.json pins are invalid')
     return manifest
@@ -228,6 +256,7 @@ def main() -> int:
     packing.add_argument('--revision', required=True)
     packing.add_argument('--epoch', type=int, default=0, help='mtime of every archived entry; the commit time keeps rebuilds identical')
     packing.add_argument('--image', help='local image reference to save as the agent image')
+    packing.add_argument('--quota-image', help='local image reference to save as the quota runtime image')
     packing.add_argument('--provider', action='append', default=[], help='NAME=COMMAND measured inside the image')
     packing.add_argument('--pin', action='append', default=[], help='extra NAME=VALUE for @pin:NAME@')
     checking = commands.add_parser('verify')

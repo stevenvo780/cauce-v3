@@ -25,12 +25,16 @@ const Bundle = z.object({ directory: z.string().regex(/^@release@\/[A-Za-z0-9_./
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u), executable: z.string().min(1).max(4096), executable_sha256: Hex.nullable(),
   argv: z.array(z.string().max(4096)).max(32), descriptor_sha256: Hex.optional() }).strict();
 const Template = z.record(z.string(), z.unknown());
+const Providers = z.array(Name).min(1).max(100).refine(values => new Set(values).size === values.length);
+const QuotaEnvironment = z.object({ image: ImageId,
+  network: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u), providers: Providers }).strict();
 const Policy = z.object({
   container_templates: z.array(Template.and(z.object({ harness_id: Name }))).max(100).default([]),
   profile_templates: z.array(Template).max(100).default([]),
   bundles: z.record(Name, Bundle),
   hooks: z.record(z.string(), Template).default({}),
   transport: Template.optional(),
+  quota_environments: QuotaEnvironment.optional(),
   authority: z.object({ identity_directory: z.literal('@identity@'), host_id: z.literal('@host@'), ca_certificate: z.string().min(1).max(4096) })
     .strict().optional(),
 }).strict();
@@ -40,12 +44,19 @@ export const HostSetupConfigSchema = z.object({
   signing_key_file: LoginPathSchema,
   release: Served.extend({ name: z.literal('release'), revision: Revision }).strict(),
   image: Served.extend({ name: z.literal('agent-image'), size: Size(MAX_IMAGE), id: ImageId }).strict().optional(),
+  quota_image: Served.extend({ name: z.literal('quota-image'), size: Size(MAX_IMAGE), id: ImageId, providers: Providers }).strict().optional(),
   files: z.array(Served).max(16).default([]),
   policy: Policy,
-}).strict().refine(value => new Set(['release', 'agent-image', ...value.files.map(file => file.name)]).size === value.files.length + 2,
+}).strict().refine(value => new Set(['release', 'agent-image', 'quota-image', ...value.files.map(file => file.name)]).size === value.files.length + 3,
   { message: 'setup artifacts need distinct names' })
   .refine(value => value.image === undefined || value.policy.container_templates.every(template => template.image === value.image?.id),
-    { message: 'every container template must run the agent image the gateway serves' });
+    { message: 'every container template must run the agent image the gateway serves' })
+  .refine(value => value.policy.quota_environments === undefined ||
+    value.policy.quota_environments.image === (value.quota_image ?? value.image)?.id,
+  { message: 'quota environments must run the quota image the gateway serves' })
+  .refine(value => value.quota_image === undefined || value.policy.quota_environments === undefined ||
+    value.policy.quota_environments.providers.every(provider => value.quota_image?.providers.includes(provider)),
+  { message: 'quota environments may only advertise providers available in the quota image' });
 export type HostSetupConfig = z.infer<typeof HostSetupConfigSchema>;
 /** `CAUCE_FLEET_HOST_SETUP_CONFIG_FILE`: the platform template; the build-dependent pins come from the release directory. */
 export const HostSetupFileSchema = z.object({
@@ -56,12 +67,14 @@ export const HostSetupFileSchema = z.object({
   policy: z.record(z.string(), z.unknown()),
 }).strict();
 const PlainName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
+const ReleaseImage = z.object({ file: PlainName, sha256: Hex, size: Size(MAX_IMAGE), id: ImageId, reference: z.string().min(1).max(256) });
 /** `host-release.json`, written by `ops/scripts/host-release.py pack` next to the files it describes. */
 export const HostReleaseManifestSchema = z.object({
   version: z.literal(1),
   revision: Revision,
   release: z.object({ file: PlainName, sha256: Hex, size: Size(MAX_ARTIFACT) }).strict(),
-  image: z.object({ file: PlainName, sha256: Hex, size: Size(MAX_IMAGE), id: ImageId, reference: z.string().min(1).max(256) }).strict().optional(),
+  image: ReleaseImage.strict().optional(),
+  quota_image: ReleaseImage.extend({ providers: Providers }).strict().optional(),
   pins: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/u), z.string().min(1).max(4096)).default({}),
 }).strict();
 export const HOST_RELEASE_MANIFEST = 'host-release.json';
@@ -110,17 +123,22 @@ export async function resolveHostSetup(value: unknown): Promise<HostSetupConfig>
       files.push({ ...item, sha256: createHash('sha256').update(await opened.file.readFile()).digest('hex'), size: opened.size });
     } finally { await opened.file.close(); }
   }
-  const policy = substitute(template.policy, text => text.replace(/@pin:([a-z][a-z0-9_]{0,63})@/gu, (_match, name: string) => {
+  const policy = Policy.parse(substitute(template.policy, text => text.replace(/@pin:([a-z][a-z0-9_]{0,63})@/gu, (_match, name: string) => {
     const pin = manifest.pins[name];
     if (pin === undefined) throw new Error(`host setup policy names the release pin ${name}, absent from ${HOST_RELEASE_MANIFEST}`);
     return pin;
-  }));
-  const { image } = manifest;
+  })));
+  const { image, quota_image: quotaImage } = manifest;
+  if (policy.quota_environments !== undefined && quotaImage !== undefined) {
+    policy.quota_environments.providers = policy.quota_environments.providers.filter(provider => quotaImage.providers.includes(provider));
+  }
   return HostSetupConfigSchema.parse({ version: 1, signing_key_file: template.signing_key_file,
     release: { name: 'release', revision: manifest.revision, path: await declared(manifest.release.file, manifest.release.size),
       sha256: manifest.release.sha256, size: manifest.release.size },
     ...(image === undefined ? {} : { image: { name: 'agent-image', id: image.id, path: await declared(image.file, image.size),
       sha256: image.sha256, size: image.size } }),
+    ...(quotaImage === undefined ? {} : { quota_image: { name: 'quota-image', id: quotaImage.id,
+      path: await declared(quotaImage.file, quotaImage.size), sha256: quotaImage.sha256, size: quotaImage.size, providers: quotaImage.providers } }),
     files, policy });
 }
 
@@ -138,7 +156,7 @@ export class HostSetupPackager {
     const der = createPublicKey(key).export({ type: 'spki', format: 'der' });
     this.signerPublicKey = der.toString('base64');
     this.signerFingerprint = createHash('sha256').update(der).digest('hex');
-    this.served = new Map([config.release, ...(config.image === undefined ? [] : [config.image]), ...config.files]
+    this.served = new Map([config.release, ...[config.image, config.quota_image].filter(item => item !== undefined), ...config.files]
       .map(item => [item.name, { path: item.path, sha256: item.sha256, size: item.size }]));
   }
 
@@ -149,14 +167,20 @@ export class HostSetupPackager {
 
   build(scope: HostSetupScope, issuedAt = Date.now()): SignedHostSetupPackage {
     const enabled = new Set(scope.harnesses);
-    const { policy, release, image, files } = this.config;
+    const { policy, release, image, quota_image: quotaImage, files } = this.config;
     const bundles = Object.fromEntries(Object.entries(policy.bundles).filter(([harness]) => enabled.has(harness)));
     const narrowed = { ...policy, bundles,
       container_templates: policy.container_templates.filter(template => Object.hasOwn(bundles, template.harness_id)) };
+    if (narrowed.quota_environments !== undefined) {
+      const providers = narrowed.quota_environments.providers.filter(provider => provider === 'agy' || Object.hasOwn(bundles, provider));
+      if (providers.length === 0) delete narrowed.quota_environments;
+      else narrowed.quota_environments = { ...narrowed.quota_environments, providers };
+    }
     const signed = { version: 1, company_id: scope.company_id, host_id: scope.host_id, issued_at: issuedAt,
       release_revision: release.revision,
       artifacts: [{ name: release.name, kind: 'release', sha256: release.sha256, size: release.size },
         ...(image === undefined ? [] : [{ name: image.name, kind: 'image', sha256: image.sha256, size: image.size, image_id: image.id }]),
+        ...(quotaImage === undefined ? [] : [{ name: quotaImage.name, kind: 'image', sha256: quotaImage.sha256, size: quotaImage.size, image_id: quotaImage.id }]),
         ...files.map(file => ({ name: file.name, kind: 'file', sha256: file.sha256, size: file.size }))],
       policy: substitute(narrowed, text => text.replaceAll('@host@', scope.host_id).replaceAll('@company@', scope.company_id)) };
     return { package: signed, signature: sign(null, Buffer.from(stableHostJson(signed)), this.key).toString('base64'),
