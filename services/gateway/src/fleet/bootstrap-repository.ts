@@ -41,7 +41,8 @@ export class BootstrapRepository {
       JOIN harness_definitions harness ON harness.id=agent.harness_id
       JOIN provider_accounts account ON account.id=agent.primary_account_id
       WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL AND tenant.enabled AND tenant.retired_at IS NULL
-        AND harness.enabled AND account.enabled AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
+        AND harness.enabled AND (account.enabled OR (account.quota_registration_key IS NOT NULL AND account.quota_identity_hash IS NULL))
+        AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
       FOR SHARE OF agent,tenant,harness,account`, [identity.tenant_id, identity.alias])).rows[0];
     if (!agent?.runtime_key || (!state && agent.enabled)) throw forbidden();
     // The sealed host scope binds an operation in flight. Settling it records a new desired revision, so the runtime it

@@ -1,4 +1,4 @@
-import { StoreError, assertFleetRelocationSourceBarrier, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
+import { StoreError, assertFleetRelocationSourceBarrier, enableProviderAccountAfterAgentAuth, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
   type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
@@ -9,6 +9,7 @@ type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'accoun
 interface Agent extends Record<string, unknown> { tenant_id: string; alias: string; runtime_key: string; harness_id: string; host_id: string;
   runtime_user: string; primary_account_id: string; retired_at: Date | null; purged_at: Date | null; company_id: string }
 interface Account { id: string; provider: string; external_account_id: string; payer_tenant_id: string; shared_with_pool: boolean; enabled: boolean }
+type SelectedAccount = Account & { quota_registration_key: string | null; quota_identity_hash: string | null };
 interface ProviderAuthPolicyContext { actor: ProviderAuthActor; operation: FleetOperationRow; agent: Agent; account: Account }
 export type ProviderAuthPolicyResolver = (client: DatabaseClient, context: ProviderAuthPolicyContext) => Promise<ProviderAuthPolicyScope>;
 export interface ProviderAuthPhysicalScope extends ProviderAuthPolicyScope {
@@ -49,11 +50,13 @@ async function context(client: DatabaseClient, actor: ProviderAuthActor, request
   const agent = (await client.query<Agent>(`SELECT * FROM agents WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 FOR SHARE`,
     [operation.target.tenant_id, operation.target.alias, authority.actingCompany])).rows[0];
   if (agent?.retired_at !== null || agent.purged_at !== null) throw denied();
-  const selected = (await client.query<Account & { consent: boolean }>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled,
+  const selected = (await client.query<SelectedAccount & { consent: boolean }>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled,
+    quota_registration_key,quota_identity_hash,
     ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`,
   [agent.primary_account_id, agent.tenant_id])).rows[0];
-  if (!selected?.enabled || !selected.consent) throw denied();
-  const { consent: _consent, ...account } = selected;
+  const pending = selected?.quota_registration_key != null && selected.quota_identity_hash == null;
+  if (!selected || !(selected.enabled || pending) || !selected.consent) throw denied();
+  const { consent: _consent, quota_registration_key: _key, quota_identity_hash: _hash, ...account } = selected;
   return { actor, operation, agent, account };
 }
 export async function assertProviderAuthSealedScope(client: DatabaseClient, operation: FleetOperationRow,
@@ -173,7 +176,14 @@ export function createProviderAuthDependencies(
       return {
         stopAdapter: async signal => { await active(signal); return hooks.stopAdapter(physical, signal); },
         openLogin: async signal => { await active(signal); return hooks.openLogin(physical, signal); },
-        verify: async signal => { await active(signal); return hooks.verify(physical, signal); },
+        verify: async signal => {
+          await active(signal);
+          const evidence = await hooks.verify(physical, signal);
+          if (evidence.identity_matches && evidence.functional_call_verified) {
+            await enableProviderAccountAfterAgentAuth(pool, physical.account_id);
+          }
+          return evidence;
+        },
         release: async () => {
           await withTransaction(pool, async client => {
             await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,783003005))', [cohort]);

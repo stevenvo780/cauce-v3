@@ -184,9 +184,12 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
       || agent.primary_account_id !== scope.account_id || scope.profile_id !== scope.account_id || agent.runtime_key !== scope.runtime_key) throw denied();
   const sealed = await assertProviderAuthSealedScope(client, row, agent);
   if (sealed.target_sha256 !== scope.host_scope_sha256) throw denied();
-  const account = (await client.query<{ provider: string; external_account_id: string; enabled: boolean; consent: boolean }>(`SELECT provider,external_account_id,enabled,
+  const account = (await client.query<{ provider: string; external_account_id: string; enabled: boolean; consent: boolean;
+    quota_registration_key: string | null; quota_identity_hash: string | null }>(`SELECT provider,external_account_id,enabled,
+    quota_registration_key,quota_identity_hash,
     ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`, [scope.account_id, scope.tenant_id])).rows[0];
-  if (!account?.enabled || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
+  const pending = account?.quota_registration_key != null && account.quota_identity_hash == null;
+  if (!account || !(account.enabled || pending) || !account.consent || account.provider !== scope.provider_id || account.external_account_id !== scope.expected_external_account_id) throw denied();
   const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
     row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));
   const hostScope = await loadFleetHostScope(client, row, scope.host_id);
