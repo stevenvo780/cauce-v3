@@ -177,17 +177,25 @@ participants AS (
   -- Tres orígenes unidos porque los tres mienten por separado. 'agents' es configuración y
   -- arrastra drift; un alias con 41 entregas en vuelo que nadie registró es EXACTAMENTE el caso
   -- que hay que ver, no el que hay que ocultar. 'work' aporta los que trabajan sin fila de
-  -- registro; 'connection_leases' los que están conectados sin trabajo.
+  -- registro; 'connection_leases' los que están conectados sin trabajo. Un agente retirado o
+  -- purgado queda fuera de los tres orígenes: ya no forma parte de la flota y pintarlo como
+  -- caído llenaría la oficina de agentes viejos.
   SELECT a.tenant_id, a.alias FROM agents a JOIN visible_tenants v ON v.tenant_id = a.tenant_id
+   WHERE a.retired_at IS NULL AND a.purged_at IS NULL
   UNION
   SELECT w.tenant_id, w.alias FROM work w
+   WHERE NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id = w.tenant_id AND gone.alias = w.alias
+                      AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
   UNION
   SELECT l.tenant_id, l.alias FROM connection_leases l JOIN visible_tenants v ON v.tenant_id = l.tenant_id
+   WHERE NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id = l.tenant_id AND gone.alias = l.alias
+                      AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
 )
 SELECT p.tenant_id,
        p.alias,
        ag.display_name,
        ag.harness_id,
+       ag.lifecycle_state,
        (ag.tenant_id IS NOT NULL)         AS registered,
        COALESCE(ag.enabled, false)        AS agent_enabled,
        lease.instance_id,

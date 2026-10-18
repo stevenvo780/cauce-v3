@@ -121,6 +121,12 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/body_preview/);
   });
 
+  it('excluye a los agentes retirados o purgados y expone su ciclo de vida', () => {
+    expect(FLEET_ACTIVITY_QUERY).toMatch(/retired_at IS NULL/);
+    expect(FLEET_ACTIVITY_QUERY).toMatch(/purged_at IS NULL/);
+    expect(FLEET_ACTIVITY_QUERY).toMatch(/lifecycle_state/);
+  });
+
   it('no combina FOR SHARE/FOR UPDATE con funciones de ventana (Postgres lo rechaza al parsear)', () => {
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/FOR\s+(SHARE|UPDATE)/i);
     expect(FLEET_ACTIVITY_QUERY).not.toMatch(/\bOVER\s*\(/i);
