@@ -177,7 +177,7 @@ export class CauceApi {
       const mapped = mapError?.(response.status, body);
       if (mapped !== undefined) throw mapped;
       const detail = errorBody(body);
-      throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error);
+      throw new ApiError(detail.message ?? (response.statusText || 'API request failed'), response.status, detail.error, detail.dependencies);
     }
     if ((responseMode === 'blob' || responseMode === 'stream') && requestGeneration !== this.authGeneration) {
       if (responseMode === 'stream') await response.body?.cancel().catch(() => undefined);

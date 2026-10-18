@@ -6,11 +6,14 @@ import type {
 
 export type FetchLike = typeof fetch;
 
+export interface ApiDependency { type: string; identity: Record<string, unknown>; blocking: boolean }
+
 export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly dependencies: readonly ApiDependency[] = [],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -64,13 +67,25 @@ export function safeBase(baseUrl: string): string {
   return baseUrl.replace(/\/$/, '');
 }
 
-export function errorBody(value: unknown): { message?: string; error?: string; reason?: string } {
-  if (!value || typeof value !== 'object') return {};
+function dependencyList(value: unknown): ApiDependency[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const record = entry as Record<string, unknown>;
+    const identity = record.identity && typeof record.identity === 'object' && !Array.isArray(record.identity)
+      ? record.identity as Record<string, unknown> : {};
+    return typeof record.type === 'string' ? [{ type: record.type, identity, blocking: record.blocking === true }] : [];
+  });
+}
+
+export function errorBody(value: unknown): { message?: string; error?: string; reason?: string; dependencies: ApiDependency[] } {
+  if (!value || typeof value !== 'object') return { dependencies: [] };
   const record = value as Record<string, unknown>;
   return {
     ...(typeof record.message === 'string' ? { message: record.message } : {}),
     ...(typeof record.error === 'string' ? { error: record.error } : {}),
     ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+    dependencies: dependencyList(record.dependencies),
   };
 }
 

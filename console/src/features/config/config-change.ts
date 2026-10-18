@@ -3,6 +3,7 @@ import { spanishWithReason } from '../../api/error-message';
 import { configurationMutationSha256 } from '@cauce/protocol/configuration';
 import type { ConfigMutation, ConfigurationChangeResult, ConfigurationSnapshot } from '../../api/types';
 import type { RecargaResultado } from '../../api/use-resource';
+import { dependencySummary } from './config-dependencies';
 import { exactConfigurationReceipt } from './config-receipt';
 
 /**
@@ -110,6 +111,12 @@ export function describeConfigError(
       message: `Conflicto de revisión: ${COMO_LLEGO[camino]} ${mismatch.expected} y el servidor ya va por la ${mismatch.current}. `
         + `Otro operador cambió la configuración y no se aplicó nada: ${QUE_HACER[camino]}`,
     };
+  }
+  const blockers = error instanceof ApiError && error.status === 409 ? dependencySummary(error.dependencies) : undefined;
+  if (blockers) {
+    return { conflict: false, message: `El servidor rechazó el cambio y no se aplicó nada: lo bloquean ${blockers}. `
+      + 'Resuélvelas primero: las membresías se quitan en la pestaña Grupos o en «Espacios y salas»; las entregas o conexiones activas '
+      + 'tienen que terminar; un agente con ejecución se elimina con «Eliminar», que lo retira y después lo purga con su historial conservado.' };
   }
   if (error instanceof ApiError && error.status === 409) {
     const known = Object.entries(CONFLICTOS).find(([english]) => error.message.toLowerCase().includes(english))?.[1];
