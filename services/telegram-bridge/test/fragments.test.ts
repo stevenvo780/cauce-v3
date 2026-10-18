@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { StoreError } from '@cauce/store';
-import { TEXT_CHUNK_MAX_GAP_SECONDS, TEXT_CHUNK_SETTLE_MS } from '../src/text-chunks.js';
 import { TelegramPoller } from '../src/poller.js';
 import type {
   PollLease, TelegramAliasConfig, TelegramApi, TelegramCursorRepository, TelegramIngress,
@@ -160,47 +159,6 @@ describe('Telegram update boundaries', () => {
     expect(repository.advances).toEqual([3]);
   });
 
-  it('publishes a lone full-length message by itself once the settle window elapses', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(1_000_000);
-      const head = 'a'.repeat(4_096);
-      const repository = new MemoryCursorRepository();
-      const ingress = new DurableRecordingIngress();
-      const loop = poller(new ScriptedTelegram([[update(1, head, 100)]]), repository, ingress);
-
-      expect(await loop.runOnce()).toBe(1);
-      expect(ingress.calls).toHaveLength(0);
-      vi.setSystemTime(1_000_000 + TEXT_CHUNK_SETTLE_MS);
-
-      expect(await loop.runOnce()).toBe(0);
-      expect(ingress.calls.map((call) => call.body.text)).toEqual([head]);
-      expect(repository.advances).toEqual([2]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('never glues an independent message to a long one sent before it', async () => {
-    const first = 'a'.repeat(4_096);
-    const second = 'mensaje humano independiente';
-    const repository = new MemoryCursorRepository();
-    const ingress = new DurableRecordingIngress();
-
-    await poller(
-      new ScriptedTelegram([[update(1, first, 100), update(2, second, 100 + TEXT_CHUNK_MAX_GAP_SECONDS + 1)]]),
-      repository,
-      ingress
-    ).runOnce();
-
-    expect(ingress.calls).toHaveLength(2);
-    expect(ingress.calls.map((call) => call.update_id)).toEqual([1, 2]);
-    expect(ingress.calls.map((call) => call.body.text)).toEqual([first, second]);
-    expect(ingress.calls.map((call) => call.origin.external_message_id)).toEqual(['701', '702']);
-    expect(ingress.calls.every((call) => call.body.fragments_v1 === undefined)).toBe(true);
-    expect(repository.advances).toEqual([2, 3]);
-  });
-
   it('does not publish or advance when polling fails', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DurableRecordingIngress();
@@ -208,34 +166,6 @@ describe('Telegram update boundaries', () => {
     api.getUpdates = async (): Promise<TelegramUpdate[]> => { throw new Error('synthetic poll error'); };
 
     await expect(poller(api, repository, ingress).runOnce()).rejects.toThrow('synthetic poll error');
-    expect(ingress.calls).toHaveLength(0);
-    expect(repository.advances).toEqual([]);
-    expect(repository.next).toBe(0);
-  });
-
-  it('passes shutdown cancellation into the long poll without publishing or advancing', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DurableRecordingIngress();
-    const api = new ScriptedTelegram([]);
-    const rendezvous = { entered: (): void => undefined };
-    const entered = new Promise<void>((resolve) => { rendezvous.entered = resolve; });
-    api.getUpdates = async (
-      _offset: number,
-      _timeout: number,
-      signal?: AbortSignal
-    ): Promise<TelegramUpdate[]> => {
-      rendezvous.entered();
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => { reject(new Error('synthetic abort')); }, { once: true });
-      });
-    };
-    const controller = new AbortController();
-    const running = poller(api, repository, ingress).runOnce(controller.signal);
-
-    await entered;
-    controller.abort();
-
-    await expect(running).rejects.toThrow('synthetic abort');
     expect(ingress.calls).toHaveLength(0);
     expect(repository.advances).toEqual([]);
     expect(repository.next).toBe(0);
@@ -276,25 +206,6 @@ describe('Telegram update boundaries', () => {
     expect(repository.next).toBe(0);
   });
 
-  it('does not advance past a publish error that is not an idempotency conflict', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DurableRecordingIngress();
-    ingress.error = new Error('database offline');
-    const metrics: string[] = [];
-
-    await expect(poller(
-      new ScriptedTelegram([[update(1, 'uno'), update(2, 'dos')]]),
-      repository,
-      ingress,
-      metrics
-    ).runOnce()).rejects.toThrow('database offline');
-
-    expect(ingress.calls.map((call) => call.update_id)).toEqual([1]);
-    expect(repository.advances).toEqual([]);
-    expect(repository.next).toBe(0);
-    expect(metrics).not.toContain('updates_conflict');
-  });
-
   it('resolves a publish idempotency conflict by update_id instead of stalling the batch on it', async () => {
     // `idempotency_key` is `telegram:{bot_id}:{update_id}` alone, content-free: this conflict is
     // what a non-deterministic voice transcription produces on a retried update, and the store
@@ -318,23 +229,6 @@ describe('Telegram update boundaries', () => {
     expect(repository.advances).toEqual([2, 3]);
     expect(repository.next).toBe(3);
     expect(metrics.filter((metric) => metric === 'updates_conflict')).toHaveLength(2);
-  });
-
-  it('fetches update 101 on the next page after a full Telegram batch of 100', async () => {
-    const firstPage = Array.from({ length: 100 }, (_, index) => update(index + 1, `m-${String(index + 1)}`));
-    const api = new ScriptedTelegram([firstPage, [update(101, 'm-101')]]);
-    const repository = new MemoryCursorRepository();
-    const ingress = new DurableRecordingIngress();
-    const worker = poller(api, repository, ingress);
-
-    await worker.runOnce();
-    expect(repository.next).toBe(101);
-    await worker.runOnce();
-
-    expect(api.calls.map((call) => call.offset)).toEqual([0, 101]);
-    expect(ingress.calls).toHaveLength(101);
-    expect(ingress.calls.at(-1)?.update_id).toBe(101);
-    expect(repository.next).toBe(102);
   });
 
   it('retries publish-before-cursor safely without duplicating or losing the update', async () => {

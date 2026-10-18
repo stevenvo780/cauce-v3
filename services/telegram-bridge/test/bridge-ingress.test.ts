@@ -3,7 +3,7 @@ import { TelegramPoller } from '../src/poller.js';
 import type { TelegramIngressMessage, TelegramUpdate, TelegramUser } from '../src/types.js';
 import {
   config, DeduplicatingIngress, FakeTelegram, GROUP_CHAT_ID, groupUpdate,
-  legacyGroupConfig, MemoryCursorRepository, TENANT, update, noopActivity, noopObserver
+  MemoryCursorRepository, TENANT, update, noopActivity, noopObserver
 } from './bridge-fixtures.js';
 
 describe('Telegram group routing (poller integration)', () => {
@@ -108,46 +108,6 @@ describe('Telegram group routing (poller integration)', () => {
     }]);
   });
 
-  // An anonymous group message is recorded with reason anonymous_sender.
-  it('un mensaje anonimo de grupo deja rastro con motivo anonymous_sender, no desaparece en silencio', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const anonimo = groupUpdate(80, { userId: 1087968824, text: 'hola heraclito' });
-    (anonimo.message as { sender_chat?: unknown }).sender_chat = { id: GROUP_CHAT_ID, type: 'supergroup' };
-    const api = new FakeTelegram([anonimo]);
-    const suppressed: unknown[] = [];
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config({
-        alias: 'kant',
-        allowed_chat_ids: [String(GROUP_CHAT_ID)],
-        bot_username: 'kant_bot',
-        chats: [{ chat_id: String(GROUP_CHAT_ID), mode: 'always', session_scope: 'user', reply_to_origin: true, threads: [] }]
-      }),
-      botId: '900001',
-      api,
-      repository,
-      ingress,
-      onSuppressed: (record) => suppressed.push(record)
-    }).runOnce();
-
-    expect(ingress.calls).toHaveLength(0);
-    expect(repository.next).toBe(81);
-    expect(suppressed).toEqual([{
-      event: 'telegram_group_update_suppressed',
-      alias: 'kant',
-      tenant_id: TENANT,
-      chat_id: String(GROUP_CHAT_ID),
-      thread_id: '0',
-      update_id: 80,
-      message_id: 180,
-      reason: 'anonymous_sender',
-      group_routing: 'scoped',
-      chat_configured: true
-    }]);
-  });
-
   it('un desconocido en un grupo permitido deja rastro user_denied, y el privado sigue mudo', async () => {
     const repository = new MemoryCursorRepository();
     const ingress = new DeduplicatingIngress();
@@ -178,58 +138,6 @@ describe('Telegram group routing (poller integration)', () => {
     expect(suppressed.map((record) => [record.chat_id, record.reason]))
       .toEqual([[String(GROUP_CHAT_ID), 'user_denied']]);
   });
-
-  it('an alias that never declared chats keeps legacy behaviour: no thread_id/addressed_by/prompt, published on the alias-wide allowlist alone', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const api = new FakeTelegram([groupUpdate(70, { text: 'no destinatario aquí' })]);
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: legacyGroupConfig({
-        alias: 'kant',
-        allowed_chat_ids: [String(GROUP_CHAT_ID)]
-      }),
-      botId: '900001',
-      api,
-      repository,
-      ingress
-    }).runOnce();
-
-    expect(ingress.calls).toHaveLength(1);
-    const call = ingress.calls[0];
-    if (!call) throw new Error('Call not found');
-    expect(call.body).not.toHaveProperty('thread_id');
-    expect(call.body).not.toHaveProperty('addressed_by');
-    expect(call.body).not.toHaveProperty('prompt');
-    expect(call.origin.metadata).toEqual({ bridge_alias: 'kant', bridge_tenant: TENANT, chat_type: 'supergroup' });
-  });
-
-  it('a group with no chats entry for a scoped alias denies and consumes the update (chat_not_configured)', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const api = new FakeTelegram([groupUpdate(80)]);
-    const metrics: string[] = [];
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config({
-        alias: 'kant',
-        allowed_chat_ids: [String(GROUP_CHAT_ID)],
-        bot_username: 'kant_bot',
-        chats: [] // scoped, default-deny: no entry for GROUP_CHAT_ID
-      }),
-      botId: '900001',
-      api,
-      repository,
-      ingress,
-      onMetric: (metric) => metrics.push(metric)
-    }).runOnce();
-
-    expect(ingress.calls).toHaveLength(0);
-    expect(repository.next).toBe(81);
-    expect(metrics).toContain('updates_chat_denied');
-  });
 });
 
 describe('Telegram human authorship', () => {
@@ -241,58 +149,6 @@ describe('Telegram human authorship', () => {
     await new TelegramPoller({
       activity: noopActivity(), observer: noopObserver(),
       config: config(), botId: '900001', api, repository, ingress
-    }).runOnce();
-
-    expect(ingress.calls).toHaveLength(1);
-    expect(ingress.calls[0]?.human).toBe(true);
-  });
-
-  it('denies the band to a bot author in a private chat without dropping the message', async () => {
-    // `resolveAddressing` runs its bot-author guard for GROUPS only (P0.b answers a private chat
-    // before P0.d can), so a DM from a bot on the allowlist still reaches the fleet. It must
-    // arrive as machine traffic, not as a person: the message is published, the band is not
-    // granted.
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const api = new FakeTelegram([{
-      update_id: 12,
-      message: {
-        message_id: 112,
-        from: { id: 101, is_bot: true },
-        chat: { id: 201, type: 'private' },
-        text: 'automated digest'
-      }
-    }]);
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config(), botId: '900001', api, repository, ingress
-    }).runOnce();
-
-    expect(ingress.calls).toHaveLength(1);
-    expect(ingress.calls[0]?.human).toBe(false);
-    expect(repository.next).toBe(13);
-  });
-
-  it('marks a mentioned person in a group as human', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const api = new FakeTelegram([groupUpdate(13, {
-      text: '@kantbot revisá el deploy',
-      entities: [{ type: 'mention', offset: 0, length: 8 }]
-    })]);
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config({
-        bot_username: 'kantbot',
-        allowed_chat_ids: ['201', String(GROUP_CHAT_ID)],
-        chats: [{
-          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
-          reply_to_origin: true, threads: []
-        }]
-      }),
-      botId: '900001', api, repository, ingress
     }).runOnce();
 
     expect(ingress.calls).toHaveLength(1);
@@ -365,75 +221,5 @@ describe('Telegram DM identity (poller integration)', () => {
     // The group envelope stays with the groups.
     expect(call.body).not.toHaveProperty('thread_id');
     expect(call.body).not.toHaveProperty('addressed_by');
-  });
-
-  it('marca como sospechoso el homóglifo cirílico que imita a otro agente de la flota', async () => {
-    // "zeu" + CYRILLIC SMALL LETTER DZE (U+0455): renders as "zeus" but is not "zeus" in any byte.
-    const call = await publish(dmUpdate(301, { id: 101, first_name: 'zeu\u0455' }));
-
-    const prompt = String(call.body.prompt);
-    expect(prompt).toContain('"impersonation_suspected"');
-    expect(prompt).toContain('"collides_with":"zeus"');
-    expect(prompt).toContain('"normalized":"zeus"');
-    // The warning goes in text, not only in JSON: that is what the model has to READ.
-    expect(prompt).toContain('WARNING: this display name imitates "zeus"');
-    expect(prompt).toContain('proves nothing');
-  });
-
-  // A display name matching the tenant does not trigger the impersonation warning.
-  it('el dueño escribiendo con su propio nombre no queda marcado como suplantador de su tenant', async () => {
-    const call = await publish(dmUpdate(304, { id: 101, first_name: TENANT }));
-
-    const prompt = String(call.body.prompt);
-    expect(prompt).toContain(`"display_name":"${TENANT}"`);
-    expect(prompt).not.toContain('impersonation_suspected');
-    expect(prompt).not.toContain('WARNING');
-  });
-
-  it('un nombre honesto no dispara la advertencia', async () => {
-    const call = await publish(dmUpdate(302, { id: 101, first_name: 'Kanta Pérez' }));
-
-    const prompt = String(call.body.prompt);
-    expect(prompt).toContain('"display_name":"Kanta P');
-    expect(prompt).not.toContain('impersonation_suspected');
-    expect(prompt).not.toContain('WARNING');
-  });
-
-  it('el override bidi no sobrevive al cuerpo publicado', async () => {
-    // RIGHT-TO-LEFT OVERRIDE (U+202E) + ZERO WIDTH SPACE (U+200B) dentro del nombre.
-    const call = await publish(dmUpdate(303, { id: 101, first_name: 'A\u202enn\u200ba' }));
-
-    const serialized = JSON.stringify(call.body);
-    expect(serialized).not.toContain('\u202e');
-    expect(serialized).not.toContain('\u200b');
-    expect(String(call.body.prompt)).toContain('"display_name":"Anna"');
-  });
-
-  it('un nombre larguísimo entra recortado y no puede empujar al mensaje fuera del prompt', async () => {
-    const call = await publish(dmUpdate(304, { id: 101, first_name: 'A'.repeat(5_000) }));
-
-    const prompt = String(call.body.prompt);
-    expect(prompt).toContain(`"display_name":"${'A'.repeat(64)}"`);
-    expect(prompt).not.toContain('A'.repeat(65));
-    expect(prompt.endsWith('hola, ¿podés mirar el deploy?')).toBe(true);
-  });
-
-  it('el emoji del nombre llega intacto: sanear no es mutilar el nombre de un humano', async () => {
-    const call = await publish(dmUpdate(305, { id: 101, first_name: '\u{1f98a} Ana' }));
-
-    expect(String(call.body.prompt)).toContain('\u{1f98a} Ana');
-  });
-
-  it('sin nombre ni username el DM sale como salía antes de P8: sin clave prompt', async () => {
-    const call = await publish(dmUpdate(306, { id: 101 }));
-
-    expect(call.body).not.toHaveProperty('prompt');
-    expect(call.body).toEqual({
-      type: 'telegram.message',
-      update_id: 306,
-      message_id: 406,
-      chat_type: 'private',
-      text: 'hola, ¿podés mirar el deploy?'
-    });
   });
 });

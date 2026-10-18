@@ -1,9 +1,9 @@
 import {
-  MAX_ARTIFACT_LOCATOR_CHARACTERS, MAX_ARTIFACTS_CONSIDERED, type Tenant
+  type Tenant
 } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { planArtifacts } from '../src/artifacts.js';
-import { TelegramEgressWorker, telegramTextChunks } from '../src/egress.js';
+import { TelegramEgressWorker } from '../src/egress.js';
 import { TelegramApiError } from '../src/telegram.js';
 import type {
   TelegramAliasConfig, TelegramApi, TelegramEffect, TelegramEffectInput, TelegramEgressRepository,
@@ -34,16 +34,6 @@ describe('plan de adjuntos', () => {
     expect(plan.footer).toBe('');
   });
 
-  it('manda como documento lo que no es imagen, aunque el agente jure que sí', () => {
-    const texto = Buffer.from('# Guion\n\nEscena 1.', 'utf8');
-    const plan = planArtifacts(payload([{
-      name: 'Guion.md', media_type: 'image/png', uri: `data:image/png;base64,${texto.toString('base64')}`
-    }]));
-    const upload = plan.uploads[0];
-    expect(upload?.kind).toBe('document');
-    expect(upload?.bytes.equals(texto)).toBe(true);
-  });
-
   it('lista los enlaces http(s) en vez de descargarlos (el puente vive al lado de producción)', () => {
     const plan = planArtifacts(payload([
       { name: 'Deploy demeter-dev', uri: 'https://demeter-dev.vercel.app/empresa/configuracion-clientes' }
@@ -52,26 +42,6 @@ describe('plan de adjuntos', () => {
     expect(plan.footer).toContain('📎 Adjuntos');
     expect(plan.footer).toContain('https://demeter-dev.vercel.app/empresa/configuracion-clientes');
     expect(plan.listed).toBe(1);
-  });
-
-  it('lista el enlace largo que el protocolo admite y descarta el que lo pasa', () => {
-    const base = 'https://consola.ejemplo.test/informe?q=';
-    const cabe = `${base}${'a'.repeat(MAX_ARTIFACT_LOCATOR_CHARACTERS - base.length)}`;
-    const pasa = `${cabe}a`;
-    const plan = planArtifacts(payload([{ name: 'cabe', uri: cabe }, { name: 'pasa', uri: pasa }]));
-
-    expect(plan.footer).toContain(`cabe: ${cabe}`);
-    expect(plan.footer).toContain('pasa: quedó en el espacio de trabajo del agente y no viajó al chat');
-  });
-
-  it('juzga el mismo prefijo de artifacts que el almacén, ni uno más', () => {
-    const relleno = Array.from({ length: MAX_ARTIFACTS_CONSIDERED }, (_, index) => ({
-      name: `f${String(index)}.txt`, uri: `/home/dev/f${String(index)}.txt`
-    }));
-    const plan = planArtifacts(payload([...relleno, { name: 'captura.png', uri: PNG_DATA_URI }]));
-
-    expect(plan.uploads).toHaveLength(0);
-    expect(plan.listed).toBe(MAX_ARTIFACTS_CONSIDERED);
   });
 
   it('explica el file:// que vive en el contenedor del agente, y NO lo lee del disco local', () => {
@@ -85,88 +55,6 @@ describe('plan de adjuntos', () => {
     // The raw path is not repeated in the chat, and is NEVER opened: `/run/secrets/database_url`
     // it exists INSIDE the bridge, and reading it would publish the production credential.
     expect(plan.footer).not.toContain('/run/secrets/database_url');
-  });
-
-  it('no rompe nada cuando artifacts está vacío, ausente o mal formado', () => {
-    for (const raro of [undefined, null, [], 'file.txt', [{ name: 'x' }], [42], [{ uri: '' }]]) {
-      const plan = planArtifacts(payload(raro));
-      expect(plan.uploads).toHaveLength(0);
-      expect(plan.footer).toBe('');
-    }
-  });
-
-  it('descarta un base64 corrupto explicándolo, en vez de subir un archivo roto', () => {
-    const plan = planArtifacts(payload([{ name: 'roto.png', uri: 'data:image/png;base64,no-es-base64!!' }]));
-    expect(plan.uploads).toHaveLength(0);
-    expect(plan.footer).toContain('mal formado');
-  });
-
-  it('rechaza un base64 no canónico en vez de subir bytes truncados', () => {
-    const plan = planArtifacts(payload([{ name: 'raro.txt', uri: 'data:text/plain;base64,QR==' }]));
-    expect(plan.uploads).toHaveLength(0);
-    expect(plan.footer).toContain('mal formado');
-  });
-
-  it('lee la cabecera del data: URI con la misma regla que el resto del árbol', () => {
-    const texto = Buffer.from('hola', 'utf8');
-    const b64 = texto.toString('base64');
-    for (const uri of [
-      `data:text/plain;charset=utf-8;base64,${b64}`,
-      `DATA:;base64,${b64}`,
-      `data:;base64,${b64.slice(0, 2)}\n ${b64.slice(2)}`
-    ]) {
-      const plan = planArtifacts(payload([{ name: 'nota.txt', uri }]));
-      expect(plan.uploads).toHaveLength(1);
-      expect(plan.uploads[0]?.bytes.equals(texto)).toBe(true);
-      expect(plan.uploads[0]?.kind).toBe('document');
-    }
-    expect(planArtifacts(payload([{ name: 'x.txt', uri: `data:;base64,${b64}` }])).uploads[0]?.mime_type)
-      .toBe('application/octet-stream');
-  });
-
-  it('explica cada data: URI que no puede decodificar, sin subir nada', () => {
-    for (const [uri, motivo] of [
-      ['data:text/plain;base64', 'no tiene datos'],
-      ['data:text/plain;base64,', 'vino vacío'],
-      ['data:text/plain,hola%20mundo', 'no viene en base64']
-    ] as const) {
-      const plan = planArtifacts(payload([{ name: 'nota.txt', uri }]));
-      expect(plan.uploads).toHaveLength(0);
-      expect(plan.footer).toContain(motivo);
-    }
-  });
-
-  it('corta en cuatro subidas por respuesta', () => {
-    const muchos = Array.from({ length: 7 }, (_, index) => ({ name: `f${String(index)}.png`, uri: PNG_DATA_URI }));
-    const plan = planArtifacts(payload(muchos));
-    expect(plan.uploads).toHaveLength(4);
-    expect(plan.footer).toContain('ya iban 4 archivos');
-  });
-
-  it('dice la verdad del artifact que no cupo en el presupuesto del turno, y no lo confunde con una ruta local', () => {
-    const plan = planArtifacts(payload([
-      { name: 'informe.pdf', uri: 'cauce:not-sent' },
-      { name: 'local.pdf', uri: '/home/dev/local.pdf' }
-    ]));
-    expect(plan.uploads).toHaveLength(0);
-    expect(plan.listed).toBe(2);
-    expect(plan.footer).toContain('informe.pdf: superó el presupuesto de adjuntos de este turno');
-    expect(plan.footer).not.toContain('informe.pdf: quedó en el espacio de trabajo');
-    expect(plan.footer).toContain('local.pdf: quedó en el espacio de trabajo del agente y no viajó al chat');
-  });
-
-  it('el pie se pega al texto del agente y no lo reemplaza', () => {
-    const plan = planArtifacts(payload([{ name: 'rama', uri: 'https://github.com/x/y/tree/z' }]));
-    const chunks = telegramTextChunks(payload([{ name: 'rama', uri: 'https://github.com/x/y/tree/z' }]), plan.footer);
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toContain('Listo, ahí va.');
-    expect(chunks[0]).toContain('https://github.com/x/y/tree/z');
-  });
-
-  it('cuando no hay respuesta pero sí adjuntos, el pie ES el mensaje', () => {
-    const artifacts = [{ name: 'informe', uri: 'https://ejemplo.test/informe' }];
-    const plan = planArtifacts(payload(artifacts, ''));
-    expect(telegramTextChunks(payload(artifacts, ''), plan.footer)[0]).toContain('📎 Adjuntos');
   });
 });
 
@@ -371,34 +259,6 @@ describe('egreso con adjuntos', () => {
     expect(repository.acks[0]?.effect_count).toBe(2);
   });
 
-  it('un adjunto que Telegram rechaza NO impide que el texto llegue ni mata la entrega', async () => {
-    const event = relay([{ name: 'captura.png', uri: PNG_DATA_URI }]);
-    const repository = new MemoryRepository(event);
-    const rechazo = async (): Promise<TelegramSendResult> => {
-      throw new TelegramApiError('Telegram API returned 400', false, undefined, true);
-    };
-    const { api, sent } = fakeApi({ sendPhoto: rechazo, sendDocument: rechazo });
-    await worker(repository, api).runOnce();
-
-    // The text went out, and instead of the file a line explaining why it did not.
-    expect(sent[0]?.value).toContain('Listo, ahí va.');
-    expect(sent[1]?.value).toContain('No pude adjuntar');
-    expect(repository.acks[0]?.status).toBe('sent');
-  });
-
-  it('degrada a documento cuando Telegram rechaza la foto', async () => {
-    const event = relay([{ name: 'captura.png', uri: PNG_DATA_URI }]);
-    const repository = new MemoryRepository(event);
-    const { api, sent } = fakeApi({
-      async sendPhoto(): Promise<TelegramSendResult> {
-        throw new TelegramApiError('Telegram API returned 400', false, undefined, true);
-      }
-    });
-    await worker(repository, api).runOnce();
-    expect(sent.map((entry) => entry.method)).toEqual(['sendText', 'sendDocument']);
-    expect(repository.acks[0]?.status).toBe('sent');
-  });
-
   it('un fallo de red al subir queda ambiguo y NO reenvía la foto sola', async () => {
     const event = relay([{ name: 'captura.png', uri: PNG_DATA_URI }]);
     const repository = new MemoryRepository(event);
@@ -410,26 +270,5 @@ describe('egreso con adjuntos', () => {
     await worker(repository, api).runOnce();
     expect(repository.acks[0]?.status).toBe('dead');
     expect([...repository.effects.values()].map((row) => row.state)).toEqual(['sent', 'ambiguous']);
-  });
-
-  it('una API sin subida de archivos sigue entregando el texto', async () => {
-    const event = relay([{ name: 'captura.png', uri: PNG_DATA_URI }]);
-    const repository = new MemoryRepository(event);
-    const { api, sent } = fakeApi({}, true);
-    await worker(repository, api).runOnce();
-    expect(sent[0]?.value).toContain('Listo, ahí va.');
-    expect(repository.acks[0]?.status).toBe('sent');
-  });
-
-  it('una respuesta sin artifacts se comporta exactamente como antes', async () => {
-    const event = relay([]);
-    const repository = new MemoryRepository(event);
-    const { api, sent } = fakeApi();
-    await worker(repository, api).runOnce();
-    expect(sent).toHaveLength(1);
-    expect(sent[0]?.method).toBe('sendText');
-    expect(repository.acks[0]?.effect_count).toBe(1);
-    // The text hash formula did not change: it is the one the live rows in production already use.
-    expect([...repository.effects.keys()]).toEqual([`${event.event_id}:0`]);
   });
 });

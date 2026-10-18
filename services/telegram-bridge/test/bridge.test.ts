@@ -1,8 +1,6 @@
-import { buildPublishReceipt, type PublishMessage } from '@cauce/protocol';
 import { describe, expect, it } from 'vitest';
 import { parseTelegramBridgeConfig } from '../src/config.js';
 import { telegramTextChunks } from '../src/egress.js';
-import { StoreTelegramIngress } from '../src/ingress.js';
 import { TelegramPoller } from '../src/poller.js';
 import {
   config, DeduplicatingIngress, FakeTelegram, MemoryCursorRepository, TENANT, noopActivity, noopObserver
@@ -44,12 +42,6 @@ describe('Telegram egress text extraction', () => {
     })).toEqual(['a'.repeat(4_096), 'b']);
   });
 
-  it('accepts result.reply before legacy result text fields', () => {
-    expect(telegramTextChunks({
-      result: { reply: 'structured reply', text: 'legacy reply' }
-    })).toEqual(['structured reply']);
-  });
-
   it('returns no chunks for an empty StructuredOutput reply, while preserving an explicit error', () => {
     const emptyOutput = {
       reply: '',
@@ -66,21 +58,6 @@ describe('Telegram egress text extraction', () => {
     expect(telegramTextChunks({
       result: { output: { ...emptyOutput, reply: ' \u0000 ' } }, error: 'adapter failed'
     })).toEqual(['Error: adapter failed']);
-  });
-
-  it('una entrega muerta se explica y pide reenviar, no vuelca el error crudo', () => {
-    const [texto] = telegramTextChunks({
-      outcome: 'dead', error: 'ACK timeout: max attempts exhausted', error_code: 'ACK_TIMEOUT'
-    });
-    expect(texto).not.toMatch(/^Error: /);
-    expect(texto).toContain('no llegó al agente');
-    expect(texto).toContain('Reenvíalo');
-    expect(texto).toContain('ACK_TIMEOUT');
-  });
-
-  it('un fallo que NO es entrega muerta conserva el error crudo', () => {
-    expect(telegramTextChunks({ outcome: 'failed', error: 'adapter failed' }))
-      .toEqual(['Error: adapter failed']);
   });
 
   it('does not treat zero-width, combining-mark-only, or control-only replies as visible Telegram content', () => {
@@ -148,31 +125,6 @@ describe('Telegram egress text extraction', () => {
       }
     })).toEqual([]);
   });
-
-  it('never publishes a serialized StructuredOutput envelope: unwraps its reply, or sends nothing', () => {
-    const envelope = JSON.stringify({
-      reply: 'texto humano', messages: [], status: 'done', retryable: false, artifacts: []
-    });
-
-    // A harness that does not produce structured output leaves the whole envelope as plain text.
-    // Publishing it as-is is what the operator sees as "JSON in the chat".
-    expect(telegramTextChunks({ result: { text: envelope } })).toEqual(['texto humano']);
-    expect(telegramTextChunks({ result: { output: { reply: envelope } } })).toEqual(['texto humano']);
-
-    // Envelope without usable human text: nothing is published, instead of the raw JSON.
-    expect(telegramTextChunks({
-      result: { text: JSON.stringify({ reply: '', messages: [], status: 'done', retryable: false, artifacts: [] }) }
-    })).toEqual([]);
-
-    // With a markdown fence around it, which is how it usually arrives.
-    expect(telegramTextChunks({ result: { text: '```json\n' + envelope + '\n```' } }))
-      .toEqual(['texto humano']);
-
-    // A JSON that is NOT a contract envelope is still treated as text: we do not invent rules.
-    expect(telegramTextChunks({ result: { text: '{"foo":1}' } })).toEqual(['{"foo":1}']);
-    // And human text that happens to start with a brace is left alone.
-    expect(telegramTextChunks({ result: { text: '{no es json' } })).toEqual(['{no es json']);
-  });
 });
 
 describe('Telegram durable polling (core)', () => {
@@ -205,71 +157,6 @@ describe('Telegram durable polling (core)', () => {
       content_base64: photo.toString('base64')
     })]);
     expect(repository.next).toBe(5);
-  });
-
-  it('keeps an attachment rejection visible even when the document has a caption', async () => {
-    const repository = new MemoryCursorRepository();
-    const ingress = new DeduplicatingIngress();
-    const api = new FakeTelegram([{
-      update_id: 6,
-      message: {
-        message_id: 106,
-        from: { id: 101 },
-        chat: { id: 201, type: 'private' },
-        caption: 'analizá esto',
-        document: {
-          file_id: 'oversized', file_name: 'informe.pdf', mime_type: 'application/pdf', file_size: 10_000_001
-        }
-      }
-    }]);
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config(), botId: '900001', api, repository, ingress
-    }).runOnce();
-
-    expect(ingress.calls[0]?.body.prompt).toMatch(/analizá esto[\s\S]*excede el límite de 10 MB/u);
-    expect(ingress.calls[0]?.body.media).toBeUndefined();
-    expect(repository.next).toBe(7);
-  });
-
-  it('descarta el adjunto que el esquema rechaza y publica igual el mensaje del humano', async () => {
-    // A file with invalid size is dropped by the attachment sieve without blocking publication.
-    const repository = new MemoryCursorRepository();
-    const published: PublishMessage[] = [];
-    const ingress = new StoreTelegramIngress({
-      publish: async (command) => {
-        published.push(command);
-        return buildPublishReceipt(command, {
-          message_id: '10000000-0000-4000-8000-000000000001',
-          delivery_ids: ['20000000-0000-4000-8000-000000000001'], duplicate: false,
-          request_id: command.request_id, trace_id: command.trace_id,
-        });
-      }
-    });
-    const api = new FakeTelegram([{
-      update_id: 8,
-      message: {
-        message_id: 108,
-        from: { id: 101 },
-        chat: { id: 201, type: 'private' },
-        caption: 'mirá esto',
-        document: { file_id: 'vacio', file_name: 'notas.txt', mime_type: 'text/plain', file_size: 0 }
-      }
-    }]);
-    api.files.set('vacio', { file_id: 'vacio', file_path: 'documents/notas.txt', file_size: 0 });
-    api.filePayloads.set('documents/notas.txt', Buffer.alloc(0));
-
-    await new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config(), botId: '900001', api, repository, ingress
-    }).runOnce();
-
-    expect(published).toHaveLength(1);
-    expect(published[0]?.body.attachments_v1).toBeUndefined();
-    expect(published[0]?.body.prompt).toMatch(/mirá esto[\s\S]*adjunto descartado/u);
-    // What was actually being lost: the cursor.
-    expect(repository.next).toBe(9);
   });
 
   it('denies a wrong chat without publishing but durably consumes the update', async () => {

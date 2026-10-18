@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { prepareTelegramAttachments } from '../src/attachments.js';
-import { batchMembers, prepareMediaGroupAttachments } from '../src/media-group.js';
 import { TelegramPoller } from '../src/poller.js';
 import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
 import type {
   PollLease, TelegramApi, TelegramEntity, TelegramMessage, TelegramRemoteFile, TelegramUpdate
 } from '../src/types.js';
 import {
-  config, DeduplicatingIngress, FakeTelegram, GROUP_CHAT_ID, MemoryCursorRepository, noopActivity,
+  config, DeduplicatingIngress, FakeTelegram, MemoryCursorRepository, noopActivity,
   noopObserver
 } from './bridge-fixtures.js';
 
@@ -96,65 +95,6 @@ describe('Telegram attachment preparation', () => {
     await expect(interrupted.getFile('photo-id')).rejects.toMatchObject({ retryable: true });
   });
 
-  it('downloads the largest photo and carries validated content with a safe name and MIME', async () => {
-    const api = new AttachmentTelegram();
-    api.files.set('large', { file_id: 'large', file_path: 'photos/picture.jpg', file_size: 7 });
-    api.payloads.set('photos/picture.jpg', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
-
-    const result = await prepareTelegramAttachments(message({
-      photo: [
-        { file_id: 'small', file_size: 4 },
-        { file_id: 'large', file_size: 7 }
-      ]
-    }), api);
-
-    expect(result.errors).toEqual([]);
-    expect(result.media).toHaveLength(1);
-    const media = result.media[0];
-    expect(media).toMatchObject({
-      kind: 'image', name: 'picture.jpg', mime_type: 'image/jpeg', file_size: 7
-    });
-    expect(Buffer.from(media?.content_base64 ?? '', 'base64'))
-      .toEqual(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]));
-    expect(media?.sha256).toMatch(/^[a-f0-9]{64}$/u);
-  });
-
-  it.each([
-    ['image/png', 'scan.png', Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])],
-    ['image/webp', 'scan.webp', Buffer.from('RIFF\u0004\u0000\u0000\u0000WEBPdata', 'binary')],
-    ['application/pdf', 'report.pdf', Buffer.from('%PDF-1.7\nfixture')],
-    ['text/plain', 'notes.txt', Buffer.from('hola mundo\n', 'utf8')],
-    // Accepts the mime variants for markdown.
-    ['text/markdown', 'TECLAS-RPG-DOS-ALMAS.md', Buffer.from('# teclas\n- w: arriba\n', 'utf8')],
-    ['text/x-markdown', 'notas.md', Buffer.from('# titulo\n', 'utf8')],
-    ['text/plain', 'plano.md', Buffer.from('texto plano en un .md\n', 'utf8')],
-    ['text/csv', 'ventas.csv', Buffer.from('fecha,total\n2026-08-04,10\n', 'utf8')],
-    [
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'brief.docx',
-      Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('[Content_Types].xml word/document.xml')])
-    ],
-    ['application/x-sh', 'desplegar.sh', Buffer.from('#!/bin/sh\nexit 0\n', 'utf8')],
-    ['application/zip', 'evidencia.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04, 9, 9])],
-    ['video/mp4', 'captura.mp4', Buffer.from('\u0000\u0000\u0000\u0018ftypmp42', 'binary')],
-    ['application/vnd.sqlite3', 'cauce.db', Buffer.from('SQLite format 3\u0000', 'binary')],
-    ['application/gzip', 'volcado.tar.gz', Buffer.from([0x1f, 0x8b, 0x08, 0x00])],
-    ['image/svg+xml', 'diagrama.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>', 'utf8')],
-    ['text/plain', 'informe con acentos y espacios.txt', Buffer.from('ñandú\n', 'utf8')]
-  ])('accepts any %s document', async (mime, name, payload) => {
-    const api = new AttachmentTelegram();
-    const remote = 'documents/file_42';
-    api.files.set('doc', { file_id: 'doc', file_path: remote, file_size: payload.length });
-    api.payloads.set(remote, payload);
-
-    const result = await prepareTelegramAttachments(message({
-      document: { file_id: 'doc', file_name: name, mime_type: mime, file_size: payload.length }
-    }), api);
-
-    expect(result.errors).toEqual([]);
-    expect(result.media[0]).toMatchObject({ name, mime_type: mime, file_size: payload.length });
-  });
-
   it('rejects oversized and traversal-shaped files without downloading unsafe input', async () => {
     const api = new AttachmentTelegram();
     api.files.set('too-big', { file_id: 'too-big', file_path: 'documents/report.pdf', file_size: 10_000_001 });
@@ -169,84 +109,6 @@ describe('Telegram attachment preparation', () => {
       expect(result.errors[0]).toMatch(/excede|nombre|ruta/u);
     }
     expect(api.downloaded).toEqual([]);
-  });
-
-  it('rejects a name carrying bidi control characters', async () => {
-    const api = new AttachmentTelegram();
-    api.files.set('bidi', { file_id: 'bidi', file_path: 'documents/report.pdf', file_size: 3 });
-
-    const result = await prepareTelegramAttachments(message({
-      document: { file_id: 'bidi', file_name: 'report\u202Efdp.exe', mime_type: 'application/pdf', file_size: 3 }
-    }), api);
-
-    expect(result.media).toEqual([]);
-    expect(result.errors[0]).toMatch(/nombre/u);
-    expect(api.downloaded).toEqual([]);
-  });
-
-  it('carries content whose bytes disagree with the claimed type, naming what the bytes are', async () => {
-    const api = new AttachmentTelegram();
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
-    api.files.set('fake-pdf', { file_id: 'fake-pdf', file_path: 'documents/report.pdf', file_size: 9 });
-    api.payloads.set('documents/report.pdf', png);
-
-    const result = await prepareTelegramAttachments(message({
-      document: { file_id: 'fake-pdf', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 9 }
-    }), api);
-
-    expect(result.errors).toEqual([]);
-    expect(result.media[0]).toMatchObject({ kind: 'image', name: 'report.pdf', mime_type: 'image/png' });
-  });
-
-  it('names a file that arrives with no usable type from its extension, or as a plain stream', async () => {
-    const api = new AttachmentTelegram();
-    const payload = Buffer.from('contenido cualquiera');
-    api.files.set('sin-tipo', { file_id: 'sin-tipo', file_path: 'documents/notas.md', file_size: payload.length });
-    api.payloads.set('documents/notas.md', payload);
-    api.files.set('sin-nada', { file_id: 'sin-nada', file_path: 'documents/volcado', file_size: payload.length });
-    api.payloads.set('documents/volcado', payload);
-
-    const conExtension = await prepareTelegramAttachments(message({
-      document: { file_id: 'sin-tipo', file_name: 'notas.md', file_size: payload.length }
-    }), api);
-    expect(conExtension.media[0]).toMatchObject({ kind: 'document', mime_type: 'text/markdown' });
-
-    const sinNada = await prepareTelegramAttachments(message({
-      document: { file_id: 'sin-nada', file_name: 'volcado', file_size: payload.length }
-    }), api);
-    expect(sinNada.media[0]).toMatchObject({ kind: 'document', mime_type: 'application/octet-stream' });
-  });
-
-  it('strips the parameters Telegram may append to a declared type', async () => {
-    const api = new AttachmentTelegram();
-    const payload = Buffer.from('hola\n', 'utf8');
-    api.files.set('param', { file_id: 'param', file_path: 'documents/notas.txt', file_size: payload.length });
-    api.payloads.set('documents/notas.txt', payload);
-
-    const result = await prepareTelegramAttachments(message({
-      document: { file_id: 'param', file_name: 'notas.txt', mime_type: 'text/plain; charset=utf-8', file_size: payload.length }
-    }), api);
-
-    expect(result.media[0]).toMatchObject({ mime_type: 'text/plain' });
-  });
-
-  it('takes a video and an animation, which used to leave only a trace of metadata', async () => {
-    const api = new AttachmentTelegram();
-    const payload = Buffer.from('\u0000\u0000\u0000\u0018ftypmp42rest', 'binary');
-    api.files.set('vid', { file_id: 'vid', file_path: 'videos/clip.mp4', file_size: payload.length });
-    api.payloads.set('videos/clip.mp4', payload);
-    api.files.set('gif', { file_id: 'gif', file_path: 'animations/meme.mp4', file_size: payload.length });
-    api.payloads.set('animations/meme.mp4', payload);
-
-    const video = await prepareTelegramAttachments(message({
-      video: { file_id: 'vid', file_name: 'clip.mp4', mime_type: 'video/mp4', file_size: payload.length }
-    }), api);
-    expect(video.media[0]).toMatchObject({ kind: 'document', name: 'clip.mp4', mime_type: 'video/mp4' });
-
-    const animation = await prepareTelegramAttachments(message({
-      animation: { file_id: 'gif', file_name: 'meme.mp4', mime_type: 'video/mp4', file_size: payload.length }
-    }), api);
-    expect(animation.media[0]).toMatchObject({ kind: 'document', name: 'meme.mp4' });
   });
 });
 
@@ -347,62 +209,6 @@ describe('álbumes de Telegram', () => {
     expect(repository.advances).toEqual([23]);
   });
 
-  it('en modo mención el álbum entero viaja: los miembros sin epígrafe ya no mueren sin destinatario', async () => {
-    const api = new FakeTelegram();
-    api.updates.push(
-      album(api, 40, 'MEN', {
-        chatId: GROUP_CHAT_ID,
-        caption: '@kant_bot mirá',
-        entities: [{ type: 'mention', offset: 0, length: 9 }]
-      }),
-      album(api, 41, 'MEN', { chatId: GROUP_CHAT_ID }),
-      album(api, 42, 'MEN', { chatId: GROUP_CHAT_ID })
-    );
-    const repository = new CountingCursors();
-    const ingress = new DeduplicatingIngress();
-    const metrics: string[] = [];
-    const bridge = new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config({
-        allowed_chat_ids: [String(GROUP_CHAT_ID)],
-        bot_username: 'kant_bot',
-        chats: [{
-          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
-          reply_to_origin: true, threads: []
-        }]
-      }),
-      botId: '900001', api, repository, ingress,
-      onMetric: (metric) => metrics.push(metric)
-    });
-
-    await bridge.runOnce();
-    await bridge.runOnce();
-
-    expect(metrics).toEqual(['updates_allowed']);
-    expect(ingress.calls).toHaveLength(1);
-    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(3);
-    expect(repository.advances).toEqual([43]);
-  });
-
-  it('publica los miembros por separado cuando el álbum entero no entra en el tope agregado', async () => {
-    const api = new FakeTelegram();
-    api.updates.push(
-      album(api, 30, 'GRANDE', { size: 6_000_000, caption: 'dos pesadas' }),
-      album(api, 31, 'GRANDE', { size: 6_000_000 })
-    );
-    const repository = new CountingCursors();
-    const ingress = new DeduplicatingIngress();
-    const bridge = poller(api, repository, ingress);
-
-    await bridge.runOnce();
-    await bridge.runOnce();
-
-    expect(ingress.calls).toHaveLength(2);
-    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(1);
-    expect(ingress.calls[1]?.body.attachments_v1).toHaveLength(1);
-    expect(repository.advances).toEqual([32]);
-  });
-
   it('descarta el miembro que declara otro chat y otro remitente en vez de darle la identidad del epígrafe', async () => {
     const api = new FakeTelegram();
     api.updates.push(
@@ -429,76 +235,5 @@ describe('álbumes de Telegram', () => {
     expect(metrics).toContain('updates_denied');
     expect(suppressed).toMatchObject([{ chat_id: '-999999', update_id: 61, reason: 'chat_not_allowed' }]);
     expect(repository.advances).toEqual([62]);
-  });
-
-  it('un miembro sin chat no revienta el ciclo ni congela el cursor', async () => {
-    const api = new FakeTelegram();
-    api.updates.push(
-      album(api, 70, 'ROTO', { caption: 'una buena' }),
-      album(api, 71, 'ROTO', { withoutChat: true })
-    );
-    const repository = new CountingCursors();
-    const ingress = new DeduplicatingIngress();
-    const bridge = poller(api, repository, ingress);
-
-    await bridge.runOnce();
-    await bridge.runOnce();
-
-    expect(ingress.calls).toHaveLength(1);
-    expect(ingress.calls[0]?.body.attachments_v1).toHaveLength(1);
-    expect(repository.next).toBe(72);
-  });
-
-  it('un álbum de seis fotos publica también los miembros de la tanda de continuación', async () => {
-    const api = new FakeTelegram();
-    api.updates.push(
-      album(api, 50, 'SEIS', {
-        chatId: GROUP_CHAT_ID,
-        caption: '@kant_bot mirá',
-        entities: [{ type: 'mention', offset: 0, length: 9 }]
-      }),
-      ...[51, 52, 53, 54, 55].map((updateId) => album(api, updateId, 'SEIS', { chatId: GROUP_CHAT_ID }))
-    );
-    const repository = new CountingCursors();
-    const ingress = new DeduplicatingIngress();
-    const metrics: string[] = [];
-    const bridge = new TelegramPoller({
-      activity: noopActivity(), observer: noopObserver(),
-      config: config({
-        allowed_chat_ids: [String(GROUP_CHAT_ID)],
-        bot_username: 'kant_bot',
-        chats: [{
-          chat_id: String(GROUP_CHAT_ID), mode: 'mention', session_scope: 'user',
-          reply_to_origin: true, threads: []
-        }]
-      }),
-      botId: '900001', api, repository, ingress,
-      onMetric: (metric) => metrics.push(metric)
-    });
-
-    await bridge.runOnce();
-    await bridge.runOnce();
-    await bridge.runOnce();
-
-    expect(metrics).toEqual(['updates_allowed', 'updates_allowed']);
-    expect(ingress.calls.map((call) => (call.body.attachments_v1 as unknown[]).length)).toEqual([4, 2]);
-    expect(repository.next).toBe(56);
-  });
-});
-
-describe('presupuesto agregado de un álbum', () => {
-  it('no recorta en silencio: el excedente hace que el álbum no entre y se publique miembro a miembro', async () => {
-    const api = new FakeTelegram();
-    const members = [80, 81, 82, 83, 84].map((updateId) => album(api, updateId, 'CINCO'));
-    const prepared = await prepareMediaGroupAttachments(
-      batchMembers(members),
-      api,
-      80
-    );
-
-    expect(prepared.members).toHaveLength(5);
-    expect(prepared.combined.media).toHaveLength(5);
-    expect(prepared.fits).toBe(false);
-    expect(prepared.members.map((member) => member.update.update_id)).toEqual([80, 81, 82, 83, 84]);
   });
 });

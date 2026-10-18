@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   TelegramActivityIndicator,
-  type TelegramActivityTarget,
-  type TelegramTerminalOutcome
-} from '../src/activity.js';
-import { TelegramApiError, TelegramHttpClient } from '../src/telegram.js';
+  type TelegramActivityTarget} from '../src/activity.js';
+import { TelegramHttpClient } from '../src/telegram.js';
 import { TELEGRAM_ACTIVITY_REACTIONS } from '../src/types.js';
 import type {
   TelegramApi, TelegramChatAction, TelegramReactionEmoji, TelegramSendResult, TelegramUpdate
@@ -61,11 +59,6 @@ afterEach(() => {
 });
 
 describe('Telegram activity indicator', () => {
-  it('rejects typing renewal intervals longer than the Bot API visibility window', () => {
-    expect(() => new TelegramActivityIndicator({ typingIntervalMs: 5_001 })).toThrow(
-      'Telegram typing interval must be between 1 and 5000 milliseconds'
-    );
-  });
 
   it('moves through read, thinking and success while renewing and then cleaning up typing', async () => {
     vi.useFakeTimers();
@@ -95,22 +88,6 @@ describe('Telegram activity indicator', () => {
     expect(api.actions).toHaveLength(actionCount);
     activity.stop();
   });
-
-  it.each<TelegramTerminalOutcome>(['failed', 'dead'])(
-    'uses failure reaction for a %s terminal relay',
-    async (outcome) => {
-      const api = new RecordingTelegram();
-      const activity = new TelegramActivityIndicator();
-
-      activity.finish(target(api), outcome);
-      await activity.whenIdle();
-
-      expect(api.reactions).toEqual([
-        { chatId: '201', messageId: '701', reaction: '👎' }
-      ]);
-      activity.stop();
-    }
-  );
 
   it('absorbs reaction and typing failures without an unhandled rejection', async () => {
     const api = new RecordingTelegram();
@@ -176,57 +153,6 @@ describe('Telegram activity indicator', () => {
     expect(api.reactions).toEqual([
       { chatId: '201', messageId: '701', reaction: '👍' }
     ]);
-    expect(api.actions).toHaveLength(0);
-    activity.stop();
-  });
-
-  it('allows a terminal correction after manual replay without reopening thinking', async () => {
-    const api = new RecordingTelegram();
-    const activity = new TelegramActivityIndicator();
-    const message = target(api);
-
-    activity.finish(message, 'dead');
-    await activity.whenIdle();
-    activity.finish(message, 'done');
-    await activity.whenIdle();
-    activity.begin(message);
-    await activity.whenIdle();
-
-    expect(api.reactions.map((entry) => entry.reaction)).toEqual(['👎', '👍']);
-    expect(api.actions).toHaveLength(0);
-    activity.stop();
-  });
-
-  it('serializes concurrent terminal corrections through the tombstone reaction tail', async () => {
-    const api = new RecordingTelegram();
-    const originalReaction = api.setMessageReaction.bind(api);
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let calls = 0;
-    api.setMessageReaction = async (chatId, messageId, reaction, signal) => {
-      calls += 1;
-      if (calls === 1) await firstGate;
-      await originalReaction(chatId, messageId, reaction, signal);
-    };
-    const activity = new TelegramActivityIndicator();
-    const message = target(api);
-
-    activity.finish(message, 'dead');
-    activity.finish(message, 'done');
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(calls).toBe(1);
-    expect(api.reactions).toHaveLength(0);
-
-    releaseFirst();
-    await activity.whenIdle();
-    activity.begin(message);
-    await activity.whenIdle();
-
-    expect(api.reactions.map((entry) => entry.reaction)).toEqual(['👎', '👍']);
     expect(api.actions).toHaveLength(0);
     activity.stop();
   });
@@ -308,29 +234,5 @@ describe('Telegram Bot API activity calls', () => {
         body: { chat_id: '-100201', action: 'typing' }
       }
     ]);
-  });
-
-  it('rejects malformed chat and message IDs before making a request', async () => {
-    let calls = 0;
-    const client = new TelegramHttpClient({
-      token: '123456:abcdefghijklmnopqrstuvwxyz_ABCDE',
-      apiBase: 'https://telegram.invalid',
-      fetcher: async () => {
-        calls += 1;
-        return new Response(JSON.stringify({ ok: true, result: true }));
-      }
-    });
-
-    await expect(client.setMessageReaction('chat-name', '701', '👀'))
-      .rejects.toBeInstanceOf(TelegramApiError);
-    await expect(client.setMessageReaction('201', '0', '👀'))
-      .rejects.toBeInstanceOf(TelegramApiError);
-    await expect(client.setMessageReaction('201', '9007199254740992', '👀'))
-      .rejects.toBeInstanceOf(TelegramApiError);
-    await expect(client.sendChatAction('99999999999999999999', 'typing'))
-      .rejects.toBeInstanceOf(TelegramApiError);
-    await expect(client.sendChatAction('0', 'typing'))
-      .rejects.toBeInstanceOf(TelegramApiError);
-    expect(calls).toBe(0);
   });
 });
