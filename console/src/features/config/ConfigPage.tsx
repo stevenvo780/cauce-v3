@@ -168,7 +168,7 @@ function PermisoDeEscritura({ access, estado }: {
   return <Notice tone={estado === 'allowed' ? 'ok' : 'warn'} role="note" data-estado={estado}
     className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
     <span>{texto}</span>
-    <span className="font-mono text-xs opacity-80">RBAC config.write · roles {roles}</span>
+    <span className="text-xs opacity-80">Rol de esta sesión: {roles}. Sirve para saber quién puede cambiar los ajustes.</span>
   </Notice>;
 }
 

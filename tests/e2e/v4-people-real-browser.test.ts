@@ -291,11 +291,11 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       expect(access.body.permissions).not.toContain('config.write');
 
       await openSection(personPage, 'agentes');
-      const writeNotice = personPage.getByRole('note').filter({ hasText: 'RBAC config.write' });
+      const writeNotice = personPage.getByRole('note').filter({ hasText: 'Rol de esta sesión' });
       await writeNotice.waitFor({ timeout: 15_000 });
       const notice = await writeNotice.innerText();
       expect(notice).toContain('Solo lectura:');
-      expect(notice).toContain('RBAC config.write');
+      expect(notice).toContain('Rol de esta sesión');
 
       expectHttpError('/v3/console/people', 403, 3);
       await openPeopleAdmin(personPage);

@@ -23,7 +23,7 @@ it('previews and applies a default-deny ACL mutation through the protected API',
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('heading', { level: 1, name: /ajustes/i })).toBeInTheDocument();
-  expect(await screen.findByText(/^RBAC config.write/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Rol de esta sesión/i)).toBeInTheDocument();
 
   await irA(user, HISTORIAL);
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
