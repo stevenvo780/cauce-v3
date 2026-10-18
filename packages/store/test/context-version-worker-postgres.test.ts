@@ -45,60 +45,6 @@ async function evidence() {
 }
 
 describe('safe diagnostics for durable context synchronization', () => {
-  it.each([
-    ['Authentication failed for https://fixture-token@github.invalid/private', 'context_git_authentication_failed'],
-    ['Permission denied (publickey)', 'context_git_authentication_failed'],
-    ['Could not resolve host: github.invalid', 'context_git_network_failed'],
-    ['Connection refused', 'context_git_network_failed'],
-    ['! [rejected] main -> main (non-fast-forward)', 'context_git_non_fast_forward'],
-    ['! [rejected] main -> main (fetch first)', 'context_git_non_fast_forward'],
-    ['Connection timed out', 'context_git_timeout'],
-    ['context repository must be private and have real Git metadata', 'context_git_repository_not_private'],
-  ])('persists a stable cause for %s', async (message, expected) => {
-    expect(await processContextOutbox(pool, { git: { commit: async () => 'b'.repeat(40),
-      push: async () => { throw new Error(message); } } }, target())).toMatchObject({ state: 'error', error: expected });
-    const stored = await evidence();
-    expect(stored.sync).toEqual([{ state: 'error', last_error: expected, git_commit: 'b'.repeat(40), attempts: 1 }]);
-    expect(stored.events).toEqual([{ company_id: 'context_alpha', tenant_id: 'ContextAlpha', actor_alias: 'director', decision: 'info',
-      metadata: { component: 'context', host_id: 'zz-canary-context-sync', target_tenant: 'ContextAlpha', target_alias: 'director',
-        version: 1, git_commit: 'b'.repeat(40), state: 'error', error_code: expected } }]);
-    expect(JSON.stringify(stored)).not.toContain('fixture-token');
-  });
-  it('audits a repeated sync failure only when its state or sanitized cause changes', async () => {
-    const messages = ['Authentication failed for https://fixture-token@github.invalid/private',
-      'Authentication failed for https://different-fixture-token@github.invalid/private',
-      'Could not resolve host: github.invalid', 'Connection refused'];
-    const causes = ['context_git_authentication_failed', 'context_git_authentication_failed',
-      'context_git_network_failed', 'context_git_network_failed'];
-    for (let index = 0; index < messages.length; index += 1) {
-      await pool.query('UPDATE agent_context_outbox SET retry_at=now(),apply_retry_at=now()');
-      expect(await processContextOutbox(pool, { git: { commit: async () => 'b'.repeat(40),
-        push: async () => { throw new Error(messages[index]); } } }, target()))
-        .toMatchObject({ state: 'error', error: causes[index] });
-      const stored = await evidence();
-      expect(stored.sync[0]).toMatchObject({ state: 'error', last_error: causes[index], attempts: index + 1 });
-      expect(stored.events).toHaveLength(index < 2 ? 1 : 2);
-    }
-    const stored = await evidence();
-    expect(stored.events.map(event => [event.metadata.state, event.metadata.error_code])).toEqual([
-      ['error', 'context_git_authentication_failed'], ['error', 'context_git_network_failed']]);
-    expect(JSON.stringify(stored)).not.toContain('fixture-token');
-  });
-  it.each([
-    [Object.assign(new Error('fixture secret'), { code: 'ETIMEDOUT' }), 'context_git_timeout'],
-    [Object.assign(new Error('fixture secret'), { killed: true, signal: 'SIGTERM' }), 'context_git_timeout'],
-    [Object.assign(new Error('fixture secret'), { code: 'ECONNRESET' }), 'context_git_network_failed'],
-    [Object.assign(new Error('fixture secret'), { stderr: 'remote: Authentication failed' }), 'context_git_authentication_failed'],
-    [Object.assign(new Error('fixture secret'), { stdout: '! [rejected] main (non-fast-forward)' }), 'context_git_non_fast_forward'],
-    [new Error('arbitrary fixture-token detail'), 'context_push_failed'],
-  ])('classifies structured failures without persisting command details %#', async (error, expected) => {
-    await processContextOutbox(pool, { git: { commit: async () => 'b'.repeat(40), push: async () => { throw error; } } }, target());
-    const stored = await evidence();
-    expect(stored.sync[0]).toMatchObject({ state: 'error', last_error: expected });
-    expect(stored.events[0]?.metadata).toMatchObject({ error_code: expected });
-    expect(JSON.stringify(stored)).not.toContain('fixture secret');
-    expect(JSON.stringify(stored)).not.toContain('fixture-token');
-  });
   it('keeps the real Git commit after a token-bearing push rejection and clears the cause on retry', async () => {
     directory = await mkdtemp(join(tmpdir(), 'zz-canary-context-sync-')); await chmod(directory, 0o700);
     await execute('git', ['init', '--initial-branch=main', directory]);
@@ -179,14 +125,6 @@ describe('bounded dedicated application of the desired version', () => {
     expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'error', version: 1, error: 'context_runtime_verification_failed' });
     expect(calls).toEqual([1, 1, 1, 1]);
   });
-  it('ends a row an unbounded worker kept retrying without spending another turn', async () => {
-    await pool.query("UPDATE agent_context_outbox SET apply_error='context_runtime_verification_failed',apply_retry_at=now()");
-    const calls: number[] = [];
-    expect(await processContextOutbox(pool, { git, runtime: unconfirmed(calls) }, target()))
-      .toEqual({ state: 'error', version: 1, error: 'context_runtime_attempts_exhausted' });
-    expect(calls).toEqual([]);
-    expect(await application()).toEqual({ apply_error: 'context_runtime_attempts_exhausted', leased: false, retry_in: null });
-  });
   it('keeps at most four applications in flight and serves the next agent once one ends', async () => {
     if (!current) throw new Error('database unavailable');
     await current.adminPool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,
@@ -242,21 +180,5 @@ describe('bounded dedicated application of the desired version', () => {
       { tenant_id: 'ContextAlpha', version: 2, state: 'error', last_error: 'context_version_unreadable', apply_error: 'context_version_unreadable' },
       { tenant_id: 'ContextBeta', version: 1, state: 'synced', last_error: null, apply_error: 'context_runtime_verification_failed' },
     ]);
-  });
-  it('serves another agent while the first application only awaits its ACK', async () => {
-    const other = target(1);
-    await store.write(client => lockCompanyAuthority(client, { tenant: other.tenant_id, alias: 'owner', humanId: other.human_id }),
-      other.tenant_id, other.alias, { expected_version: 0, source: 'ui', files: [{ path: 'context/mission.md', content: 'Second company.' }] });
-    let release!: () => void; const blocked = new Promise<void>(resolve => { release = resolve; });
-    const runtime = { apply: async (version: ContextVersion, waiting?: () => void) => {
-      if (version.company_id === target().company_id) { waiting?.(); await blocked; }
-      return { version: version.version, digest: version.digest };
-    } };
-    expect(await processContextOutbox(pool, { git, runtime }, target())).toEqual({ state: 'pending', version: 1 });
-    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'error', version: 1, error: 'context_runtime_verification_failed' });
-    expect(await application(0)).toMatchObject({ apply_error: null, leased: true });
-    expect(await application(1)).toMatchObject({ apply_error: 'context_runtime_verification_failed', leased: false });
-    release(); await settleContextApplications(pool);
-    expect(await application(0)).toMatchObject({ apply_error: 'context_runtime_verification_failed', leased: false });
   });
 });

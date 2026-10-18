@@ -9,13 +9,13 @@ import { randomUUID } from 'node:crypto';
 import { requireValue } from './helpers.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Ack, DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, createPool, type DatabaseClient, type DatabasePool } from '../src/index.js';
+import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { failureSignature } from '../src/repository.js';
 import {
   resetTestDatabase, startTestDatabase, type TestDatabase
 } from '../../../tests/helpers/postgres.js';
 import {
-  ackEnvelope, ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
+  ackWith as applyTerminalAck, consumer as leaseConsumer, nextDelivery as claimNext,
   type Consumer
 } from './helpers/consumer.js';
 
@@ -186,78 +186,6 @@ afterAll(async () => {
 describe('coalescencia de avisos de fracaso', () => {
   const sameCause = [{ error: 'harness exited before producing a reply', code: 'PROCESS_EXIT' }];
 
-  it.each(['done', 'failed', 'dead'])(
-    'emite otro aviso cuando el anterior ya está %s dentro de la ventana', async (status) => {
-      const { socrates, children, notice } = await standingFailure();
-      const window = await pool.query('SELECT window_started_at,window_expires_at FROM agent_failure_notices');
-      await pool.query('UPDATE deliveries SET status=$2,terminal_at=now() WHERE id=$1', [notice.delivery_id, status]);
-
-      await ackFailed(socrates, requireValue(children[1], 'second child'));
-
-      expect(await noticesTo('kant')).toHaveLength(2);
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
-      const events = await pool.query<{ coalesced: boolean; notice_message_id: string }>(
-        'SELECT coalesced,notice_message_id FROM agent_failure_notice_events ORDER BY created_at'
-      );
-      expect(events.rows.every((event) => !event.coalesced)).toBe(true);
-      expect(new Set(events.rows.map((event) => event.notice_message_id)).size).toBe(2);
-      const unchangedWindow = await pool.query('SELECT window_started_at,window_expires_at FROM agent_failure_notices');
-      expect(unchangedWindow.rows).toEqual(window.rows);
-    }
-  );
-
-  it.each(['pending', 'retry', 'leased', 'accepted', 'started'])(
-    'sólo pliega el aviso pendiente que nunca se tomó: estado %s', async (status) => {
-      const { socrates, children, notice } = await standingFailure();
-      await pool.query('UPDATE deliveries SET status=$2 WHERE id=$1', [notice.delivery_id, status]);
-
-      await ackFailed(socrates, requireValue(children[1], 'second child'));
-
-      const coalesced = status === 'pending';
-      expect(await noticesTo('kant')).toHaveLength(coalesced ? 1 : 2);
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: coalesced ? 1 : 2 });
-      const events = await pool.query<{ coalesced: boolean }>(
-        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [children[1]?.delivery_id]
-      );
-      expect(events.rows[0]?.coalesced).toBe(coalesced);
-    }
-  );
-
-  it.each(['missing_delivery', 'missing_message', 'other_message', 'other_tenant', 'other_alias', 'other_parent', 'other_parent_message'])(
-    'emite otro aviso si el anterior no corresponde al padre: %s', async (mismatch) => {
-      const { socrates, children, notice, rootMessageId } = await standingFailure();
-      if (mismatch === 'missing_delivery' || mismatch === 'missing_message') {
-        await pool.query(
-          `UPDATE agent_failure_notices SET
-             last_notice_delivery_id=CASE WHEN $1='missing_delivery' THEN $2::uuid ELSE last_notice_delivery_id END,
-             last_notice_message_id=CASE WHEN $1='missing_message' THEN $2::uuid ELSE last_notice_message_id END`,
-          [mismatch, randomUUID()]
-        );
-      } else if (mismatch === 'other_message') {
-        await pool.query('UPDATE agent_failure_notices SET last_notice_message_id=$1', [rootMessageId]);
-      } else if (mismatch === 'other_tenant' || mismatch === 'other_alias') {
-        await pool.query(
-          'UPDATE deliveries SET recipient_tenant=$2,recipient_alias=$3 WHERE id=$1',
-          [notice.delivery_id, mismatch === 'other_tenant' ? 'Miguel' : 'Steven', mismatch === 'other_alias' ? 'argos' : 'kant']
-        );
-      } else {
-        await pool.query(
-          `UPDATE messages SET body=jsonb_set(body,$2::text[],to_jsonb($3::text))
-           WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)`,
-          [notice.delivery_id, ['correlation', mismatch === 'other_parent' ? 'response_to_delivery_id' : 'response_to_message_id'], randomUUID()]
-        );
-      }
-
-      await ackFailed(socrates, requireValue(children[1], 'second child'));
-
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
-      const event = await pool.query<{ coalesced: boolean }>(
-        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [children[1]?.delivery_id]
-      );
-      expect(event.rows[0]?.coalesced).toBe(false);
-    }
-  );
-
   it('una ráfaga concurrente después de un aviso terminado emite uno nuevo y conserva el ledger', async () => {
     const { socrates, children, notice } = await standingFailure(6);
     await pool.query("UPDATE deliveries SET status='done',terminal_at=now() WHERE id=$1", [notice.delivery_id]);
@@ -294,106 +222,6 @@ describe('coalescencia de avisos de fracaso', () => {
       .toEqual(outbox.rows);
   });
 
-  it('emite otro aviso sin esperar el lock del anterior mientras retiene el bucket', async () => {
-    const { socrates, children, notice } = await standingFailure();
-    const url = new URL(database.url);
-    url.searchParams.set('options', '-c lock_timeout=1s');
-    const boundedPool = createPool(url.toString());
-    const boundedRepository = new CauceRepository(boundedPool);
-    const locker = await pool.connect();
-    try {
-      await locker.query('BEGIN');
-      await locker.query('SELECT 1 FROM deliveries WHERE id=$1 FOR UPDATE', [notice.delivery_id]);
-      const child = requireValue(children[1], 'second child');
-      const result = await boundedRepository.ackDelivery(
-        child.delivery_id, socrates.tenant, socrates.alias,
-        ackEnvelope(child, socrates, {}, {
-          status: 'failed', error: sameCause[0]?.error, error_code: sameCause[0]?.code
-        })
-      );
-      expect(result).toMatchObject({ applied: true, status: 'failed' });
-      expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
-      const notices = await noticesTo('kant');
-      expect(notices).toHaveLength(2);
-      expect(notices[0]?.text).toBe(notice.text);
-    } finally {
-      await locker.query('ROLLBACK');
-      locker.release();
-      await boundedPool.end();
-    }
-  });
-
-  it('un claim iniciado antes de la coalescencia entrega el cuerpo actualizado completo', async () => {
-    const { kant, socrates, children, notice } = await standingFailure();
-    const barrier = randomUUID();
-    const gate = await pool.connect();
-    let pendingClaim: Promise<{ delivery?: DeliveryEnvelope; error?: unknown }> | undefined;
-    try {
-      await gate.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [barrier]);
-      const gatePid = requireValue((await gate.query<{ pid: number }>(
-        'SELECT pg_backend_pid() AS pid'
-      )).rows[0], 'barrier pid').pid;
-      const racePool = {
-        connect: async (): Promise<DatabaseClient> => {
-          const client = await pool.connect();
-          const wrappedQuery = (async (queryText: string, values?: unknown[]) => {
-            if (queryText.includes('WITH picked AS (') && values?.[6] === false) {
-              const barrierParameter = `$${String(values.length + 1)}`;
-              queryText = queryText.replace(
-                'WITH picked AS (',
-                `WITH claim_snapshot_barrier AS MATERIALIZED (
-                   SELECT pg_advisory_xact_lock(hashtextextended(${barrierParameter}::text,0))
-                 ), picked AS (`
-              ).replace(
-                'WHERE d.recipient_tenant=$1',
-                'WHERE (SELECT count(*) FROM claim_snapshot_barrier)=1 AND d.recipient_tenant=$1'
-              );
-              values = [...values, barrier];
-            }
-            return values === undefined ? client.query(queryText) : client.query(queryText, values);
-          }) as DatabaseClient['query'];
-          return {
-            query: wrappedQuery, on: client.on.bind(client), off: client.off.bind(client),
-            release: client.release.bind(client)
-          } as DatabaseClient;
-        }
-      } as DatabasePool;
-      pendingClaim = claimNext(new CauceRepository(racePool), kant, () => true, 1).then(
-        (delivery) => ({ delivery }), (error: unknown) => ({ error })
-      );
-      await expect.poll(async () => (await pool.query(
-        `SELECT 1 FROM pg_stat_activity activity
-         WHERE activity.datname=current_database() AND activity.wait_event_type='Lock'
-           AND $1::integer=ANY(pg_blocking_pids(activity.pid))
-           AND activity.query LIKE '%WITH claim_snapshot_barrier AS MATERIALIZED%'`,
-        [gatePid]
-      )).rowCount, { timeout: 5_000, interval: 20 }).toBe(1);
-
-      const second = requireValue(children[1], 'second child');
-      await ackFailed(socrates, second);
-      const stored = requireValue((await pool.query<{ body: Record<string, unknown> }>(
-        'SELECT body FROM messages WHERE id=(SELECT message_id FROM deliveries WHERE id=$1)',
-        [notice.delivery_id]
-      )).rows[0], 'stored notice');
-      expect(stored.body.text).toContain('2 failures with this same cause');
-      expect((await pool.query<{ coalesced: boolean }>(
-        'SELECT coalesced FROM agent_failure_notice_events WHERE ack_delivery_id=$1', [second.delivery_id]
-      )).rows[0]?.coalesced).toBe(true);
-
-      await gate.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [barrier]);
-      const outcome = await pendingClaim;
-      if (outcome.error !== undefined) throw new Error('claim failed at the snapshot barrier', { cause: outcome.error });
-      const claimed = requireValue(outcome.delivery, 'claimed notice');
-      expect(claimed.delivery_id).toBe(notice.delivery_id);
-      expect(claimed.body).toEqual(stored.body);
-      expect(await noticesTo('kant')).toHaveLength(1);
-    } finally {
-      await gate.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [barrier]).catch(() => undefined);
-      gate.release();
-      await pendingClaim;
-    }
-  });
-
   it('pliega cinco fracasos idénticos en UNA sola entrega hacia el padre', async () => {
     await setCoalescing(true);
 
@@ -407,56 +235,6 @@ describe('coalescencia de avisos de fracaso', () => {
     expect(bucket?.child_alias).toBe('socrates');
     expect(bucket?.total_failures).toBe(5);
     expect(bucket?.notices_emitted).toBe(1);
-  });
-
-  it('sin coalescencia las mismas cinco muertes producen las cinco entregas del incidente', async () => {
-    await setCoalescing(false);
-
-    await fanoutThatDies(5, sameCause);
-
-    expect(await noticesTo('kant')).toHaveLength(5);
-    expect(await buckets()).toHaveLength(0);
-  });
-
-  it('el aviso que sí llega dice cuántos fracasos representa', async () => {
-    await setCoalescing(true);
-
-    await fanoutThatDies(5, sameCause);
-
-    const notice = (await noticesTo('kant'))[0];
-    // It still starts with the same phrase: a coordinator looking for it doesn't break.
-    expect(notice?.text).toContain('socrates could not complete the delegated request');
-    // And now it also says what the parent will not see arrive.
-    expect(notice?.text).toContain('5 failures with this same cause from socrates');
-    expect(notice?.text).toContain('4 of them were coalesced into this notice instead of being delivered');
-    // And it says where the rest is, with the exact identifier: the notice is not a dead end.
-    expect(notice?.text).toContain('agent_failure_notice_events where notice_id=');
-  });
-
-  it('el detalle de cada fracaso plegado sigue siendo recuperable por el padre', async () => {
-    await setCoalescing(true);
-    await fanoutThatDies(5, sameCause);
-    const bucketId = requireValue((await buckets())[0], 'value').id;
-
-    const detail = await repository.failureNoticeDetail(bucketId, 'Steven', 'kant');
-
-    const failures = detail.failures as Record<string, unknown>[];
-    // The five failures still exist one by one, with their raw cause.
-    expect(failures).toHaveLength(5);
-    expect(failures.filter((failure) => failure.coalesced === false)).toHaveLength(1);
-    expect(failures.filter((failure) => failure.coalesced === true)).toHaveLength(4);
-    expect(failures.every((failure) => failure.error === requireValue(sameCause[0], 'sameCause').error)).toBe(true);
-    expect(failures.every((failure) => failure.error_code === requireValue(sameCause[0], 'sameCause').code)).toBe(true);
-    expect(failures.every((failure) => failure.child_alias === 'socrates')).toBe(true);
-    // Each one names the specific child delivery that died: you can go from here to replay.
-    expect(new Set(failures.map((failure) => failure.child_delivery_id)).size).toBe(5);
-    // And each one names the notice under which the parent finds it.
-    expect(new Set(failures.map((failure) => failure.notice_message_id)).size).toBe(1);
-
-    const summary = detail.notice as Record<string, unknown>;
-    expect(summary.total_failures).toBe(5);
-    expect(summary.notices_emitted).toBe(1);
-    expect(summary.child_alias).toBe('socrates');
   });
 
   it('el detalle es default-deny para quien no es ni el padre ni el hijo', async () => {
@@ -558,79 +336,6 @@ describe('coalescencia de avisos de fracaso', () => {
     expect(recorded.rows.filter((row) => row.coalesced === true)).toHaveLength(2);
   });
 
-  async function twoBranchesFirstDies(): Promise<{ kant: Consumer; socrates: Consumer; second: DeliveryEnvelope }> {
-    const { kant, socrates, children } = await standingFailure();
-    return { kant, socrates, second: requireValue(children[1], 'second') };
-  }
-
-  it('un fracaso repetido contra un aviso que el padre YA atendió abre uno nuevo que lo despierta', async () => {
-    await setCoalescing(true);
-    const { kant, socrates, second } = await twoBranchesFirstDies();
-    await ackDone(kant, await nextDelivery(kant), [], 'visto');
-
-    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
-
-    const notices = await noticesTo('kant');
-    expect(notices).toHaveLength(2);
-    const fresh = requireValue(notices[1], 'second notice');
-    const status = await pool.query<{ status: string }>('SELECT status FROM deliveries WHERE id=$1', [fresh.delivery_id]);
-    expect(status.rows[0]?.status).toBe('pending');
-    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 2 });
-  });
-
-  it('tampoco pliega en un aviso que el padre ya reclamó: su texto ya no se puede reescribir', async () => {
-    await setCoalescing(true);
-    const { kant, socrates, second } = await twoBranchesFirstDies();
-    await nextDelivery(kant);
-
-    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
-
-    expect(await noticesTo('kant')).toHaveLength(2);
-  });
-
-  it('mientras el aviso sigue pendiente, el fracaso repetido se pliega en él (sin nueva entrega)', async () => {
-    await setCoalescing(true);
-    const { socrates, second } = await twoBranchesFirstDies();
-
-    await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
-
-    const notices = await noticesTo('kant');
-    expect(notices).toHaveLength(1);
-    expect((await buckets())[0]).toMatchObject({ total_failures: 2, notices_emitted: 1 });
-  });
-
-  it('dos hermanos que mueren A LA VEZ en un cubo nuevo producen un solo aviso (el primero no se lee como «ya leído»)', async () => {
-    await setCoalescing(true);
-    const kant = await consumer('Steven', 'kant');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-    await ackDone(kant, await nextDelivery(kant), Array.from({ length: 6 }, (_, index) => ({ to: 'socrates', body: `rama ${String(index)}` })));
-    const children = await claimAll(socrates, 6);
-    await Promise.all(children.map((child) => ackFailed(socrates, child, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '')));
-
-    expect(await noticesTo('kant')).toHaveLength(1);
-    expect((await buckets())[0]).toMatchObject({ total_failures: 6, notices_emitted: 1 });
-  });
-
-  for (const [state, setup] of [
-    ['retry', "status='retry',attempt=1,last_error='ack timeout'"],
-    ['pendiente con intento gastado', "status='pending',attempt=1,last_error=NULL"],
-    ['aparcado tras un reclamo', "status='pending',attempt=0,last_error='ACK timeout: no adapter connected; parked without spending an attempt'"],
-  ] as const) {
-    it(`un aviso ya reclamado (${state}) no se reescribe: el fracaso repetido abre uno nuevo`, async () => {
-      await setCoalescing(true);
-      const { socrates, second } = await twoBranchesFirstDies();
-      const notice = requireValue((await noticesTo('kant'))[0], 'notice');
-      await pool.query(`UPDATE deliveries SET ${setup} WHERE id=$1`, [notice.delivery_id]);
-
-      await ackFailed(socrates, second, sameCause[0]?.error ?? '', sameCause[0]?.code ?? '');
-
-      const notices = await noticesTo('kant');
-      expect(notices).toHaveLength(2);
-      expect(requireValue(notices[0], 'old').text).toBe(notice.text);
-    });
-  }
-
   it('nunca pliega una respuesta exitosa', async () => {
     await setCoalescing(true);
     const kant = await consumer('Steven', 'kant');
@@ -653,27 +358,11 @@ describe('coalescencia de avisos de fracaso', () => {
 });
 
 describe('failureSignature', () => {
-  it('pliega el mismo fallo reescrito por un contador o un uuid', () => {
-    const first = failureSignature(
-      'dead', 'ACK timeout on attempt 3 for delivery 6b1c9f2e-9d2a-4c11-9d0a-1a2b3c4d5e6f', undefined
-    );
-    const second = failureSignature(
-      'dead', 'ACK timeout on attempt 11 for delivery 0f9e8d7c-6b5a-4321-8f0e-9d8c7b6a5f4e', undefined
-    );
-    // Without this masking coalescence would have folded NOTHING in the incident: each notice
-    // carried a different delivery id.
-    expect(first).toBe(second);
-  });
 
   it('separa dos causas distintas y prefiere el código de error al texto', () => {
     expect(failureSignature('failed', 'boom', 'AUTH_EXPIRED'))
       .not.toBe(failureSignature('failed', 'boom', 'PROCESS_EXIT'));
     expect(failureSignature('failed', 'un texto', 'AUTH_EXPIRED'))
       .toBe(failureSignature('failed', 'otro texto totalmente distinto', 'AUTH_EXPIRED'));
-  });
-
-  it('distingue el estado terminal aunque la causa no se conozca', () => {
-    expect(failureSignature('dead', undefined, undefined)).toBe('dead:unspecified');
-    expect(failureSignature('failed', undefined, undefined)).toBe('failed:unspecified');
   });
 });

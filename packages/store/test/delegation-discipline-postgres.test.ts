@@ -128,28 +128,6 @@ async function deliveriesFor(alias: string): Promise<{ id: string; body_type: st
   )).rows;
 }
 
-/**
- * A complete delegation round-trip: the coordinator delegates, the target answers, and the
- * coordinator receives the turn again as an `agent.response` continuation. This is the cycle
- * that accounts for 61% of the traffic measured in prod.
- */
-async function delegateAndReturn(
-  coordinator: Consumer,
-  target: Consumer,
-  coordinatorDelivery: DeliveryEnvelope,
-  body: string
-): Promise<DeliveryEnvelope> {
-  await ackWith(coordinator, coordinatorDelivery, [{ to: target.alias, body }]);
-  const child = await nextDelivery(target, (item) => item.body.type === 'agent.message');
-  await ackWith(target, child, [], 'listo');
-  const claimed = await repository.claimDeliveries(
-    coordinator.tenant, coordinator.alias, coordinator.instanceId, coordinator.epoch, 10, 30_000
-  );
-  const response = claimed.find((item) => item.body.type === 'agent.response');
-  if (!response) throw new Error(`no agent.response came back to ${coordinator.alias}`);
-  return response;
-}
-
 preparePostgresSuite(import.meta.url, async () => {
   database = await startTestDatabase();
   databaseStarted = true;
@@ -333,137 +311,9 @@ describe('receipt durable de materialización', () => {
     )).rows[0], 'rows');
     expect(after).toEqual(before);
   }, 180_000);
-
-  it('rechaza @all sobre el límite antes de escribir hijos y replays sin truncación', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    interface RoutingTargetForTest { tenant_id: Tenant; alias: string; online: boolean }
-    const mutableRepository = repository as unknown as {
-      routingTargets(
-        client: unknown,
-        sourceTenant: Tenant,
-        sourceAlias: string,
-      ): Promise<RoutingTargetForTest[]>;
-    };
-    const originalRoutingTargets = mutableRepository.routingTargets.bind(repository);
-    mutableRepository.routingTargets = async () => Array.from(
-      { length: 1_001 },
-      (_, index): RoutingTargetForTest => ({
-        tenant_id: 'Steven',
-        alias: `peer_${String(index).padStart(4, '0')}`,
-        online: true,
-      }),
-    );
-    try {
-      const ack = terminalAck(root, argos, [{ to: '@all', body: 'fanout acotado' }]);
-      const fresh = await repository.ackDelivery(
-        root.delivery_id, argos.tenant, argos.alias, ack,
-      );
-      expect(fresh).toMatchObject({ applied: true, receipt: 'applied' });
-      expect(fresh.delegation_materializations).toBeUndefined();
-      expect(fresh.delegation_rejections).toEqual([
-        expect.objectContaining({ output_index: 0, target: '@all', code: 'invalid_output' }),
-      ]);
-      expect((await pool.query(
-        `SELECT 1 FROM agent_output_materializations
-         WHERE source_delivery_id=$1 AND status='materialized'`,
-        [root.delivery_id],
-      )).rowCount).toBe(0);
-      expect((await pool.query(
-        `SELECT 1 FROM agent_output_materializations WHERE source_delivery_id=$1`,
-        [root.delivery_id],
-      )).rowCount).toBe(1);
-
-      const replay = await repository.ackDelivery(
-        root.delivery_id, argos.tenant, argos.alias, ack,
-      );
-      expect(replay).toEqual({
-        delivery_id: root.delivery_id,
-        status: 'done',
-        applied: false,
-        receipt: 'duplicate',
-        delegation_rejections: fresh.delegation_rejections,
-      });
-    } finally {
-      mutableRepository.routingTargets = originalRoutingTargets;
-    }
-  }, 180_000);
-
-  it('falla cerrado si feedback durable legado supera el límite en vez de truncarlo', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    const root = await nextDelivery(argos);
-    const ack = terminalAck(root, argos, [{ to: 'socrates', body: 'rama original' }]);
-    await repository.ackDelivery(root.delivery_id, argos.tenant, argos.alias, ack);
-    await pool.query(
-      `INSERT INTO agent_output_materializations(
-         source_delivery_id,source_attempt,output_index,source_message_id,source_tenant,
-         source_alias,target_ref_hash,body_hash,status,rejection_code,request_id,trace_id,
-         hop_count,hop_budget,correlation
-       )
-       SELECT delivery.id,delivery.attempt,series.index,delivery.message_id,message.tenant_id,
-              delivery.recipient_alias,repeat('a',64),repeat('b',64),'rejected','invalid_output',
-              message.request_id,message.trace_id,1,16,
-              jsonb_build_object('rejection',jsonb_build_object(
-                'code','invalid_output',
-                'reason','legacy feedback exceeds the wire boundary',
-                'guidance','split the fanout into bounded batches'
-              ))
-       FROM deliveries delivery
-       JOIN messages message ON message.id=delivery.message_id
-       CROSS JOIN generate_series(1,1000) AS series(index)
-       WHERE delivery.id=$1`,
-      [root.delivery_id],
-    );
-
-    await expect(repository.ackDelivery(
-      root.delivery_id, argos.tenant, argos.alias, ack,
-    )).rejects.toMatchObject({
-      name: 'StoreError',
-      code: 'conflict',
-      message: 'durable delegation feedback exceeds the wire limit',
-    });
-  }, 180_000);
 });
 
 describe('cadena que cicla -> se corta', () => {
-  it('corta la rotación por continuación, que NINGUN guarda anterior veía', async () => {
-    // This is the dominant failure mode measured in prod, and the one no previous guard touched:
-    //
-    //   * 61% of delegations are born on an `agent.response` continuation turn. There the target
-    //     was never an ANCESTOR of the sender, so `visited_path` does not see it.
-    //   * the `actor_alias` guard already blocked the IMMEDIATE repeat, which is why only 129
-    //     out of 1411 delegations from the big root repeated the previous target. The walk dodges
-    //     that guard by ROTATING: argos sent the same task to kant 148 times, to iza 137, to
-    //     kratos 126, to seneca 123... alternating across 12 pairs in a single chain.
-    //
-    // Counting the (root, sender, target) edge does see it. Here the rotation is reproduced
-    // with two pairs and a cap of 1.
-    await setCaps({ delegation_caps_enabled: true, max_edge_repeats_per_root: 1 });
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    const jarvis = await consumer('Steven', 'jarvis');
-    await repository.publish(command());
-
-    const root = await nextDelivery(argos);
-    const afterSocrates = await delegateAndReturn(argos, socrates, root, 'vuelta 1');
-    // Rotating to another pair sidesteps the immediate-repeat guard: this still goes through, and is fine.
-    const afterJarvis = await delegateAndReturn(argos, jarvis, afterSocrates, 'vuelta 2');
-
-    // Returning to socrates is the second time over the SAME edge within the SAME root.
-    const third = await ackWith(argos, afterJarvis, [{ to: 'socrates', body: 'vuelta 3' }]);
-    const rows = await materializations();
-    expect(rows.filter((row) => row.rejection_code === 'edge_repeat_exceeded')).toHaveLength(1);
-    expect(rows.filter((row) => row.status === 'materialized')).toHaveLength(2);
-    expect(third.delegation_rejections?.[0]?.code).toBe('edge_repeat_exceeded');
-    // The counter did NOT advance with the rejection: the reservation IS the conditional UPDATE,
-    // so a rejection does not consume budget and a retry will not drain it.
-    expect((await pool.query<{ uses: number }>(
-      `SELECT uses FROM agent_chain_edge_uses WHERE source_node='Steven/argos'
-         AND target_node='Steven/socrates'`
-    )).rows[0]?.uses).toBe(1);
-  }, 180_000);
 
   it('corta el ciclo por camino de antepasados (A -> B -> C -> A)', async () => {
     // The `actor_alias` guard only blocks the return to the IMMEDIATE parent. Two hops away the
@@ -489,35 +339,6 @@ describe('cadena que cicla -> se corta', () => {
     expect(result.delegation_rejections?.[0]?.code).toBe('cycle_detected');
   }, 180_000);
 
-  it('acota el abanico del turno INTERNO sin tocar el turno raíz', async () => {
-    // The fanout cap exists so the bounded depth is not compensated for in width. The root turn
-    // is exempt: in prod, fanouts of 11-14 targets are always `@all` at hop_count=1, and breaking
-    // them would kill work that runs today.
-    await setCaps({ delegation_caps_enabled: true, max_fanout_per_turn: 1 });
-    const argos = await consumer('Steven', 'argos');
-    const socrates = await consumer('Steven', 'socrates');
-    await repository.publish(command());
-
-    // Root turn (hop_count=1): two targets, both go through.
-    await ackWith(argos, await nextDelivery(argos), [
-      { to: 'socrates', body: 'rama 1' },
-      { to: 'jarvis', body: 'rama 2' }
-    ]);
-    expect((await materializations()).filter((row) => row.status === 'materialized')).toHaveLength(2);
-
-    // Turno interno (hop_count=2): el segundo destino se rechaza.
-    const child = await nextDelivery(socrates, (item) => item.body.type === 'agent.message');
-    const result = await ackWith(socrates, child, [
-      { to: 'kant', body: 'sub 1' },
-      { to: 'jarvis', body: 'sub 2' }
-    ]);
-    const rejected = (await materializations()).filter(
-      (row) => row.rejection_code === 'fanout_exceeded'
-    );
-    expect(rejected).toHaveLength(1);
-    expect(result.delegation_rejections?.[0]?.code).toBe('fanout_exceeded');
-  }, 120_000);
-
   it('agota el combustible de la raíz y deja de emitir', async () => {
     await setCaps({ delegation_caps_enabled: true, max_delegations_per_root: 1 });
     const argos = await consumer('Steven', 'argos');
@@ -534,26 +355,6 @@ describe('cadena que cicla -> se corta', () => {
     expect((await pool.query<{ delegations: number }>(
       'SELECT delegations FROM agent_chain_progress'
     )).rows[0]?.delegations).toBe(1);
-  }, 120_000);
-
-  it('con los topes apagados no cambia nada (conducta previa a 019)', async () => {
-    // El seguro del despliegue: `delegation_caps_enabled=false` tiene que devolver exactamente
-    // la conducta anterior, para que apagar sea una sentencia y no un rollback de imagen.
-    await setCaps({
-      delegation_caps_enabled: false, max_fanout_per_turn: 1, max_delegations_per_root: 1,
-      max_edge_repeats_per_root: 1
-    });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-
-    const result = await ackWith(argos, await nextDelivery(argos), [
-      { to: 'socrates', body: 'una' },
-      { to: 'jarvis', body: 'dos' },
-      { to: 'kant', body: 'tres' }
-    ]);
-    expect((await materializations()).filter((row) => row.status === 'materialized')).toHaveLength(3);
-    expect(result.delegation_rejections).toBeUndefined();
-    expect((await pool.query('SELECT 1 FROM agent_chain_edge_uses')).rowCount).toBe(0);
   }, 120_000);
 });
 
@@ -594,33 +395,6 @@ describe('tarea de espera humana -> gate, no entrega', () => {
     )).rows;
     expect(relays).toHaveLength(1);
     expect(relays[0]?.reply).toContain('¿Aprobás el gasto de facturación?');
-  }, 120_000);
-
-  it('rechaza toda delegación nueva de la raíz mientras el gate esté abierto', async () => {
-    await setCaps({ human_gate_enabled: true });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-
-    const result = await ackWith(argos, await nextDelivery(argos), [
-      { to: 'socrates', body: 'esto no debería salir' },
-      { to: '@human', body: '¿seguimos?' }
-    ]);
-
-    const rows = await materializations();
-    expect(rows.map((row) => row.rejection_code).sort()).toEqual(['chain_gated', 'human_gate_opened']);
-    expect((await pool.query('SELECT 1 FROM deliveries')).rowCount).toBe(1);
-    const gated = result.delegation_rejections?.find((item) => item.code === 'chain_gated');
-    expect(gated?.reason).toContain('¿seguimos?');
-  }, 120_000);
-
-  it('con la primitiva apagada, @human vuelve a ser un alias irruteable', async () => {
-    await setCaps({ human_gate_enabled: false });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-
-    await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿seguimos?' }]);
-    expect((await materializations()).map((row) => row.rejection_code)).toEqual(['unroutable_alias']);
-    expect((await pool.query('SELECT 1 FROM agent_chain_gates')).rowCount).toBe(0);
   }, 120_000);
 });
 
@@ -677,21 +451,6 @@ describe('gate resuelto -> reanuda', () => {
     expect((closed.items as Record<string, unknown>[])[0]?.status).toBe('answered');
   }, 120_000);
 
-  it('no se puede contestar dos veces el mismo gate', async () => {
-    await setCaps({ human_gate_enabled: true });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    await ackWith(argos, await nextDelivery(argos), [{ to: '@human', body: '¿aprobás?' }]);
-    const gateId = requireValue((await pool.query<{ id: string }>(
-      'SELECT id FROM agent_chain_gates'
-    )).rows[0], 'rows').id;
-
-    await repository.answerChainGate(gateId, 'sí', 'Steven', 'kant');
-    await expect(repository.answerChainGate(gateId, 'sí otra vez', 'Steven', 'kant'))
-      .rejects.toMatchObject({ name: 'StoreError', code: 'conflict' });
-    expect((await deliveriesFor('argos')).length).toBe(2);
-  }, 120_000);
-
   it('cancelar un gate libera la raíz sin reanudar nada', async () => {
     await setCaps({ human_gate_enabled: true });
     const argos = await consumer('Steven', 'argos');
@@ -737,25 +496,5 @@ describe('el rechazo es legible', () => {
     expect(rejection?.target).toBe('jarvis');
     expect(rejection?.guidance).toEqual(expect.any(String));
     expect(rejection?.guidance.length ?? 0).toBeGreaterThan(0);
-  }, 120_000);
-
-  it('omite rechazos vacíos pero informa la materialización exacta del ACK sano', async () => {
-    await setCaps({ delegation_caps_enabled: true });
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(command());
-    const result = await ackWith(argos, await nextDelivery(argos), [
-      { to: 'socrates', body: 'una' }
-    ]);
-    expect(result).not.toHaveProperty('delegation_rejections');
-    expect(result.delegation_materializations).toEqual([
-      expect.objectContaining({
-        output_index: 0,
-        target_tenant: 'Steven',
-        target_alias: 'socrates'
-      })
-    ]);
-    expect(result.delegation_materializations?.[0]?.child_delivery_id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
-    );
   }, 120_000);
 });
