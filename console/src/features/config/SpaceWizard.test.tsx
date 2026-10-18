@@ -20,17 +20,17 @@ it('mantiene la navegación y el reinicio para lectores, pero deja inerte el bor
   const user = userEvent.setup();
   const calls = renderWizard(accept, false);
 
-  expect(screen.getByLabelText('Tenant id')).toBeDisabled();
-  expect(screen.getByRole('checkbox', { name: /crear el tenant/i })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: /3\. membership/i }));
-  expect(screen.getByLabelText('Alias')).toBeDisabled();
+  expect(screen.getByLabelText('Identificador del espacio')).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: /crear el espacio/i })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: /3\. membresía/i }));
+  expect(screen.getByLabelText('Identificador')).toBeDisabled();
   expect(screen.getByRole('button', { name: /siguiente/i })).toBeEnabled();
 
   await user.click(screen.getByRole('button', { name: review }));
   expect(screen.getByRole('button', { name: /previsualizar paso/i })).toBeDisabled();
   expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: /reiniciar wizard/i }));
-  expect(screen.getByLabelText('Tenant id')).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: /empezar de nuevo/i }));
+  expect(screen.getByLabelText('Identificador del espacio')).toBeDisabled();
   expect(calls).toHaveLength(0);
 });
 
@@ -38,7 +38,7 @@ function accept({ dryRun }: Call): ConfigChangeOutcome {
   return { ok: true, result: { applied: !dryRun, dry_run: dryRun, revision: dryRun ? 1 : 2, summary: 'mock' } };
 }
 
-const review = /4\. dry-run y aplicar/i;
+const review = /4\. revisar y aplicar/i;
 
 it('encadena tenant, room y membership con las formas exactas del protocolo', async () => {
   const user = userEvent.setup();
@@ -73,9 +73,9 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   await applyEveryStep(user, 3);
   expect(await screen.findByText(/espacio completo/i)).toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: /1\. tenant/i }));
-  await user.clear(screen.getByLabelText('Tenant id'));
-  await user.type(screen.getByLabelText('Tenant id'), 'Beta');
+  await user.click(screen.getByRole('button', { name: /1\. espacio/i }));
+  await user.clear(screen.getByLabelText('Identificador del espacio'));
+  await user.type(screen.getByLabelText('Identificador del espacio'), 'Beta');
   await user.click(screen.getByRole('button', { name: review }));
 
   expect(screen.queryByText(/espacio completo/i)).not.toBeInTheDocument();
@@ -107,9 +107,9 @@ it('vuelve a bloquear el apply cuando el plan cambia después del dry-run', asyn
   await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
   expect(await screen.findByRole('button', { name: /aplicar paso/i })).toBeEnabled();
 
-  await user.click(screen.getByRole('button', { name: /1\. tenant/i }));
-  await user.clear(screen.getByLabelText('Tenant id'));
-  await user.type(screen.getByLabelText('Tenant id'), 'Beta');
+  await user.click(screen.getByRole('button', { name: /1\. espacio/i }));
+  await user.clear(screen.getByLabelText('Identificador del espacio'));
+  await user.type(screen.getByLabelText('Identificador del espacio'), 'Beta');
   await user.click(screen.getByRole('button', { name: review }));
 
   expect(screen.getByRole('button', { name: /aplicar paso/i })).toBeDisabled();
@@ -143,7 +143,7 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
   await user.click(await screen.findByRole('button', { name: /aplicar paso/i }));
 
-  const aviso = await screen.findByText(/tenant aplicado en revisión 2/i);
+  const aviso = await screen.findByText(/espacio aplicado en revisión 2/i);
   expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó \(config store caído\)/i);
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
   // Neither green nor red: it was applied, but what shows below may be stale.

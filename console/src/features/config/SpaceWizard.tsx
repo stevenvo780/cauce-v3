@@ -12,7 +12,7 @@ type WizardStep = SpaceStep | 'review';
 
 const wizardSteps: WizardStep[] = ['tenant', 'room', 'membership', 'review'];
 const stepTitles: Record<WizardStep, string> = {
-  tenant: 'Tenant', room: 'Room', membership: 'Membership', review: 'Dry-run y aplicar',
+  tenant: 'Espacio', room: 'Sala', membership: 'Membresía', review: 'Revisar y aplicar',
 };
 
 // Same expressions as TenantSchema and AliasSchema in packages/protocol/src/schemas.ts.
@@ -73,16 +73,16 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
     if (!draft.withTenant && !draft.withRoom && !draft.withMembership) return undefined;
     return TENANT_ID.test(draft.tenantId.trim())
       ? undefined
-      : 'El tenant debe empezar con letra y seguir con letras, números, guion o guion bajo (máx. 64).';
+      : 'El espacio debe empezar con letra y seguir con letras, números, guion o guion bajo (máx. 64).';
   }
   if (step === 'room') {
     if (!draft.withRoom && !draft.withMembership) return undefined;
     const roomId = draft.roomId.trim();
-    return roomId.length >= 1 && roomId.length <= 128 ? undefined : 'El room necesita un id de 1 a 128 caracteres.';
+    return roomId.length >= 1 && roomId.length <= 128 ? undefined : 'La sala necesita un identificador de 1 a 128 caracteres.';
   }
   if (step === 'membership') {
     if (!draft.withMembership) return undefined;
-    if (!SLUG.test(draft.alias.trim())) return 'El alias debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
+    if (!SLUG.test(draft.alias.trim())) return 'El identificador debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
     return SLUG.test(draft.role.trim()) ? undefined : 'El rol de permisos debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
   }
   if (!planFor(draft).length) return 'El plan quedó vacío: incluí al menos un recurso.';
@@ -164,7 +164,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     if (dryRun) {
       setValidated(pendingKey);
       setPreview(JSON.stringify(outcome.result, null, 2));
-      setNotice({ text: `Dry-run de ${stepTitles[pending.step]} aceptado: revisá el resultado antes de aplicar.`, tone: 'success' });
+      setNotice({ text: `Previsualización de ${stepTitles[pending.step]} aceptada: revisá el resultado antes de aplicar.`, tone: 'success' });
       return;
     }
     // The mutation the server accepted is recorded, even if the draft changed during the await.
@@ -182,31 +182,31 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     });
   }
 
-  return <div className="grid gap-3" role="group" aria-label="Wizard de espacios">
-    <p className={HINT}>Cada paso pasa por dry-run y se aplica por separado.</p>
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pasos del wizard">
+  return <div className="grid gap-3" role="group" aria-label="Alta guiada">
+    <p className={HINT}>Cada paso se previsualiza y se aplica por separado. El siguiente necesita que el anterior ya exista.</p>
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Pasos del alta">
       {wizardSteps.map((item, position) => <Button key={item} size="sm" variant={item === step ? 'primary' : 'secondary'} onClick={() => { setStep(item); }}>
         {doneSteps.has(item) ? <CircleCheck size={14} aria-hidden="true" /> : null}{position + 1}. {stepTitles[item]}
       </Button>)}
     </div>
 
     {step === 'tenant' ? <div className={FORM_GRID}>
-      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el tenant <span className={HINT}>destildá si ya existe; el id se sigue usando en los pasos siguientes</span></label>
-      <label>Tenant id<input {...writeControls} value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
-      <label>Display name <span className={HINT}>opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
-      <label className={CHECK_LABEL}><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es hub</label>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el espacio <span className={HINT}>desmarcalo si ya existe; el identificador se sigue usando después</span></label>
+      <label>Identificador del espacio<input {...writeControls} value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
+      <label>Nombre visible <span className={HINT}>opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
+      <label className={CHECK_LABEL}><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es el espacio principal</label>
     </div> : null}
 
     {step === 'room' ? <div className={FORM_GRID}>
-      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear el room</label>
-      <label>Room id<input {...writeControls} value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
-      <label>Display name <span className={HINT}>opcional</span><input {...writeControls} value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withRoom} onChange={(event) => { edit({ withRoom: event.target.checked }); }} /> Crear la sala</label>
+      <label>Identificador de la sala<input {...writeControls} value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} /></label>
+      <label>Nombre visible <span className={HINT}>opcional</span><input {...writeControls} value={draft.roomLabel} onChange={(event) => { edit({ roomLabel: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'membership' ? <div className={FORM_GRID}>
-      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membership</label>
-      <label>Alias<input {...writeControls} value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
-      <label>Rol de permisos <span className={HINT}>route/read/control salen de role_policies; no cambia el contexto</span><input {...writeControls} value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withMembership} onChange={(event) => { edit({ withMembership: event.target.checked }); }} /> Crear la membresía</label>
+      <label>Identificador<input {...writeControls} value={draft.alias} onChange={(event) => { edit({ alias: event.target.value }); }} /></label>
+      <label>Rol <span className={HINT}>en minúsculas; decide qué puede hacer en la sala</span><input {...writeControls} aria-label="Rol de permisos" value={draft.role} onChange={(event) => { edit({ role: event.target.value }); }} /></label>
     </div> : null}
 
     {step === 'review' ? <>
@@ -219,14 +219,14 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
       {/* The pending step's JSON is not lost: it stops being open. What matters for the decision is
           the list above —which step goes and in what state—, not how it is encoded. */}
       {pendingText !== undefined ? <details className="text-[13px]">
-        <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación del paso pendiente</summary>
+        <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver el detalle del paso pendiente</summary>
         <pre className={`${PREVIEW} mt-2`} aria-label="Mutación pendiente del wizard">{pendingText}</pre>
       </details> : null}
       {plan.length > 0 && !pending ? <Outcome tone="success">Espacio completo: los {plan.length} pasos quedaron aplicados.</Outcome> : null}
       <div className="flex flex-wrap gap-2">
         <Button disabled={!canWrite || busy || !pending || Boolean(invalid)} onClick={() => void run(true)}><SearchCheck size={16} aria-hidden="true" />Previsualizar paso</Button>
         <Button variant="primary" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</Button>
-        <Button size="sm" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Reiniciar wizard</Button>
+        <Button size="sm" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Empezar de nuevo</Button>
       </div>
       {preview ? <pre className={PREVIEW} aria-label="Dry-run del wizard">{preview}</pre> : null}
     </> : null}

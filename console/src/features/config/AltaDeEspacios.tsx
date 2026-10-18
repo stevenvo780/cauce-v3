@@ -17,12 +17,12 @@ const MODOS: readonly { id: ModoDeAlta; label: string; nota: string }[] = [
   {
     id: 'rapida',
     label: 'Un solo recurso',
-    nota: 'Un cliente, una sala, una membresía o una arista de permisos. Un envío.',
+    nota: 'Un espacio, una sala, una membresía o un permiso entre espacios. Un envío.',
   },
   {
     id: 'guiada',
     label: 'Espacio completo, paso a paso',
-    nota: 'Un cliente de cero: cliente → sala → membresía, con dry-run por paso.',
+    nota: 'Un espacio desde cero: espacio, sala y quién entra, con una previsualización en cada paso.',
   },
 ];
 

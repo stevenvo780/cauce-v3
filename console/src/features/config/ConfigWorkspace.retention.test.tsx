@@ -41,10 +41,10 @@ it('conserva borradores del alta rápida y del wizard durante sus propias idas y
   await roundtrip(user);
   expect(screen.getByLabelText('Identificador')).toHaveValue('pendiente');
   await user.click(screen.getByRole('button', { name: 'Espacio completo, paso a paso' }));
-  await user.clear(screen.getByLabelText('Tenant id'));
-  await user.type(screen.getByLabelText('Tenant id'), 'DraftTenant');
+  await user.clear(screen.getByLabelText('Identificador del espacio'));
+  await user.type(screen.getByLabelText('Identificador del espacio'), 'DraftTenant');
   await roundtrip(user);
-  expect(screen.getByLabelText('Tenant id')).toHaveValue('DraftTenant');
+  expect(screen.getByLabelText('Identificador del espacio')).toHaveValue('DraftTenant');
 });
 
 it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin reenviar', async () => {
