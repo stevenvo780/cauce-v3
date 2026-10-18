@@ -28,6 +28,14 @@ type FormState =
 const CHECK = 'flex items-start gap-2 font-normal';
 const HINT = 'text-xs font-normal text-muted';
 
+function foreignDetail(count: number | null, names: readonly string[]): string {
+  if (count === null) return 'No se puede comparar: la sesión no informa tu espacio.';
+  if (count === 0) return 'Ninguna cuenta la paga otra empresa.';
+  if (names.length === 1) return `La paga ${names[0]}.`;
+  if (names.length > 1) return `Las pagan ${names.join(', ')}.`;
+  return 'Las paga otra empresa.';
+}
+
 /**
  * An account update rewrites label, shared_with_pool and enabled at once. If the snapshot does
  * not carry one of the two booleans there is no current state to preserve, and sending an
@@ -74,9 +82,18 @@ export function AccountsInventory({ config, access, registry }: {
   const actorTenant = viewerTenant(access.error ? undefined : access.data?.subject);
   const pooled = accounts.available ? accounts.items.filter((item) => item.sharedWithPool === true).length : null;
   const enabled = accounts.available ? accounts.items.filter((item) => item.enabled === true).length : null;
+  const foreignPayers = accounts.available && actorTenant
+    ? [...new Set(accounts.items.flatMap((item) => item.payerTenant && item.payerTenant !== actorTenant ? [item.payerTenant] : []))]
+    : [];
   const foreign = accounts.available && actorTenant
     ? accounts.items.filter((item) => item.payerTenant !== null && item.payerTenant !== actorTenant).length
     : null;
+  const foreignNames = foreignPayers.flatMap((id) => {
+    const row = config.data?.tenants?.find((tenant) => tenant.id === id);
+    const name = typeof row?.display_name === 'string' ? row.display_name.trim() : '';
+    return name && name !== id ? [name] : [];
+  });
+  const inventoryEmpty = accounts.available && accounts.items.length === 0;
 
   const editing = form?.kind === 'edit'
     ? accounts.items.find((item) => item.id === form.edit.id)
@@ -128,14 +145,14 @@ export function AccountsInventory({ config, access, registry }: {
       <Kpi label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las del pool' : 'el servidor no publica el inventario'} />
       <Kpi label="Publicadas al pool" value={pooled} detail="prestadas por su pagador" />
       <Kpi label="Habilitadas" value={enabled} detail="las que el despacho puede usar" />
-      <Kpi label="Pagadas por otro tenant" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={actorTenant ? `pagador distinto de ${actorTenant}` : 'tenant del actor sin informar'} />
+      <Kpi label="Pagadas por otra empresa" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={foreignDetail(foreign, foreignNames)} />
     </KpiGrid>
 
     <section aria-label="Inventario de cuentas">
       <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» acá significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2 className="m-0 text-sm font-semibold">Inventario</h2>
-        <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>
+        {inventoryEmpty ? null : <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>}
       </div>
       <Notice tone="info" className="mb-3">Cauce no autentica cuentas mediante rutas o variables declaradas en el inventario.
         Registra la cuenta e inicia sesión en «Mis cuotas». La ejecución del agente usa el perfil autenticado de su cuenta principal.</Notice>
@@ -144,7 +161,11 @@ export function AccountsInventory({ config, access, registry }: {
           No disponible: este gateway no publica el inventario de cuentas (<code>provider_accounts</code>). No se muestra nada porque no hay dato, y la consola no lo simula.
         </EmptyState>
         : accounts.items.length === 0
-          ? <EmptyState>El servidor devolvió cero cuentas visibles para este actor.</EmptyState>
+          ? <EmptyState>
+            Todavía no hay cuentas. Es lo normal en una empresa nueva.{' '}
+            <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>
+            {' '}añade una suscripción para consultar su uso, aunque ningún agente la use todavía.
+          </EmptyState>
           : <Desplazable etiqueta="Inventario de cuentas de proveedores de IA" className={SCROLL}>
             <table className={CARD_TABLE}>
               <caption className="sr-only">Inventario de cuentas de proveedores de IA</caption>
