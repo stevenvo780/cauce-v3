@@ -220,30 +220,125 @@ def normalized_capabilities(values) -> set:
     return {value.removeprefix('CAP_') if isinstance(value, str) else value for value in values or []}
 
 
-def validate(policy: dict, environment: dict, observed: dict) -> None:
+RELEASE_BIND_DRIFT = frozenset({'helper_source', 'life_source'})
+
+
+def _mount_map(observed: dict) -> dict:
+    return {row['Destination']: row for row in observed.get('Mounts', [])}
+
+
+def spec_mismatches(policy: dict, environment: dict, observed: dict) -> set[str]:
     approved = configuration(policy)
     expected = labels(policy, environment)
-    mounts = {row['Destination']: row for row in observed.get('Mounts', [])}
+    mounts = _mount_map(observed)
     state = mounts.get('/home/node') or {}
     helper = mounts.get('/cauce/executor') or {}
     lifecycle = mounts.get('/cauce/lifecycle') or {}
-    host = observed['HostConfig']
-    if observed['Image'] != approved['image'] or observed['Config'].get('User') != '1000:1000' \
-            or not all((observed['Config'].get('Labels') or {}).get(key) == value for key, value in expected.items()) \
-            or host.get('ReadonlyRootfs') is not True or host.get('Privileged') is not False \
-            or host.get('NetworkMode') != approved['network'] or host.get('PidMode') == 'host' \
-            or host.get('Memory') != 512 * 1024 * 1024 or host.get('PidsLimit') != 128 \
-            or host.get('Tmpfs') != TMPFS \
-            or normalized_capabilities(host.get('CapDrop')) != {'ALL'} or normalized_capabilities(host.get('CapAdd')) != set(CAPABILITIES) \
-            or not any(value.startswith('no-new-privileges') for value in host.get('SecurityOpt') or []) \
-            or len(mounts) != 3 or state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' \
-            or state.get('RW') is not True or helper.get('Type') != 'bind' or helper.get('Source') != str(EXECUTOR_SOURCE) \
-            or helper.get('RW') is not False or lifecycle.get('Type') != 'bind' or lifecycle.get('Source') != str(LIFECYCLE_SOURCE) \
-            or lifecycle.get('RW') is not False:
+    host = observed.get('HostConfig')
+    config = observed.get('Config')
+    if not isinstance(host, dict) or not isinstance(config, dict):
+        return {'unreadable'}
+    failed: set[str] = set()
+    if observed['Image'] != approved['image']:
+        failed.add('image')
+    if config.get('User') != '1000:1000':
+        failed.add('user')
+    if not all((config.get('Labels') or {}).get(key) == value for key, value in expected.items()):
+        failed.add('labels')
+    if host.get('ReadonlyRootfs') is not True:
+        failed.add('readonly')
+    if host.get('Privileged') is not False:
+        failed.add('privileged')
+    if host.get('NetworkMode') != approved['network']:
+        failed.add('network')
+    if host.get('PidMode') == 'host':
+        failed.add('pidmode')
+    if host.get('Memory') != 512 * 1024 * 1024:
+        failed.add('memory')
+    if host.get('PidsLimit') != 128:
+        failed.add('pids')
+    if host.get('Tmpfs') != TMPFS:
+        failed.add('tmpfs')
+    if normalized_capabilities(host.get('CapDrop')) != {'ALL'}:
+        failed.add('capdrop')
+    if normalized_capabilities(host.get('CapAdd')) != set(CAPABILITIES):
+        failed.add('capadd')
+    if not any(value.startswith('no-new-privileges') for value in host.get('SecurityOpt') or []):
+        failed.add('nnp')
+    if len(mounts) != 3:
+        failed.add('mounts')
+    if state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile' or state.get('RW') is not True:
+        failed.add('profile')
+    if helper.get('Type') != 'bind' or helper.get('RW') is not False:
+        failed.add('helper_bind')
+    elif helper.get('Source') != str(EXECUTOR_SOURCE):
+        failed.add('helper_source')
+    if lifecycle.get('Type') != 'bind' or lifecycle.get('RW') is not False:
+        failed.add('lifecycle_bind')
+    elif lifecycle.get('Source') != str(LIFECYCLE_SOURCE):
+        failed.add('life_source')
+    return failed
+
+
+def profile_owned(policy: dict, environment: dict, observed: dict) -> bool:
+    expected = labels(policy, environment)
+    state = _mount_map(observed).get('/home/node') or {}
+    if not all((observed['Config'].get('Labels') or {}).get(key) == value for key, value in expected.items()):
+        return False
+    if state.get('Type') != 'volume' or state.get('Name') != environment['container_name'] + '-profile':
+        return False
+    try:
+        volume = json.loads(docker('volume', 'inspect', state['Name']))[0]
+    except (SafeFailure, ValueError, TypeError, KeyError):
+        return False
+    return all((volume.get('Labels') or {}).get(key) == value for key, value in expected.items())
+
+
+def validate(policy: dict, environment: dict, observed: dict) -> None:
+    if spec_mismatches(policy, environment, observed):
         raise SafeFailure('quota container isolation or ownership differs')
-    volume = json.loads(docker('volume', 'inspect', state['Name']))[0]
-    if not all((volume.get('Labels') or {}).get(key) == value for key, value in expected.items()):
+    if not profile_owned(policy, environment, observed):
         raise SafeFailure('quota profile volume ownership differs')
+
+
+def replace_release_binds(policy: dict, environment: dict) -> None:
+    # The profile volume is the provider session. Replacing the container
+    # retargets the release binds and must not remove that volume.
+    volume = environment['container_name'] + '-profile'
+    if not EXECUTOR_SOURCE.is_dir() or not LIFECYCLE_SOURCE.is_dir():
+        raise SafeFailure('runtime_release_stale')
+    provider_operation(policy, environment['provider'], 'install')
+    approved = configuration(policy)
+    try:
+        image_id = json.loads(docker('image', 'inspect', approved['image']))[0]['Id']
+    except (SafeFailure, ValueError, TypeError, KeyError, IndexError):
+        raise SafeFailure('runtime_release_stale') from None
+    if image_id != approved['image']:
+        raise SafeFailure('runtime_release_stale')
+    try:
+        docker('rm', '-f', environment['container_name'])
+        if inspect_container(environment['container_name']) is not None \
+                or volume not in docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines():
+            raise SafeFailure('runtime_release_stale')
+        create_runtime(policy, environment, None)
+    except SafeFailure:
+        raise SafeFailure('runtime_release_stale') from None
+
+
+def require_current_runtime(policy: dict, environment: dict) -> dict:
+    observed = inspect_container(environment['container_name'])
+    if observed is None or observed['State']['Running'] is not True:
+        raise SafeFailure('quota environment is not running')
+    mismatches = spec_mismatches(policy, environment, observed)
+    if mismatches and mismatches <= RELEASE_BIND_DRIFT and profile_owned(policy, environment, observed):
+        replace_release_binds(policy, environment)
+        observed = inspect_container(environment['container_name'])
+        if observed is None or observed['State']['Running'] is not True:
+            raise SafeFailure('runtime_release_stale')
+    elif 'image' in mismatches and profile_owned(policy, environment, observed):
+        raise SafeFailure('runtime_image_stale')
+    validate(policy, environment, observed)
+    return observed
 
 
 def provider_executable(environment: dict) -> str:
@@ -356,7 +451,9 @@ def create_runtime(policy: dict, environment: dict, existing: dict | None) -> di
 def remove(policy: dict, environment: dict) -> dict:
     existing = inspect_container(environment['container_name'])
     if existing is not None:
-        validate(policy, environment, existing)
+        mismatches = spec_mismatches(policy, environment, existing)
+        if not (mismatches and mismatches <= RELEASE_BIND_DRIFT and profile_owned(policy, environment, existing)):
+            validate(policy, environment, existing)
         docker('rm', '-f', environment['container_name'])
     volume = environment['container_name'] + '-profile'
     names = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
@@ -376,10 +473,7 @@ def login_plan(policy: dict, document: dict) -> dict:
     environment = packet(policy, document)
     if document['action'] != 'authenticate':
         raise SafeFailure('provider device authentication is unavailable')
-    observed = inspect_container(environment['container_name'])
-    if observed is None or observed['State']['Running'] is not True:
-        raise SafeFailure('quota environment is not running')
-    validate(policy, environment, observed)
+    observed = require_current_runtime(policy, environment)
     command = provider_operation(policy, environment['provider'], 'authenticate', command=True)
     if pathlib.PurePosixPath(command[0]).name != environment['provider']:
         raise SafeFailure('descriptor login executable differs from the quota provider')
@@ -422,10 +516,7 @@ def verify_authentication(policy: dict, document: dict) -> dict:
     environment = packet(policy, document)
     if document['action'] != 'authenticate':
         raise SafeFailure('quota authentication verification requires a consented login operation')
-    observed = inspect_container(environment['container_name'])
-    if observed is None or observed['State']['Running'] is not True:
-        raise SafeFailure('quota environment is not running')
-    validate(policy, environment, observed)
+    require_current_runtime(policy, environment)
     verify = descriptor_verify_command(policy, environment['provider'])
     if verify is not None:
         code, stdout = verify_command_observation(policy, environment, verify)
@@ -470,10 +561,7 @@ def perform(policy: dict, document: dict) -> dict:
         return create(policy, environment)
     if action == 'delete':
         return remove(policy, environment)
-    observed = inspect_container(environment['container_name'])
-    if observed is None or observed['State']['Running'] is not True:
-        raise SafeFailure('quota environment is not running')
-    validate(policy, environment, observed)
+    require_current_runtime(policy, environment)
     if action == 'authenticate':
         return {'awaiting_auth': True, 'login_plan': login_plan(policy, document)}
     if action == 'query':
