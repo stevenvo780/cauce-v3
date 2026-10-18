@@ -1,0 +1,13 @@
+services:
+  cauce-platform:
+    environment:
+      CAUCE_SPACE_BACKUP_DIRECTORY: /var/lib/cauce-v3/space-backups
+    volumes:
+      - type: volume
+        source: space_backups_data
+        target: /var/lib/cauce-v3/space-backups
+
+volumes:
+  space_backups_data:
+    external: true
+    name: ${CAUCE_PLATAFORMA_COPIAS:?run through ops/cli/cauce-platform-contenedor}

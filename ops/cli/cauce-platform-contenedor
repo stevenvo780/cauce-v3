@@ -23,7 +23,7 @@ valor() {  # $1=key: last assignment in the env file, read as data and never sou
 proyecto=$(valor COMPOSE_PROJECT_NAME)
 proyecto=${proyecto:-cauce-v3-prod}
 [[ $proyecto =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || fallar "COMPOSE_PROJECT_NAME no es un nombre de proyecto válido"
-for script in platform_admin.mjs context_seed.mjs company_import.mjs; do
+for script in platform_admin.mjs context_seed.mjs company_import.mjs company_purge.mjs; do
   [ -f "$AQUI/$script" ] || fallar "falta $AQUI/$script"
 done
 
@@ -32,10 +32,14 @@ if [ "${1:-}" = --mostrar ]; then mostrar=true; shift; fi
 unset CAUCE_PLATAFORMA_NATIVOS CAUCE_PLATAFORMA_INVENTARIO CAUCE_PLATAFORMA_PERFILES CAUCE_PLATAFORMA_CLAVE
 export CAUCE_PLATAFORMA_PROYECTO="$proyecto-plataforma"
 export CAUCE_PLATAFORMA_RED="${proyecto}_backend"
+export CAUCE_PLATAFORMA_COPIAS="${proyecto}_space_backups_data"
 export CAUCE_PLATAFORMA_CLI="$AQUI"
 export CAUCE_PLATAFORMA_ENTRADA=platform_admin.mjs
 [ "${1:-}" = contexto ] && CAUCE_PLATAFORMA_ENTRADA=context_seed.mjs
 compose=(docker compose --env-file "$ENV_FILE" -p "$CAUCE_PLATAFORMA_PROYECTO" -f "$AQUI/cauce-platform.compose.yaml")
+if [ "${1:-}" = empresa ] && [ "${2:-}" = purgar-canarios ] && [[ " $* " != *" --simular "* ]] && [[ " $* " != *" --help "* ]] && [[ " $* " != *" -h "* ]]; then
+  compose+=(-f "$AQUI/cauce-platform.purgar-canarios.compose.yaml")
+fi
 
 # The host DIR of --nativos does not exist inside the container: it is bound read-only and the seed
 # receives the mount point instead. A missing value is left to context_seed.mjs to reject.

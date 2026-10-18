@@ -9,6 +9,7 @@ const HELP = `Uso: cauce platform <grupo> <operación> [opciones]
   admin semilla --email CORREO [--company ID --role owner|admin]
   admin otorgar|revocar --empresa ID --id UUID [--email CORREO --rol owner|admin]
   empresa estado --empresa ID --estado enabled|disabled|retired [--si]
+  empresa purgar-canarios [--simular] [--empresa zz-canary-ID] [--admin UUID]
   enlace crear|borrar --empresa ID --otra-empresa ID
   empresa importar --inventario RUTA --email CORREO --nombre NOMBRE --dry-run|--apply (ver empresa importar --help)
 
@@ -226,9 +227,9 @@ export async function databaseUrl(environment = process.env) {
   return url;
 }
 
-async function loadStore() {
-  const source = new URL('../../packages/store/src/db.ts', import.meta.url);
-  const compiled = new URL('../../packages/store/dist/db.js', import.meta.url);
+async function loadStore(module = 'db') {
+  const source = new URL(`../../packages/store/src/${module}.ts`, import.meta.url);
+  const compiled = new URL(`../../packages/store/dist/${module}.js`, import.meta.url);
   if (existsSync(source)) {
     let tsImport;
     try { ({ tsImport } = await import('tsx/esm/api')); }
@@ -266,6 +267,9 @@ export async function main(argv = process.argv.slice(2)) {
   // The company import lives in its own module, loaded only here so the other operations never depend on it.
   if (`${argv[0]} ${argv[1]}` === 'empresa importar') {
     return (await import('./company_import.mjs')).main(argv, { databaseUrl, isDatabaseError, localReason, sanitizeEnvironment, UsageError });
+  }
+  if (`${argv[0]} ${argv[1]}` === 'empresa purgar-canarios') {
+    return (await import('./company_purge.mjs')).main(argv, { databaseUrl, isDatabaseError, localReason, sanitizeEnvironment, loadStore, UsageError });
   }
   let plan, url, seed;
   try {

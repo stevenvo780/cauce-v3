@@ -40,6 +40,10 @@ services:
         source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/company_import.mjs
         target: /app/ops/cli/company_import.mjs
         read_only: true
+      - type: bind
+        source: ${CAUCE_PLATAFORMA_CLI:?run through ops/cli/cauce-platform-contenedor}/company_purge.mjs
+        target: /app/ops/cli/company_purge.mjs
+        read_only: true
     secrets:
       - database_url
       - postgres_ca

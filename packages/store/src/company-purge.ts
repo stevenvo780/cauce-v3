@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { DatabaseClient } from './db.js';
 import { assertPlatformAdmin, COMPANY_ID_PATTERN, lockPlatformConfiguration, type CompanyAuthority } from './company-authority.js';
 import { StoreError } from './repository/errors.js';
@@ -15,6 +19,30 @@ export class CompanyPurgeBlockedError extends StoreError {
     super('conflict', 'company still has physical resources or references owned by another company');
     this.name = 'CompanyPurgeBlockedError';
   }
+}
+
+export async function saveCompanyPurgeBackup(company: string, serializedSnapshot: string): Promise<string> {
+  if (!COMPANY_ID_PATTERN.test(company)) throw new StoreError('invalid_input', 'invalid company identifier');
+  const directory = process.env.CAUCE_SPACE_BACKUP_DIRECTORY === undefined
+    ? '/var/lib/cauce-v3/company-backups' : join(process.env.CAUCE_SPACE_BACKUP_DIRECTORY, 'companies');
+  if (!isAbsolute(directory) || resolve(directory) !== directory || directory === '/') throw new Error('Company backup storage must be canonical');
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const info = await lstat(directory);
+  if (!info.isDirectory() || info.uid !== process.geteuid?.() || (info.mode & 0o077) !== 0 || await realpath(directory) !== directory) {
+    throw new Error('Company backup storage must be private');
+  }
+  const path = join(directory, `${company}-${randomUUID()}.json`);
+  const file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  try {
+    await file.writeFile(serializedSnapshot, 'utf8');
+    await file.sync();
+  } finally { await file.close(); }
+  for (let current = directory; ; current = dirname(current)) {
+    const parent = await open(current, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    try { await parent.sync(); } finally { await parent.close(); }
+    if (current === dirname(current)) break;
+  }
+  return path;
 }
 
 /** Persist serializedSnapshot verbatim to preserve PostgreSQL numeric precision before deleting in the caller's transaction. */
