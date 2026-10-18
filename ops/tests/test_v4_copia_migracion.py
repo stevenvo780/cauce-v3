@@ -234,7 +234,7 @@ class SecurityTests(Scoped):
         project = self.source / 'proyecto'
         git(self.root, 'init', '-q', '-b', 'main', str(project))
         write(project / 'README.md', 'hola\n')
-        write(project / 'fixture.md', 'token de prueba ' + github_token() + '\n')
+        write(project / 'fixture.md', 'contenido de prueba sin credenciales\n')
         (project / 'salida').symlink_to(self.outside)
         git(project, 'add', '-A')
         git(project, 'commit', '-q', '-m', 'inicial')
@@ -277,15 +277,19 @@ class SecurityTests(Scoped):
         (self.copy / 'manifest.json').write_text(json.dumps(manifest))
 
     def test_finding1_credentials_are_excluded_by_content_hardlink_and_unicode_name(self):
+        project = self.source / 'proyecto'
+        write(project / 'fixture.md', 'token de prueba ' + github_token() + '\n')
+        git(project, 'add', 'fixture.md')
+        git(project, 'commit', '-q', '-m', 'credencial ficticia')
         manifest = self.make_copy()
         reasons = {item['path']: item['reason'] for item in manifest['omissions']}
         for path in ('proyecto/notas.txt', 'proyecto/copia-inocente.txt', 'proyecto/config.yaml'):
             self.assertEqual(reasons[path], 'sensitive-content', path)
         self.assertEqual(reasons['proyecto/ａｕｔｈ.json'], 'auth')
-        repo, = manifest['repositories']
-        self.assertEqual(repo['trackedSensitive'], ['proyecto/fixture.md'])
-        self.assertEqual(repo['remotes'], {'limpio': 'git@example.invalid:owner/x.git'})
-        self.assertEqual(repo['droppedRemotes'], ['origin', 'peligro'])
+        self.assertEqual(manifest['repositories'], [])
+        self.assertIn('git-sensitive-history', reasons.values())
+        copied = b''.join(path.read_bytes() for path in self.copy.rglob('*') if path.is_file())
+        self.assertNotIn(github_token().encode(), copied)
 
     def test_finding4_restore_validates_manifest_modes_links_and_destinations(self):
         self.make_copy()

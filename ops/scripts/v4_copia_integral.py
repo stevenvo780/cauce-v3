@@ -1,4 +1,4 @@
-"""Private stopped-agent snapshots with raw Git state, work sessions and SQLite companions."""
+"""Private stopped-agent snapshots with clean Git bundles, work sessions and SQLite companions."""
 from __future__ import annotations
 
 import argparse
@@ -7,10 +7,11 @@ import hashlib
 import io
 import json
 import os
-import re
 import stat
+import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import uuid
 
@@ -24,8 +25,12 @@ from v4_copia_migracion import (  # noqa: E402
     OPEN_NEW,
     REGENERABLE,
     SHA256_RE,
+    VERIFIED_CREDENTIAL,
+    Copier,
     Failure,
+    Restorer,
     canonical,
+    credential_name,
     fold_text,
     open_verified,
     relative,
@@ -33,11 +38,15 @@ from v4_copia_migracion import (  # noqa: E402
     seal,
     under,
 )
+from v4_copia_migracion import (
+    SCHEMA as COPY_SCHEMA,
+)
+from v4_copia_migracion import (
+    validate as validate_copy,
+)
 
 SCHEMA = 'cauce.v4-migracion-integral/1'
 SPACE = ('context', 'directives', 'projects', 'config', 'data', 'logs', 'tmp')
-CREDENTIAL = re.compile(r'^(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.cauce-credentials|agent\.token|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc|\.pypirc|\.boto|\.s3cfg|\.htpasswd|(?:\.?credentials(?:\.(?:json|ya?ml|toml|ini|txt))?|auth(?:-profiles)?\.json|oauth(?:_creds|[-_]credentials|[-_]tokens)?\.json|application_default_credentials\.json)(?:[.-](?:bak|backup|old|tmp).*)?|client_secrets?[^/]*\.json|secrets?\.(?:json|ya?ml|toml)|token\.json|settings\.local\.json|\.env(?:\..*)?|kubeconfig|cookies(?:-(?:wal|shm|journal)|\.(?:txt|json|sqlite3?(?:-(?:wal|shm|journal))?))?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))$')
-VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bxai-[A-Za-z0-9]{20,}')
 
 
 def absolute(value: str) -> str:
@@ -99,7 +108,7 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
         info = os.stat(name, dir_fd=parent, follow_symlinks=False)
         identities[path] = fingerprint(info)
         folded = fold_text(name)
-        reason = 'credential' if CREDENTIAL.fullmatch(folded) else 'regenerable' if stat.S_ISDIR(info.st_mode) and folded in REGENERABLE else None
+        reason = 'git-metadata' if folded == '.git' else 'credential' if credential_name(name) else 'regenerable' if stat.S_ISDIR(info.st_mode) and folded in REGENERABLE else None
         if reason:
             omissions.append({'path': path, 'reason': reason})
             return
@@ -108,7 +117,10 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
             entries.append({**entry, 'kind': 'directory'})
             child = open_verified(parent, name, info, OPEN_DIRECTORY)
             try:
-                for item in sorted(os.listdir(child)):
+                names = sorted(os.listdir(child))
+                if 'HEAD' in names and 'objects' in names:
+                    raise Failure('a bare Git directory must be exported as a clean bundle separately')
+                for item in names:
                     relative(item)
                     visit(child, item, path + '/' + item, source)
                 if fingerprint(os.fstat(child)) != identities[path]:
@@ -122,14 +134,6 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
                 if fingerprint(os.fstat(child)) != identities[path]:
                     raise Failure('a file changed; stop the agent before copying')
                 entries.append({**entry, 'kind': 'file', 'size': info.st_size, 'sha256': digest})
-                if name in ('.git', 'commondir', 'alternates'):
-                    os.lseek(child, 0, os.SEEK_SET)
-                    raw = os.read(child, min(info.st_size, 65537)).decode('utf-8', 'surrogateescape')
-                    if name == '.git' and raw.startswith('gitdir:') or name == 'commondir' and '/.git/' in path or name == 'alternates' and path.endswith('/objects/info/alternates'):
-                        references = [item.removeprefix('gitdir:').strip() for item in raw.splitlines()]
-                        base = os.path.join(os.readlink(f'/proc/self/fd/{parent}'), '../' if name == 'alternates' else '')
-                        if info.st_size > 65536 or any(item.startswith('/') or not under(os.path.realpath(os.path.join(base, item)), os.readlink(f'/proc/self/fd/{source}')) for item in references):
-                            raise Failure('external Git storage cannot be restored as a private snapshot')
             finally:
                 os.close(child)
         elif stat.S_ISLNK(info.st_mode):
@@ -164,6 +168,25 @@ def counts(entries: list[dict], omissions: list[dict]) -> dict:
     return {**dict(collections.Counter(e['kind'] for e in entries)), 'bytes': sum(e.get('size', 0) for e in entries), 'omitted': len(omissions)}
 
 
+def repositories(roots: dict[str, int], omissions: list[dict], output: str) -> Copier:
+    copier = Copier(output)
+    copier.host_roots = [os.readlink(f'/proc/self/fd/{root}') for root in roots.values()]
+    for item in omissions:
+        if item['reason'] != 'git-metadata':
+            continue
+        path = item['path'].rsplit('/', 1)[0]
+        source, _, suffix = path.partition('/')
+        holder = descend(roots[source], suffix)
+        try:
+            marker = os.stat('.git', dir_fd=holder, follow_symlinks=False)
+            if stat.S_ISLNK(marker.st_mode) or copier.git_metadata_outside(holder):
+                raise Failure('external Git storage cannot be exported as a private snapshot')
+            copier.repository(path, holder)
+        finally:
+            os.close(holder)
+    return copier
+
+
 def pack(args: argparse.Namespace) -> dict:
     roots = {}
     for rule in args.origen:
@@ -171,7 +194,7 @@ def pack(args: argparse.Namespace) -> dict:
         if not separator or not NAME_RE.fullmatch(name) or name in roots:
             raise Failure('--origen requires unique NAME=/absolute/path entries')
         roots[name] = absolute(path)
-        if any(CREDENTIAL.fullmatch(fold_text(part)) for part in path.split('/')):
+        if any(fold_text(part) == '.git' or credential_name(part) for part in path.split('/')):
             raise Failure('an explicit source must not be a credential path')
     if any(under(path, other) for name, path in roots.items() for key, other in roots.items() if name != key):
         raise Failure('source roots must not overlap')
@@ -182,11 +205,14 @@ def pack(args: argparse.Namespace) -> dict:
     if any(under(destination, path) for path in roots.values()):
         raise Failure('the archive must be outside every source')
     handles, parent, temporary, created = {}, directory(os.path.dirname(destination)), '.' + uuid.uuid4().hex + '.tar', False
+    scratch = tempfile.TemporaryDirectory(prefix='cauce-v4-clean-git-')
     try:
         for name, path in roots.items():
             handles[name] = directory(path)
         before = inventory(handles)
-        manifest = {'schema': SCHEMA, 'alias': args.alias, 'tenant': args.empresa, 'container': scope['container'], 'roots': sorted(roots), 'entries': before[0], 'omissions': before[1]}
+        copier = repositories(handles, before[1], scratch.name)
+        omitted = [*before[1], *copier.omissions]
+        manifest = {'schema': SCHEMA, 'alias': args.alias, 'tenant': args.empresa, 'container': scope['container'], 'roots': sorted(roots), 'entries': before[0], 'omissions': omitted, 'repositories': list(copier.repositories.values())}
         manifest['sha256'] = seal(manifest)
         validate(manifest, args)
         descriptor = os.open(temporary, OPEN_NEW, 0o600, dir_fd=parent)
@@ -216,6 +242,11 @@ def pack(args: argparse.Namespace) -> dict:
                         raise Failure('a file changed while the archive was written')
                 finally:
                     os.close(reader)
+            for repo in manifest['repositories']:
+                with open(os.path.join(scratch.name, repo['bundle']), 'rb') as incoming:
+                    member = tarfile.TarInfo(repo['bundle'])
+                    member.size, member.mode = os.fstat(incoming.fileno()).st_size, 0o600
+                    archive.addfile(member, incoming)
         if inventory(handles) != before:
             raise Failure('source inventory changed; the archive was rejected')
         for name, path in roots.items():
@@ -231,7 +262,7 @@ def pack(args: argparse.Namespace) -> dict:
             os.fsync(stream.fileno())
         os.link(temporary, os.path.basename(destination), src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
         os.fsync(parent)
-        return {'verified': True, 'manifestSha256': manifest['sha256'], 'archiveSha256': archive_digest, 'counts': counts(before[0], before[1]), 'omissions': before[1]}
+        return {'verified': True, 'manifestSha256': manifest['sha256'], 'archiveSha256': archive_digest, 'counts': counts(before[0], omitted), 'omissions': omitted}
     finally:
         try:
             if created:
@@ -241,17 +272,22 @@ def pack(args: argparse.Namespace) -> dict:
         os.close(parent)
         for handle in handles.values():
             os.close(handle)
+        scratch.cleanup()
 
 
 def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
     if not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or manifest.get('sha256') != seal(manifest) or (manifest.get('alias'), manifest.get('tenant')) != (args.alias, args.empresa):
         raise Failure('invalid manifest seal, alias or company')
+    if VERIFIED_CREDENTIAL.search(canonical(manifest)):
+        raise Failure('credential material detected in copy metadata')
     roots = manifest.get('roots')
     if not isinstance(roots, list) or not roots or len(set(roots)) != len(roots) or any(not isinstance(name, str) or not NAME_RE.fullmatch(name) for name in roots):
         raise Failure('invalid manifest roots')
     entries = {}
     for entry in manifest['entries']:
         path = relative(entry['path'])
+        if any(fold_text(part) == '.git' or credential_name(part) for part in path.split('/')):
+            raise Failure('raw Git metadata and credential paths cannot be restored')
         if path in entries or path.split('/')[0] not in roots or type(entry.get('mode')) is not int or not 0 <= entry['mode'] <= 0o7777 or entry['kind'] not in ('directory', 'file', 'symlink'):
             raise Failure('invalid manifest entry')
         if entry['kind'] == 'file' and (type(entry.get('size')) is not int or entry['size'] < 0 or not SHA256_RE.fullmatch(entry.get('sha256', ''))):
@@ -286,8 +322,14 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
                         pending.extendleft(reversed(linked['target'].split('/')))
     if any(root not in entries for root in roots):
         raise Failure('missing manifest root')
-    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'regenerable', 'regenerable-socket') for item in manifest['omissions']):
+    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'regenerable', 'regenerable-socket', 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
         raise Failure('invalid manifest omissions')
+    repos = manifest.get('repositories', [])
+    if not isinstance(repos, list) or len({repo['path'] for repo in repos}) != len(repos) or len({repo['bundle'] for repo in repos}) != len(repos) or any(entries.get(repo['path'], {}).get('kind') != 'directory' for repo in repos):
+        raise Failure('invalid manifest repositories')
+    copy_manifest = {'schema': COPY_SCHEMA, 'alias': args.alias, 'tenant': args.empresa, 'sources': roots, 'entries': [], 'omissions': [], 'repositories': repos}
+    copy_manifest['sha256'] = seal(copy_manifest)
+    validate_copy(copy_manifest)
     return entries
 
 
@@ -297,7 +339,7 @@ def unpack(args: argparse.Namespace) -> dict:
         descriptor = os.open(os.path.basename(args.archivo), OPEN_FILE, dir_fd=archive_parent)
     finally:
         os.close(archive_parent)
-    with os.fdopen(descriptor, 'rb') as stream, tarfile.open(fileobj=stream, mode='r:') as archive:
+    with os.fdopen(descriptor, 'rb') as stream, tarfile.open(fileobj=stream, mode='r:') as archive, tempfile.TemporaryDirectory(prefix='cauce-v4-restore-git-') as scratch:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise Failure('archive must be a regular file')
         archive_identity = fingerprint(os.fstat(stream.fileno()))
@@ -310,11 +352,20 @@ def unpack(args: argparse.Namespace) -> dict:
         manifest = json.load(raw)
         entries = validate(manifest, args)
         files = {'files/' + path: entry for path, entry in entries.items() if entry['kind'] == 'file'}
-        if {member.name for member in members} != {'manifest.json', *files}:
+        bundles = {repo['bundle']: repo for repo in manifest.get('repositories', [])}
+        if {member.name for member in members} != {'manifest.json', *files, *bundles}:
             raise Failure('archive members do not match its manifest')
         for name, entry in files.items():
-            if archive.getmember(name).size != entry['size'] or digest_stream(archive.extractfile(name).read) != entry['sha256']:
+            if archive.getmember(name).size != entry['size'] or digest_stream(archive.extractfile(name).read, private=True) != entry['sha256']:
                 raise Failure('archive file digest mismatch')
+        for name, repo in bundles.items():
+            os.makedirs(os.path.join(scratch, 'repos'), mode=0o700, exist_ok=True)
+            with open(os.path.join(scratch, name), 'xb') as output, archive.extractfile(name) as incoming:
+                while chunk := incoming.read(CHUNK):
+                    output.write(chunk)
+            with open(os.path.join(scratch, name), 'rb') as incoming:
+                if digest_stream(incoming.read) != repo['bundleSha256']:
+                    raise Failure('archive bundle digest mismatch')
         mapping = {}
         for rule in args.mapa:
             name, separator, path = rule.partition('=')
@@ -337,8 +388,14 @@ def unpack(args: argparse.Namespace) -> dict:
             if os.listdir(root):
                 raise Failure('destination must be empty')
             os.fchmod(root, 0o700)
+            def apply(path: str) -> str:
+                source, _, suffix = path.partition('/')
+                return mapping[source] + ('/' + suffix if suffix else '')
+            restorer = Restorer(scratch, args.destino, apply)
             for path in SPACE:
                 os.mkdir(path, 0o700, dir_fd=root)
+            for repo in sorted(bundles.values(), key=lambda item: item['path'].count('/')):
+                restorer.repository(repo, checkout=False)
             for path, entry in sorted(entries.items(), key=lambda item: (item[1]['kind'] == 'symlink', item[0].count('/'), item[0])):
                 source, _, suffix = path.partition('/')
                 target = mapping[source] + ('/' + suffix if suffix else '')
@@ -392,7 +449,7 @@ def main() -> int:
         receipt = pack(args) if args.command == 'pack' else unpack(args)
         print(json.dumps({**receipt, 'durationSeconds': round(time.monotonic() - started, 3)}, ensure_ascii=True))
         return 0
-    except (ValueError, OSError, KeyError, TypeError, tarfile.TarError) as error:
+    except (ValueError, OSError, KeyError, TypeError, tarfile.TarError, subprocess.SubprocessError) as error:
         print(json.dumps({'verified': False, 'error': str(error)}, ensure_ascii=True), file=sys.stderr)
         return 1
 

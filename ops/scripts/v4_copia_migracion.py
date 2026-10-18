@@ -1,4 +1,4 @@
-"""Recoverable pre-cut copy of one alias: git bundles at the same HEAD and stores other files by sha256. Credentials are omitted by name and content; the walk uses directory fds and O_NOFOLLOW."""
+"""Recoverable pre-cut copy of one alias using credential-free Git history and content-addressed files."""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +17,7 @@ import tempfile
 import time
 import unicodedata
 import urllib.parse
+import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v4_alcance_copia import check_sources, host_containers, tenant_scope  # noqa: E402
@@ -40,12 +41,16 @@ CHUNK = 1 << 20
 OPEN_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 OPEN_FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK | getattr(os, 'O_NOCTTY', 0)
 OPEN_NEW = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-GIT_ENV = {'GIT_OPTIONAL_LOCKS': '0', 'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C', 'GIT_CONFIG_NOSYSTEM': '1'}
+GIT_ENV = {'PATH': '/usr/bin:/bin', 'GIT_OPTIONAL_LOCKS': '0', 'GIT_TERMINAL_PROMPT': '0', 'LC_ALL': 'C',
+           'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_SYSTEM': '/dev/null', 'GIT_CONFIG_GLOBAL': '/dev/null',
+           'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_ATTR_NOSYSTEM': '1'}
 HEX_RE = re.compile(r'^(?:[0-9a-f]{40}|[0-9a-f]{64})$')
 SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
 BRANCH_RE = re.compile(r'^(?!-)(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]{1,200}(?<![./])$')
 REMOTE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
 SAFE_URL = re.compile(r'^(?:(?:https?|ssh|git)://[^\s]+|[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:[^\s]+)$')
+CREDENTIAL = re.compile(r'^(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.cauce-credentials|agent\.token|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc|\.pypirc|\.boto|\.s3cfg|\.htpasswd|(?:\.?credentials(?:\.(?:json|ya?ml|toml|ini|txt))?|auth(?:-profiles)?\.json|oauth(?:_creds|[-_]credentials|[-_]tokens)?\.json|application_default_credentials\.json)(?:[.-](?:bak|backup|old|tmp).*)?|client_secrets?[^/]*\.json|secrets?\.(?:json|ya?ml|toml)|token\.json|settings\.local\.json|\.env(?:\..*)?|kubeconfig|cookies(?:-(?:wal|shm|journal)|\.(?:txt|json|sqlite3?(?:-(?:wal|shm|journal))?))?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\..*)?|.*\.(?:token|pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))$')
+VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b|\bxai-[A-Za-z0-9]{20,}')
 
 
 class Failure(ValueError):
@@ -75,6 +80,11 @@ def omission_reason(name: str, directory: bool) -> str | None:
     return found or ('regenerable' if directory and folded in REGENERABLE else None)
 
 
+def credential_name(name: str) -> bool:
+    folded = fold_text(name)
+    return bool(CREDENTIAL.fullmatch(folded) or next(pattern for reason, pattern in OMISSION_RULES if reason == 'credential').fullmatch(folded))
+
+
 def clean_url(url: str) -> str | None:
     """Remote without userinfo, query or fragment; schemes that run commands (ext::, fd::) are dropped."""
     if '::' in url or url.startswith('-'):
@@ -95,13 +105,128 @@ def scrub(text: str) -> str:
     return re.sub(r'://[^\s@]*@', '://', text)
 
 
-def git(repository: str, *arguments: str, check: bool = True, fd: int | None = None) -> str:
+def git_command(repository: str, arguments: tuple[str, ...], fd: int | None = None) -> list[str]:
     location = f'/proc/self/fd/{fd}' if fd is not None else repository
-    command = ['git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always', '-C', location, *arguments]
-    done = subprocess.run(command, capture_output=True, env={**os.environ, **GIT_ENV}, check=False, timeout=3600, pass_fds=(fd,) if fd is not None else ())
+    return ['/usr/bin/git', '-c', 'safe.directory=*', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null',
+            '-c', 'init.templateDir=', '-c', 'core.attributesFile=/dev/null', '-c', 'protocol.allow=never',
+            '-c', 'protocol.file.allow=always', '-C', location, *arguments]
+
+
+def git(repository: str, *arguments: str, check: bool = True, fd: int | None = None) -> str:
+    done = subprocess.run(git_command(repository, arguments, fd), capture_output=True, env=GIT_ENV,
+                          check=False, timeout=3600, pass_fds=(fd,) if fd is not None else ())
     if check and done.returncode:
-        raise Failure(f'git {arguments[0]} failed: {scrub(done.stderr.decode(errors="replace").strip())[:200]}')
+        raise Failure(f'git {arguments[0]} failed')
     return done.stdout.decode('utf-8', 'surrogateescape') if done.returncode == 0 else ''
+
+
+class GitObjects:
+    def __init__(self, directory: int, object_format: str, shallow: list[str]):
+        self.object_format, self.shallow = object_format, set(shallow)
+        self.process = subprocess.Popen(git_command('.', ('cat-file', '--batch'), directory), stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=GIT_ENV, pass_fds=(directory,))
+        self.dependencies: dict[str, tuple[str, ...]] = {}
+        self.clean: dict[str, bool] = {}
+
+    def close(self) -> None:
+        self.process.stdin.close()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.process.stdout.close()
+
+    def read(self, oid: str) -> tuple[str, bytes]:
+        if not HEX_RE.fullmatch(oid):
+            raise Failure('invalid Git object identifier')
+        self.process.stdin.write(oid.encode() + b'\n')
+        self.process.stdin.flush()
+        header = self.process.stdout.readline(256).split()
+        if len(header) != 3 or header[0].decode('ascii') != oid or header[1] not in (b'blob', b'tree', b'commit', b'tag'):
+            raise Failure('Git history has an unavailable object')
+        size = int(header[2])
+        if size < 0:
+            raise Failure('invalid Git object size')
+        data = self.process.stdout.read(size)
+        if len(data) != size or self.process.stdout.read(1) != b'\n':
+            raise Failure('Git object changed during its read')
+        kind = header[1].decode('ascii')
+        if hashlib.new(self.object_format, header[1] + b' ' + str(size).encode() + b'\0' + data).hexdigest() != oid:
+            raise Failure('Git object digest differs from its identifier')
+        return kind, data
+
+    def inspect(self, oid: str) -> tuple[bool, tuple[str, ...]]:
+        kind, data = self.read(oid)
+        if VERIFIED_CREDENTIAL.search(data):
+            return False, ()
+        dependencies = []
+        if kind == 'tree':
+            cursor, oid_size = 0, 20 if self.object_format == 'sha1' else 32
+            while cursor < len(data):
+                end = data.find(b'\0', cursor)
+                mode, separator, raw_name = data[cursor:end].partition(b' ')
+                if end < 0 or not separator or not raw_name or b'/' in raw_name or end + oid_size >= len(data):
+                    raise Failure('invalid Git tree')
+                name = fold_text(raw_name.decode('utf-8', 'surrogateescape'))
+                if credential_name(name) or name == '.git':
+                    return False, ()
+                if mode not in (b'40000', b'040000', b'100644', b'100755', b'120000', b'160000'):
+                    raise Failure('unsupported Git tree entry')
+                if mode != b'160000':
+                    dependencies.append(data[end + 1:end + 1 + oid_size].hex())
+                cursor = end + 1 + oid_size
+        elif kind in ('commit', 'tag'):
+            fields = data.partition(b'\n\n')[0].splitlines()
+            required = b'tree' if kind == 'commit' else b'object'
+            targets = [line.partition(b' ')[2] for line in fields if line.startswith(required + b' ')]
+            if len(targets) != 1:
+                raise Failure('invalid Git history object')
+            dependencies.extend(target.decode('ascii') for target in targets)
+            if kind == 'commit' and oid not in self.shallow:
+                dependencies.extend(line[7:].decode('ascii') for line in fields if line.startswith(b'parent '))
+        if any(not HEX_RE.fullmatch(target) for target in dependencies):
+            raise Failure('invalid Git history dependency')
+        return True, tuple(dependencies)
+
+    def safe(self, oid: str) -> bool:
+        pending, active = [(oid, False)], set()
+        while pending:
+            current, visited = pending.pop()
+            if current in self.clean:
+                continue
+            if visited:
+                active.remove(current)
+                self.clean[current] = all(self.clean.get(child, False) for child in self.dependencies[current])
+                continue
+            if current in active:
+                raise Failure('cyclic Git history')
+            safe, children = self.inspect(current)
+            self.dependencies[current] = children
+            if not safe:
+                self.clean[current] = False
+                continue
+            active.add(current)
+            pending.append((current, True))
+            pending.extend((child, False) for child in reversed(children) if child not in self.clean)
+        return self.clean[oid]
+
+    def export(self, selected: dict[str, str], destination: str) -> list[str]:
+        included, pending = set(), list(selected.values())
+        while pending:
+            oid = pending.pop()
+            if oid in included:
+                continue
+            included.add(oid)
+            pending.extend(self.dependencies[oid])
+        for oid in sorted(included):
+            kind, data = self.read(oid)
+            raw = kind.encode() + b' ' + str(len(data)).encode() + b'\0' + data
+            target = os.path.join(destination, 'objects', oid[:2], oid[2:])
+            os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
+            with os.fdopen(os.open(target, OPEN_NEW, 0o600), 'wb') as output:
+                output.write(zlib.compress(raw))
+        return sorted(included.intersection(self.shallow))
 
 
 def relative(value) -> str:
@@ -300,11 +425,12 @@ class Copier:
         self.omissions.append({'path': path, 'reason': reason, 'kind': kind, 'files': files, 'bytes': size})
 
     def repository(self, path: str, directory: int) -> None:
-        head = git(path, 'rev-parse', '--verify', '-q', 'HEAD^{commit}', check=False, fd=directory).strip()
-        if not head:
-            self.omissions.append({'path': path + '/.git', 'reason': 'git-without-commits', 'kind': 'directory',
-                                   'files': 0, 'bytes': 0})
-            return
+        def omit(name: str, reason: str) -> None:
+            if VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape')):
+                name = 'redacted-' + hashlib.sha256(name.encode('utf-8', 'surrogateescape')).hexdigest()
+            self.omissions.append({'path': path + '/.git/' + name, 'reason': reason, 'kind': 'file', 'files': 0, 'bytes': 0})
+
+        head = git(path, 'rev-parse', '--verify', '-q', 'HEAD', check=False, fd=directory).strip() or None
         object_format = git(path, 'rev-parse', '--show-object-format', check=False, fd=directory).strip() or 'sha1'
         if object_format not in ('sha1', 'sha256'):
             raise Failure(f'unsupported git object format in {path}')
@@ -318,34 +444,72 @@ class Copier:
         for line in git(path, 'remote', '-v', fd=directory).splitlines():
             name, _, rest = line.partition('\t')
             if rest.endswith(' (fetch)') and REMOTE_RE.fullmatch(name):
+                if VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape')):
+                    dropped.append('redacted-' + hashlib.sha256(name.encode('utf-8', 'surrogateescape')).hexdigest())
+                    continue
                 url = clean_url(rest[:-len(' (fetch)')])
                 if url:
                     remotes[name] = url
                 else:
                     dropped.append(name)
-        bundle = f'repos/{len(self.repositories):04d}.bundle'
-        bundle_path = os.path.join(self.output, bundle)
-        os.makedirs(os.path.join(self.output, 'repos'), mode=0o700, exist_ok=True)
-        git(path, 'bundle', 'create', '-q', bundle_path, 'HEAD', '--all', fd=directory)
-        git(path, 'bundle', 'verify', '-q', bundle_path, fd=directory)
-        if git(path, 'bundle', 'list-heads', bundle_path, 'HEAD', fd=directory).split() != [head, 'HEAD']:
-            raise Failure(f'HEAD changed while copied: {path}')
-        if shallow_boundaries(shallow_path, object_format) != shallow:
-            raise Failure(f'shallow history changed while copied: {path}')
+        snapshot = {}
+        for line in git(path, 'for-each-ref', '--format=%(objectname)%00%(refname)', fd=directory).splitlines():
+            oid, _, name = line.partition('\0')
+            if name.startswith(('refs/heads/', 'refs/tags/')):
+                snapshot[name] = oid
+            else:
+                omit(name, 'git-state-not-exported')
+        if git(path, 'diff', '--cached', '--name-only', '-z', check=False, fd=directory):
+            omit('index', 'git-state-not-exported')
+        selected, had_history = {}, bool(snapshot or head)
+        objects = GitObjects(directory, object_format, shallow)
+        try:
+            for name, oid in sorted({**snapshot, **({'HEAD': head} if head else {})}.items()):
+                safe = not VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape'))
+                try:
+                    safe = safe and objects.safe(oid) and (name != 'HEAD' or objects.read(oid)[0] == 'commit')
+                except (Failure, ValueError, UnicodeError):
+                    safe = False
+                if safe:
+                    selected[name] = oid
+                else:
+                    omit(name, 'git-sensitive-history')
+            head = selected.get('HEAD')
+            if not selected:
+                self.omissions.append({'path': path + '/.git', 'reason': 'git-no-clean-refs' if had_history else 'git-without-commits',
+                                       'kind': 'directory', 'files': 0, 'bytes': 0})
+                return
+            bundle = f'repos/{len(self.repositories):04d}.bundle'
+            bundle_path = os.path.abspath(os.path.join(self.output, bundle))
+            os.makedirs(os.path.join(self.output, 'repos'), mode=0o700, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix='cauce-v4-clean-git-') as scratch:
+                git(scratch, 'init', '-q', '--bare', '--object-format=' + object_format)
+                shallow = objects.export(selected, scratch)
+                if shallow:
+                    with os.fdopen(os.open(os.path.join(scratch, 'shallow'), OPEN_NEW, 0o600), 'w', encoding='ascii') as output:
+                        output.write('\n'.join(shallow) + '\n')
+                for name, oid in selected.items():
+                    git(scratch, 'update-ref', '--no-deref', name, oid)
+                git(scratch, 'bundle', 'create', '-q', bundle_path, *sorted(selected))
+                git(scratch, 'bundle', 'verify', '-q', bundle_path)
+                exported = {line.split(' ', 1)[1]: line.split(' ', 1)[0] for line in git(scratch, 'bundle', 'list-heads', bundle_path).splitlines()}
+                if exported != selected:
+                    raise Failure('Git bundle references differ from the audited snapshot')
+        finally:
+            objects.close()
         tracked = {}
-        for record in git(path, 'ls-tree', '-r', '-z', head, fd=directory).split('\0'):
+        for record in git(path, 'ls-tree', '-r', '-z', head, fd=directory).split('\0') if head else ():
             if record:
                 meta, _, name = record.partition('\t')
                 mode, _, blob = meta.split(' ', 2)
                 tracked[name] = (mode, blob)
-        refs = git(path, 'for-each-ref', '--format=%(refname)', fd=directory).split()
         reader = os.open(bundle_path, OPEN_FILE)
         try:
             bundle_digest = scan(reader, os.fstat(reader).st_size, None)[0]
         finally:
             os.close(reader)
-        self.repositories[path] = {'path': path, 'head': head, 'branch': branch if branch and BRANCH_RE.fullmatch(branch) else None,
-                                   'objectFormat': object_format, 'shallow': shallow, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(refs),
+        self.repositories[path] = {'path': path, 'head': head, 'branch': branch if head and branch and BRANCH_RE.fullmatch(branch) and 'refs/heads/' + branch in selected else None,
+                                   'objectFormat': object_format, 'shallow': shallow, 'remotes': remotes, 'droppedRemotes': sorted(dropped), 'refs': len(selected) - int(head is not None),
                                    'bundle': bundle, 'bundleSha256': bundle_digest, 'deleted': [], 'trackedSensitive': []}
         self.tracked[path] = tracked
 
@@ -361,9 +525,7 @@ class Copier:
         try:
             digest, blob, sensitive = scan(descriptor, info.st_size, object_format)
             clean = bool(tracked) and tracked[1] == blob and tracked[0] == ('100755' if info.st_mode & 0o111 else '100644')
-            if sensitive and clean:
-                self.repositories[repo]['trackedSensitive'].append(path)
-            elif sensitive:
+            if sensitive and not clean:
                 self.omissions.append({'path': path, 'reason': 'sensitive-content', 'kind': 'file', 'files': 1, 'bytes': info.st_size})
                 return
             if not clean:
@@ -392,6 +554,10 @@ class Copier:
             marker = os.stat('.git', dir_fd=directory, follow_symlinks=False)
         except FileNotFoundError:
             marker = None
+        if marker is None:
+            names = os.listdir(directory)
+            if 'HEAD' in names and 'objects' in names and git(path, 'rev-parse', '--is-bare-repository', check=False, fd=directory).strip() == 'true':
+                raise Failure(f'bare Git stores cannot be copied as working-tree files: {path}')
         if marker is not None and stat.S_ISLNK(marker.st_mode):
             self.omissions.append({'path': path + '/.git', 'reason': 'unsafe-git-link', 'kind': 'symlink', 'files': 0, 'bytes': 0})
         elif marker is not None and ((stat.S_ISREG(marker.st_mode) and self.git_file_outside(directory)) or self.git_metadata_outside(directory)):
@@ -464,6 +630,8 @@ def copy(alias: str, sources: list[str], output: str, scope: dict) -> dict:
         'totals': {'files': sum(1 for e in copier.entries if e['kind'] == 'file'), 'bytes': sum(e['bytes'] for e in copier.entries if e['kind'] == 'file'),
                    'dataFiles': len(data), 'dataBytes': sum(e['bytes'] for e in data), 'repositories': len(copier.repositories),
                    'omissions': len(copier.omissions), 'omittedBytes': sum(o['bytes'] for o in copier.omissions)}}
+    if VERIFIED_CREDENTIAL.search(canonical(manifest)):
+        raise Failure('credential material detected in copy metadata')
     manifest['sha256'] = seal(manifest)
     writer = os.open(os.path.join(output, 'manifest.json'), OPEN_NEW, 0o600)
     with os.fdopen(writer, 'w', encoding='utf-8') as handle:
@@ -499,7 +667,7 @@ def validate(manifest: dict) -> dict:
         relative(repo['path'])
         if not valid_boundaries(repo.get('shallow', []), repo.get('objectFormat', 'sha1')):
             raise Failure(f'invalid shallow history metadata: {repo["path"]}')
-        if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or not HEX_RE.fullmatch(str(repo.get('head'))) or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) or (repo.get('branch') is not None and not BRANCH_RE.fullmatch(str(repo['branch']))):
+        if not re.fullmatch(r'repos/\d{4}\.bundle', str(repo.get('bundle'))) or (repo.get('head') is not None and not HEX_RE.fullmatch(str(repo['head']))) or not SHA256_RE.fullmatch(str(repo.get('bundleSha256'))) or (repo.get('branch') is not None and (repo.get('head') is None or not BRANCH_RE.fullmatch(str(repo['branch'])))):
             raise Failure(f'manifest repository is invalid: {repo["path"]}')
         for name, url in repo.get('remotes', {}).items():
             if not REMOTE_RE.fullmatch(name) or clean_url(url) != url:
@@ -524,6 +692,34 @@ def digest_of(path: str) -> str:
         os.close(descriptor)
 
 
+def verify_bundle(bundle: str, repo: dict) -> None:
+    if digest_of(bundle) != repo['bundleSha256']:
+        raise Failure('Git bundle digest differs from its receipt')
+    with tempfile.TemporaryDirectory(prefix='cauce-v4-verify-git-') as scratch:
+        init_repository(scratch, repo, git)
+        git(scratch, 'bundle', 'verify', '-q', bundle)
+        refs = git(scratch, 'bundle', 'list-heads', bundle).splitlines()
+        exported_head = []
+        for line in refs:
+            oid, separator, name = line.partition(' ')
+            if not separator or not HEX_RE.fullmatch(oid) or VERIFIED_CREDENTIAL.search(name.encode('utf-8', 'surrogateescape')):
+                raise Failure('Git bundle has invalid or sensitive references')
+            if name == 'HEAD':
+                exported_head.append(oid)
+        if exported_head != ([repo['head']] if repo['head'] is not None else []):
+            raise Failure('Git bundle HEAD differs from its receipt')
+        git(scratch, 'bundle', 'unbundle', bundle)
+        descriptor = os.open(scratch, OPEN_DIRECTORY)
+        objects = GitObjects(descriptor, repo.get('objectFormat', 'sha1'), repo.get('shallow', []))
+        try:
+            identifiers = git(scratch, 'cat-file', '--batch-all-objects', '--batch-check=%(objectname)').splitlines()
+            if not identifiers or any(not objects.safe(oid) for oid in identifiers):
+                raise Failure('Git bundle contains credential material or sensitive history')
+        finally:
+            objects.close()
+            os.close(descriptor)
+
+
 def check(copy_directory: str) -> dict:
     manifest = load(copy_directory)
     missing = []
@@ -537,12 +733,18 @@ def check(copy_directory: str) -> dict:
         if not os.path.isfile(bundle) or digest_of(bundle) != repo['bundleSha256']:
             missing.append(repo['bundle'])
             continue
+        verify_bundle(bundle, repo)
         with tempfile.TemporaryDirectory(prefix='cauce-v4-bundle-') as scratch:
             init_repository(scratch, repo, git)
             git(scratch, 'bundle', 'verify', '-q', bundle)
-            git(scratch, 'fetch', '-q', bundle, 'HEAD')
-            if git(scratch, 'rev-parse', 'FETCH_HEAD').strip() != repo['head']:
+            exported_head = git(scratch, 'bundle', 'list-heads', bundle, 'HEAD').split()
+            if exported_head != ([repo['head'], 'HEAD'] if repo['head'] is not None else []):
                 missing.append(repo['bundle'])
+            git(scratch, 'fetch', '-q', bundle, '+refs/*:refs/*')
+            if repo['head'] is not None:
+                git(scratch, 'fetch', '-q', bundle, 'HEAD')
+                if git(scratch, 'rev-parse', 'FETCH_HEAD').strip() != repo['head']:
+                    missing.append(repo['bundle'])
             if shallow_boundaries(os.path.join(scratch, '.git', 'shallow'), repo.get('objectFormat', 'sha1')) != repo.get('shallow', []):
                 missing.append(repo['bundle'])
     if missing:
@@ -609,19 +811,29 @@ class Restorer:
             os.unlink(target)
             raise Failure(f'stored blob does not match the manifest: {digest[:12]}')
 
-    def repository(self, repo: dict) -> None:
+    def repository(self, repo: dict, checkout: bool = True) -> None:
+        bundle = os.path.join(self.copy_directory, repo['bundle'])
+        verify_bundle(bundle, repo)
         target = self.place(repo['path'])
         os.makedirs(target, mode=0o700, exist_ok=True)
         init_repository(target, repo, git)
-        bundle = os.path.join(self.copy_directory, repo['bundle'])
         git(target, 'fetch', '-q', '--update-head-ok', bundle, '+refs/*:refs/*')
-        git(target, 'fetch', '-q', bundle, 'HEAD')
         branch = repo['branch']
-        if branch and git(target, 'rev-parse', '-q', '--verify', f'refs/heads/{branch}', check=False).strip() == repo['head']:
+        if repo['head'] is None:
+            unborn = 'refs/heads/cauce-copy-unborn'
+            while git(target, 'rev-parse', '-q', '--verify', unborn, check=False).strip():
+                unborn += '-'
+            git(target, 'symbolic-ref', 'HEAD', unborn)
+        elif branch and git(target, 'rev-parse', '-q', '--verify', f'refs/heads/{branch}', check=False).strip() == repo['head']:
             git(target, 'symbolic-ref', 'HEAD', f'refs/heads/{branch}')
-            git(target, 'reset', '-q', '--hard')
+            git(target, 'reset', '-q', '--hard') if checkout else git(target, 'read-tree', '--reset', 'HEAD')
         else:
-            git(target, 'checkout', '-q', '--detach', repo['head'])
+            git(target, 'fetch', '-q', bundle, 'HEAD')
+            if checkout:
+                git(target, 'checkout', '-q', '--detach', repo['head'])
+            else:
+                git(target, 'update-ref', '--no-deref', 'HEAD', repo['head'])
+                git(target, 'read-tree', '--reset', 'HEAD')
         for name, url in sorted(repo['remotes'].items()):
             git(target, 'remote', 'add', '--', name, url)
 
@@ -717,7 +929,7 @@ def verify_restore(manifest: dict, base: str, apply, layout_rules: dict, skipped
             problems.append(path)
         layout.append({'from': entry['path'], 'to': path, 'sha256': entry.get('sha256'), 'source': entry['source']})
     for path, repo in sorted(repos.items()):
-        if git(os.path.join(base, path), 'rev-parse', 'HEAD').strip() != repo['head']:
+        if (git(os.path.join(base, path), 'rev-parse', '-q', '--verify', 'HEAD', check=False).strip() or None) != repo['head']:
             problems.append(path + ' (HEAD)')
         if shallow_boundaries(os.path.join(base, path, '.git', 'shallow'), repo.get('objectFormat', 'sha1')) != repo.get('shallow', []):
             problems.append(path + ' (shallow)')
