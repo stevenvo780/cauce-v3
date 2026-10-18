@@ -157,8 +157,17 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
     expected = {**identity, 'account_id': account, 'identity': provider_identity, 'nonce': nonce}
     if phase is not None:
         expected['phase'] = phase
-    if not isinstance(observed, dict) or not IDENTITY_FIELDS.issubset(observed) or set(observed) - IDENTITY_FIELDS - PROOF_FIELDS - {'phase'} \
+    if not isinstance(observed, dict) or not IDENTITY_FIELDS.issubset(observed) or set(observed) - IDENTITY_FIELDS - PROOF_FIELDS - {'phase', 'account_identity'} \
             or any(observed.get(field) != value for field, value in expected.items()) \
             or any(type(observed[field]) is not bool for field in set(observed) & PROOF_FIELDS):
         raise SafeFailure('functional proof identity or nonce differs')
-    return {field: observed[field] for field in set(observed) & PROOF_FIELDS}
+    proof = {field: observed[field] for field in set(observed) & PROOF_FIELDS}
+    if 'account_identity' in observed:
+        from fleet_provider_identity import select_account_identity
+        if step != 'authenticate' or observed.get('authenticated') is not True \
+                or select_account_identity(provider_identity, [observed['account_identity']]) is None:
+            raise SafeFailure('functional proof has no verified provider account identity')
+        proof['account_identity'] = observed['account_identity']
+    elif step == 'authenticate' and provider_identity.startswith('unverified:') and observed.get('authenticated') is True:
+        raise SafeFailure('provisional provider account has no observed identity')
+    return proof

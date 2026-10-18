@@ -9,7 +9,7 @@ import re
 import subprocess
 import sys
 
-from fleet_provider_identity import authenticated_provider
+from fleet_provider_identity import authenticated_identity
 from fleet_provider_probe import probe
 
 
@@ -122,9 +122,13 @@ def execute(packet: dict) -> dict:
 
         if os.geteuid() != pwd.getpwnam(packet["agent"]["runtime_user"]).pw_uid or os.geteuid() == 0:
             raise ValueError("functional check is not running under the approved user")
-        result = (
-            {"authenticated": authenticated_provider(packet)} if packet["step"] == "authenticate" else probe(packet)
-        )
+        if packet['step'] == 'authenticate':
+            account_identity = authenticated_identity(packet)
+            result = {'authenticated': account_identity is not None}
+            if account_identity is not None:
+                result['account_identity'] = account_identity
+        else:
+            result = probe(packet)
     identity = {key: packet["agent"][key] for key in ("tenant_id", "alias", "runtime_key")}
     identity.update(account_id=packet["account_id"], identity=packet["identity"], nonce=packet["nonce"])
     if "phase" in packet:

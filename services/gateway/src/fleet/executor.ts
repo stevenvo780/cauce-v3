@@ -1,4 +1,5 @@
 import { FleetEvidenceSchema, type FleetError, type FleetEvidence, type FleetOperation, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
+import { z } from 'zod';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { FleetProviderAccounts } from './accounts.js';
 import { redactExecutorStderr } from './host-stderr.js';
@@ -29,7 +30,17 @@ export interface FleetExecutionRepository {
   compensate(claim: FleetOperationClaim, evidence?: FleetEvidence): Promise<FleetOperation>;
   settle(claim: FleetOperationClaim): Promise<FleetOperation>;
 }
-export interface FleetEffectResult { evidence: FleetEvidence; awaiting_auth?: boolean }
+export interface FleetEffectResult { evidence: FleetEvidence; awaiting_auth?: boolean; account_identity?: string }
+
+/** Only the fenced console login may bind a provisional provider identity. */
+export function providerIdentityPending(execution: FleetExecution): boolean {
+  const target = execution.request.target;
+  if (target.resource !== 'agent') return false;
+  const agents = z.array(z.record(z.string(), z.unknown())).parse(execution.snapshot?.agents ?? []);
+  const agent = agents.find(value => value.tenant_id === target.tenant_id && value.alias === target.alias);
+  return execution.trusted_accounts?.some(account => account.id === agent?.primary_account_id
+    && account.external_account_id.startsWith('unverified:')) === true;
+}
 export interface FleetExecutorOptions {
   worker: string; host: string; leaseMs?: number;
   signal?: AbortSignal;
@@ -94,7 +105,7 @@ export class FleetExecutor {
         if (current.operation.id !== execution.operation.id) throw new Error('fleet operation identity changed');
         if (current.operation.status === 'cancelling') continue;
         if (step === 'admission') result.evidence = { ...result.evidence, authority_verified: true };
-        if (result.awaiting_auth === true) {
+        if (result.awaiting_auth === true || step === 'authenticate' && providerIdentityPending(current)) {
           await this.repository.awaitAuth(claim);
           return true;
         }

@@ -246,15 +246,15 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
             pass
 
 
-def authenticated_openclaw(packet: dict) -> bool:
-    from fleet_provider_identity import command_output, provider_command
+def authenticated_identity(packet: dict) -> str | None:
+    from fleet_provider_identity import command_output, provider_command, select_account_identity
     try:
         binding, agent = packet['profile_binding'], packet['agent']
         if agent['harness_id'] != 'openclaw' or binding['identity'] != packet['identity'] or agent['primary_account_id'] != packet['account_id']:
-            return False
+            return None
         if not isinstance(packet['nonce'], str) or re.fullmatch(r'[0-9a-f]{64}', packet['nonce']) is None \
                 or agent.get('reasoning_effort') not in {None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
-            return False
+            return None
         validate_execution_selection(agent)
         validate_definition(binding['openclaw'], binding['provider'])
         read_config(binding, agent)
@@ -263,33 +263,34 @@ def authenticated_openclaw(packet: dict) -> bool:
         prefix = [driver['node_command'], command]
         version = command_output([*prefix, '--version'], packet).decode().strip()
         if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}:
-            return False
+            return None
         meta = json.loads(command_output([*prefix, 'models', 'auth', 'list', '--agent', agent['runtime_key'],
                                           '--provider', binding['openclaw']['provider_id'], '--json'], packet))
         if not isinstance(meta, dict):
-            return False
+            return None
         profiles = meta.get('profiles')
         if meta.get('agentId') != agent['runtime_key'] or meta.get('provider') != binding['openclaw']['provider_id'] \
                 or not isinstance(profiles, list) or len(profiles) != 1:
-            return False
+            return None
         selected = profiles[0]
         if not isinstance(selected, dict):
-            return False
+            return None
         _, flow = provider_flow(binding['provider'])
+        identity = select_account_identity(packet['identity'], [selected.get('email')])
         if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
-                or selected.get('type') not in flow['profile_types'] or selected.get('email') != packet['identity']:
-            return False
+                or selected.get('type') not in flow['profile_types'] or identity is None:
+            return None
         if any(selected.get(field) for field in ('cooldownUntil', 'disabledUntil')):
-            return False
+            return None
         if 'expiresAt' in selected or flow['expiry_required']:
             if not isinstance(selected.get('expiresAt'), str):
-                return False
+                return None
             expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
             if expires <= datetime.now(UTC):
-                return False
+                return None
         model = canonical_model(agent.get('model_id'))
         if not model.startswith(driver['provider_id'] + '/'):
-            return False
+            return None
         expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
         args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
                 'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '25',
@@ -298,14 +299,18 @@ def authenticated_openclaw(packet: dict) -> bool:
             args += ['--thinking', agent['reasoning_effort']]
         reply = json.loads(command_output(args, packet, timeout=30))
         if not isinstance(reply, dict):
-            return False
+            return None
         result = reply.get('result', reply)
         if not isinstance(result, dict) or not isinstance(result.get('payloads'), list):
-            return False
+            return None
         texts = [value.get('text') for value in result.get('payloads', []) if isinstance(value, dict)]
-        return reply.get('status', 'ok') == 'ok' and texts == [expected]
+        return identity if reply.get('status', 'ok') == 'ok' and texts == [expected] else None
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-        return False
+        return None
+
+
+def authenticated_openclaw(packet: dict) -> bool:
+    return authenticated_identity(packet) is not None
 
 
 authenticated = authenticated_openclaw

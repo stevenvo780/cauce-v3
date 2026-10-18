@@ -1,6 +1,6 @@
 import { FleetEvidenceSchema, type FleetEvidence, type FleetOperation, type FleetStepName } from '@cauce/protocol';
 import { aggregateHostEvidence, isRegistryDraft, selectFleetHostSlices, type FleetOperationClaim } from '@cauce/store';
-import type { FleetEffectResult, FleetExecution } from './executor.js';
+import { providerIdentityPending, type FleetEffectResult, type FleetExecution } from './executor.js';
 import { scopedFleetProviderAgents } from './accounts.js';
 
 export interface CoordinatedHostSlice {
@@ -98,9 +98,9 @@ export class FleetCoordinator {
         ? { evidence: await this.transport.compensate(slice.host_id, packet, signal) }
         : await this.transport.perform(slice.host_id, step, packet, signal);
       signal.throwIfAborted();
-      if (result.awaiting_auth) {
+      if (result.awaiting_auth || step === 'authenticate' && providerIdentityPending(execution)) {
         if (execution.request.target.resource !== 'agent' || slices.length !== 1 || step !== 'authenticate') throw unavailable();
-        return result;
+        return { ...result, awaiting_auth: true };
       }
       const evidence = step === 'admission' ? { ...result.evidence, authority_verified: true } : result.evidence;
       await this.repository.completeHostStep(claim, step, slice.host_id, slice.target_sha256, FleetEvidenceSchema.parse(evidence));

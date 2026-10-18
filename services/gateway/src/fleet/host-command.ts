@@ -6,7 +6,8 @@ import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
-const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional() }).strict();
+const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
+  account_identity: z.string().min(1).max(256).regex(/^[^\p{Cc}]+$/u).refine(value => !value.startsWith('unverified:')).optional() }).strict();
 const MAX_RECEIPT_BYTES = 8192;
 function unverified(): Error { return new Error('Host effect could not be verified'); }
 function absolute(value: string): boolean { return value.startsWith('/') && !/[\p{Cc}]/u.test(value) && !value.split('/').includes('..'); }
@@ -84,7 +85,9 @@ async function runHostCommand(
       if (code !== 0 || failed) { reject(unverified()); return; }
       try {
         const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        resolve({ evidence: receipt.evidence, ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }) });
+        resolve({ evidence: receipt.evidence,
+          ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }),
+          ...(receipt.account_identity === undefined ? {} : { account_identity: receipt.account_identity }) });
       }
       catch { reject(unverified()); }
     });

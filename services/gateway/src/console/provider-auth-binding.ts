@@ -1,4 +1,4 @@
-import { StoreError, assertFleetRelocationSourceBarrier, enableProviderAccountAfterAgentAuth, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
+import { StoreError, assertFleetRelocationSourceBarrier, bindProviderAccountIdentity, enableProviderAccountAfterAgentAuth, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
   type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { isLiteralTrue } from '@cauce/protocol';
@@ -18,7 +18,7 @@ export interface ProviderAuthPhysicalScope extends ProviderAuthPolicyScope {
 export interface ProviderAuthPhysicalHooks {
   stopAdapter(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ stopped: boolean }>;
   openLogin(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<ProviderAuthLogin>;
-  verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean }>;
+  verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean; account_identity?: string }>;
   cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal, client?: DatabaseClient): Promise<{ stopped: boolean }>;
 }
 interface Reservation {
@@ -52,7 +52,7 @@ async function context(client: DatabaseClient, actor: ProviderAuthActor, request
   if (agent?.retired_at !== null || agent.purged_at !== null) throw denied();
   const selected = (await client.query<SelectedAccount & { consent: boolean }>(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled,
     quota_registration_key,quota_identity_hash,
-    ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR SHARE`,
+    ${providerAccountConsentSql('provider_accounts', '$2')} AS consent FROM provider_accounts WHERE id=$1 FOR ${lock ? 'UPDATE' : 'SHARE'}`,
   [agent.primary_account_id, agent.tenant_id])).rows[0];
   const pending = selected?.quota_registration_key != null && selected.quota_identity_hash == null;
   if (!selected || !(selected.enabled || pending) || !selected.consent) throw denied();
@@ -180,7 +180,25 @@ export function createProviderAuthDependencies(
           await active(signal);
           const evidence = await hooks.verify(physical, signal);
           if (evidence.identity_matches && evidence.functional_call_verified) {
-            await enableProviderAccountAfterAgentAuth(pool, physical.account_id);
+            if (physical.expected_external_account_id.startsWith('unverified:') && evidence.account_identity === undefined) {
+              throw new ProviderAuthError('IDENTITY_MISMATCH');
+            }
+            await active(signal);
+            await withTransaction(pool, async client => {
+              const value = await context(client, actor, request, true);
+              await scope(client, value, request, resolve);
+              const reservation = await latest(client, request.operation_id);
+              if (reservation?.session_id !== sessionId || reservation.state !== 'reserved' || Date.parse(reservation.expires_at) <= Date.now()) {
+                throw new ProviderAuthError('SESSION_EXPIRED');
+              }
+              signal.throwIfAborted();
+              if (evidence.account_identity !== undefined) {
+                try { await bindProviderAccountIdentity(client, value.agent.company_id, physical.account_id, evidence.account_identity,
+                  { operation_id: request.operation_id }); }
+                catch (error) { if (error instanceof StoreError) throw new ProviderAuthError('IDENTITY_MISMATCH'); throw error; }
+              }
+              await enableProviderAccountAfterAgentAuth(pool, physical.account_id, client);
+            });
           }
           return evidence;
         },

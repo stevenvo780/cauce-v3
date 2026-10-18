@@ -11,6 +11,7 @@ import uuid
 from fleet_provider_identity import (
     nonce_roundtrip,
     read_profile_json,
+    select_account_identity,
     validate_provider_binding,
     validate_provider_selection,
 )
@@ -115,25 +116,23 @@ def fetch_userinfo(access_token: str) -> dict:
     return value
 
 
-def verified_identities(root: str) -> set:
-    # Exactly the active credential (the first auth entry, as the quota reader
-    # selects it) may vouch for the identity; no other stored token is tried.
+def verified_identities(root: str) -> list[str]:
     document = read_profile_json(str(root) + '/auth.json')
     if not isinstance(document, dict) or not document:
-        return set()
+        return []
     entry = next(iter(document.values()))
     token = entry.get('key') if isinstance(entry, dict) else None
     if not isinstance(token, str) or not token:
-        return set()
+        return []
     try:
         userinfo = fetch_userinfo(token)
     except Exception:
-        return set()
-    identities = set()
+        return []
+    identities = []
     if isinstance(userinfo.get('sub'), str) and userinfo['sub']:
-        identities.add(userinfo['sub'])
+        identities.append(userinfo['sub'])
     if userinfo.get('email_verified') is True and isinstance(userinfo.get('email'), str) and userinfo['email']:
-        identities.add(userinfo['email'])
+        identities.append(userinfo['email'])
     return identities
 
 
@@ -146,14 +145,19 @@ def reply_text(output: bytes):
     return value.get('text') if isinstance(value.get('text'), str) else None
 
 
-def authenticated(packet: dict) -> bool:
+def authenticated_identity(packet: dict) -> str | None:
     try:
         root = environment(packet['profile_binding'], packet['agent'])['GROK_HOME']
-        if packet['identity'] not in verified_identities(root):
-            return False
-        return nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text)
+        identity = select_account_identity(packet['identity'], verified_identities(root))
+        if identity is None or not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
+            return None
+        return identity
     except Exception:
-        return False
+        return None
+
+
+def authenticated(packet: dict) -> bool:
+    return authenticated_identity(packet) is not None
 
 
 authenticated_grok = authenticated

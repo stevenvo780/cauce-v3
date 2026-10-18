@@ -11,14 +11,15 @@ export const PENDING_QUOTA_ACCOUNT_SQL = 'quota_registration_key IS NOT NULL AND
  * registration: the account stays without a quota identity hash, which is only bound
  * by a quota-environment login, but it may now back fleet operations.
  */
-export async function enableProviderAccountAfterAgentAuth(pool: DatabasePool, accountId: string): Promise<boolean> {
-  return withTransaction(pool, async client => {
+export async function enableProviderAccountAfterAgentAuth(pool: DatabasePool, accountId: string, transactionClient?: DatabaseClient): Promise<boolean> {
+  const enable = async (client: DatabaseClient) => {
     const updated = await client.query(
       `UPDATE provider_accounts SET enabled=true,quota_version=quota_version+1,updated_at=now()
        WHERE id=$1 AND enabled=false AND canonical_account_id IS NULL AND ${PENDING_QUOTA_ACCOUNT_SQL}`,
       [accountId]);
     return (updated.rowCount ?? 0) > 0;
-  });
+  };
+  return transactionClient === undefined ? withTransaction(pool, enable) : enable(transactionClient);
 }
 
 function providerIdentityHash(provider: string, identity: string): string {
@@ -26,6 +27,28 @@ function providerIdentityHash(provider: string, identity: string): string {
     throw new StoreError('invalid_input', 'quota provider identity is invalid');
   }
   return createHash('sha256').update(JSON.stringify([provider, identity])).digest('hex');
+}
+
+/** The caller holds a verified provider receipt and the transaction's company authority. */
+export async function bindProviderAccountIdentity(client: DatabaseClient, companyId: string, accountId: string, identity: string,
+  source: { operation_id: string }): Promise<void> {
+  const account = (await client.query<{ provider: string; external_account_id: string }>(
+    `SELECT provider,external_account_id FROM provider_accounts
+     WHERE id=$1 AND company_id=$2 AND canonical_account_id IS NULL FOR UPDATE`, [accountId, companyId])).rows[0];
+  if (!account || identity.startsWith('unverified:')) throw new StoreError('conflict', 'provider account identity is unavailable');
+  const hash = providerIdentityHash(account.provider, identity);
+  if (!account.external_account_id.startsWith('unverified:') && account.external_account_id !== identity) {
+    throw new StoreError('conflict', 'authenticated provider identity differs from the accepted account');
+  }
+  if (account.external_account_id === identity) return;
+  const duplicate = await client.query(`SELECT 1 FROM provider_accounts WHERE company_id=$1 AND provider=$2
+    AND external_account_id=$3 AND id<>$4`, [companyId, account.provider, identity, accountId]);
+  if (duplicate.rowCount) throw new StoreError('conflict', 'provider identity is already registered in this company');
+  await client.query(`UPDATE provider_accounts SET external_account_id=$3,quota_version=quota_version+1,updated_at=now()
+    WHERE id=$1 AND company_id=$2`, [accountId, companyId, identity]);
+  await client.query(`INSERT INTO audit_events(company_id,action,decision,metadata)
+    VALUES($1,'provider_account.identity_bound','allow',$2::jsonb)`, [companyId, JSON.stringify({ account_id: accountId,
+    provider: account.provider, previous_identity: account.external_account_id, identity_hash: hash, ...source })]);
 }
 export async function assertQuotaEnvironmentIdentity(client: DatabaseClient, environmentId: string, accountId: string, identity: string): Promise<void> {
   const environment = (await client.query<{ account_id: string; provider: string; quota_identity_hash: string | null }>(

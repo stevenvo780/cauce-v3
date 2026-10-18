@@ -195,6 +195,9 @@ def resolve_profile(policy: dict, agent: dict) -> dict | None:
     trusted = matches[0]
     if account in policy['profiles']:
         binding = policy['profiles'][account]
+        from fleet_provider_identity import valid_account_identity
+        if binding.get('identity') == 'unverified:' + account and valid_account_identity(trusted['external_account_id']):
+            binding = {**binding, 'identity': trusted['external_account_id']}
         if binding.get('provider') != trusted['provider'] or binding.get('identity') != trusted['external_account_id']:
             raise SafeFailure('static provider binding differs from the current durable account')
         if (agent['harness_id'] == 'openclaw') != ('openclaw' in binding):

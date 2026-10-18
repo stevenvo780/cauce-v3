@@ -461,12 +461,12 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
       ? context.accounts.find((entry) => entry.provider === provider && entry.externalAccountId === external)
       : undefined;
     if (duplicate) {
-      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'un cliente que el servidor no informó'}. UNIQUE (provider, external_account_id) existe para que "quién paga qué" tenga una sola respuesta: no se puede registrar dos veces con dos pagadores.`;
+      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'un cliente que el servidor no informó'}. UNIQUE (company_id, provider, external_account_id) exige una sola cuenta por suscripción dentro de la empresa. La misma suscripción puede registrarse en otra empresa.`;
     }
     if (payer !== undefined && context.tenantIds.length > 0 && !context.tenantIds.includes(payer)) {
       return `El tenant pagador «${payer}» no existe en la configuración visible, y payer_tenant_id es un foreign key contra tenants. Creá el tenant antes de registrar la cuenta.`;
     }
-    return `${prefix} Un alta de cuenta puede violar tres: UNIQUE (provider, external_account_id) —la suscripción ya está registrada con otro pagador—, el foreign key de payer_tenant_id contra tenants, o el CHECK provider_accounts_credential_ref_shape sobre el locator. El snapshot local no muestra ninguna incumplida, así que el choque está del lado del servidor: actualizá y volvé a previsualizar.`;
+    return `${prefix} Un alta de cuenta puede violar tres: UNIQUE (company_id, provider, external_account_id) —la suscripción ya está registrada en esta empresa—, el foreign key de payer_tenant_id contra tenants, o el CHECK provider_accounts_credential_ref_shape sobre el locator. El snapshot local no muestra ninguna incumplida, así que el choque está del lado del servidor: actualizá y volvé a previsualizar.`;
   }
 
   if (mutation.resource === 'alias_routing_ceiling' && mutation.action === 'create') {

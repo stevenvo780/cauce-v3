@@ -211,7 +211,7 @@ it('señala la suscripción externa ya registrada en vez de repetir el error gen
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
   expect(described.message).toMatch(/ya está registrada como «codex-steven»/);
-  expect(described.message).toMatch(/UNIQUE \(provider, external_account_id\)/);
+  expect(described.message).toMatch(/UNIQUE \(company_id, provider, external_account_id\)/);
 });
 
 it('explica los permisos de rol y empresa ante un 403 sin sugerir un reintento', () => {

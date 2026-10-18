@@ -17,7 +17,8 @@ export const AgentAuthCommandSchema = z.object({ fence: AgentAuthFenceSchema, co
 export const AgentAuthEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('result'), fence: AgentAuthFenceSchema, id: z.uuid(), ok: z.boolean(),
     method: z.enum(['device','terminal']).optional(), stopped: z.boolean().optional(),
-    identity_matches: z.boolean().optional(), functional_call_verified: z.boolean().optional() }).strict(),
+    identity_matches: z.boolean().optional(), functional_call_verified: z.boolean().optional(),
+    account_identity: z.string().min(1).max(256).regex(/^[^\p{Cc}]+$/u).refine(value => !value.startsWith('unverified:')).optional() }).strict(),
   z.object({ type: z.literal('output'), fence: AgentAuthFenceSchema, sequence: z.number().int().positive(),
     data: z.string().max(5464).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u) }).strict(),
 ]);

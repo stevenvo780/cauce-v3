@@ -394,13 +394,31 @@ class Executor:
             return {'evidence': {}, 'awaiting_auth': True}
         account, binding = binding_for(self.policy, agent)
         self.journal['authenticated'] = {'account_id': account, 'binding': binding}
+        self.journal.pop('account_identity', None)
+        result = {'evidence': {'provider_verified': True}}
+        if 'account_identity' in observed:
+            self.journal['account_identity'] = observed['account_identity']
+            result['account_identity'] = observed['account_identity']
         self.save()
-        return {'evidence': {'provider_verified': True}}
+        return result
+
+    def authenticated_binding_matches(self, account, binding: dict) -> bool:
+        proof = self.journal.get('authenticated')
+        if proof == {'account_id': account, 'binding': binding}:
+            return True
+        if not isinstance(proof, dict) or proof.get('account_id') != account:
+            return False
+        previous = proof.get('binding')
+        from fleet_provider_identity import valid_account_identity
+        identity = self.journal.get('account_identity')
+        return isinstance(previous, dict) and isinstance(previous.get('identity'), str) \
+            and previous['identity'].startswith('unverified:') and valid_account_identity(identity) \
+            and binding == {**previous, 'identity': identity}
 
     def profile(self):
         agent = self.agent()
         account, binding = binding_for(self.policy, agent)
-        if self.journal.get('authenticated') != {'account_id': account, 'binding': binding}:
+        if not self.authenticated_binding_matches(account, binding):
             raise SafeFailure('provider profile has no current authenticated identity proof')
         if self.journal.get('login_stopped') is True:
             # The console login stopped this runtime; the profile and verify probes need it running again.
@@ -433,7 +451,7 @@ class Executor:
             raise SafeFailure('admission requires complete functional verification')
         agent = self.agent()
         account, binding = binding_for(self.policy, agent)
-        if self.journal.get('authenticated') != {'account_id': account, 'binding': binding}:
+        if not self.authenticated_binding_matches(account, binding):
             raise SafeFailure('admission provider account or profile binding changed')
         source = copy.deepcopy(self.context.get('snapshot'))
         if not isinstance(source, dict):

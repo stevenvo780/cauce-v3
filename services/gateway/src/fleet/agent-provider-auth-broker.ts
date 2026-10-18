@@ -50,7 +50,8 @@ export class AgentProviderAuthBroker {
         const binding = await this.binding(physical); signal.throwIfAborted();
         const response = await this.command(binding, { id: randomUUID(), type: 'verify' });
         return { identity_matches: response.ok && response.identity_matches === true,
-          functional_call_verified: response.ok && response.functional_call_verified === true };
+          functional_call_verified: response.ok && response.functional_call_verified === true,
+          ...(response.account_identity === undefined ? {} : { account_identity: response.account_identity }) };
       },
       cleanup: async (physical, sessionId, _signal, client) => {
         const binding = await this.binding(physical, sessionId, client);

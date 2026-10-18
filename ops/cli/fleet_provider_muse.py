@@ -15,6 +15,7 @@ import uuid
 from fleet_provider_identity import (
     nonce_roundtrip,
     profile_jwt_candidates,
+    select_account_identity,
     validate_provider_binding,
     validate_provider_selection,
 )
@@ -227,16 +228,18 @@ def verified_identities(config: str) -> set:
         return set()
 
 
-def authenticated(packet: dict) -> bool:
+def authenticated_identity(packet: dict) -> str | None:
     try:
         config = environment(packet['profile_binding'], packet['agent'])['XDG_CONFIG_HOME']
-        # Roundtrip first (the CLI may refresh its credential while running),
-        # then verify the stored id_token read back afterwards.
         if not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
-            return False
-        return packet['identity'] in verified_identities(config)
+            return None
+        return select_account_identity(packet['identity'], verified_identities(config))
     except Exception:
-        return False
+        return None
+
+
+def authenticated(packet: dict) -> bool:
+    return authenticated_identity(packet) is not None
 
 
 authenticated_muse = authenticated

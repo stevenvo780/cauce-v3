@@ -105,6 +105,7 @@ async function policies(options: HostProviderAuthOptions): Promise<z.infer<typeo
 function selected(policy: z.infer<typeof Policy>, accountId: string, provider: string, identity: string, runtimeUser: string,
   placement: { runtime_key: unknown; runtime_mode: unknown; container_name: unknown }, harness: string) {
   let profile = policy.profiles[accountId];
+  if (profile?.identity === `unverified:${accountId}` && !identity.startsWith('unverified:')) profile = { ...profile, identity };
   let templateLogin: z.infer<typeof Login> | undefined;
   if (!profile) {
     const templates = policy.profile_templates?.filter(value => value.provider === provider && value.runtime_user === runtimeUser
@@ -265,7 +266,8 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
         await loginConfiguration(options, execution, scope, signal);
         const result = await performHostCommand(options.hostConfig.command, 'authenticate', execution, signal);
         return { identity_matches: !result.awaiting_auth && result.evidence.provider_verified === true,
-          functional_call_verified: !result.awaiting_auth && result.evidence.provider_verified === true };
+          functional_call_verified: !result.awaiting_auth && result.evidence.provider_verified === true,
+          ...(result.account_identity === undefined ? {} : { account_identity: result.account_identity }) };
       });
     },
     cleanup: async (scope, _sessionId, signal, borrowedClient) => {

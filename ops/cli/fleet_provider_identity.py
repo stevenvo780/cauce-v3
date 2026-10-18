@@ -340,14 +340,29 @@ def codex_identity(packet: dict) -> str:
         stop_process_group(process)
 
 
-def authenticated_provider(packet: dict) -> bool:
+def valid_account_identity(value) -> bool:
+    return isinstance(value, str) and re.fullmatch(r'[^\x00-\x1f\x7f-\x9f]{1,256}', value) is not None \
+        and not value.startswith('unverified:')
+
+
+def select_account_identity(expected: str, identities) -> str | None:
+    verified = [value for value in identities if valid_account_identity(value)]
+    if expected in verified:
+        return expected
+    if isinstance(expected, str) and expected.startswith('unverified:'):
+        return next(iter(verified), None)
+    return None
+
+
+def authenticated_identity(packet: dict) -> str | None:
     module_name = packet_fleet_module(packet)
     if module_name:
         try:
             from importlib import import_module
-            return bool(import_module(module_name).authenticated(packet))
+            identity = import_module(module_name).authenticated_identity(packet)
+            return select_account_identity(packet['identity'], [identity])
         except (ImportError, OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError):
-            return False
+            return None
     provider = packet["profile_binding"]["provider"]
     try:
         command = provider_command(packet)
@@ -356,16 +371,13 @@ def authenticated_provider(packet: dict) -> bool:
         elif provider == "claude":
             result = json.loads(command_output([command, "auth", "status", "--json"], packet))
             if result.get("loggedIn") is not True or not isinstance(result.get("email"), str):
-                return False
+                return None
             identity = result["email"]
         else:
             raise ProviderProofError("provider has no approved account inspection")
-        expected = packet["identity"]
-        # A fresh quota registration carries an `unverified:` placeholder instead of the
-        # provider identity: the first proven session binds it, so only the placeholder
-        # may differ from the identity the provider reports.
-        if identity != expected and not (isinstance(expected, str) and expected.startswith("unverified:")):
-            return False
+        identity = select_account_identity(packet['identity'], [identity])
+        if identity is None:
+            return None
         expected = "CAUCE_BOOTSTRAP_" + packet["nonce"]
         prompt = "Responde únicamente " + expected + ". No uses herramientas ni envíes mensajes."
         if provider == "codex":
@@ -377,15 +389,19 @@ def authenticated_provider(packet: dict) -> bool:
                 if (event := json.loads(line)).get("type") == "item.completed"
                 and event.get("item", {}).get("type") == "agent_message"
             ]
-            return replies == [expected]
+            return identity if replies == [expected] else None
         output = json.loads(
             command_output(
                 [command, "-p", prompt, "--output-format", "json", "--tools", "", "--max-turns", "1"], packet
             )
         )
-        return output.get("is_error") is False and output.get("result") == expected
+        return identity if output.get("is_error") is False and output.get("result") == expected else None
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-        return False
+        return None
+
+
+def authenticated_provider(packet: dict) -> bool:
+    return authenticated_identity(packet) is not None
 
 
 EXTENSION_LIMIT = 262144
