@@ -16,15 +16,21 @@ import {
 } from './registry';
 
 const emptyDraft: AccountDraft = {
-  id: 'codex-steven',
-  provider: 'codex',
+  id: '',
+  provider: '',
   externalAccountId: '',
   payerTenant: '',
   label: '',
   credentialRefKind: 'env_path',
-  credentialRef: 'CAUCE_CODEX_STEVEN_PATH',
+  credentialRef: '',
   sharedWithPool: false,
   enabled: false,
+};
+
+const LOCATOR_PLACEHOLDER: Record<CredentialRefKind, string> = {
+  env_path: 'CAUCE_PROVIDER_PATH',
+  file: '/var/lib/cauce/credencial',
+  secret_manager: 'vault:equipo/cuenta',
 };
 
 interface AccountEdit {
@@ -113,8 +119,13 @@ export function AccountsInventory({ config, access, registry }: {
           ? `Escribí exactamente «${form.accountId}» para confirmar el borrado.`
           : undefined
     : undefined;
+  const createError = form?.kind === 'create' ? accountDraftError(form.draft) : undefined;
+  const createStarted = form?.kind === 'create' && (
+    form.draft.id !== '' || form.draft.provider !== '' || form.draft.externalAccountId !== ''
+    || form.draft.payerTenant !== '' || form.draft.label !== '' || form.draft.credentialRef !== ''
+  );
   const mutation = form?.kind === 'create'
-    ? (accountDraftError(form.draft) ? undefined : createAccountMutation(form.draft))
+    ? (createError ? undefined : createAccountMutation(form.draft))
     : form?.kind === 'edit'
       ? (editInvalid ? undefined : updateAccountMutation(form.edit.id, {
         label: form.edit.label.trim() || null,
@@ -123,7 +134,7 @@ export function AccountsInventory({ config, access, registry }: {
       }))
       : form?.kind === 'delete' ? (deleteInvalid ? undefined : deleteAccountMutation(form.accountId)) : undefined;
   const invalid = form?.kind === 'create'
-    ? accountDraftError(form.draft)
+    ? (createStarted ? createError : undefined)
     : form?.kind === 'edit' ? editInvalid : deleteInvalid;
 
   function open(next: FormState) {
@@ -229,23 +240,24 @@ export function AccountsInventory({ config, access, registry }: {
     </section>
 
     <FormDialog open={shown && form?.kind === 'create'} onClose={close} busy={runner.busy} title="Alta de cuenta"
-      description="Declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse.">
+      description="Declara quién paga la suscripción y dónde está su credencial. Todo pasa por dry-run antes de aplicarse."
+      footer={form?.kind === 'create' ? <MutationBar part="actions" runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" /> : undefined}>
       {form?.kind === 'create' ? <>
         <div className={FIELDS}>
           <label>Id de cuenta <span className={HINT}>global, inmutable, referenciado por los techos</span>
-            <input {...writeProps} value={form.draft.id} onChange={(event) => { editDraft({ id: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.id} placeholder="cuenta-ejemplo" onChange={(event) => { editDraft({ id: event.target.value }); }} />
           </label>
           <label>Proveedor <span className={HINT}>codex, gemini, minimax…</span>
-            <input {...writeProps} value={form.draft.provider} onChange={(event) => { editDraft({ provider: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.provider} placeholder="codex" onChange={(event) => { editDraft({ provider: event.target.value }); }} />
           </label>
           <label>Id externo de la suscripción <span className={HINT}>uuid, mail u org id. NUNCA el secreto</span>
-            <input {...writeProps} value={form.draft.externalAccountId} onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.externalAccountId} placeholder="org-1234" onChange={(event) => { editDraft({ externalAccountId: event.target.value }); }} />
           </label>
           <label>Tenant pagador <span className={HINT}>quién paga; inmutable después del alta</span>
-            <input {...writeProps} value={form.draft.payerTenant} onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.payerTenant} placeholder="Acme" onChange={(event) => { editDraft({ payerTenant: event.target.value }); }} />
           </label>
           <label>Etiqueta <span className={HINT}>opcional</span>
-            <input {...writeProps} value={form.draft.label} onChange={(event) => { editDraft({ label: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.label} placeholder="Cuenta del equipo" onChange={(event) => { editDraft({ label: event.target.value }); }} />
           </label>
           <label>Tipo de locator
             <select {...writeProps} value={form.draft.credentialRefKind} onChange={(event) => { editDraft({ credentialRefKind: event.target.value as CredentialRefKind }); }}>
@@ -253,12 +265,12 @@ export function AccountsInventory({ config, access, registry }: {
             </select>
           </label>
           <label className="sm:col-span-2">Locator de la credencial <span className={HINT}>{CREDENTIAL_REF_HINTS[form.draft.credentialRefKind]}</span>
-            <input {...writeProps} value={form.draft.credentialRef} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
+            <input {...writeProps} value={form.draft.credentialRef} placeholder={LOCATOR_PLACEHOLDER[form.draft.credentialRefKind]} onChange={(event) => { editDraft({ credentialRef: event.target.value }); }} />
           </label>
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.draft.sharedWithPool} onChange={(event) => { editDraft({ sharedWithPool: event.target.checked }); }} /> <span>Publicar al pool <span className={HINT}>habilita que otros tenants la pidan prestada</span></span></label>
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.draft.enabled} onChange={(event) => { editDraft({ enabled: event.target.checked }); }} /> Habilitada</label>
         </div>
-        <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" />
+        <MutationBar part="details" runner={runner} mutation={mutation} invalid={invalid} previewLabel="alta de cuenta" />
       </> : null}
     </FormDialog>
 

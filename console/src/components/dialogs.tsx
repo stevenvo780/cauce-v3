@@ -47,7 +47,7 @@ export function ConfirmDialog({
 }
 
 /** A modal form: the title, an optional purpose line, and room for the fields and the write bar. */
-export function FormDialog({ open, title, description, busy = false, wide = false, anchorTop = false, initialFocus, finalFocus, onClose, children }: {
+export function FormDialog({ open, title, description, busy = false, wide = false, anchorTop = false, initialFocus, finalFocus, onClose, footer, children }: {
   open: boolean;
   title: ReactNode;
   description?: ReactNode;
@@ -58,6 +58,8 @@ export function FormDialog({ open, title, description, busy = false, wide = fals
   initialFocus?: ComponentProps<typeof Dialog.Popup>['initialFocus'];
   finalFocus?: ComponentProps<typeof Dialog.Popup>['finalFocus'];
   onClose: () => void;
+  /** Stays on screen while the fields scroll. A phone dialog is taller than the viewport otherwise. */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -73,10 +75,10 @@ export function FormDialog({ open, title, description, busy = false, wide = fals
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
         <Dialog.Popup initialFocus={initialFocus} finalFocus={finalFocus}
-          className={cn('fixed left-1/2 z-50 grid max-h-[calc(100dvh-1.5rem)] -translate-x-1/2 content-start gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop',
-            anchorTop ? 'top-3 sm:top-[6dvh] max-h-[calc(100dvh-1.5rem)] sm:max-h-[88dvh]' : 'top-1/2 -translate-y-1/2',
+          className={cn('fixed left-1/2 z-50 flex max-h-[calc(100dvh-1.5rem)] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-pop',
+            anchorTop ? 'top-3 sm:top-[6dvh] sm:max-h-[88dvh]' : 'top-1/2 -translate-y-1/2',
             wide ? 'w-[min(94vw,720px)]' : 'w-[min(94vw,640px)]')}>
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex shrink-0 items-start justify-between gap-3 p-5 pb-0">
             <div className="min-w-0">
               <Dialog.Title className="m-0 text-base font-semibold">{title}</Dialog.Title>
               {description ? <Dialog.Description className="m-0 mt-0.5 text-xs text-muted">{description}</Dialog.Description> : null}
@@ -86,7 +88,8 @@ export function FormDialog({ open, title, description, busy = false, wide = fals
               <X size={16} aria-hidden="true" />
             </Dialog.Close>
           </div>
-          {children}
+          <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto p-5">{children}</div>
+          {footer ? <div className="shrink-0 border-t border-line bg-surface px-5 py-3">{footer}</div> : null}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

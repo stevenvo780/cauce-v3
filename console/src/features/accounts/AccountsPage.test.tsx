@@ -100,6 +100,14 @@ async function openInventory() {
   return within(el ?? document.body);
 }
 
+async function fillNeutralAccount(user: { type: (element: HTMLElement, text: string) => Promise<void> }) {
+  await user.type(screen.getByLabelText(/^id de cuenta/i), 'cuenta-ejemplo');
+  await user.type(screen.getByLabelText(/^proveedor/i), 'codex');
+  await user.type(screen.getByLabelText(/id externo de la suscripción/i), 'org-9f21');
+  await user.type(screen.getByLabelText(/^tenant pagador/i), 'Acme');
+  await user.type(screen.getByLabelText(/locator de la credencial/i), 'CAUCE_PROVIDER_PATH');
+}
+
 it('declara no disponible el inventario cuando el gateway no publica provider_accounts', async () => {
   configuration({ agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
   const user = userEvent.setup();
@@ -125,11 +133,10 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
 
   await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await fillNeutralAccount(user);
 
-// Apply does not exist as a parallel path: it is disabled until the server validated exactly
-    // this mutation in dry-run.
+  // Apply does not exist as a parallel path: it is disabled until the server validated exactly
+  // this mutation in dry-run.
   expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
 
@@ -139,10 +146,10 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
     dry_run: true,
     expected_revision: 4,
     mutation: {
-      resource: 'provider_account', action: 'create', id: 'codex-steven',
+      resource: 'provider_account', action: 'create', id: 'cuenta-ejemplo',
       value: {
-        provider: 'codex', external_account_id: 'org-9f21', payer_tenant_id: 'Steven', label: null,
-        credential_ref_kind: 'env_path', credential_ref: 'CAUCE_CODEX_STEVEN_PATH',
+        provider: 'codex', external_account_id: 'org-9f21', payer_tenant_id: 'Acme', label: null,
+        credential_ref_kind: 'env_path', credential_ref: 'CAUCE_PROVIDER_PATH',
         shared_with_pool: false, enabled: false,
       },
     },
@@ -164,8 +171,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
 
   await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await fillNeutralAccount(user);
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
   await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
 
@@ -183,12 +189,11 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
 
   await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await fillNeutralAccount(user);
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   const preview = await screen.findByLabelText(/dry-run de alta de cuenta/i);
-  expect(preview).not.toHaveTextContent('CAUCE_CODEX_STEVEN_PATH');
+  expect(preview).not.toHaveTextContent('CAUCE_PROVIDER_PATH');
   expect(preview).not.toHaveTextContent('"credential_ref":');
 });
 
@@ -205,8 +210,7 @@ it('bloquea aplicar si el recibo confirma otro locator aunque la proyección vis
   renderWithApi(<AccountsPage />);
   await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
+  await fillNeutralAccount(user);
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/sin el recibo exacto del dry-run/i);
   expect(accountActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();
