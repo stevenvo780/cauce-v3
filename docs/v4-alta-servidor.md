@@ -143,7 +143,7 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
 3. En **Host operativo**, elige `<empresa>-<nombre>`; en **Plantilla de ejecución**, la que ofrece esa computadora; en **Cuenta principal de ejecución**, la cuenta del proveedor que pagará al agente.
 4. **Previsualizar operación** y, si el resumen es correcto, **Encolar operación**. La operación avanza paso a paso. La primera vez que un agente usa su cuenta en esta computadora se para en **«Esperando autenticación»**: su contenedor ya existe, pero el proveedor todavía no tiene sesión dentro.
 5. **Autentica el proveedor del agente** desde la consola, en el mismo recibo de la operación o en la pestaña **Operación** de la ficha del agente:
-   1. En **«Autenticar la cuenta principal»** comprueba el proveedor, la cuenta y la computadora, y pulsa **Conectar cuenta**.
+   1. En **«Autenticar la cuenta principal»** comprueba el proveedor, la cuenta y la computadora, y pulsa **Iniciar sesión**.
    2. Se abre un terminal con el login del proveedor, que corre dentro del contenedor del agente en tu máquina. Sigue lo que pide: con Codex, abre en tu navegador la dirección que muestra y escribe el código; con Claude, abre la dirección y pega en el terminal el código que te devuelve. Entra con la cuenta que elegiste como «Cuenta principal de ejecución».
    3. Cuando el terminal confirme el inicio de sesión, pulsa **Verificar conexión**. Cauce comprueba que la identidad es la de esa cuenta y que el CLI del proveedor responde; aparece **«Cuenta e identidad verificadas»**.
    4. Pulsa **Reanudar operación** y espera a **«Completada»**.
@@ -187,9 +187,9 @@ Los mensajes de `cauce hosts setup` y `status` salen con el prefijo `cauce:`; lo
 | el agente se crea pero no conecta (bootstrap sin respuesta) | la máquina salió de la tailnet o no llega al puerto 8443 del gateway | `tailscale status` y la prueba de `gateway-alcanzable` del paso 2.1 |
 | al crear un agente: permiso denegado en Docker | el usuario no está en `docker`, o su gestor arrancó antes de añadirlo | `sudo usermod -aG docker cauce-<empresa>` y `sudo systemctl restart user@$(id -u cauce-<empresa>).service` |
 | la operación queda en «Esperando autenticación» | el proveedor aún no tiene sesión en el contenedor del agente | autentícalo desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)); si no vas a hacerlo, **Cancelar operación** |
-| **Conectar cuenta** falla («La conexión no se pudo verificar») o no aparece el terminal | la máquina no sirve el login (`cauce hosts status` da `"provider_auth": false`) o su política de login no casa con la del ejecutor | repite `cauce hosts setup`; el diario lo explica: `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service \| grep 'provider authentication'` |
-| **Verificar conexión**: «La cuenta conectada no corresponde a la identidad autorizada» | iniciaste sesión con otra cuenta del proveedor | **Cancelar conexión**, **Conectar cuenta** otra vez y entra con la cuenta correcta |
-| **Verificar conexión**: «La conexión caducó» | pasaron más de 10 minutos desde **Conectar cuenta** | vuelve a pulsar **Conectar cuenta** |
+| **Iniciar sesión** falla («La conexión no se pudo verificar») o no aparece el terminal | la máquina no sirve el login (`cauce hosts status` da `"provider_auth": false`) o su política de login no casa con la del ejecutor | repite `cauce hosts setup`; el diario lo explica: `journalctl --user -u cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service \| grep 'provider authentication'` |
+| **Verificar conexión**: «La cuenta conectada no corresponde a la identidad autorizada» | iniciaste sesión con otra cuenta del proveedor | **Cancelar conexión**, **Iniciar sesión** otra vez y entra con la cuenta correcta |
+| **Verificar conexión**: «La conexión caducó» | pasaron más de 10 minutos desde **Iniciar sesión** | vuelve a pulsar **Iniciar sesión** |
 
 ## 7. Dar de baja la computadora
 
