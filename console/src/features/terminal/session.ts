@@ -62,8 +62,9 @@ function membershipSummary(states: (boolean | null | undefined)[]): boolean | un
 
 /**
  * Resolves publish authority from the actor-scoped /topology/access snapshot.
- * Same-tenant targets require a shared room; cross-tenant targets require a
- * directed route/control ACL while the source remains one of the actor's rooms.
+ * Same-tenant targets require a shared room. Cross-tenant targets require a
+ * directed `allow_route` edge, the same column the store checks before publish.
+ * `allow_control` authorizes terminal and configuration, not the message itself.
  */
 export function operatorRouteForAgent(
   topology: TopologySnapshot | undefined,
@@ -128,15 +129,15 @@ export function operatorRouteForAgent(
   const edge = (topology?.acl_edges ?? []).find((candidate) => (
     same(candidate.from_tenant, actor.tenantId) && same(candidate.to_tenant, agent.tenantId)
   ));
-  if (edge?.enabled !== true || edge.allow_route !== true || edge.allow_control !== true) {
+  if (edge?.enabled !== true || edge.allow_route !== true) {
     return {
       allowed: false,
       sourceRoomIds,
       membership: true,
-      reason: `ACL ${actor.tenantId} → ${agent.tenantId} no concede route + control; destino bloqueado.`,
+      reason: `ACL ${actor.tenantId} → ${agent.tenantId} no concede ruta; destino bloqueado.`,
     };
   }
-  return { allowed: true, sourceRoomIds, membership: true, reason: 'Room de origen y ACL route + control verificados.' };
+  return { allowed: true, sourceRoomIds, membership: true, reason: 'Room de origen y ACL de ruta verificados.' };
 }
 
 /** Projects authoritative server messages into a recipient-scoped, non-durable UI session. */

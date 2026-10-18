@@ -61,6 +61,14 @@ it('publishes cross-tenant only from an operator room allowed by directed ACL', 
     allowed: false,
     sourceRoomIds: ['grp.steven'],
   });
+  expect(operatorRouteForAgent({
+    ...topology,
+    acl_edges: [{ from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: true, allow_control: false }],
+  }, { subject: 'Steven:kant' }, target)).toMatchObject({ allowed: true, sourceRoomIds: ['grp.steven'] });
+  expect(operatorRouteForAgent({
+    ...topology,
+    acl_edges: [{ from_tenant: 'Steven', to_tenant: 'Miguel', enabled: true, allow_route: false, allow_control: true }],
+  }, { subject: 'Steven:kant' }, target).allowed).toBe(false);
 });
 
 it('falla cerrado cuando no se pudo leer la membresía, y no toma prestada la sala del destinatario', () => {

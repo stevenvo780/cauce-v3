@@ -279,7 +279,7 @@ it('bloquea el envío a un destino sin ruta y dice el motivo, en vez de dejar pu
   const campo = within(hilo).getByRole('textbox', { name: /mensaje para salva/i });
   await waitFor(() => { expect(campo).toBeDisabled(); });
   expect(within(hilo).getByRole('button', { name: /^enviar$/i })).toBeDisabled();
-  expect(within(hilo).getByText(/no concede route \+ control|no pertenece a un room de origen|no comparten un room/i)).toBeInTheDocument();
+  expect(within(hilo).getByText(/no concede ruta|no pertenece a un room de origen|no comparten un room/i)).toBeInTheDocument();
   expect(enviados).toHaveLength(0);
 }, 20_000);
 
