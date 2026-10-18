@@ -9,7 +9,7 @@ import { StoreError } from './repository/errors.js';
 import { assertQuotaEnvironmentIdentity, bindQuotaEnvironmentIdentity } from './quota-identity.js';
 import { expireQuotaAuthentication } from './quota-auth-expiry.js';
 
-export type QuotaFailureDetail = 'runtime_release_stale' | 'runtime_image_stale' | 'reader_unreadable' | 'environment_not_running' | 'isolation_rejected';
+export type QuotaFailureDetail = 'runtime_release_stale' | 'runtime_image_stale' | 'reader_unreadable' | 'environment_not_running' | 'isolation_rejected' | 'cli_update_failed' | 'cli_update_timed_out';
 
 const Result = z.object({ runtime_verified: z.literal(true).optional(), container_name: z.string().regex(/^cauce-quota-[a-f0-9]{32}$/u).optional(),
   authenticated_verified: z.literal(true).optional(), account_identity: z.string().min(1).max(256).optional(), account_id: z.string().optional(),

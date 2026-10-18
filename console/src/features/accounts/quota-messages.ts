@@ -118,6 +118,8 @@ const QUOTA_STEP_REASON: Record<string, string> = {
   reader_unreadable: 'El lector de cuotas no devolvió una medición. Reintenta. Si se repite, actualiza el CLI del entorno.',
   environment_not_running: 'El contenedor del entorno no está en ejecución. Vuelve a consultar. Si sigue parado, revisa Docker en ese ordenador.',
   isolation_rejected: 'El contenedor no cumple el aislamiento o la propiedad aprobados. No se tocó la sesión. Revisa el entorno en ese ordenador antes de volver a consultar.',
+  cli_update_timed_out: 'La actualización del CLI se cortó al llegar al tiempo límite. Vuelve a intentarlo. Si se repite, ese ordenador no alcanza a descargar el paquete o el contenedor se queda corto de tiempo.',
+  cli_update_failed: 'El comando de actualización terminó con error. Vuelve a intentarlo. Si se repite, revisa que el entorno pueda instalar paquetes: hace falta red y el usuario del contenedor.',
 };
 
 export function describeKnownOperationError(code: string): string | undefined {

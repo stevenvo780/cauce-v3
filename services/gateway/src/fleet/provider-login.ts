@@ -41,7 +41,7 @@ const CleanupSchema = z.object({ stopped_verified: z.literal(true) }).strict();
 const OutputSchema = z.object({ type: z.literal('output'), data: z.string().max(87_384).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u) }).strict();
 const EventSchema = z.union([StartedSchema, ExitSchema, OutputSchema]);
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
-export const QUOTA_STEP_REASONS = ['runtime_release_stale', 'runtime_image_stale', 'reader_unreadable', 'environment_not_running', 'isolation_rejected'] as const;
+export const QUOTA_STEP_REASONS = ['runtime_release_stale', 'runtime_image_stale', 'reader_unreadable', 'environment_not_running', 'isolation_rejected', 'cli_update_failed', 'cli_update_timed_out'] as const;
 export type QuotaStepReason = typeof QUOTA_STEP_REASONS[number];
 const QUOTA_STEP_REASON = new Map<string, QuotaStepReason>([
   ['runtime_release_stale', 'runtime_release_stale'],
@@ -58,6 +58,8 @@ const QUOTA_STEP_REASON = new Map<string, QuotaStepReason>([
   ['quota environment is not running', 'environment_not_running'],
   ['quota CLI executable cannot be inspected', 'reader_unreadable'],
   ['quota CLI version receipt is invalid', 'reader_unreadable'],
+  ['cli_update_failed', 'cli_update_failed'],
+  ['cli_update_timed_out', 'cli_update_timed_out'],
 ]);
 export function readQuotaStepReason(error: unknown): QuotaStepReason | undefined {
   if (!error || typeof error !== 'object' || !('quotaStepReason' in error)) return undefined;
@@ -66,7 +68,9 @@ export function readQuotaStepReason(error: unknown): QuotaStepReason | undefined
 }
 function quotaStepReason(stderr: string): QuotaStepReason | undefined {
   const line = stderr.split('\n').find(item => item.startsWith('fleet effect failed: '));
-  return line ? QUOTA_STEP_REASON.get(line.slice('fleet effect failed: '.length).trim()) : undefined;
+  if (!line) return undefined;
+  const text = line.slice('fleet effect failed: '.length).trim();
+  return QUOTA_STEP_REASON.get(text) ?? QUOTA_STEP_REASONS.find(item => text.startsWith(`${item}: `));
 }
 const maximumPinBytes = 536_870_912;
 

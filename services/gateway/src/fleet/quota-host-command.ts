@@ -47,7 +47,10 @@ async function invokeQuotaHostCommand(config: HostCommandConfig, execution: Quot
   const command = config.transport === undefined ? { executable: config.python, args }
     : { executable: config.transport.executable, args: [...await fleetSshArguments(config.transport), config.transport.destination,
       [config.python, ...args].map(quote).join(' ')] };
-  return boundedProviderReceipt(command.executable, command.args, JSON.stringify(input), signal, config.timeoutMs ?? 180_000);
+  const budget = config.timeoutMs ?? 180_000;
+  // update_cli lets the executor time out at 200s and print the reason; a shorter receipt kills it with no stderr.
+  const timeoutMs = execution.action === 'update_cli' ? Math.min(300_000, Math.max(budget, 240_000)) : budget;
+  return boundedProviderReceipt(command.executable, command.args, JSON.stringify(input), signal, timeoutMs);
 }
 
 export async function performQuotaHostCommand(config: HostCommandConfig, execution: QuotaOperationExecution,

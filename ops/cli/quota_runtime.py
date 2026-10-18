@@ -8,7 +8,7 @@ import re
 import subprocess
 import uuid
 
-from fleet_executor_container import docker, inspect_container
+from fleet_executor_container import diagnostic, docker, inspect_container
 from fleet_executor_policy import SafeFailure
 
 NON_HARNESS_PROVIDERS = frozenset({'agy'})
@@ -570,9 +570,14 @@ def perform(policy: dict, document: dict) -> dict:
         return {**normalize_cli_snapshot(environment['provider'], raw, environment['account_id']),
                 'cli_version': provider_version(environment)}
     if action == 'update_cli':
-        from fleet_executor_runtime import checked_command
+        # Under the host receipt budget (240s) so a timeout is reported instead of a killed process with no stderr.
         command = ['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],
                    *provider_operation(policy, environment['provider'], 'update', command=True)]
-        checked_command(command, timeout=180)
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=200, check=False)
+        except subprocess.TimeoutExpired as error:
+            raise SafeFailure('cli_update_timed_out') from error
+        if result.returncode:
+            raise SafeFailure('cli_update_failed: ' + diagnostic(result.stderr))
         return {'cli_updated_verified': True, 'cli_version': provider_version(environment, updated=True)}
     raise SafeFailure('unsupported quota environment action')
