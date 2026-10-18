@@ -133,13 +133,13 @@ it('reads durable history and performs cancel/resume using the latest operation 
     }));
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
-  await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
-  await user.click(within(screen.getByLabelText('Operación de flota')).getByRole('button', { name: 'Cancelar operación' }));
-  await within(screen.getByLabelText('Operación de flota')).findByText(/Cancelación en curso/);
+  await user.click(await screen.findByRole('button', { name: 'Ver detalle de Detener a one' }));
+  await user.click(within(screen.getByLabelText('Operación de flota')).getByRole('button', { name: 'Cancelar' }));
+  await waitFor(() => { expect(controls).toEqual([{ expected_version: 3 }]); });
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
-  await within(screen.getByLabelText('Operación de flota')).findByText(/Esperando autenticación/);
-  await user.click(screen.getByRole('button', { name: 'Reanudar operación' }));
-  await within(screen.getByLabelText('Operación de flota')).findByText(/En ejecución/);
+  await within(screen.getByLabelText('Operación de flota')).findByText(/Esperando tu acción/);
+  await user.click(screen.getByRole('button', { name: 'Reanudar' }));
+  await within(screen.getByLabelText('Operación de flota')).findByText(/En curso/);
   expect(controls).toEqual([{ expected_version: 3 }, { expected_version: 4 }]);
 });
 it('authenticates within the operation and resumes manually only with its reread version', async () => {
@@ -161,13 +161,13 @@ it('authenticates within the operation and resumes manually only with its reread
     }));
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
-  await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
+  await user.click(await screen.findByRole('button', { name: 'Ver detalle de Iniciar a one' }));
   await user.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
-  await screen.findByText(/Operación releída en versión 4/i);
+  await screen.findByText(/Cuenta verificada/i);
   expect(resumed).toEqual([]);
   expect(document.body.textContent).not.toContain('private-test-profile');
-  await user.click(screen.getByRole('button', { name: 'Reanudar operación' }));
-  await within(screen.getByLabelText('Operación de flota')).findByText(/En ejecución/);
+  await user.click(screen.getByRole('button', { name: 'Reanudar' }));
+  await within(screen.getByLabelText('Operación de flota')).findByText(/En curso/);
   expect(resumed).toEqual([{ expected_version: 4 }]);
 });
 it('rejects a mismatched preview receipt without enabling enqueue', async () => {
@@ -197,7 +197,7 @@ it('polls durable progress and refuses a changed request hash', async () => {
   await screen.findByLabelText('Operación de flota');
   expect(await screen.findByRole('alert')).toHaveTextContent(/estado distinto del recibo/);
   expect(screen.getByLabelText('Operación de flota')).toHaveTextContent(/En cola/);
-  expect(screen.getByRole('button', { name: 'Cancelar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled();
 });
 it('retains the receipt after CAS conflict and rereads before retrying controls', async () => {
   const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
@@ -215,13 +215,13 @@ it('retains the receipt after CAS conflict and rereads before retrying controls'
     }));
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
-  await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
-  await user.click(screen.getByRole('button', { name: 'Cancelar operación' }));
+  await user.click(await screen.findByRole('button', { name: 'Ver detalle de Detener a one' }));
+  await user.click(screen.getByRole('button', { name: 'Cancelar' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('version changed');
-  expect(screen.getByRole('button', { name: 'Cancelar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Cancelar' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Cancelar operación' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'Cancelar operación' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Cancelar' }));
   await within(screen.getByLabelText('Operación de flota')).findByText(/Cancelada/);
   expect(versions).toEqual([3, 6]);
 });

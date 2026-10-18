@@ -26,9 +26,10 @@ const view = () => renderWithApi(<ConsoleAccessBoundary><RecentFleetOperations /
 it('lists summary and human-readable targets', async () => {
   serve(['config.write']);
   view();
-  expect(await screen.findAllByText('A/sala (grupo)')).toHaveLength(2);
-  expect(screen.getAllByText(/Purgar · Fallida · Purga: El ejecutor no pudo completar este paso\./u).length).toBeGreaterThan(0);
-  expect(screen.getByText('A (espacio)')).toBeInTheDocument();
+  expect(await screen.findAllByText('Eliminar definitivamente el grupo sala')).toHaveLength(2);
+  expect(screen.getAllByText(/Falló/u).length).toBeGreaterThan(0);
+  expect(screen.getByText('Preparar el espacio A')).toBeInTheDocument();
+  expect(screen.getAllByText(/por op/u).length).toBeGreaterThan(0);
 });
 
 it('cancels a failed operation with its version and replaces the row', async () => {
@@ -40,9 +41,10 @@ it('cancels a failed operation with its version and replaces the row', async () 
   }));
   view();
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Cancelar A/sala (grupo)' }));
-  await waitFor(() => { expect(screen.getByText(/Cancelada/u)).toBeInTheDocument(); });
-  expect(screen.getByRole('status')).toHaveTextContent('Operación de A/sala (grupo) cancelada.');
+  await user.click(await screen.findByRole('button', { name: 'Ver detalle de Eliminar definitivamente el grupo sala' }));
+  await user.click(await screen.findByRole('button', { name: 'Cancelar' }));
+  await waitFor(() => { expect(screen.getAllByText(/Cancelada/u).length).toBeGreaterThan(0); });
+  expect(screen.getAllByRole('status')[0]).toHaveTextContent('Eliminar definitivamente el grupo sala: cancelada.');
   expect(body).toEqual({ expected_version: 2 });
 });
 
@@ -52,15 +54,20 @@ it('sin operaciones, el vacío dice cuándo aparecerá la primera', async () => 
   expect(await screen.findByText(/Cuando se cree, detenga o reanude un agente, grupo o espacio/)).toBeInTheDocument();
 });
 
-it('offers Reanudar only for resumable operations', async () => {
+it('offers Reintentar only for resumable operations', async () => {
   serve(['config.write']);
   view();
-  await screen.findAllByText('A/sala (grupo)');
+  const user = userEvent.setup();
+  await screen.findAllByText('Eliminar definitivamente el grupo sala');
   const rows = screen.getAllByRole('listitem');
-  expect(within(rows[0]).getByRole('button', { name: /^Reanudar/u })).toBeEnabled();
-  expect(within(rows[1]).getByRole('button', { name: /^Reanudar/u })).toBeDisabled();
-  expect(within(rows[2]).getByRole('button', { name: /^Reanudar/u })).toBeDisabled();
-  expect(within(rows[2]).getByRole('button', { name: /^Cancelar/u })).toBeEnabled();
+  await user.click(within(rows[0]).getByRole('button', { name: /Ver detalle/u }));
+  expect(within(rows[0]).getByRole('button', { name: 'Reintentar' })).toBeEnabled();
+  await user.click(within(rows[1]).getByRole('button', { name: /Ver detalle/u }));
+  expect(within(rows[1]).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+  expect(within(rows[1]).getByRole('button', { name: 'Cancelar' })).toBeEnabled();
+  await user.click(within(rows[2]).getByRole('button', { name: /Ver detalle/u }));
+  expect(within(rows[2]).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+  expect(within(rows[2]).getByRole('button', { name: 'Cancelar' })).toBeEnabled();
 });
 
 it('stays quiet when the server predates the route', async () => {
@@ -74,7 +81,9 @@ it('stays quiet when the server predates the route', async () => {
 it('disables every control without config.write', async () => {
   serve(['config.read']);
   view();
-  await screen.findAllByText('A/sala (grupo)');
-  await waitFor(() => { for (const button of screen.getAllByRole('button', { name: /^(Reanudar|Cancelar)/u })) expect(button).toBeDisabled(); });
+  const user = userEvent.setup();
+  await screen.findAllByText('Eliminar definitivamente el grupo sala');
+  await user.click(screen.getAllByRole('button', { name: /Ver detalle/u })[0]);
+  await waitFor(() => { for (const button of screen.getAllByRole('button', { name: /^(Reintentar|Reanudar|Cancelar)$/u })) expect(button).toBeDisabled(); });
   expect(screen.getByRole('button', { name: 'Releer' })).toBeEnabled();
 });

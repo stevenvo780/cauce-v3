@@ -8,7 +8,8 @@ import {
   readAgentExtensions, readHostAllowed, RISK_LABEL, RISK_TONE, validateDraft,
   type AgentExtension, type ExtensionType,
 } from './ampliaciones';
-import { AgentFleetPreview, AgentFleetOperation } from './AgentFleetOperation';
+import { AgentFleetPreview, AgentFleetOperation, OperationStatusPill } from './AgentFleetOperation';
+import { needsAttention, operationHeadline, operationTitle } from './fleet-operation-text';
 import { useAgentExtensions } from './use-agent-extensions';
 import './agent-lifecycle.css';
 
@@ -191,6 +192,10 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
         onChange={(event) => { setTypedAlias(event.target.value); operational.clear(); }} /></label> : null}
     {!aliasOk ? <p className={HINT}>Escribe exactamente el alias para habilitar la vista previa con control total.</p> : null}
 
+    {operation && needsAttention(operation) ? <Notice role="status" tone="info" className="grid gap-1">
+      <span className="flex flex-wrap items-center gap-2"><OperationStatusPill operation={operation} /><strong>{operationTitle(operation)}</strong></span>
+      <span>{operationHeadline(operation)}</span>
+    </Notice> : null}
     {operational.error ? <Notice role="alert" tone="danger">{operational.error}</Notice> : null}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <span className="text-xs text-muted">Revisión esperada: {String(snapshot.revision ?? 'desconocida')}</span>
@@ -206,9 +211,9 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
     </div>
     {!operational.canWrite ? <Notice role="note">Edición de ampliaciones en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
     {operational.previewReceipt ? <AgentFleetPreview preview={operational.previewReceipt} /> : null}
-    {operational.request ? <details><summary>Solicitud de ampliaciones previsualizada</summary>
+    {operational.request ? <details><summary>Detalles técnicos de la solicitud</summary>
       <pre className={PREVIEW} aria-label="Solicitud de ampliaciones">{JSON.stringify(operational.request, null, 2)}</pre>
-    </details> : operational.submittedRequest ? <details><summary>Solicitud de ampliaciones enviada</summary>
+    </details> : operational.submittedRequest ? <details><summary>Detalles técnicos de la solicitud enviada</summary>
       <pre className={PREVIEW} aria-label="Solicitud de ampliaciones enviada">{JSON.stringify(operational.submittedRequest, null, 2)}</pre>
     </details> : null}
     {operation ? <>

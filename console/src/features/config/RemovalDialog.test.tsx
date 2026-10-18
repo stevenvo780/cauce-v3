@@ -65,9 +65,10 @@ it('keeps a host failure and partial fence visible and requires a current CAS ve
   await user.click(screen.getByRole('button', { name: 'Encolar retiro' }));
   await screen.findByLabelText('Operación de flota');
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('HOST_UNAVAILABLE');
-  expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('Cierre de entregas: Acreditado');
-  await user.click(screen.getByRole('button', { name: 'Reanudar operación' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('La computadora del agente no respondió');
+  expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('Cierre de entregas');
+  expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('HOST_UNAVAILABLE');
+  await user.click(screen.getByRole('button', { name: 'Reintentar' }));
   await waitFor(() => { expect(controls).toEqual([{ expected_version: 2 }]); });
 });
 it('blocks purge when dependencies are present', async () => {
@@ -75,7 +76,7 @@ it('blocks purge when dependencies are present', async () => {
   server.use(preview(false));
   const user = userEvent.setup();
   await user.click(await screen.findByRole('button', { name: 'Previsualizar purga' }));
-  expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Bloquea esta operación');
+  expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Todavía no se puede lanzar');
   expect(screen.getByRole('button', { name: 'Encolar purga' })).toBeDisabled();
 });
 it('fails closed when capability is missing even with config.write', async () => {
@@ -89,7 +90,7 @@ it('loads durable group history after reopening and restores without promising t
   const stored = await operation(input, 'succeeded', 7);
   renderDialog('restore', [stored]);
   const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
+  await user.click(await screen.findByRole('button', { name: /Ver detalle de Restaurar el grupo/u }));
   const dialog = within(screen.getByRole('dialog'));
   expect(dialog.getByText(/Los agentes conservan la admisión deshabilitada/)).toBeInTheDocument();
   expect(dialog.queryByRole('button', { name: 'Iniciar' })).not.toBeInTheDocument();

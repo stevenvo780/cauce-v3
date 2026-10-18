@@ -5,8 +5,8 @@ import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
-import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
-import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationSummary } from './fleet-operation-text';
+import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusPill } from './AgentFleetOperation';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
@@ -140,6 +140,10 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
         {embedded ? null : <button type="button" className="button secondary" onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</button>}
       </div>
+      {flow.operation && needsAttention(flow.operation) ? <div className="notice grid gap-1" role="status" aria-label="Operación en curso">
+        <span className="flex flex-wrap items-center gap-2"><OperationStatusPill operation={flow.operation} /><strong className="text-sm">{operationTitle(flow.operation)}</strong></span>
+        <span className="text-sm">{operationHeadline(flow.operation)}</span>
+      </div> : null}
       {fixedKind ? null : <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>}
       {agent ? <p>Estado durable del agente: {typeof agent.lifecycle_state === 'string' ? agent.lifecycle_state : 'Sin publicar en esta lectura'}.</p> : null}
       {!canWrite ? <p className="notice">No se acreditó permiso para operar agentes desde esta cuenta.</p> : null}
@@ -173,20 +177,29 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       {error ? <p className="notice" role="alert">{error}</p> : null}
       {samePreview ? <><AgentFleetPreview preview={validated.receipt} />
-        <details><summary>Solicitud exacta de esta previsualización</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
+        <details><summary>Detalles técnicos de la solicitud</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
       {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}
-        onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale}
+        onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale} hostId={draft.hostId || undefined}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
         <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} />
         {onReloaded ? <ActionButton label="Releer inventario" announceError={false} action={() => reloadSnapshot()} /> : null}</> : null}
-      <details><summary>Historial operativo durable</summary>
+      <details><summary>Historial de operaciones</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
-        {flow.history?.length ? <ul>{flow.history.map((operation) => <li key={operation.id}>
-          {operationSummary(operation)} · {operation.created_at}
-          <button type="button" className="button secondary" aria-label={`Abrir operación ${operation.id}`}
-            disabled={busy} onClick={() => { flow.accept(operation); }}>{operation.id}</button></li>)}</ul>
-          : <p>{target ? 'No hay operaciones acreditadas en esta lectura.' : 'El historial de este agente se podrá releer desde su registro guardado.'}</p>}
+        {flow.history?.length ? (() => {
+          const { attention, finished } = partitionOperations(flow.history);
+          const row = (operation: (typeof flow.history)[number]) => <li key={operation.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-line p-3">
+            <OperationLine operation={operation} />
+            <button type="button" className="button secondary" aria-label={`Ver detalle de ${operationTitle(operation)}`}
+              disabled={busy} onClick={() => { flow.accept(operation); }}>Ver</button>
+          </li>;
+          return <div className="grid gap-2">
+            {attention.length ? <ul className="m-0 grid list-none gap-2 p-0">{attention.map(row)}</ul> : null}
+            {finished.length ? <details><summary className="cursor-pointer text-sm">Terminadas ({finished.length})</summary>
+              <ul className="m-0 mt-2 grid list-none gap-2 p-0">{finished.map(row)}</ul></details> : null}
+          </div>;
+        })()
+          : <p>{target ? 'Todavía no hay operaciones para este agente.' : 'El historial de este agente se podrá ver desde su registro guardado.'}</p>}
       </details>
     </section> : null}
   </div>;
