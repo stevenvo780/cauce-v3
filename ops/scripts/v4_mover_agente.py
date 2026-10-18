@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import uuid
+from decimal import Decimal
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -21,7 +22,20 @@ sys.path.insert(0, str(HERE))
 
 from v4_mover_host import Remote  # noqa: E402
 
-REAL_ALIASES = ('gaia', 'hades', 'argos', 'hegel')
+
+def destination_limits(plan):
+    defaults = {'gaia': (1024**3, 1.5), 'hades': (1024**3, 1), 'argos': (3 * 1024**3, 2), 'hegel': (2 * 1024**3, 2)}
+    memory, cpus = defaults.get(plan.get('alias'), (1024**3, 1))
+    limits = plan['destination'].get('limits', {'memory_bytes': memory, 'cpus': cpus})
+    if not isinstance(limits, dict) or set(limits) != {'memory_bytes', 'cpus'} \
+            or type(limits['memory_bytes']) is not int or not 6 * 1024**2 <= limits['memory_bytes'] < 2**63 \
+            or type(limits['cpus']) not in (int, float) or not math.isfinite(limits['cpus']) \
+            or not 0.01 <= limits['cpus'] <= 1024:
+        raise ValueError('limits requiere memory_bytes de 6 MiB a int64 y cpus entre 0.01 y 1024')
+    nano_cpus = Decimal(str(limits['cpus'])) * 1_000_000_000
+    if nano_cpus != nano_cpus.to_integral_value():
+        raise ValueError('cpus solo admite precisión de nanocpu')
+    return dict(limits)
 
 
 def write_json(path, value):
@@ -73,12 +87,15 @@ def load_plan(path, alias):
         if not isinstance(plan[key], dict) or not isinstance(plan[key].get('route'), str) \
                 or not re.fullmatch(r'local|ssh:[A-Za-z0-9_.@-]{1,128}', plan[key]['route']):
             raise ValueError('ruta de host inválida')
-        if alias in REAL_ALIASES and not re.fullmatch(r'[a-f0-9]{16}', plan[key].get('machine_id_sha256', '')):
+        if not alias.startswith('zz-canary-') and not re.fullmatch(r'[a-f0-9]{16}', plan[key].get('machine_id_sha256', '')):
             raise ValueError('el plan requiere la identidad física medida de origen y destino')
+        if type(plan[key].get('sudo', False)) is not bool or plan[key].get('sudo') and plan[key]['route'] == 'local':
+            raise ValueError('sudo debe ser booleano y solo se admite por SSH')
+    if plan['source'].get('systemd_scope', 'user') not in ('user', 'system'):
+        raise ValueError('systemd_scope debe ser user o system')
     if not isinstance(plan['destination'].get('host_id'), str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', plan['destination']['host_id']):
         raise ValueError('host_id de destino inválido')
-    if alias in REAL_ALIASES and plan['destination']['host_id'] != 'server2':
-        raise ValueError('los cuatro agentes reales solo pueden trasladarse a server2')
+    destination_limits({**plan, 'alias': alias})
     names = set()
     targets = []
     for item in plan['roots']:
@@ -161,7 +178,8 @@ def target_parameters(fleet, original, plan):
 class Cut:
     def __init__(self, fleet, plan, evidence, alias_config):
         self.fleet, self.plan, self.evidence, self.alias_config = fleet, plan, evidence, alias_config
-        self.source, self.destination = Remote(plan['source']['route']), Remote(plan['destination']['route'])
+        self.source = Remote(plan['source']['route'], sudo=plan['source'].get('sudo', False))
+        self.destination = Remote(plan['destination']['route'], sudo=plan['destination'].get('sudo', False))
         self.receipt = {'schema': 'cauce.v4-mover-agente/1', 'alias': plan['alias'], 'company': plan['company'],
                         'tenant': plan['tenant'], 'state': 'preflight', 'steps': [], 'operations': [],
                         'started_at': time.time(), 'source_retained': True,
@@ -196,6 +214,14 @@ class Cut:
         return result
 
     def measure(self, label):
+        if self.plan['source'].get('sudo'):
+            from v4_medicion_migracion import load, scope_from_config
+            scope = load(str(self.evidence / 'antes.json'))['scope'] if label != 'antes' else scope_from_config(
+                json.loads(self.alias_config.read_text()), [self.plan['alias']])
+            receipt = self.source.call('measure', {'label': label, 'scope': scope, 'route': self.plan['source']['route']})
+            write_json(self.evidence / (label + '.json'), receipt)
+            load(str(self.evidence / (label + '.json')))
+            return
         arguments = [str(HERE / 'v4-medicion-migracion.sh'), 'medir', '--label', label,
                      '--out', str(self.evidence / (label + '.json'))]
         route = self.plan['source']['route']
@@ -294,7 +320,7 @@ class Cut:
         write_json(self.evidence / 'source-host.json', source)
         if self.plan['source'].get('machine_id_sha256', source['machineIdSha256']) != source['machineIdSha256']:
             raise ValueError('la identidad física del origen no coincide con el plan')
-        if alias in REAL_ALIASES and source['machineIdSha256'] == destination['host']['machineIdSha256']:
+        if not alias.startswith('zz-canary-') and source['machineIdSha256'] == destination['host']['machineIdSha256']:
             raise ValueError('el destino es el mismo ordenador físico que el origen')
         if source['machineIdSha256'] == destination['host']['machineIdSha256']:
             destination_path = pathlib.PurePosixPath(common['directory'])
@@ -338,9 +364,9 @@ class Cut:
                 self.relocation_attempted = True
                 self.step('reubicar-flota', lambda: self.fleet.operation('update', alias, target, timeout=timeout))
             if target['placement']['mode'] == 'container':
-                defaults = {'gaia': (1024**3, 1.5), 'hades': (1024**3, 1), 'argos': (3 * 1024**3, 2), 'hegel': (2 * 1024**3, 2)}
-                memory, cpus = defaults.get(alias, (1024**3, 1))
-                self.step('limites-destino', lambda: self.destination.call('limit', {**common, 'memory': memory, 'cpus': cpus}))
+                limits = destination_limits(self.plan)
+                self.step('limites-destino', lambda: self.destination.call('limit', {
+                    **common, 'memory': limits['memory_bytes'], 'cpus': limits['cpus']}))
             self.step('aplicar-contexto-destino', lambda: self.fleet.refresh_context(alias,
                 'Aplicar el contexto del agente en su nuevo ordenador tras el traslado.', timeout=timeout))
             proof = self.step('verificar', lambda: self.fleet.verify(alias, target, timeout=timeout))
@@ -383,8 +409,8 @@ def main():
     parser.add_argument('--inventario', type=pathlib.Path, help='snapshot público reciente de configuración y capacidad para simular')
     parser.add_argument('--copia', type=pathlib.Path, help='copia preliminar local cuyo manifiesto y bytes se comprueban al simular')
     args = parser.parse_args()
-    if args.alias not in REAL_ALIASES and not re.fullmatch(r'zz-canary-[a-z0-9-]+', args.alias):
-        parser.error('alias permitido: gaia, hades, argos, hegel o zz-canary-* propio')
+    if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', args.alias):
+        parser.error('alias inválido; debe identificar un agente del registro de la empresa')
     plan_path = args.plan or ROOT / '.delegados/v4/migracion' / (args.alias + '.json')
     if not args.ejecutar:
         from v4_simular_traslado import simulate

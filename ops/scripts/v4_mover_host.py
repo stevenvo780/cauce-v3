@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from decimal import Decimal
 
 BOOTSTRAP = '''import base64,io,json,pathlib,sys,tempfile,zipfile
 request=json.loads(sys.stdin.buffer.readline())
@@ -132,6 +133,9 @@ def dispatch(request):
     with tempfile.TemporaryDirectory(prefix='cauce-move-data-') as work:
         if action == 'identity':
             print(json.dumps(observed_host()))
+        elif action == 'measure':
+            from v4_medicion_migracion import measure
+            print(json.dumps(measure(request['label'], request['scope'], request['route'])))
         elif action.startswith('legacy-'):
             from v4_mover_legado import legacy_unit
             print(json.dumps(legacy_unit(request, action.removeprefix('legacy-'))))
@@ -205,7 +209,8 @@ def dispatch(request):
                    '--cpus', str(request['cpus']), info['Id'])
             info = json.loads(docker('inspect', info['Id']))[0]
             if info['HostConfig']['Memory'] != request['memory'] \
-                    or info['HostConfig']['NanoCpus'] != int(request['cpus'] * 1_000_000_000):
+                    or info['HostConfig']['MemorySwap'] != request['memory'] \
+                    or info['HostConfig']['NanoCpus'] != int(Decimal(str(request['cpus'])) * 1_000_000_000):
                 raise ValueError('resource limits did not apply')
             print(json.dumps({'verified': True, 'memory': request['memory'], 'cpus': request['cpus']}))
         else:
@@ -216,7 +221,7 @@ def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
     names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
-             'v4_git_migracion.py', 'v4_alcance_copia.py']
+             'v4_git_migracion.py', 'v4_alcance_copia.py', 'v4_medicion_migracion.py']
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
             archive.writestr(name, (root / name).read_bytes())
@@ -224,12 +229,16 @@ def bundle():
 
 
 class Remote:
-    def __init__(self, route):
-        self.route = route
+    def __init__(self, route, *, sudo=False):
+        if type(sudo) is not bool or sudo and route == 'local':
+            raise ValueError('sudo requires an explicit SSH route')
+        self.route, self.sudo = route, sudo
 
     def call(self, action, payload, source=None, destination=None):
         import shlex
         command = ['python3', '-I', '-B', '-c', BOOTSTRAP]
+        if self.sudo:
+            command = ['sudo', '-n', '--', *command]
         if self.route != 'local':
             command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
                        '-o', 'ServerAliveCountMax=3', self.route.removeprefix('ssh:'), shlex.join(command)]

@@ -254,16 +254,24 @@ async function profile(pool: DatabasePool, tenant: string, alias: string) {
 
 export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown): Promise<unknown> {
   const packet = Packet.parse(raw);
+  let selectedIdentity: ReturnType<typeof identity> | undefined;
   const account = (await pool.query<{ tenant_id: string; alias: string }>(
     'SELECT tenant_id,alias FROM console_users WHERE id=$1 AND active', [packet.human_id])).rows[0];
   if (!account) throw new StoreError('forbidden', 'platform administrator is unavailable');
   const source: CompanyAuthoritySource = async (client: DatabaseClient) => {
+    if (selectedIdentity) await lockFleetRevision(client);
     const authority = await lockCompanyAuthority(client, { tenant: account.tenant_id, alias: account.alias,
       humanId: packet.human_id, requestedCompany: packet.company });
     assertPlatformAdmin(authority);
     if (authority.actingCompany !== packet.company) throw new StoreError('forbidden', 'migration company authority changed');
     if (packet.tenant !== null && !(await client.query('SELECT 1 FROM tenants WHERE id=$1 AND company_id=$2',
       [packet.tenant, packet.company])).rowCount) throw new StoreError('forbidden', 'migration tenant belongs to another company');
+    if (selectedIdentity && !(await client.query(`SELECT 1 FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
+      WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.company_id=$3 AND tenant.company_id=$3
+        AND agent.purged_at IS NULL AND tenant.purged_at IS NULL FOR SHARE OF agent,tenant`,
+    [selectedIdentity.tenant_id, selectedIdentity.alias, packet.company])).rowCount) {
+      throw new StoreError('not_found', 'migration target is not registered in the selected company');
+    }
     return authority;
   };
   await withTransaction(pool, source);
@@ -280,22 +288,22 @@ export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown)
   if (parsedPath.pathname.startsWith(operations)) {
     if (!fleet) conflict('fleet executor is unavailable');
     if (method === 'POST' && (path === operations || path === `${operations}/preview`)) {
-      const request = FleetOperationRequestSchema.parse(payload); identity(request.target, packet.tenant);
+      const request = FleetOperationRequestSchema.parse(payload); selectedIdentity = identity(request.target, packet.tenant);
       if (path.endsWith('/preview')) return fleet.preview(account.tenant_id, account.alias, request, subject);
       await preserveLegacyAuthority(pool, source, request);
       const operation = record(await fleet.enqueue(account.tenant_id, account.alias, request, subject));
       return { operation_id: operation.id, status: operation.status, operation };
     }
     if (method === 'GET' && parsedPath.pathname === operations) {
-      const target = FleetTargetSchema.parse(Object.fromEntries(parsedPath.searchParams)); identity(target, packet.tenant);
+      const target = FleetTargetSchema.parse(Object.fromEntries(parsedPath.searchParams)); selectedIdentity = identity(target, packet.tenant);
       if (!fleet.list) conflict('fleet history is unavailable');
       return { operations: await fleet.list(account.tenant_id, account.alias, target, subject) };
     }
     const match = new RegExp(`^${operations}/([a-f0-9-]{36})(/cancel)?$`, 'u').exec(path);
     if (match?.[1]) {
       const operation = record(await fleet.get(account.tenant_id, account.alias, match[1], subject));
-      identity(record(operation.target), packet.tenant);
-      if (method === 'GET' && !match[2]) return operation;
+      selectedIdentity = identity(record(operation.target), packet.tenant);
+      if (method === 'GET' && !match[2]) { await withTransaction(pool, source); return operation; }
       if (method === 'POST' && match[2]) return fleet.cancel(account.tenant_id, account.alias, match[1],
         z.number().int().nonnegative().parse(record(payload).expected_version), subject);
     }

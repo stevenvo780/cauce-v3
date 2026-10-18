@@ -9,16 +9,26 @@ import subprocess
 import uuid
 
 
+def legacy_manager(source, alias, entry):
+    unit = source['legacy_unit']
+    user = source['systemd_user']
+    scope = source.get('systemd_scope', 'user')
+    if unit != 'cauce-v3-container-' + alias + '.service' or user != entry.get('systemdUser', 'stev') \
+            or scope not in ('user', 'system') or scope != entry.get('systemdScope', 'user'):
+        raise ValueError('legacy manager differs from the alias inventory')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
+        raise ValueError('invalid legacy manager user')
+    if scope == 'system' and user != 'root':
+        raise ValueError('the system legacy manager must be root')
+    return scope, user
+
+
 def legacy_unit(request, action):
     from v4_mover_host import docker
     source, alias = request['source'], request['alias']
     entry = request['config']['aliases'][alias]
+    scope, user = legacy_manager(source, alias, entry)
     unit = source['legacy_unit']
-    user = source['systemd_user']
-    if unit != 'cauce-v3-container-' + alias + '.service' or user != entry.get('systemdUser', 'stev'):
-        raise ValueError('legacy manager differs from the alias inventory')
-    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
-        raise ValueError('invalid legacy manager user')
     pin = source['container_id']
     info = json.loads(docker('inspect', entry['container']))[0]
     if action not in {'status', 'stop', 'start'}:
@@ -26,13 +36,16 @@ def legacy_unit(request, action):
     if not re.fullmatch(r'[0-9a-f]{64}', pin) or info['Id'] != pin \
             or action != 'start' and info['State']['Running'] is not True:
         raise ValueError('legacy container differs from its running original')
-    uid = pwd.getpwnam(user).pw_uid
-    command = ['env', 'XDG_RUNTIME_DIR=/run/user/' + str(uid),
-               'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus', 'systemctl', '--user']
-    if uid != os.geteuid():
-        if os.geteuid() != 0:
-            raise ValueError('the source route must reach the legacy manager user')
-        command = ['runuser', '-u', user, '--', *command]
+    if scope == 'system':
+        command = ['systemctl', '--system'] if os.geteuid() == 0 else ['sudo', '-n', '--', 'systemctl', '--system']
+    else:
+        uid = pwd.getpwnam(user).pw_uid
+        command = ['env', 'XDG_RUNTIME_DIR=/run/user/' + str(uid),
+                   'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(uid) + '/bus', 'systemctl', '--user']
+        if uid != os.geteuid():
+            if os.geteuid() != 0:
+                raise ValueError('the source route must reach the legacy manager user')
+            command = ['runuser', '-u', user, '--', *command]
 
     def run(*args):
         result = subprocess.run([*command, *args], capture_output=True, text=True, check=False, timeout=120)
@@ -40,6 +53,8 @@ def legacy_unit(request, action):
             raise RuntimeError('legacy unit ' + args[0] + ' failed')
         return result.stdout.strip()
 
+    if scope == 'system' and run('show', '--property=User', '--value', unit) not in {'', 'root'}:
+        raise ValueError('legacy system unit does not run as root')
     if action in {'stop', 'start'}:
         run(action, unit)
     state = run('show', '--property=ActiveState', '--value', unit)
@@ -49,7 +64,7 @@ def legacy_unit(request, action):
     running = json.loads(docker('inspect', pin))[0]['State']['Running']
     if running is not (action != 'stop'):
         raise ValueError('legacy container did not reach the requested running state')
-    return {'verified': True, 'unit': unit, 'systemd_user': user, 'active_state': state, 'container_id': pin,
+    return {'verified': True, 'unit': unit, 'systemd_user': user, 'systemd_scope': scope, 'active_state': state, 'container_id': pin,
             'container_running': running}
 
 

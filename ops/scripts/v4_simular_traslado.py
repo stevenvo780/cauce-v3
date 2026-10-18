@@ -66,6 +66,8 @@ def simulate(args, plan_path, load_plan, target_parameters):
     try:
         plan = {**load_plan(plan_path, args.alias), 'alias': args.alias}
         checks['plan_valid'] = True
+        from v4_mover_agente import destination_limits
+        checks['destination_limits'] = destination_limits(plan)
         if plan.get('platform_gateway'):
             checks['authority'] = 'platform_gateway'
         else:
@@ -84,6 +86,10 @@ def simulate(args, plan_path, load_plan, target_parameters):
         tenant = plan['tenant'] if plan else entry['tenant']
         if entry['tenant'] != tenant:
             raise ValueError('el plan y el catálogo discrepan sobre el tenant')
+        if plan and plan['source'].get('legacy_unit'):
+            from v4_mover_legado import legacy_manager
+            scope, user = legacy_manager(plan['source'], args.alias, entry)
+            checks['legacy_manager'] = {'scope': scope, 'user': user, 'sudo': plan['source'].get('sudo', False)}
     except (OSError, ValueError, KeyError, TypeError):
         blockers.append('alias_config_missing_or_invalid')
         tenant = plan['tenant'] if plan else None
