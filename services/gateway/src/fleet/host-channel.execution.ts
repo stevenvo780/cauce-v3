@@ -12,7 +12,7 @@ export async function hostFleetExecution(client:DatabaseClient,identity:Identity
   await lockFleetRevision(client,row.status==='cancelling'?undefined:Number(row.desired_revision??row.expected_revision),row.company_id);
   const prepared=await preparedState(client,row.id);
   const agents=(await client.query<Agent>(`SELECT tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,
-    state_directory,runtime_key,primary_room_id,lifecycle_state,host_id,runtime_mode,systemd_user,primary_account_id,model_id,reasoning_effort
+    state_directory,runtime_key,primary_room_id,lifecycle_state,host_id,runtime_mode,systemd_user,primary_account_id,model_id,reasoning_effort,extensions
     FROM agents WHERE company_id=$1 AND host_id=$2 AND purged_at IS NULL ORDER BY tenant_id,alias FOR SHARE`,
   [identity.company_id,identity.host_id])).rows;
   if (agents.length>1000) throw new FleetOperationError('conflict','host fleet snapshot exceeds its bound');

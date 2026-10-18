@@ -4,6 +4,7 @@ import { open } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { ExtensionsAllowedSchema } from '@cauce/protocol';
 import { StoreError, stableHostJson, type HostSetupArtifactRequest, type HostSetupScope } from '@cauce/store';
 import { LoginPathSchema, readPrivateJson } from './provider-login.js';
 import { privateBytes } from './signed-source.js';
@@ -35,6 +36,7 @@ const Policy = z.object({
   hooks: z.record(z.string(), Template).default({}),
   transport: Template.optional(),
   quota_environments: QuotaEnvironment.optional(),
+  extensions_allowed: ExtensionsAllowedSchema.optional(),
   authority: z.object({ identity_directory: z.literal('@identity@'), host_id: z.literal('@host@'), ca_certificate: z.string().min(1).max(4096) })
     .strict().optional(),
 }).strict();
@@ -170,6 +172,7 @@ export class HostSetupPackager {
     const { policy, release, image, quota_image: quotaImage, files } = this.config;
     const bundles = Object.fromEntries(Object.entries(policy.bundles).filter(([harness]) => enabled.has(harness)));
     const narrowed = { ...policy, bundles,
+      extensions_allowed: ExtensionsAllowedSchema.parse(scope.extensions_allowed ?? { types: [], mount_roots: [], networks: [] }),
       container_templates: policy.container_templates.filter(template => Object.hasOwn(bundles, template.harness_id)) };
     if (narrowed.quota_environments !== undefined) {
       const providers = narrowed.quota_environments.providers.filter(provider => provider === 'agy' || Object.hasOwn(bundles, provider));
@@ -182,7 +185,8 @@ export class HostSetupPackager {
         ...(image === undefined ? [] : [{ name: image.name, kind: 'image', sha256: image.sha256, size: image.size, image_id: image.id }]),
         ...(quotaImage === undefined ? [] : [{ name: quotaImage.name, kind: 'image', sha256: quotaImage.sha256, size: quotaImage.size, image_id: quotaImage.id }]),
         ...files.map(file => ({ name: file.name, kind: 'file', sha256: file.sha256, size: file.size }))],
-      policy: substitute(narrowed, text => text.replaceAll('@host@', scope.host_id).replaceAll('@company@', scope.company_id)) };
+      policy: { ...substitute(narrowed, text => text.replaceAll('@host@', scope.host_id).replaceAll('@company@', scope.company_id)) as typeof narrowed,
+        extensions_allowed: narrowed.extensions_allowed } };
     return { package: signed, signature: sign(null, Buffer.from(stableHostJson(signed)), this.key).toString('base64'),
       signer_public_key: this.signerPublicKey };
   }

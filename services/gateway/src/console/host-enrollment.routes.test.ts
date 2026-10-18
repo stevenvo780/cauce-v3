@@ -65,7 +65,8 @@ describe('host enrollment client IP limits', () => {
 /** Answers every query as the enrolled identity of the host it names, so a valid proof reaches the transaction. */
 function enrolledPool(keys: Record<string, string>) {
   const answer = vi.fn(async (_sql: string, params: unknown[] = []) => ({
-    rows: [{ public_key: keys[String(params[0])], available: true, timeout_ms: 0 }], rowCount: 1 }));
+    rows: [{ public_key: keys[String(params[0])], available: true, timeout_ms: 0,
+      extensions_allowed: { types: [], mount_roots: [], networks: [] } }], rowCount: 1 }));
   const connect = vi.fn(async () => ({ query: answer, on: vi.fn(), off: vi.fn(), release: vi.fn() }));
   return { pool: { query: answer, connect } as unknown as DatabasePool, connect };
 }

@@ -1,4 +1,18 @@
 import type { DatabaseClient } from '@cauce/store';
+import { ExtensionsSchema } from '@cauce/protocol';
+
+export async function desiredFleetExtensions(client: DatabaseClient, agents: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  const rows = (await client.query<{ tenant_id: string; alias: string; extensions: unknown }>(`SELECT agent.tenant_id,agent.alias,agent.extensions
+    FROM agents agent JOIN unnest($1::text[],$2::text[]) AS wanted(tenant_id,alias)
+      ON agent.tenant_id=wanted.tenant_id AND agent.alias=wanted.alias FOR SHARE OF agent`,
+  [agents.map(agent => agent.tenant_id), agents.map(agent => agent.alias)])).rows;
+  const extensions = new Map(rows.map(row => [JSON.stringify([row.tenant_id, row.alias]), ExtensionsSchema.parse(row.extensions)]));
+  return agents.map(agent => {
+    const value = extensions.get(JSON.stringify([agent.tenant_id, agent.alias]));
+    if (value === undefined) throw new Error('Fleet agent extensions are unavailable');
+    return { ...agent, extensions: value };
+  });
+}
 
 export async function trustedFleetBaseline(client: DatabaseClient, agents: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
   const keys = [...new Set(agents.map(agent => agent.runtime_key).filter((key): key is string => typeof key === 'string'))];

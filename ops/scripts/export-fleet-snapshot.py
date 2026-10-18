@@ -52,7 +52,7 @@ AGENT_FIELDS = frozenset(
     }
 )
 AGENT_OPTIONAL_FIELDS = frozenset({"runtime_key", "primary_room_id", "lifecycle_state", "host_id",
-                                   "runtime_mode", "systemd_user", "primary_account_id", "model_id", "reasoning_effort"})
+                                   "runtime_mode", "systemd_user", "primary_account_id", "model_id", "reasoning_effort", "extensions"})
 BOOTSTRAP_LIFECYCLES = frozenset({"draft", "provisioning", "auth_pending", "verifying"})
 LIFECYCLES = BOOTSTRAP_LIFECYCLES | {"ready", "failed", "retiring", "retired"}
 MEMBERSHIP_FIELDS = frozenset(
@@ -233,6 +233,9 @@ def _agents(
         label = f"agents[{index}]"
         if set(agent) - AGENT_OPTIONAL_FIELDS != AGENT_FIELDS:
             _exact_fields(agent, AGENT_FIELDS | AGENT_OPTIONAL_FIELDS, label)
+        # The executor enforces extensions from the original snapshot, outside the base manifests.
+        if "extensions" in agent and not isinstance(agent["extensions"], list):
+            raise SnapshotError(f"{label}.extensions must be an array")
         identity = _identity(agent, label, allowed_tenants)
         tenant, alias = identity
         lifecycle = _optional_text(agent.get("lifecycle_state"), f"{label}.lifecycle_state")

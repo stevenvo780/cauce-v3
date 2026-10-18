@@ -15,7 +15,7 @@ import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
-import { trustedFleetBaseline } from './baseline.js';
+import { desiredFleetExtensions, trustedFleetBaseline } from './baseline.js';
 import { fleetHostInputs } from './coordinator.js';
 import { performHostCommand, performHostLoginStop, type HostCommandConfig } from './host-command.js';
 import { assertLoginPins, cleanupProviderLogin, ContainerLoginBindingSchema, createProviderLogin, HelperLoginPinsSchema, LoginCommandSchema,
@@ -168,7 +168,15 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
   const raw = (await client.query<{ jsonb_build_object: unknown }>(snapshotQuery)).rows;
   if (raw.length !== 1) throw unavailable();
   const snapshot = Snapshot.parse(raw[0]?.jsonb_build_object);
-  snapshot.agents = await trustedFleetBaseline(client, snapshot.agents);
+  const tenants = new Set((await client.query<{ id: string }>('SELECT id FROM tenants WHERE company_id=$1', [row.company_id])).rows.map(tenant => tenant.id));
+  if (!tenants.has(scope.tenant_id) || prepared.previous_agents.some(agent => !tenants.has(String(agent.tenant_id)))
+      || prepared.fenced_targets.some(target => !tenants.has(target.tenant_id))) throw denied();
+  snapshot.agents = snapshot.agents.filter(agent => tenants.has(String(agent.tenant_id)));
+  const identities = new Set(snapshot.agents.map(agent => JSON.stringify([agent.tenant_id, agent.alias])));
+  snapshot.memberships = snapshot.memberships.filter(member => identities.has(JSON.stringify([member.tenant_id, member.alias])));
+  snapshot.purgedRuntimeKeys = (await client.query<{ runtime_key: string }>(`SELECT DISTINCT runtime_key FROM agents
+    WHERE company_id=$1 AND purged_at IS NOT NULL AND runtime_key IS NOT NULL ORDER BY runtime_key`, [row.company_id])).rows.map(agent => agent.runtime_key);
+  snapshot.agents = await desiredFleetExtensions(client, await trustedFleetBaseline(client, snapshot.agents));
   prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
   const matches = snapshot.agents.filter(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(matches.length === 1 ? matches[0] : undefined);
