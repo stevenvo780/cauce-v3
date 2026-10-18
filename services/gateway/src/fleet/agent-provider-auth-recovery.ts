@@ -14,11 +14,11 @@ export async function recoverAgentAuthSession(pool: DatabasePool, actor: Provide
     const binding = AgentAuthBindingSchema.parse(stored.binding);
     if (binding.actor.subject !== actor.subject || binding.actor.tenant_id !== actor.tenant_id || binding.actor.alias !== actor.alias
         || actor.requestedCompany !== undefined && actor.requestedCompany !== binding.actor.requestedCompany) throw new ProviderAuthError('AUTHORITY_REVOKED');
+    const cohort = JSON.stringify([binding.physical.host_id, binding.physical.runtime_user, binding.physical.profile_id]);
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,783003005))', [cohort]);
     const value = await loadProviderAuthRoutingScope(client, actor, binding.fence.operation_id);
     if (value.agent.company_id !== binding.actor.requestedCompany || value.sealed.target_sha256 !== binding.fence.scope_sha256
         || Number(value.operation.epoch) !== binding.fence.operation_epoch) throw new ProviderAuthError('AUTHORITY_REVOKED');
-    const cohort = JSON.stringify([binding.physical.host_id, binding.physical.runtime_user, binding.physical.profile_id]);
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,783003005))', [cohort]);
     await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE', [value.operation.id]);
     const current = (await client.query<{ reservation: { session_id: string; state: string } }>(`SELECT metadata->'provider_auth' AS reservation
       FROM fleet_operation_events WHERE operation_id=$1 AND metadata->'provider_auth'->>'session_id'=$2 ORDER BY id DESC LIMIT 1`, [value.operation.id, id])).rows[0];
@@ -29,7 +29,7 @@ export async function recoverAgentAuthSession(pool: DatabasePool, actor: Provide
     let cleanupPending = current.reservation.state !== 'released';
     if (cleanupPending) {
       const latest = (await client.query<{ id: string }>(`SELECT metadata->'provider_auth'->>'session_id' AS id FROM fleet_operation_events
-        WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`, [value.operation.id])).rows[0];
+        WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY fleet_operation_events.id DESC LIMIT 1`, [value.operation.id])).rows[0];
       if (latest?.id !== id) throw new ProviderAuthError('AUTHORITY_REVOKED');
       const stopped = await cleanup(binding, client); cleanupPending = !stopped;
       audit = { status: !stopped ? 'failed' : expired ? 'expired' : cancel ? 'cancelled' : 'failed',

@@ -65,7 +65,7 @@ export function providerAuthStreamUrl(sessionId: string, origin = globalThis.loc
 export function providerAuthClient(request: RequestFn): ProviderAuthClient {
   const path = '/v3/console/provider-auth/sessions';
   const post = <T,>(url: string, body: unknown) => request<T>(url,
-    { method: 'POST', body: JSON.stringify(body), cache: 'no-store', keepalive: true }, { requireCsrf: true });
+    { method: 'POST', body: JSON.stringify(body), cache: 'no-store', keepalive: true, signal: AbortSignal.timeout(360_000) }, { requireCsrf: true });
   return {
     resolveProviderAuthOperation: async operationId => {
       const result = record(await request(`/v3/console/provider-auth/operations/${id(operationId)}/scope`, { cache: 'no-store' }));

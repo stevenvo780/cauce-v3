@@ -13,6 +13,7 @@ import { trustedFleetBaseline } from './baseline.js';
 import { fleetHostInputs } from './coordinator.js';
 import type { FleetExecution } from './executor.js';
 import { recoverAgentAuthSession } from './agent-provider-auth-recovery.js';
+import { recoverableAgentAuthStart } from './agent-provider-auth-start.js';
 
 interface Pending { packet: AgentAuthCommand; binding: AgentAuthBinding; timer: ReturnType<typeof setTimeout>; resolve(value: AgentAuthResult): void }
 interface Output { binding: AgentAuthBinding; sequence: number; listeners: Set<(bytes: Uint8Array) => void> }
@@ -72,8 +73,9 @@ export class AgentProviderAuthBroker {
         }
       };
     }
-    this.service = Object.assign(manager, { resolve: (actor: ProviderAuthActor, id: string) =>
-      resolveProviderAuthRequest(pool, actor, id, this.resolvePolicy) });
+    const resolve = (actor: ProviderAuthActor, id: string) => resolveProviderAuthRequest(pool, actor, id, this.resolvePolicy);
+    manager.start = recoverableAgentAuthStart(pool, manager, (actor, request) => dependencies.authorize(actor, request), resolve);
+    this.service = Object.assign(manager, { resolve });
   }
   private async enrollment(client: DatabaseClient, host: string, company: string) {
     if ((await client.query(`SELECT 1 FROM fleet_hosts host JOIN fleet_host_identities identity
@@ -133,7 +135,7 @@ export class AgentProviderAuthBroker {
     if (this.pending.size >= 1000) throw new ProviderAuthError('SESSION_CONFLICT');
     return new Promise(resolve => {
       const timer = setTimeout(() => { this.pending.delete(command.id); resolve({ type: 'result', id: command.id, fence: binding.fence, ok: false }); },
-        command.type === 'verify' ? 120_000 : 15_000);
+        ['input','resize'].includes(command.type) ? 15_000 : 330_000);
       timer.unref(); this.pending.set(command.id, { binding, packet: { fence: binding.fence, command }, timer, resolve });
     });
   }
