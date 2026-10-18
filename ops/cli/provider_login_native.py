@@ -23,6 +23,7 @@ from provider_login_state import (
     pinned_digest,
     private_state,
     read_metadata,
+    release,
     remove_metadata,
     write_metadata,
 )
@@ -360,26 +361,40 @@ def run_guardian(plan: dict, user, root: int, lock: int, controller: dict) -> in
             tree.close()
             os.close(master)
             os.close(parent_fd)
-            os.close(lock)
-            os.close(root)
     return 2 if protocol_failed else 0
 
 
 def run_native(plan: dict, *, child: bool = False) -> int:
     user = native_user(plan, child=child)
     root = private_state(plan['state_root'], create=child)
-    lock = acquire(root, plan['operation_id'])
-    if read_metadata(root, plan['operation_id']) is not None:
-        os.close(lock)
+    try:
+        lock = acquire(root, plan['operation_id'])
+    except BaseException:
         os.close(root)
-        raise LoginFailure('login operation requires cleanup before reuse')
-    controller = process_identity(os.getpid())
-    guardian = os.fork()
-    if guardian == 0:
+        raise
+    try:
+        if read_metadata(root, plan['operation_id']) is not None:
+            raise LoginFailure('login operation requires cleanup before reuse')
+        controller = process_identity(os.getpid())
+        guardian = os.fork()
+    except BaseException:
         try:
-            os._exit(run_guardian(plan, user, root, lock, controller))
+            release(root, plan['operation_id'], lock)
+        finally:
+            os.close(root)
+        raise
+    if guardian == 0:
+        result = 2
+        try:
+            result = run_guardian(plan, user, root, lock, controller)
         except BaseException:
-            os._exit(2)
+            pass
+        finally:
+            try:
+                release(root, plan['operation_id'], lock)
+            finally:
+                os.close(root)
+        os._exit(result)
     os.close(lock)
     os.close(root)
     descriptor = open_pidfd(guardian)
@@ -445,6 +460,8 @@ def cleanup_native(identity: str, state_root: str) -> dict:
     finally:
         for descriptor in descriptors:
             os.close(descriptor)
-        if lock is not None:
-            os.close(lock)
-        os.close(root)
+        try:
+            if lock is not None:
+                release(root, identity, lock)
+        finally:
+            os.close(root)

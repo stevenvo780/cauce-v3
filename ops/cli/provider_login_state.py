@@ -68,10 +68,11 @@ def private_state(value: str, *, create: bool = False) -> int:
     return root
 
 
-def checked_file(root: int, name: str, flags: int) -> int:
+def checked_file(root: int, name: str, flags: int, *, allow_unlinked: bool = False) -> int:
     descriptor = os.open(name, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=root)
     details = os.fstat(descriptor)
-    if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_uid != os.geteuid() \
+    if not stat.S_ISREG(details.st_mode) or details.st_nlink not in ({0, 1} if allow_unlinked else {1}) \
+            or details.st_uid != os.geteuid() \
             or stat.S_IMODE(details.st_mode) != 0o600:
         os.close(descriptor)
         raise LoginFailure('login metadata ownership or privacy differs')
@@ -79,17 +80,46 @@ def checked_file(root: int, name: str, flags: int) -> int:
 
 
 def acquire(root: int, identity: str, *, wait: float = 0) -> int:
-    descriptor = checked_file(root, operation(identity) + '.lock', os.O_RDWR | os.O_CREAT)
+    name = operation(identity) + '.lock'
     deadline = time.monotonic() + wait
     while True:
+        descriptor = checked_file(root, name, os.O_RDWR | os.O_CREAT, allow_unlinked=True)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return descriptor
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                os.close(descriptor)
-                raise LoginFailure('login operation is already active') from None
-            time.sleep(0.05)
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise LoginFailure('login operation is already active') from None
+                    time.sleep(0.05)
+            held = os.fstat(descriptor)
+            try:
+                observed = os.stat(name, dir_fd=root, follow_symlinks=False)
+            except FileNotFoundError:
+                observed = None
+            if observed is not None and held.st_nlink == 1 \
+                    and (held.st_dev, held.st_ino) == (observed.st_dev, observed.st_ino):
+                return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+        os.close(descriptor)
+
+
+def release(root: int, identity: str, descriptor: int) -> None:
+    try:
+        name = operation(identity) + '.lock'
+        held = os.fstat(descriptor)
+        try:
+            observed = os.stat(name, dir_fd=root, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if held.st_nlink == 1 and (held.st_dev, held.st_ino) == (observed.st_dev, observed.st_ino):
+            os.unlink(name, dir_fd=root)
+            os.fsync(root)
+    finally:
+        os.close(descriptor)
 
 
 def write_metadata(root: int, identity: str, document: dict) -> None:

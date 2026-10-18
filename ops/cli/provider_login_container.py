@@ -18,6 +18,7 @@ from provider_login_state import (
     canonical_path,
     private_state,
     read_metadata,
+    release,
     remove_metadata,
     write_metadata,
 )
@@ -114,19 +115,29 @@ def cleanup_container(identity: str, state_root: str) -> dict:
         remove_metadata(root, identity)
         return {'stopped_verified': True}
     finally:
-        if lock is not None:
-            os.close(lock)
-        os.close(root)
+        try:
+            if lock is not None:
+                release(root, identity, lock)
+        finally:
+            os.close(root)
 
 
 def run_container(plan: dict) -> int:
     binding = validate_binding(plan.get('container_binding'))
     observe(binding)
     root = private_state(plan['state_root'])
-    lock = acquire(root, plan['operation_id'])
-    if read_metadata(root, plan['operation_id']) is not None:
-        os.close(lock)
+    try:
+        lock = acquire(root, plan['operation_id'])
+        try:
+            return run_locked_container(plan, binding, root)
+        finally:
+            release(root, plan['operation_id'], lock)
+    finally:
         os.close(root)
+
+
+def run_locked_container(plan: dict, binding: dict, root: int) -> int:
+    if read_metadata(root, plan['operation_id']) is not None:
         raise LoginFailure('container login operation requires cleanup before reuse')
     frames = Frames()
     child = subprocess.Popen(command(binding, '--container-child'), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -224,6 +235,4 @@ def run_container(plan: dict) -> int:
         finally:
             child.stdout.close()
             os.close(descriptor)
-            os.close(lock)
-            os.close(root)
     return 2 if failed else 0
