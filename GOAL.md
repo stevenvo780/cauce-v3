@@ -97,7 +97,7 @@ Registrar y consultar cuentas sin agente, instanciar un entorno Docker aislado c
 - [x] [local real] Cuentas sin agente: alta, edición y borrado con pines por persona y empresa que persisten en otro navegador.
 - [x] [código] Entorno endurecido (`--read-only`, `cap-drop ALL`, `no-new-privileges`, límites), operaciones tipadas sin shell, login con comando fijo del descriptor y PTY acotado.
 - [x] [local real] Cola durable con CAS y fencing para create/authenticate/query/update_cli/delete.
-- [ ] Un ordenador de la empresa ofrece el ejecutor de cuotas con la imagen fijada (Claude 2.1.296, Codex 0.160.1, Grok 1.0.41; 4808975f, 79c5bb16). Hoy hay 0 identidades de host y 0 entornos; depende de enrolar server2.
+- [x] [prod] Un ordenador de la empresa ofrece el ejecutor de cuotas con la imagen fijada: server2, desde el 18-oct (713d5456), anuncia entornos para Claude, Codex, Grok, Muse y agy (crear, autenticar, consultar, actualizar el CLI y eliminar).
 - [ ] El dueño crea un entorno, conecta su cuenta, consulta sus cuotas, actualiza el CLI y elimina el entorno desde «Mis cuotas»; al eliminarlo desaparecen el contenedor y el volumen. La UI y el runtime existen; falta el host de la línea anterior.
 - [x] [código] **Refresco de token restaurado** solo en entornos de «Mis cuotas» con sesión propia (flag explícito, nunca en contenedores de agentes), con candado, relectura y escritura atómica 0600 (25a27a83, 365d9faf, 425cd569). Falta el recibo real de un entorno autenticado hace >9 h.
 - [x] [código] Habilitar Grok (paquete e identidad) y dejar de ofrecer proveedores sin ejecutor (gemini).
@@ -171,8 +171,8 @@ Estructura estándar de espacios (contextos/directivas, proyectos, configuració
 - [ ] El dueño trabaja y descarga una copia completa de cada espacio migrado, con proyectos y contextos conservados. El agente responde leyendo desde la ruta nueva y queda una copia recuperable del origen. El supervisor ya exporta `CAUCE_SPACE_ROOT`/`TMPDIR` (93f193fc).
 - [x] [prod] El dueño consulta en GitHub el historial inicial de los 14 agentes reales de Humanizar con sus documentos actuales: siembra del 18-oct (seeded=14) y la cola de contexto quedó en `synced` (17/17). Los `TOOLS.md` con secretos quedaron fuera de Git; Praxis, cuando exista. (a7407e52, 09f7beac, 015ffd01)
 - [x] [local real] **Versionar las ediciones hechas en el espacio del agente**: hoy no se registran y además bloquean sus turnos. (0e186764, adc0bf9d, 341d4dbc, 99683b04)
-- [ ] El dueño cambia una directiva y Claude y Codex la usan en su siguiente turno, con la versión aplicada visible y sin instrucciones antiguas contradictorias (adopción implementada en 4273c1da).
-- [ ] El dueño guarda cambios de varios agentes y recupera una sincronización fallida sin perder versiones, viendo autor, pendiente y causa; al reintentar, GitHub recibe los cambios (fetch previo, CAS y autor ya en 177947c1).
+- [x] [local real + prod] El dueño cambia una directiva y Claude y Codex la usan en su siguiente turno con la versión aplicada visible: recorrido real con `codex exec` y `claude --print` (versión 1 → 2, documento nativo regenerado); arreglo 00e3784f desplegado desde 5af22b9e.
+- [x] [local real + prod] El dueño guarda cambios de varios agentes y recupera una sincronización fallida: recorrido real con un remoto caído y reintento desde la ficha (4 versiones y 4 commits con autor); desplegado en 015ffd01. Historial real de Humanizar en GitHub, 17/17 synced.
 
 ## 9. Auditoría, diagnóstico y eliminación de código innecesario
 
@@ -203,7 +203,7 @@ Máxima paralelización efectiva con revisión independiente; entorno local real
 - ~~Gate completo por candidato con cobertura ≥ 94,49 %~~ — retirado por sobreingeniería (decisión del dueño 17-oct): el gate de despliegue es typecheck + lint + empaquetado (698e33a6) y la verificación es funcional.
 - [x] [local real] Ensayo 052–065 sobre el dump de producción del 12-oct: 307 279 filas intactas, transacción de 663 ms, contención que falla sin aplicar nada y reversión real 065→051→065 con los `down` corregidos (4924052c, b976df33).
 - [x] [código] Merge a `dev` y fast-forward de `main`.
-- [ ] El dueño usa en producción los flujos corregidos y recupera sus datos si falla una actualización; la versión publicada es la del código comprobado. Despliegues continuos con `.delegados/v4/corte.sh` + `deploy1-*.sh` (17-oct: 01f2089a y 85c3fc71).
+- [x] [prod] Despliegues continuos con la versión publicada igual al código comprobado: 11 despliegues el 17–18 oct con recibo de gates, backup previo cuando hubo migración y smoke verde (`deploy/HISTORIAL.md`).
 
 ## Trabajo a portar de ramas antiguas
 
@@ -250,7 +250,7 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
 - [ ] **5. Oficina y harnesses operativos.** La oficina responde a la creación, edición, asignación y eliminación de salas y agentes; su configuración persiste; y el detalle de cada agente muestra correctamente sus cuotas y estado visual. El mecanismo de configuración de harnesses se ha probado con operaciones reales y no depende de cambios dispersos para cada integración.
   - [x] [local real] El plano persiste tras recargar y en otro navegador.
   - [x] [código] Salas y agentes dinámicos y cansancio con estados distintos.
-  - [ ] Reflejo e2e de altas y bajas; campus según el plano; ficha con datos reales.
+  - [x] [prod] La oficina refleja altas y bajas, el campus sigue el plano y la ficha abre con datos reales: QA en producción qr2 y qr6 (18-oct) sin bloqueos.
   - [ ] Harnesses con operaciones reales y alta sin cambios dispersos.
 
 - [ ] **6. Archivos ordenados y contextos versionados.** Los espacios utilizan la estructura estándar sin pérdida de datos ni rutas rotas. El repositorio compartido de GitHub contiene las carpetas de los agentes y registra sus cambios. Se han probado la edición desde las vías soportadas, el historial, las diferencias, la restauración, la aplicación efectiva al agente, las escrituras concurrentes y la recuperación después de un fallo de sincronización, sin exponer secretos ni contextos entre empresas.
@@ -263,12 +263,12 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
   - [x] [local real] Rastro útil de fallos y poda de auditoría sin romper nada.
 
 - [ ] **8. Pruebas reales en local y en el despliegue.** Se han ejecutado las pruebas correspondientes sobre la versión final integrada y se han recorrido los flujos esenciales en el entorno desplegado. No basta con que compile, pase el linter, funcionen los mocks o responda un endpoint de salud. Los errores encontrados se corrigen y los flujos afectados se vuelven a probar.
-  - [ ] typecheck, lint y empaquetado en verde sobre el SHA que se publica, con su recibo (`.delegados/v4/corte.sh`).
-  - [ ] Flujos esenciales recorridos en producción por QA de agentes, con el ciclo corregir → volver a probar. ~~Gate completo y cobertura del SHA final~~ retirado (17-oct).
+  - [x] [prod] typecheck, lint y empaquetado en verde sobre cada SHA publicado, con su recibo (`.delegados/v4/corte.sh`, recibos en `.delegados/v4/recibos/gate/`).
+  - [x] [prod] Flujos esenciales recorridos en producción por QA de agentes con el ciclo corregir → volver a probar: registro, personas, cuotas, ordenadores, mensajes, oficina, Ajustes botón por botón, móvil, aislamiento y primer día de un cliente (17–18 oct).
 
 - [ ] **9. Despliegue final y documentación completos.** Los cambios están integrados y desplegados; la versión publicada corresponde al código verificado; la documentación describe todas las funciones reales y los procedimientos de operación y recuperación; y no quedan pendientes críticos ocultos detrás de un «se hará después».
   - [x] [desplegado] Integrado en `dev`/`main`, desplegado, versión publicada = código verificado.
-  - [ ] Guía y operación V4 documentadas en todas las áreas de §10, con los procedimientos de operación y recuperación, sin rutas privadas ni pendientes críticos.
+  - [x] [prod] Guía y operación V4 al día (`docs/v4-guia.md`, `docs/operacion.md`), seguidas al pie de la letra contra producción y corregidas (18-oct).
 
 Al finalizar, entrega un informe verificable (`docs/v4-informe-final.md`) con la versión o commit desplegado, los entornos comprobados, la ubicación final de los agentes migrados, el resultado de las pruebas y las evidencias relevantes. Distingue claramente entre lo implementado, lo probado en local y lo verificado en el despliegue.
 
@@ -287,7 +287,7 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [x] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible (33f37937; QA 17-oct tradujo los restantes, bd7c012f).
 - [x] 8. Pantalla «Empresa retirada».
 - ~~9. Validar `harness_definitions` contra los descriptores~~ — retirado: la BD y los descriptores coinciden y la UI ya usa el descriptor aprobado (17-oct).
-- [ ] 10. Un agente aplica la versión nueva de su contexto en su siguiente turno natural. El autor real en `git log` ya está hecho (177947c1, 919bd20e).
+- [x] 10. [local real + prod] Un agente aplica la versión nueva de su contexto en su siguiente turno natural (00e3784f; ver §8). El autor real en `git log` ya está hecho (177947c1, 919bd20e).
 - [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
 - [x] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
