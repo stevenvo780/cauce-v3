@@ -64,6 +64,11 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
         setRequested(false); setError(describeQuotaEnvironmentError(cause, 'No se pudo iniciar sesión en la cuenta.'));
       }).finally(() => { step.current = false; setBusy(false); });
     };
+    if (scope) {
+      // A login was opened for scope.operation: its panel owns the rest, even while verification runs the operation.
+      if (operation?.id === scope.operation && operation.status === 'done') { setVerified(true); setRequested(false); setScope(undefined); }
+      return;
+    }
     if (operation && BUSY.includes(operation.status)) return;
     if (launched && operation?.id === launched && operation.status === 'failed') {
       setLaunched(undefined); setRequested(false); setError(describeOperationError(operation.error_code ?? 'STEP_FAILED')); return;
@@ -74,11 +79,11 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
       run(() => api.createQuotaEnvironment({ ...input, idempotency_key: keyFor(JSON.stringify(input)) }));
       return;
     }
-    if (environment.status !== 'ready' && environment.status !== 'failed') return;
+    if (environment.status === 'pending' || environment.status === 'running') return;
     const signature = `${environment.id}:${String(environment.version)}`;
     run(() => api.actQuotaEnvironment(environment.id, { action: 'authenticate', expected_version: environment.version,
       idempotency_key: keyFor(signature), consent: true }));
-  }, [requested, block, busy, snapshot, environment, operation, launched, hostId, account.id, account.label, api, reload]);
+  }, [requested, block, busy, snapshot, scope, environment, operation, launched, hostId, account.id, account.label, api, reload]);
 
   const operationId = awaitingLogin ? operation.id : undefined;
   const provider = environment?.provider; const accountId = environment?.account_id; const environmentHostId = environment?.host_id;
@@ -86,14 +91,22 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
     if (!requested || !operationId) return;
     let alive = true;
     setScope(undefined);
-    void api.resolveProviderAuthOperation(operationId).then(request => {
+    // The host registers the login a moment after the operation reaches awaiting_auth: retry before reporting.
+    const resolve = async (): Promise<ProviderAuthRequest> => {
+      for (let attempt = 1; ; attempt++) {
+        try { return await api.resolveProviderAuthOperation(operationId); }
+        catch (cause) { if (attempt >= 10 || !alive) throw cause; }
+        await new Promise(done => setTimeout(done, 1000));
+      }
+    };
+    void resolve().then(request => {
       if (!alive) return;
       if (request.operation_id !== operationId || request.provider_id !== provider || request.account_id !== accountId
         || request.profile_id !== accountId || request.host_id !== environmentHostId
         || request.harness_id !== provider || request.runtime_user !== 'node') throw new Error('quota_auth_scope_mismatch');
       setScope({ operation: operationId, request });
     }).catch(() => {
-      if (alive) setScope({ operation: operationId, error: 'No se pudo acreditar la autorización de esta cuenta. Pulsa «Iniciar sesión» otra vez.' });
+      if (alive) setScope({ operation: operationId, error: 'No se pudo acreditar la autorización de esta cuenta. Cierra y pulsa «Iniciar sesión» otra vez.' });
     });
     return () => { alive = false; };
   }, [api, requested, operationId, provider, accountId, environmentHostId]);
@@ -103,16 +116,16 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
     void reload().catch(() => { setError('La sesión quedó verificada, pero no se pudo releer la cuenta. Pulsa «Actualizar cuotas y entornos».'); });
   }, [reload]);
   const close = () => { setRequested(false); setLaunched(undefined); setScope(undefined); refresh(); };
-  const activeScope = requested && operationId && scope?.operation === operationId ? scope : undefined;
+  const activeScope = requested ? scope : undefined;
   const progress = !requested || activeScope ? undefined
     : !environment ? 'Preparando el entorno de la cuenta…'
-      : !['ready', 'failed'].includes(environment.status) && !awaitingLogin ? 'Preparando el entorno de la cuenta…'
+      : (environment.status === 'pending' || environment.status === 'running') ? 'Preparando el entorno de la cuenta…'
         : awaitingLogin ? 'Abriendo la terminal de inicio de sesión…' : 'Pidiendo el inicio de sesión…';
   const hostName = snapshot?.capabilities.hosts.find(host => host.host_id === (environment?.host_id ?? hostId))?.display_name;
   return <section aria-label={`Inicio de sesión de ${account.label}`} className="grid gap-2">
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="primary" disabled={!!block || busy || requested} title={block}
-        onClick={() => { setVerified(false); setError(''); setLaunched(undefined); setRequested(true); }}>Iniciar sesión</Button>
+        onClick={() => { keys.current.clear(); setVerified(false); setError(''); setLaunched(undefined); setScope(undefined); setRequested(true); }}>Iniciar sesión</Button>
       {!environment && hosts.length > 1 ? <label className="text-sm">Ordenador <select value={hostId} disabled={busy || requested}
         onChange={event => { setHostChoice(event.target.value); }}>{hosts.map(host => <option key={host.host_id} value={host.host_id}>{host.display_name}</option>)}</select></label> : null}
     </div>

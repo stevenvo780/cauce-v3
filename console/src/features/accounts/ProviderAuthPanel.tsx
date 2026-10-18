@@ -61,7 +61,7 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
     assertProviderAuthTarget(value, request);
     if (scopeKey !== currentScope.current) { if (active(value)) void client.cancel(value.session_id).catch(() => undefined); return; }
     current.current = value;
-    if (!alive.current) return;
+    if (!alive.current) { if (active(value)) void client.cancel(value.session_id).catch(() => undefined); return; }
     setSession(value); setError(value.status === 'failed' || value.status === 'expired' || value.cleanup_pending ? message(value) : null);
     if (value.status === 'authenticated' && accepted.current !== value.session_id) {
       accepted.current = value.session_id; onAuthenticated?.(value);
@@ -115,9 +115,11 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
     {error && <p role="alert">{error}</p>}
     {autoStart && !session && !error ? <p role="status">Abriendo el inicio de sesión del proveedor…</p> : null}
     {!session && (!autoStart || (!busy && error)) && <Button size="sm" disabled={busy} onClick={() => { void run('start'); }}>{autoStart ? 'Reintentar' : 'Conectar cuenta'}</Button>}
-    {session?.status === 'awaiting_login' && <>
-      <p>{session.method === 'device' ? 'Sigue la autorización del proveedor en el terminal.' : 'Completa el inicio de sesión en el terminal.'}
-        {autoStart ? ' Cuando el proveedor confirme el inicio de sesión, pulsa «Verificar conexión».' : ''}</p>
+    {/* The stream stays open while verifying: closing it cancels the session and aborts the verification. */}
+    {(session?.status === 'awaiting_login' || session?.status === 'verifying') && <>
+      <p role={session.status === 'verifying' ? 'status' : undefined}>{session.status === 'verifying' ? 'Verificando la cuenta con el proveedor…'
+        : session.method === 'device' ? 'Sigue la autorización del proveedor en el terminal.' : 'Completa el inicio de sesión en el terminal.'}
+        {autoStart && session.status === 'awaiting_login' ? ' Cuando el proveedor confirme el inicio de sesión, pulsa «Verificar conexión».' : ''}</p>
       <ProviderAuthTerminal session={session} client={client} onDisconnect={disconnected} />
     </>}
     <div className="flex flex-wrap gap-2">
