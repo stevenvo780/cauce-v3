@@ -194,7 +194,7 @@ export function LiveFleetPage() {
   }
 
   const problems = tally.down + tally.blocked;
-  const connected = views.length - tally.down;
+  const connected = views.length - tally.down - tally.unprepared;
   const unknown = verdict.tone === 'desconocido';
   const selected = views.find((view) => view.key === selectedKey) ?? null;
   const requestedMember = selectedKey ? topologyMembers.get(selectedKey) : undefined;

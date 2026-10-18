@@ -1,5 +1,5 @@
 import { Dialog } from '@base-ui/react/dialog';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Notice } from '../../components/kit';
 import { ConfigCollectionForm } from './ConfigCollectionForm';
 import { DIALOG_BODY, WIZARD_POPUP, WizardHeader } from './config-dialog';
@@ -16,8 +16,15 @@ const TITLE: Record<string, string> = { create: 'Nuevo equipo', update: 'Editar 
 export function TeamFormDialog({ ctx }: { ctx: ConfigWrites }) {
   const [dirty, setDirty] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [applied, setApplied] = useState(false);
   const target = ctx.formTarget;
   const definition = target ? configFormDefinition(target.collection) : undefined;
+  useEffect(() => { if (target) setApplied(false); }, [target]);
+  if (!target && applied) {
+    const notice = ctx.canalFormulario.notice;
+    return notice ? <Notice tone={notice.tone === 'success' ? 'ok' : 'warn'}
+      role={notice.tone === 'success' ? 'status' : 'alert'}>{notice.text}</Notice> : null;
+  }
   if (!ctx.formModal || !target || !definition || !ctx.config.data) return null;
   const Form = target.collection === 'rooms' ? GroupEditor : ConfigCollectionForm;
   const close = () => { setConfirming(false); setDirty(false); ctx.setFormTarget(undefined); ctx.canalFormulario.clear(); };
@@ -41,6 +48,7 @@ export function TeamFormDialog({ ctx }: { ctx: ConfigWrites }) {
         <div className={DIALOG_BODY}>
           <Form key={`${target.collection}:${target.action}:${JSON.stringify(target.row ?? {})}`} definition={definition} target={target}
             snapshot={ctx.config.data} runner={ctx.canalFormulario} busy={ctx.busy} onCancel={requestClose} onDirtyChange={setDirty}
+            onApplied={() => { setApplied(true); setConfirming(false); setDirty(false); ctx.setFormTarget(undefined); }}
             onRelated={(related) => { ctx.openForm(related, true); }} />
         </div>
       </Dialog.Popup>

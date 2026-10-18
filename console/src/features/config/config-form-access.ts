@@ -48,15 +48,17 @@ export const HARNESS_CATALOG_REASON = 'Las definiciones de arnés se cambian con
 
 /**
  * A snapshot without a role stays unchanged: the form fixtures omit it.
- * Harness writes stay on the platform CLI for every named role. Role and chain policies stay
- * editable for platform_admin.
+ * Harness and role-policy writes stay on the platform CLI for every named role.
+ * Chain policies stay editable for platform_admin.
  */
 export function platformCatalogReason(snapshot: ConfigurationSnapshot | undefined, resource: string): string | undefined {
   if (!snapshot) return undefined;
   const role = (snapshot as { capabilities?: { actor?: { role?: unknown } } }).capabilities?.actor?.role;
   if (resource === 'harness') return typeof role === 'string' ? HARNESS_CATALOG_REASON : undefined;
+  if (resource === 'role_policy') return typeof role === 'string'
+    ? 'Las políticas de rol se cambian con la CLI de plataforma, no desde esta consola.' : undefined;
   if (typeof role !== 'string' || role === 'platform_admin') return undefined;
-  if (resource === 'role_policy' || resource === 'chain_policy') return PLATFORM_CATALOG_REASON;
+  if (resource === 'chain_policy') return PLATFORM_CATALOG_REASON;
   return undefined;
 }
 

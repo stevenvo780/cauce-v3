@@ -51,7 +51,7 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
   if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
   if (cause.status === 409 && cause.code === 'conflict'
     && cause.message === 'quota account version changed or the change is not allowed') {
-    return 'No se guardó la cuenta. Para marcar «Cuenta habilitada», pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas». Si ya iniciaste sesión, actualiza cuotas y vuelve a intentarlo.';
+    return 'No se guardó la cuenta: su versión cambió o el cambio no está permitido. Pulsa «Actualizar cuotas y entornos» y revisa los datos antes de reintentar. Si estás habilitando una cuenta nueva, primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas».';
   }
   if (cause.status === 400) return rejectedFields(cause.message) ?? STATUS_MESSAGE[400];
   if (cause.status === 504) return cause.message;

@@ -11,7 +11,7 @@ export function GroupEditor(props: ComponentProps<typeof ConfigCollectionForm>) 
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   const reportForm = useCallback((value: boolean) => { setFormDirty(value); }, []);
   const reportMove = useCallback((value: boolean) => { setMoveDirty(value); }, []);
-  return <><ConfigCollectionForm {...props} onDirtyChange={reportForm} />
+  return <><ConfigCollectionForm {...props} onDirtyChange={reportForm} onApplied={moveDirty ? undefined : props.onApplied} />
     {target.action === 'update' && typeof row?.tenant_id === 'string' && typeof row.id === 'string'
       ? <GroupMembershipMove tenantId={row.tenant_id} roomId={row.id} snapshot={snapshot} runner={runner} busy={busy}
         onDirtyChange={reportMove} /> : null}

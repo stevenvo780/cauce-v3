@@ -199,8 +199,8 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   useEffect(() => {
     if (aliasedFrom === undefined) return;
     const detalle = params.map((param) => encodeURIComponent(param)).join('/');
-    redirect(`/${routeId}${detalle ? `/${detalle}` : ''}`);
-  }, [aliasedFrom, params, routeId]);
+    redirect(`/${routeId}${detalle ? `/${detalle}` : ''}${search}`);
+  }, [aliasedFrom, params, routeId, search]);
 
   /* Preserve the audit tab requested by the `/audit` alias until navigation leaves observability. */
   const auditoriaPedida = useRef(false);

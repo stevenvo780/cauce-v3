@@ -70,6 +70,7 @@ function ConfigPageContent() {
   const { config } = ctx;
   const search = useRouteSearch();
   const [seccion, setSeccion] = useState<ConfigSectionId>(() => seccionPedida(search));
+  const [visited, setVisited] = useState<ReadonlySet<ConfigSectionId>>(() => new Set([seccion]));
   const ancha = useMediaQuery('(min-width: 768px)');
   useRefreshOnReturn(config.reload, !ctx.busy && !config.loading);
 
@@ -82,6 +83,7 @@ function ConfigPageContent() {
   }
 
   function irA(siguiente: ConfigSectionId) {
+    setVisited(current => current.has(siguiente) ? current : new Set([...current, siguiente]));
     setSeccion(siguiente);
     ctx.alCambiarDeSeccion();
   }
@@ -132,10 +134,10 @@ function ConfigPageContent() {
         className={cn('hidden gap-1 md:flex', 'md:sticky md:top-4 md:flex-col')}>
         {CONFIG_SECTIONS.map((section) => <Tabs.Tab key={section.id} value={section.id} className={NAV_TAB}>{section.label}</Tabs.Tab>)}
       </Tabs.List>
-      {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} className="min-w-0 outline-none">
-        <Suspense fallback={<p className="muted" role="status">Cargando sección…</p>}>
+      {CONFIG_SECTIONS.map((section) => <Tabs.Panel key={section.id} value={section.id} keepMounted className="min-w-0 outline-none">
+        {visited.has(section.id) ? <Suspense fallback={<p className="muted" role="status">Cargando sección…</p>}>
           {contenido[section.id]}
-        </Suspense>
+        </Suspense> : null}
       </Tabs.Panel>)}
     </Tabs.Root>
   </div>;
