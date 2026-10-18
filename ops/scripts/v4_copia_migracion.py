@@ -26,7 +26,7 @@ CONFIG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 RESTORE_SCHEMA = 'cauce.v4-migracion-restauracion/1'
 NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')
 OMISSION_RULES = (
-    ('auth', re.compile(r'o?auth(?!or)')), ('session', re.compile(r'session')), ('token', re.compile(r'token')), ('profile', re.compile(r'profile')),
+    ('auth', re.compile(r'o?auth(?!or)')), ('session', re.compile(r'session')), ('token', re.compile(r'token')), ('profile', re.compile(r'profile|^codex-home$')),
     ('credential', re.compile(r'(?:\.ssh|\.gnupg|\.aws|\.docker|\.kube|\.password-store|\.netrc|_netrc|\.git-credentials|\.pgpass|\.npmrc|\.pypirc|\.yarnrc(?:\.yml)?|\.boto|\.s3cfg|\.htpasswd|\.env(?:\..*)?|kubeconfig|known_hosts|cookies?.*|id_(?:rsa|dsa|ecdsa|ed25519).*|.*credential.*|.*secret.*|.*passw(?:or)?d.*|.*api[-_]?key.*|.*contrase.*|.*clave.*|.*bearer.*|.*private[-_]?key.*|.*[-_]key\..*|.*\.(?:pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|gpg|asc|ovpn|hdr))')),
 )
 REGENERABLE = frozenset({'node_modules', '__pycache__', '.venv', 'venv', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.cache', '.npm', '.next', '.turbo', 'marketplace-cache'})
