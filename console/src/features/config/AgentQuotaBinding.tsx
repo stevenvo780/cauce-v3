@@ -40,7 +40,7 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
       ],
     };
   const disabled = !runner.canWrite || runner.busy || !available || !canAssign;
-  return <section className="mt-4 grid gap-3 rounded-lg border border-line bg-surface p-3" aria-label={`Cuentas de cuota de ${tenantId}/${alias}`}>
+  return <section className="mt-4 grid gap-3 rounded-lg border border-line bg-surface p-4" aria-label={`Cuentas de cuota de ${tenantId}/${alias}`}>
     <h3 className="m-0 text-sm font-semibold">Cuentas de cuota</h3>
     <p className="m-0 text-xs text-muted">Estas cuentas aportan las cuotas de la ficha y el cansancio de la oficina.
       Con varias cuentas, la oficina muestra la mejor disponibilidad entre ellas.
@@ -67,7 +67,7 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
     {!runner.canWrite || !canAssign ? <Notice role="note">No tienes permiso para cambiar las cuentas de cuota.</Notice> : null}
     {runner.notice ? <Notice role={runner.notice.tone === 'error' ? 'alert' : 'status'}
       tone={runner.notice.tone === 'error' ? 'danger' : 'info'}>{runner.notice.text}</Notice> : null}
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <Button disabled={disabled || !mutation} onClick={() => { if (mutation) void runner.run(mutation, true); }}>Previsualizar cuenta</Button>
       <Button variant="primary" disabled={disabled || !mutation || !runner.isValidated(mutation)}
         onClick={() => { if (mutation) void runner.run(mutation, false); }}>Guardar cuenta de cuota</Button>

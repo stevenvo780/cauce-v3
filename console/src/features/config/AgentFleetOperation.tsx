@@ -160,7 +160,7 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
   const showResume = rawResume;
   const showCancel = cancel;
   return <section className="agent-fleet-receipt grid gap-3" aria-label="Operación de flota">
-    <div className="flex flex-wrap items-start justify-between gap-2">
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
       <p role="status" className="m-0 min-w-0 flex-1 text-sm font-semibold break-words">{operationHeadline(operation, hostId)}</p>
       <OperationStatusPill operation={operation} />
     </div>

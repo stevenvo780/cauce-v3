@@ -134,7 +134,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
           const entry = catalogEntry(ext.type);
           const risk = extensionRisk(ext);
           const ssh = ext.type === 'ssh' ? operational.sshPublic : undefined;
-          return <li key={`${ext.type}-${String(index)}`} className="grid gap-2 rounded-lg border border-line bg-surface px-3 py-2.5">
+          return <li key={`${ext.type}-${String(index)}`} className="grid gap-2 rounded-lg border border-line bg-surface p-3">
             <div className="flex flex-wrap items-center gap-2">
               <strong className="text-[13px]">{entry.label}</strong>
               <Pill tone={RISK_TONE[risk]}>{risk === 'maximo' ? 'Máximo' : RISK_LABEL[risk]}</Pill>
@@ -162,7 +162,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
     <section aria-label="Añadir ampliación" className="grid gap-3 rounded-lg border border-line bg-subtle p-3">
       <h3 className="m-0 text-sm font-semibold">Añadir desde el catálogo</h3>
       <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2">
-        {EXTENSION_CATALOG.map((entry) => <li key={entry.type} className="grid gap-1 rounded-lg border border-line bg-surface px-3 py-2.5">
+        {EXTENSION_CATALOG.map((entry) => <li key={entry.type} className="grid gap-1.5 rounded-lg border border-line bg-surface p-3">
           <span className="flex flex-wrap items-center gap-2">
             <strong className="text-[13px]">{entry.label}</strong>
             <Pill tone={entry.tone}>{entry.riskLabel}</Pill>

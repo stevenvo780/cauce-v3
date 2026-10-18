@@ -309,12 +309,12 @@ function AgentRegistryForm({
     {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
     {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
       role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <span>Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-      <div>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
+      <div className="flex flex-wrap items-center gap-2">
         <Button onClick={() => { void preview(); }} disabled={disabled || deleting}>
           Previsualizar cambio
-        </Button>{' '}
+        </Button>
         <Button variant="primary" onClick={() => { void apply(); }}
           disabled={disabled || deleting || !mutation || !runner.isValidated(mutation)}>
           Aplicar cambio

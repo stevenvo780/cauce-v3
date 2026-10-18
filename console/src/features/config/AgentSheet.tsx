@@ -131,7 +131,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
           </ErrorBoundary>
         </div> : <Tabs.Root value={tab} onValueChange={(value) => { select(value as SheetTab); }} className="flex min-h-0 flex-1 flex-col">
           {tabs.length > 1 ? <Tabs.List aria-label={`Secciones de ${view.ref}`} activateOnFocus
-            className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-3">
+            className="flex shrink-0 gap-1 overflow-x-auto border-b border-line px-5">
             {tabs.map((id) => <Tabs.Tab key={id} value={id} className={TAB}>{TAB_LABEL[id]}</Tabs.Tab>)}
           </Tabs.List> : null}
           {tabs.map((id) => <Tabs.Panel key={id} value={id} keepMounted className={`${DIALOG_BODY} outline-none`}>

@@ -182,8 +182,10 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale} hostId={draft.hostId || undefined}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
-        <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} />
-        {onReloaded ? <ActionButton label="Releer inventario" announceError={false} action={() => reloadSnapshot()} /> : null}</> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} />
+          {onReloaded ? <ActionButton label="Releer inventario" announceError={false} action={() => reloadSnapshot()} /> : null}
+        </div></> : null}
       <details><summary>Historial de operaciones</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
         {flow.history?.length ? (() => {

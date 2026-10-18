@@ -38,7 +38,7 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
     {agent.registered ? null : <Notice role="note">
       Este agente solo aparece como miembro de un grupo: no tiene registro editable, por eso no ofrece edición ni operaciones.
     </Notice>}
-    <dl className="m-0 grid-cols-1 gap-0 rounded-lg border border-line bg-surface px-3" aria-label={`Datos de ${view.ref}`}>
+    <dl className="m-0 grid-cols-1 gap-0 rounded-lg border border-line bg-surface px-4" aria-label={`Datos de ${view.ref}`}>
       <Fact label="Arnés declarado">{agent.harness ?? 'desconocido'}</Fact>
       <Fact label="Cuenta de ejecución">{typeof view.row?.primary_account_id === 'string'
         ? view.row.primary_account_id : 'Sin cuenta declarada'}</Fact>
@@ -82,7 +82,7 @@ export function GroupsTab({ agent, view, snapshot, onReloaded, onDirtyChange, on
     {!agent.groupsKnown ? <Notice role="note">El servidor no publicó las membresías en esta lectura.</Notice>
       : !agent.groups.length ? <Notice role="note">Este agente no tiene membresías registradas.</Notice>
         : <ul className="m-0 grid list-none gap-2 p-0" aria-label={`Grupos de ${view.ref}`}>
-          {agent.groups.map((group) => <li key={group.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
+          {agent.groups.map((group) => <li key={group.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-line bg-surface p-3">
             <span className="min-w-0"><strong className="block truncate text-[13px]">{group.label}</strong>
               <span className="block truncate font-mono text-xs text-muted">{group.id}</span></span>
             <span className="flex flex-wrap items-center gap-2">

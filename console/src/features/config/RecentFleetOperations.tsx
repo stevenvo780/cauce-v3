@@ -72,8 +72,8 @@ export function RecentFleetOperations() {
   }
   const operations = load.state === 'ready' ? load.operations : [];
   const { attention, finished } = partitionOperations(operations);
-  const renderRow = (operation: FleetOperation) => <li key={operation.id} className="grid gap-2 rounded-lg border border-line p-3">
-    <div className="flex flex-wrap items-start justify-between gap-2">
+  const renderRow = (operation: FleetOperation) => <li key={operation.id} className="grid gap-3 rounded-lg border border-line p-3">
+    <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
       <OperationLine operation={operation} />
       <Button size="sm" aria-expanded={expanded === operation.id}
         aria-label={`${expanded === operation.id ? 'Ocultar' : 'Ver'} detalle de ${operationTitle(operation)}`}
