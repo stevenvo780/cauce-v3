@@ -123,7 +123,7 @@ it('oculta la frase interna de un 500 pero conserva su código y explica por qu�
   expect(screen.getByText(/Tu rol permite ver el plano, pero no cambiarlo/u)).toBeVisible();
 });
 
-it('el conflicto al guardar muestra la acción, el borrador conservado y el código estable', async () => {
+it('el conflicto al guardar muestra solo el panel común, sin la banda con código', async () => {
   server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json(
     { error: 'conflict', message: 'office layout version changed; reload and retry' }, { status: 409 },
   )));
@@ -134,9 +134,11 @@ it('el conflicto al guardar muestra la acción, el borrador conservado y el cód
   await user.click(screen.getByRole('button', { name: 'Añadir parte' }));
   expect(screen.getByText('Guarda o descarta los cambios de plano antes de releerlo.')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Guardar plano' }));
-  const alert = await screen.findByRole('alert');
-  expect(alert).toHaveTextContent('Otra persona guardó una versión nueva del plano mientras editabas. Tu borrador sigue sin guardar: elige si cargas su versión o reaplicas tu borrador sobre ella.');
-  expect(alert.textContent).not.toContain('reload and retry');
-  expect(within(alert).getByText('conflict', { selector: 'code' })).toBeVisible();
+  const panel = await screen.findByRole('group', { name: 'Conflicto de versión' });
+  expect(panel).toHaveTextContent('Otra persona guardó una versión nueva del plano.');
+  expect(panel).toHaveTextContent('Tu borrador se conserva en el formulario');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toContain('Código:');
+  expect(document.body.textContent).not.toContain('reload and retry');
   expect(screen.getByText('Plano sin guardar')).toBeVisible();
 });

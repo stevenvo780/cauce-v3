@@ -188,7 +188,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
           <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setConflictDiffs(undefined); setError(undefined); }}>Descartar cambios de plano</Button></div></header>
       {unavailable || (draft && !draft.conflicted) ? <p className="m-0 text-xs text-muted">{unavailable ?? 'Guarda o descarta los cambios de plano antes de releerlo.'}</p> : null}
       {layout.loading ? <p role="status">Leyendo plano…</p> : null}
-      {failure ? <ErrorNotice failure={failure} /> : null}
+      {failure && !draft?.conflicted ? <ErrorNotice failure={failure} /> : null}
       {draft?.conflicted ? <ConflictNotice title="Otra persona guardó una versión nueva del plano."
         diffs={conflictDiffs} busy={busy || layout.loading}
         onRetry={() => { void resolveConflict('reapply'); }}
