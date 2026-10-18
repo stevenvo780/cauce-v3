@@ -103,9 +103,10 @@ export async function verifyHeadlessConsumption(
       || previous.some((entry) => turnId(entry, snapshot.harness) === injected.key)) return undefined;
     const inputs = entries.filter((entry) => turnId(entry, snapshot.harness) === injected.key
       && (snapshot.harness === "claude" ? entry.type === "user"
-        : entry.type === "response_item" && object(entry.payload)?.role === "user"));
+        : entry.type === "response_item" && object(entry.payload)?.role === "user")
+      && nativeInput(entry, snapshot.harness) === request.stdin);
     const input = inputs[0];
-    if (inputs.length !== 1 || input === undefined || nativeInput(input, snapshot.harness) !== request.stdin) return undefined;
+    if (inputs.length !== 1 || input === undefined) return undefined;
     if (snapshot.harness === "claude") {
       if (inputs[0]?.cwd !== snapshot.workspace) return undefined;
     } else {
