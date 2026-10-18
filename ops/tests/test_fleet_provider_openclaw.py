@@ -345,9 +345,9 @@ class OpenClawProviderTest(unittest.TestCase):
             driver.validate_binding(self.binding, self.agent)
 
     def test_binding_provider_without_flow_is_refused_with_reason(self):
-        self.binding['provider'] = 'grok'
-        with self.assertRaisesRegex(ValueError, "no account flow for binding provider 'grok'"):
-            driver.validate_definition(self.binding['openclaw'], 'grok')
+        self.binding['provider'] = 'gemini'
+        with self.assertRaisesRegex(ValueError, "no account flow for binding provider 'gemini'"):
+            driver.validate_definition(self.binding['openclaw'], 'gemini')
         self.assertFalse(identity.authenticated_provider(self.packet))
 
     def test_flow_without_measurement_never_inspects_cli_or_mutates_the_profile(self):

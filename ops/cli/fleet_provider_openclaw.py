@@ -16,25 +16,17 @@ AUTH_LIST_SHA256 = '31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff
 FIELDS = {'provider_id', 'method_id', 'version', 'auth_list_source', 'auth_list_sha256',
           'node_command', 'node_command_sha256', 'bridge', 'bridge_sha256'}
 INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
-# The binding provider (the paying account) decides which OpenClaw provider id
-# and model namespace apply; the driver itself is provider-agnostic.
-PROVIDER_BY_BINDING = {'codex': 'openai', 'claude': 'anthropic'}
-# Login/identity flow per upstream provider: the pinned release and its
-# provider-agnostic auth-list source, the isolated login methods, the profile
-# types that method stores and whether the listing must carry an expiry.
-# OpenAI was measured against the real CLI. Anthropic uses the isolated
-# setup-token login (never the external Claude CLI import) and is exercised
-# only with a controlled CLI until the migration front authenticates a real
-# account: authentication still demands the observed account profile, its
-# email identity and a nonce round trip through an anthropic/ model, so a
-# wrong assumption about the real listing fails closed. A flow set to None is
-# refused before any CLI inspection or profile write.
+# API-key profiles cannot prove the paying identity; only account flows with
+# an observed email and a model nonce may admit a runtime.
 PROVIDER_FLOWS = {
-    'openai': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
+    'openai': {'binding_provider': 'codex', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
                'profile_types': {'oauth'}, 'expiry_required': True},
-    'anthropic': {'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'setup-token'},
+    'anthropic': {'binding_provider': 'claude', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'setup-token'},
                   'profile_types': {'token'}, 'expiry_required': False},
+    'xai': {'binding_provider': 'grok', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
+            'profile_types': {'oauth'}, 'expiry_required': True},
 }
+PROVIDER_BY_BINDING = {flow['binding_provider']: provider for provider, flow in PROVIDER_FLOWS.items()}
 
 
 def provider_flow(provider: str) -> tuple[str, dict]:
@@ -65,7 +57,8 @@ def validate_execution_selection(agent: dict) -> None:
         return
     model = agent.get('model_id')
     if not isinstance(model, str) or re.fullmatch(
-            r'(?:openai|anthropic)/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None:
+            r'[a-z][a-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None \
+            or PROVIDER_FLOWS.get(model.partition('/')[0]) is None:
         raise ValueError('OpenClaw activation requires an explicit measured provider model: <provider>/<model>')
     if agent.get('reasoning_effort') not in {None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
         raise ValueError('OpenClaw reasoning effort is not supported by the measured driver')
