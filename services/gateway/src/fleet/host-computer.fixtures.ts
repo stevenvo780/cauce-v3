@@ -360,7 +360,7 @@ async function buildComputerImage(work: string, image: string, providerLogin: bo
 
 export async function startComputerHarness(options: {
   prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string };
-  workRoot?: string; dockerSocket?: string;
+  workRoot?: string; dockerSocket?: string; hostDirectories?: readonly string[];
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
@@ -438,6 +438,7 @@ export async function startComputerHarness(options: {
     const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
       '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
       ...(options.dockerSocket !== undefined && transport !== undefined ? ['--mount', `type=bind,src=${join(work, 'transport')},dst=/transport,readonly`] : []),
+      ...(options.hostDirectories ?? []).flatMap(directory => ['--mount', `type=bind,src=${directory},dst=${directory},readonly`]),
       '-v', `${options.dockerSocket ?? '/var/run/docker.sock'}:/var/run/docker.sock`, '-v', `${join(work, 'install')}:${join(work, 'install')}`, built.computer]);
     if (started.code !== 0) throw new Error(`computer did not start: ${started.stderr}`);
     owned.container = container;
