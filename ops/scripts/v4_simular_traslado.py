@@ -68,6 +68,11 @@ def simulate(args, plan_path, load_plan, target_parameters):
         checks['plan_valid'] = True
         from v4_mover_agente import destination_limits
         checks['destination_limits'] = destination_limits(plan)
+        checks['repositories'] = plan.get('repositories', [])
+        checks['extensions'] = plan.get('extensions', [])
+        if checks['repositories']:
+            result['steps'].insert(result['steps'].index('aplicar-contexto-destino'), 'clonar-repositorios')
+            result['pending'].append('claves propias SSH autorizadas y clones Git fijados en el espacio propio')
         if plan.get('platform_gateway'):
             checks['authority'] = 'platform_gateway'
         else:
@@ -144,7 +149,10 @@ def simulate(args, plan_path, load_plan, target_parameters):
             if plan:
                 try:
                     from v4_mover_agente import migration_parameters
-                    target_parameters(fleet, migration_parameters(fleet, row, plan), plan)
+                    original = migration_parameters(fleet, row, plan)
+                    target = target_parameters(fleet, original, plan)
+                    checks['original_container_name'] = original['placement'].get('container_name')
+                    checks['reasoning_effort'] = target.get('reasoning_effort')
                     checks['target_parameters_valid'] = True
                 except (ValueError, FleetFailure):
                     blockers.append('target_parameters_invalid')

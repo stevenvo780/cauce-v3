@@ -128,6 +128,30 @@ def restore_container(request):
             stdin=incoming, stdout=sys.stdout.buffer, timeout=3600)
 
 
+def excluded_roots(request, scope, roots):
+    from v4_alcance_copia import under
+    exclusions = request.get('excluded_roots', [])
+    if not isinstance(exclusions, list):
+        raise ValueError('excluded_roots must be a list of paths with reasons')
+    known = set(scope['allowed']) | set(scope['mounted'])
+    seen = set()
+    for item in exclusions:
+        if not isinstance(item, dict) or set(item) != {'path', 'reason'}:
+            raise ValueError('each excluded root requires only path and reason')
+        path, reason = item['path'], item['reason']
+        if not isinstance(path, str) or not path.startswith('/') or path.startswith('//') or '\x00' in path \
+                or os.path.normpath(path) != path or os.path.realpath(path) != path:
+            raise ValueError('an excluded root must be an absolute canonical path')
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError('an excluded root requires a nonempty reason')
+        if path not in known or path in seen:
+            raise ValueError('an excluded root must identify a distinct alias data root or mount')
+        if any(under(path, root) or under(root, path) for root in roots.values()):
+            raise ValueError('an excluded root overlaps a copy source')
+        seen.add(path)
+    return exclusions
+
+
 def dispatch(request):
     action = request['action']
     with tempfile.TemporaryDirectory(prefix='cauce-move-data-') as work:
@@ -145,25 +169,30 @@ def dispatch(request):
         elif action == 'terminal-probe':
             from v4_mover_legado import terminal_probe
             print(json.dumps(terminal_probe(request)))
+        elif action == 'clone-repositories':
+            from v4_mover_repos import clone_repositories
+            print(json.dumps(clone_repositories(request)))
         elif action == 'preflight-source':
             from v4_alcance_copia import check_sources, host_containers, tenant_scope, under
-            scope = tenant_scope(request['config'], request['alias'], request['tenant'], host_containers())
+            containers = host_containers()
+            scope = tenant_scope(request['config'], request['alias'], request['tenant'], containers)
+            scope['mounted'] = sorted({mount[0] for mount in containers[scope['container']]})
             placement = request['original']['placement']
             if (placement.get('mode') == 'container' or request.get('legacy')) and placement.get('container_name') != scope['container']:
                 raise ValueError('copy scope differs from the current original runtime')
             roots = {item['name']: item['path'] for item in request['roots']}
             check_sources(roots, scope)
+            exclusions = excluded_roots(request, scope, roots)
             required = []
             for path in scope['allowed']:
-                try:
-                    check_sources({'required': path}, scope)
-                except ValueError:
+                if any(under(path, item['path']) for item in exclusions):
                     continue
                 if pathlib.Path(path).is_dir():
                     required.append(path)
             if any(not any(under(path, root) for root in roots.values()) for path in required):
                 raise ValueError('copy plan omits a complete alias data root')
-            print(json.dumps({'verified': True, 'required_roots': sorted(required), 'roots': roots}))
+            print(json.dumps({'verified': True, 'required_roots': sorted(required), 'roots': roots,
+                              'excluded_roots': exclusions, 'shared_readers': scope.get('sharedReaders', [])}))
         elif action == 'preflight':
             if request['placement']['mode'] == 'container':
                 idle_destination(request)
@@ -220,7 +249,7 @@ def dispatch(request):
 def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
-    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
+    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
              'v4_git_migracion.py', 'v4_alcance_copia.py', 'v4_medicion_migracion.py']
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:

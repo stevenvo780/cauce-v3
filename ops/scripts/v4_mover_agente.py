@@ -116,6 +116,15 @@ def load_plan(path, alias):
         targets.append(item['target'])
     if not names:
         raise ValueError('el plan no declara datos para copiar')
+    from v4_mover_repos import validate_repositories
+    validate_repositories(plan)
+    if 'extensions' in plan:
+        sys.path.insert(0, str(HERE.parent / 'cli'))
+        from fleet_executor_policy import agent_extensions
+        try:
+            agent_extensions({'extensions': plan['extensions']})
+        except RuntimeError as error:
+            raise ValueError('ampliaciones del plan inválidas') from error
     return plan
 
 
@@ -132,12 +141,23 @@ def migration_parameters(fleet, row, plan):
         raise ValueError('el traslado heredado requiere un contenedor propio en destino')
     values = dict(row)
     overrides = plan.get('agent', {})
-    if not isinstance(overrides, dict) or set(overrides) - {'runtime_key', 'harness_id', 'primary_account_id', 'model_id', 'primary_room_id'}:
-        raise ValueError('agent solo admite identidad de runtime, harness, cuenta, modelo y sala primaria')
+    if not isinstance(overrides, dict) or set(overrides) - {'runtime_key', 'harness_id', 'primary_account_id', 'model_id',
+                                                          'primary_room_id', 'container_name', 'reasoning_effort'}:
+        raise ValueError('agent solo admite identidad, selección de proveedor, sala primaria y contenedor original')
+    if 'reasoning_effort' in overrides and overrides['reasoning_effort'] not in (None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+        raise ValueError('reasoning_effort inválido')
+    if 'container_name' in overrides and (not isinstance(overrides['container_name'], str)
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', overrides['container_name'])):
+        raise ValueError('container_name original inválido')
     for key, value in overrides.items():
         if row.get(key) is not None and row[key] != value:
-            raise ValueError('el plan no puede sustituir el harness, cuenta, modelo o identidad existentes')
+            raise ValueError('el plan no puede sustituir la selección o identidad existentes')
         values[key] = value
+    if 'container_name' in overrides and values.get('placement'):
+        placement = dict(values['placement'])
+        if placement.get('container_name') not in (None, overrides['container_name']):
+            raise ValueError('el contenedor original difiere del placement registrado')
+        values['placement'] = {**placement, 'container_name': overrides['container_name']}
     if values.get('primary_room_id') is None:
         rooms = [member['room_id'] for member in row['memberships'] if member.get('enabled', True)]
         if len(rooms) == 1:
@@ -172,7 +192,10 @@ def target_parameters(fleet, original, plan):
             raise ValueError('el plan requiere el digest de la imagen aprobada para restaurar el volumen')
     if row.get('host_id') == placement['host_id']:
         raise ValueError('el agente ya está en el destino; revisar su recibo anterior')
-    return {**original, 'placement': placement}
+    result = {**original, 'placement': placement}
+    if 'extensions' in plan:
+        result['extensions'] = plan['extensions']
+    return result
 
 
 class Cut:
@@ -305,6 +328,9 @@ class Cut:
         self.save()
         common = {**self.plan['destination'], 'alias': alias, 'tenant': self.plan['tenant'], 'runtime_key': target['runtime_key'],
                   'placement': target['placement'], 'roots': self.plan['roots'],
+                  'excluded_roots': self.plan.get('excluded_roots', []),
+                  'repositories': self.plan.get('repositories', []),
+                  'primary_account_id': target['primary_account_id'],
                   'directory': target['placement']['state_directory'] + '/space', 'require_new': self.legacy,
                   'migration_id': self.evidence.name, 'legacy': self.legacy}
         self.common = common
@@ -367,6 +393,11 @@ class Cut:
                 limits = destination_limits(self.plan)
                 self.step('limites-destino', lambda: self.destination.call('limit', {
                     **common, 'memory': limits['memory_bytes'], 'cpus': limits['cpus']}))
+            if common['repositories']:
+                repositories = self.step('clonar-repositorios', lambda: self.destination.call('clone-repositories', common))
+                if repositories.get('verified') is not True:
+                    raise ValueError('los clones propios no quedaron verificados')
+                write_json(self.evidence / 'repositorios.json', repositories)
             self.step('aplicar-contexto-destino', lambda: self.fleet.refresh_context(alias,
                 'Aplicar el contexto del agente en su nuevo ordenador tras el traslado.', timeout=timeout))
             proof = self.step('verificar', lambda: self.fleet.verify(alias, target, timeout=timeout))
