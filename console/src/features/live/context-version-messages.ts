@@ -23,6 +23,22 @@ export function applicationNotice(code: string): ApplicationNotice {
   return APPLICATION[code] ?? { pending: false, message: 'No se pudo aplicar la versión al agente. Reintenta; si persiste, revisa el estado del agente.' };
 }
 
+const SYNCHRONIZATION: Record<string, string> = {
+  context_git_unavailable: 'El servicio de sincronización del contexto no está configurado.',
+  context_git_repository_not_private: 'El repositorio de contextos no cumple las condiciones de privacidad o estructura exigidas. El administrador debe revisar su configuración.',
+  context_git_authentication_failed: 'El repositorio remoto rechazó la autenticación. El administrador debe revisar su acceso.',
+  context_git_network_failed: 'No se pudo conectar con el repositorio remoto. Revisa la conexión y reintenta.',
+  context_git_timeout: 'El repositorio de contextos tardó demasiado en responder. Reintenta la sincronización.',
+  context_git_non_fast_forward: 'El historial remoto tiene cambios incompatibles. El administrador debe revisar la divergencia antes de reintentar.',
+  context_git_commit_failed: 'No se pudo registrar el contexto en Git. El administrador debe revisar el repositorio.',
+  context_push_failed: 'No se pudo enviar el contexto al repositorio remoto. Revisa su disponibilidad y reintenta.',
+};
+
+export function synchronizationMessage(code: string): string {
+  if (code === 'context_version_unreadable') return UNREADABLE_VERSION_MESSAGE;
+  return `${SYNCHRONIZATION[code] ?? 'No se pudo confirmar la sincronización con el repositorio remoto. Reintenta; si persiste, consulta al administrador.'} Los cambios siguen guardados y pendientes de sincronización.`;
+}
+
 const REQUEST_CODES: Partial<Record<string, string>> = {
   context_version_unreadable: UNREADABLE_VERSION_MESSAGE,
   context_version_conflict: 'Conflicto de versión: el contexto cambió mientras lo editabas. Relee las versiones y vuelve a intentarlo; tu borrador se conserva.',

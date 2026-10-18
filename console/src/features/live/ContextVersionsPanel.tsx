@@ -4,7 +4,7 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
-import { applicationNotice, contextRequestMessage } from './context-version-messages';
+import { applicationNotice, contextRequestMessage, synchronizationMessage } from './context-version-messages';
 
 const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
 
@@ -75,7 +75,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
         <div><dt>Aplicación</dt><dd>{applicationState === 'applied' ? 'Aplicada' : applicationState === 'error' ? 'Error de aplicación' : 'Aplicación pendiente'}</dd></div>
         <div><dt>Versión deseada</dt><dd>{snapshot.desired_version}</dd></div><div><dt>GitHub</dt><dd>{snapshot.sync.state === 'synced' ? 'Sincronizado' : snapshot.sync.state === 'error' ? 'Error de sincronización' : 'Pendiente'}</dd></div></dl>
       {snapshot.desired_version !== snapshot.applied_version ? <Notice tone="warn">El agente aún no acredita la versión {snapshot.desired_version}. Guardar una versión no demuestra que ya la esté usando.</Notice> : null}
-      {snapshot.sync.last_error ? <Notice tone="warn">{snapshot.sync.last_error}</Notice> : null}
+      {snapshot.sync.last_error ? <Notice tone="warn">{synchronizationMessage(snapshot.sync.last_error)}</Notice> : null}
       {snapshot.application.last_error === 'native_context_conflict' ? <Notice tone="danger" role="alert">
         Conflicto de ingesta nativa: el agente editó su contexto dentro del espacio sobre una versión anterior y esta ya había avanzado. No se perdió nada: su edición quedó apartada en el espacio como copia en conflicto y sigue trabajando con la versión del servidor.
         <div className="mt-2"><Button size="sm" disabled={!writable || !!draft} onClick={() => { setDraft({ version: snapshot.version, files: snapshot.files }); setNotice('Borrador creado desde la versión actual. Incorpora el contenido acordado con el agente y guarda una nueva versión; la adoptará en su próximo turno.'); }}>Resolver desde esta ficha</Button></div>
