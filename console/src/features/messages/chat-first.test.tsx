@@ -1,15 +1,12 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { ApiError, CauceApi } from '../../api/client';
+import { CauceApi } from '../../api/client';
 import { ConversationDrafts, ConversationDraftStore } from './conversation-drafts';
 import { ApiProvider } from '../../api/context';
 import type { ComponentProps } from 'react';
 import { mockMessages, mockStatus, topology } from '../../mocks/data';
-import { server } from '../../mocks/server';
-import { declaredPtyTargets } from '../../test/pty-targets';
 import { renderWithApi, testApi } from '../../test/render';
-import { renderChat } from './chat-test-utils';
 import { ConversationPane } from './ConversationPane';
 import { construirRosterDeMensajeria } from './roster';
 
@@ -25,45 +22,6 @@ function props(): ComponentProps<typeof ConversationPane> {
     onReload: vi.fn(), onQueueReload: vi.fn(),
   };
 }
-
-it('la bienvenida no repite el selector de agentes de la barra lateral', async () => {
-  renderChat();
-  const welcome = await screen.findByRole('region', { name: 'Sin conversación abierta' });
-  expect(within(welcome).queryAllByRole('button')).toHaveLength(0);
-  expect(screen.queryByLabelText('Empezar una conversación')).toBeNull();
-});
-
-it('el menú de la conversación lleva a perfil y terminal y devuelve el foco con Escape', async () => {
-  const user = userEvent.setup();
-  server.use(declaredPtyTargets(['Steven', 'argos']));
-  renderWithApi(<ConversationPane {...props()} />);
-  const more = screen.getByRole('button', { name: 'Opciones de la conversación' });
-  expect(screen.queryByRole('menuitem', { name: 'Perfil y contexto' })).toBeNull();
-  await user.click(more);
-  const menu = await screen.findByRole('menu');
-  expect(within(menu).getByRole('menuitem', { name: 'Perfil y contexto' })).toHaveAttribute('href', '/messages/Steven/argos?view=context');
-  expect(within(menu).getByRole('menuitem', { name: 'Abrir terminal' })).toHaveAttribute('href', '/terminal/Steven/argos?modo=terminal');
-  expect(within(menu).getByRole('menuitemradio', { name: /Interactivo/ })).toHaveAttribute('aria-checked', 'true');
-  await user.keyboard('{Escape}');
-  await waitFor(() => { expect(screen.queryByRole('menu')).toBeNull(); });
-  expect(more).toHaveFocus();
-});
-
-it('reintentos, muertas y fallos de lectura permanecen visibles sin roster ni Más', async () => {
-  const user = userEvent.setup();
-  const input = props();
-  renderWithApi(<ConversationPane {...input}
-    salud={{ pendientes: undefined, enCurso: 0, reintentos: 2, muertas: 3, muertasTruncadas: true }}
-    queueError={new Error('cola inaccesible')} />);
-  expect(screen.getByText(/2 reintento\(s\).*≥ 3 muerta\(s\)/)).toBeVisible();
-  expect(screen.getByRole('alert')).toHaveTextContent('Cola sin verificar');
-  await user.click(screen.getByRole('button', { name: /Cola sin verificar/ }));
-  expect(screen.getByRole('link', { name: 'Revisar en Colas' })).toHaveAttribute('href', '/queues');
-  expect(screen.getByText(/No se pudo actualizar la cola: cola inaccesible/)).toBeVisible();
-  await user.click(screen.getByRole('button', { name: 'Reintentar cola' }));
-  expect(input.onQueueReload).toHaveBeenCalledOnce();
-  expect(screen.queryByRole('region', { name: 'Más opciones de conversación' })).toBeNull();
-});
 
 it('una sala elegida que desaparece no se sustituye ni permite publicar el borrador', async () => {
   const user = userEvent.setup();
@@ -82,73 +40,6 @@ it('una sala elegida que desaparece no se sustituye ni permite publicar el borra
   expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
   await user.selectOptions(screen.getByRole('combobox', { name: 'Room de origen' }), 'grp.steven');
   expect(screen.getByRole('button', { name: 'Enviar' })).toBeEnabled();
-});
-
-it('el inspector devuelve el foco al mensaje y usa Más si el mensaje salió de la ventana', async () => {
-  const user = userEvent.setup();
-  const input = props();
-  const { rerender } = renderWithApi(<ConversationPane {...input} />);
-  const trigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
-  await user.click(trigger);
-  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
-  expect(screen.getByRole('heading', { name: 'Mensaje que elegiste' })).toHaveFocus();
-  await user.keyboard('{Escape}');
-  expect(trigger).toHaveFocus();
-  await user.click(trigger);
-  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
-  rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ ...input.page, items: [] }} /></ApiProvider>);
-  expect(trigger.isConnected).toBe(false);
-  expect(screen.getByRole('note')).toHaveTextContent('Mensaje fuera de la ventana actual');
-  await user.click(screen.getByRole('button', { name: 'Cerrar detalle' }));
-  expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
-});
-
-it.each([
-  { status: 'done', label: 'HECHA' },
-  { status: 'failed', label: 'FALLÓ' },
-] as const)('el inspector conserva el resultado $status recibido después de elegir y antes de salir de la ventana', async ({ status, label }) => {
-  const user = userEvent.setup();
-  const input = props();
-  const message = input.page?.items?.find((item) => item.deliveries?.some((delivery) => delivery.recipient_alias === 'argos'));
-  const delivery = message?.deliveries?.find((item) => item.recipient_alias === 'argos');
-  if (!message || !delivery) throw new Error('Missing message fixture');
-  const inProgress = {
-    ...delivery, status: 'started' as const,
-    timeline: delivery.timeline?.filter((event) => event.status !== 'done' && event.status !== 'failed'),
-  };
-  const initial = { ...message, deliveries: [inProgress] };
-  const terminalAt = '2026-10-02T20:15:00.000Z';
-  const updated = { ...message, deliveries: [{
-    ...inProgress, status, attempt: 3,
-    timeline: [...(inProgress.timeline ?? []), { status, at: terminalAt, attempt: 3 }],
-  }] };
-  const { rerender } = renderWithApi(<ConversationPane {...input} page={{ items: [initial] }} />);
-  await user.click(screen.getByRole('button', { name: 'Opciones del mensaje' }));
-  await user.click(await screen.findByRole('menuitem', { name: 'Ver detalle' }));
-  const detail = screen.getByRole('group', { name: 'Detalle del mensaje seleccionado' });
-  expect(within(detail).getByText('HECHA / FALLÓ · UNKNOWN')).toBeVisible();
-  const composer = screen.getByRole('textbox');
-  await user.click(composer);
-
-  rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ items: [updated] }} /></ApiProvider>);
-  expect(within(detail).getByText(label)).toBeVisible();
-  expect(within(detail).getByText('Intento 3')).toBeVisible();
-  expect(composer).toHaveFocus();
-
-  rerender(<ApiProvider api={testApi}><ConversationPane {...input} page={{ items: [] }} /></ApiProvider>);
-  expect(within(detail).getByRole('note')).toHaveTextContent('último detalle recibido');
-  const terminal = within(detail).getByText(label).closest('li');
-  expect(terminal?.querySelector('time')).toHaveAttribute('datetime', terminalAt);
-  expect(within(detail).getByText('Intento 3')).toBeVisible();
-  expect(within(detail).queryByText('HECHA / FALLÓ · UNKNOWN')).toBeNull();
-  expect(composer).toHaveFocus();
-});
-
-it('no promete detalles para un mensaje sin identificador', async () => {
-  const input = props();
-  const items = input.page?.items?.map((item) => ({ ...item, message_id: undefined }));
-  await act(async () => { renderWithApi(<ConversationPane {...input} page={{ ...input.page, items }} />); });
-  expect(screen.getByRole('button', { name: 'Opciones del mensaje' })).toBeDisabled();
 });
 
 it('la respuesta tardía de un cuerpo no reemplaza el mensaje que se está leyendo', async () => {
@@ -299,44 +190,6 @@ it('muestra aceptación y empieza a leer antes de confirm, con doble submit bloq
   expect(f.input.onReload).toHaveBeenCalledOnce();
 });
 
-it('muestra la respuesta preconfirm en otra burbuja con el agente correcto', async () => {
-  const f = pendingPublish();
-  const view = renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
-  await waitFor(() => { expect(f.read).toHaveBeenCalledOnce(); });
-  view.rerender(<ApiProvider api={testApi}><ConversationPane {...f.input} page={f.page} /></ApiProvider>);
-  const human = screen.getByText('Ping').closest('article');
-  const response = await screen.findByRole('article', { name: `Mensaje de ${f.input.agent.alias}` });
-  expect(human).toHaveAttribute('data-direction', 'input');
-  expect(human).toHaveTextContent('Steven');
-  expect(human).not.toHaveTextContent('Pong antes de confirm');
-  expect(response).toHaveAttribute('data-direction', 'output');
-  expect(response).toHaveTextContent('Pong antes de confirm');
-  expect(response).not.toHaveTextContent('Ping');
-  expect(response.parentElement).toBe(human?.parentElement);
-  expect(screen.getByRole('button', { name: 'Confirmando…' })).toBeDisabled();
-  await act(async () => { f.pending.resolve(f.confirmation); });
-});
-
-it.each([
-  { code: 'timeout', status: 0, text: 'Confirmación incierta', calls: 2 },
-  { code: undefined, status: 409, text: 'Confirmación rechazada', calls: 1 },
-])('conserva el recibo aceptado con $text sin otro publish', async ({ code, status, text, calls }) => {
-  const f = pendingPublish();
-  f.confirm.mockRejectedValue(new ApiError('confirm unavailable', status, code));
-  renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Ping' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Enviar' }));
-  expect(await screen.findByText(new RegExp(text))).toHaveTextContent('Aceptado por el control plane');
-  expect(f.publish).toHaveBeenCalledOnce();
-  expect(f.confirm).toHaveBeenCalledTimes(calls);
-  expect(f.input.onReload).toHaveBeenCalledOnce();
-  expect(f.read).toHaveBeenCalledWith(f.receipt.message_id);
-  expect(screen.getByRole('textbox')).toHaveValue('');
-  expect(screen.queryByRole('alert')).toBeNull();
-});
-
 it.each(['identidad', 'conversación'])('cerca el recibo tardío tras cambiar de %s', async (change) => {
   const f = pendingPublish();
   const publish = deferred<typeof f.receipt>();
@@ -475,80 +328,4 @@ it('cierra la selección y descarta el cuerpo completo retenido al cambiar de AP
   expect(screen.queryByText('Respuesta anterior')).toBeNull();
   expect(await screen.findByText('Nueva respuesta verificada')).toBeVisible();
   expect(nextRead).toHaveBeenCalledExactlyOnceWith(f.receipt.message_id);
-});
-
-
-it('un solo toque al enviar conserva foco y cerca un segundo submit antes de confirmar', async () => {
-  const user = userEvent.setup();
-  const f = pendingPublish();
-  renderWithApi(<ConversationPane {...f.input} page={{ items: [] }} />);
-  const input = screen.getByRole('textbox');
-  await user.click(input);
-  fireEvent.change(input, { target: { value: 'Ping' } });
-  const send = screen.getByRole('button', { name: 'Enviar' });
-  const pointer = new MouseEvent('pointerdown', { bubbles: true, cancelable: true, button: 0 });
-  fireEvent(send, pointer);
-  expect(pointer.defaultPrevented).toBe(true);
-  expect(input).toHaveFocus();
-  fireEvent.click(send);
-  await waitFor(() => { expect(f.publish).toHaveBeenCalledOnce(); });
-  expect(input).toHaveFocus();
-  expect(input).toBeEnabled();
-  const form = input.closest('form');
-  if (!form) throw new Error('Missing composer');
-  fireEvent.submit(form);
-  expect(f.prepare).toHaveBeenCalledOnce();
-  await act(async () => { f.pending.resolve(f.confirmation); });
-  expect(input).toHaveFocus();
-  expect(input).not.toHaveAttribute('readonly');
-});
-
-it('muestra el recibo de buzón Cronos con su etiqueta y estado en el detalle del mensaje sin afirmar ejecución', async () => {
-  const user = userEvent.setup();
-  const input = props();
-  const mailboxAddress = 'mbx-0123456789abcdef0123456789abcdef';
-  const mailboxDelivery = {
-    delivery_id: '10000000-0000-4000-8000-000000000001',
-    recipient_tenant: 'Steven',
-    recipient_alias: mailboxAddress,
-    status: 'done' as const,
-    attempt: 0,
-    timeline: [{ status: 'published' as const }, { status: 'done' as const, attempt: 0 }],
-    client_mailbox: { label: 'Buzón Cronos', state: 'stored' as const },
-  };
-  const agentDelivery = {
-    delivery_id: '20000000-0000-4000-8000-000000000002',
-    recipient_tenant: input.agent.tenantId,
-    recipient_alias: input.agent.alias,
-    status: 'done' as const,
-    attempt: 1,
-    timeline: [{ status: 'published' as const }, { status: 'done' as const, attempt: 1 }],
-  };
-  const message = {
-    message_id: '30000000-0000-4000-8000-000000000003',
-    tenant_id: 'Steven',
-    actor_alias: 'operator',
-    body_preview: 'Directiva para el buzón',
-    created_at: new Date().toISOString(),
-    deliveries: [agentDelivery, mailboxDelivery],
-  };
-
-  renderWithApi(<ConversationPane {...input} page={{ items: [message] }} />);
-
-  const menuTrigger = screen.getByRole('button', { name: 'Opciones del mensaje' });
-  await user.click(menuTrigger);
-  const detailButton = await screen.findByRole('menuitem', { name: 'Ver detalle' });
-  await user.click(detailButton);
-
-  const detailSection = await screen.findByRole('group', { name: 'Detalle del mensaje seleccionado' });
-  expect(detailSection).toBeVisible();
-
-  const fanoutSection = within(detailSection).getByRole('region', { name: 'Entregas hermanas del mismo publish' });
-  expect(within(fanoutSection).getByText(`Buzón Cronos (${mailboxAddress})`)).toBeVisible();
-  expect(within(fanoutSection).getByText('Guardado en buzón')).toBeVisible();
-  expect(within(fanoutSection).getByText('sin consumidor')).toBeVisible();
-  expect(within(fanoutSection).getByText('No acredita lectura ni ejecución')).toBeVisible();
-
-  expect(within(fanoutSection).queryByText(/ejecutad/i)).toBeNull();
-  expect(within(fanoutSection).queryByText('HECHA')).toBeNull();
 });

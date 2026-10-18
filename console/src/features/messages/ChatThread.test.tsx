@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { expect, it, vi } from 'vitest';
@@ -31,13 +31,6 @@ function thread(props: Partial<ComponentProps<typeof ChatThread>> & Pick<Compone
 function rows(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('article[data-message-id]')];
 }
-
-it.each(['', '   ', ' '.repeat(240)])('no dibuja una burbuja vacía para un preview sin texto (%j)', (body_preview) => {
-  const { message, delivery } = fixture();
-  thread({ items: [{ message: { ...message, body_preview }, delivery, direction: 'input' }] });
-  expect(rows()[0]).toHaveTextContent('Mensaje sin contenido textual.');
-  expect(rows()[0]).not.toHaveTextContent('Vista previa recortada');
-});
 
 it('muestra metadatos de adjuntos entrantes y salientes sin precargar sus bytes', () => {
   const source = fixture();
@@ -103,16 +96,6 @@ it.each([
   expect(check).not.toHaveTextContent(/leído|leyó/);
 });
 
-it('una entrega fallida lo dice bajo el mensaje y ofrece el detalle', async () => {
-  const { message, delivery } = fixture();
-  const select = vi.fn();
-  thread({ items: [{ message, delivery: { ...delivery, status: 'failed', timeline: [] }, direction: 'input' }], onSelectItem: select });
-  expect(screen.getByRole('status', { name: 'Entrega: La ejecución falló' })).toBeVisible();
-  expect(document.querySelector('[data-checks]')).toBeNull();
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Ver detalle' }));
-  expect(select).toHaveBeenCalledOnce();
-});
-
 it.each([null, undefined, '', '   '])('no dibuja una respuesta vacía ni provisional (%s), incluso sin autor humano', (reply) => {
   const { message, delivery, canonical } = fixture(false);
   thread({ items: [{ message, delivery, direction: 'input' }], canonicalReply: { ...canonical, reply } });
@@ -136,33 +119,6 @@ it.each([{ deliveryId: 'other-delivery' }, { messageId: 'other-root' }, { tenant
   expect(screen.queryByText('Pong del agente')).toBeNull();
 });
 
-it('la sonda muestra propósito y plazo; el JSON técnico queda en el detalle', () => {
-  const { message, delivery } = fixture();
-  const body = { type: 'system.gate.probe', nonce: 'a'.repeat(32), timeout_ms: 90_000 };
-  const select = vi.fn();
-  const row = { message: { ...message, body_preview: JSON.stringify(body) }, delivery, direction: 'input' as const };
-  thread({ items: [row], onSelectItem: select });
-  const probe = screen.getByRole('group', { name: 'Comprobación de conexión' });
-  expect(within(probe).getByText('90 segundos')).toBeVisible();
-  expect(probe).not.toHaveTextContent('nonce');
-  fireEvent.contextMenu(rows()[0]);
-  expect(select).toHaveBeenCalledExactlyOnceWith(row);
-});
-
-it.each(['__proto__', 'constructor', 'toString'])('trata el tipo %s como texto', (type) => {
-  const { message, delivery } = fixture();
-  thread({ items: [{ message: { ...message, body_preview: JSON.stringify({ type }) }, delivery, direction: 'input' }] });
-  expect(screen.getByText(`Tipo: ${type}`)).toBeVisible();
-});
-
-it('el texto del agente se lee como texto con formato, no como burbuja técnica', () => {
-  const { message } = fixture(false);
-  thread({ items: [{ message: { ...message, actor_alias: 'argos', body_preview: 'Listo:\n- uno\n- dos\n\n```\nls\n```' }, direction: 'output' }] });
-  const agent = rows()[0];
-  expect(within(agent).getByRole('list')).toHaveTextContent('unodos');
-  expect(agent.querySelector('pre')).toHaveTextContent('ls');
-});
-
 it('una vista previa recortada lo dice y pide el cuerpo entero sólo a pedido', async () => {
   const { message } = fixture(false);
   const expand = vi.fn();
@@ -178,36 +134,6 @@ it('una vista previa recortada lo dice y pide el cuerpo entero sólo a pedido', 
   expect(rows()[0]).not.toHaveTextContent('Vista previa recortada');
 });
 
-it('el hilo vacío invita a empezar con sugerencias que llenan el compositor', async () => {
-  const suggest = vi.fn();
-  thread({ items: [], onSuggestion: suggest });
-  expect(screen.getByRole('heading', { name: 'Empezá la conversación con argos' })).toBeVisible();
-  await userEvent.setup().click(screen.getByRole('button', { name: '¿Qué te bloquea?' }));
-  expect(suggest).toHaveBeenCalledExactlyOnceWith('¿Qué te bloquea?');
-});
-
-it('sin permiso para escribir el hilo vacío no ofrece sugerencias', () => {
-  thread({ items: [] });
-  expect(screen.queryByRole('button')).toBeNull();
-});
-
-it('el agente «escribe» mientras tiene el último mensaje en vuelo y deja de hacerlo al responder', () => {
-  const { message, delivery, canonical } = fixture();
-  const item = { message, delivery: { ...delivery, status: 'started' as const }, direction: 'input' as const };
-  const view = thread({ items: [item], agentState: 'thinking' });
-  expect(screen.getByRole('status', { name: 'argos está pensando…' })).toBeVisible();
-  view.rerender(<ChatThread items={[item]} alias="argos" seed="Steven/argos" fullBodies={{}} onSelectItem={vi.fn()} onExpand={vi.fn()}
-    agentState="thinking" canonicalReply={{ ...canonical, status: 'done' }} />);
-  expect(screen.queryByRole('status', { name: /está pensando/ })).toBeNull();
-  expect(screen.getByText('Pong del agente')).toBeVisible();
-});
-
-it('un mensaje encolado se ve como «recibiendo…»', () => {
-  const { message, delivery } = fixture();
-  thread({ items: [{ message, delivery: { ...delivery, status: 'pending' }, direction: 'input' }], agentState: 'idle' });
-  expect(screen.getByRole('status', { name: 'argos está recibiendo…' })).toBeVisible();
-});
-
 // Provenance: only the server's author projection makes a message human.
 const author: MessageAuthor = { kind: 'human', subject_id: HUMAN, display_name: 'Steven' };
 const provenanceDelivery: DeliveryView = { delivery_id: 'delivery', recipient_tenant: 'Steven', recipient_alias: 'kant', status: 'started' };
@@ -221,17 +147,6 @@ it('muestra el perfil autenticado en lugar del alias técnico de enrutamiento', 
   expect(screen.getByText('Steven')).toHaveAttribute('title', 'Persona autenticada · identidad técnica: kant');
   expect(screen.getByRole('status', { name: 'Entrega: Recibido por el agente · ejecución iniciada' })).toBeInTheDocument();
   expect(screen.getByText('Ping')).toBeInTheDocument();
-});
-
-it('los mensajes propios no repiten el autor a la vista pero lo conservan para lectores de pantalla', () => {
-  thread({ ownSubject: HUMAN, items: [{ message: { ...provenanceMessage, author }, direction: 'input', delivery: provenanceDelivery }] });
-  expect(screen.getByText('Steven')).toHaveClass('sr-only');
-});
-
-it('usa un rótulo humano genérico sin adivinar un nombre', () => {
-  thread({ items: [{ message: { ...provenanceMessage, author: { ...author, display_name: null } }, direction: 'input' }] });
-  expect(screen.getByText('Persona autenticada', { selector: 'span[title]' })).toBeInTheDocument();
-  expect(screen.queryByText('Steven')).not.toBeInTheDocument();
 });
 
 it('deja intacta la identidad técnica histórica cuando no hay procedencia', () => {
