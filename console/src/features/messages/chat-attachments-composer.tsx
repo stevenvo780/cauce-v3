@@ -1,6 +1,7 @@
 import { ArrowUp, CircleOff, LoaderCircle, LockKeyhole, Paperclip } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent, type RefObject, type SyntheticEvent } from 'react';
 import type { JobLane } from '../../api/types';
+import { onNavClick } from '../../router';
 import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_ATTACHMENTS_TOTAL_BYTES, validateAttachmentSelection } from './chat-attachments';
 import { ChatSelectedMedia } from './chat-selected-media';
 import { ChatVoiceRecorder, ICON_BUTTON } from './chat-voice-recorder';
@@ -19,6 +20,7 @@ interface ChatAttachmentsComposerProps {
   sending: boolean;
   confirming: boolean;
   notice?: { tone: 'success' | 'error' | 'parcial'; text: string };
+  unpreparedHref?: string;
   onSubmit: (event: SyntheticEvent<HTMLFormElement>) => void;
   onTextChange: (text: string) => void;
   onRoomChange: (roomId: string) => void;
@@ -28,7 +30,7 @@ interface ChatAttachmentsComposerProps {
 
 export function ChatAttachmentsComposer({
   agentId, agentAlias, canPublish, route, roomChoiceRequired, roomId, roomUnavailable,
-  lane, text, files, sending, confirming, notice, onSubmit, onTextChange, onRoomChange, onFilesChange, inputRef,
+  lane, text, files, sending, confirming, notice, unpreparedHref, onSubmit, onTextChange, onRoomChange, onFilesChange, inputRef,
 }: ChatAttachmentsComposerProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -150,6 +152,12 @@ export function ChatAttachmentsComposer({
       onDragLeave={() => { setDraggingFiles(false); }} onDrop={handleDrop}
       className="group/composer mx-auto grid w-full max-w-3xl gap-2 px-3 pt-1 pb-3 in-data-[keyboard-open]:pb-1.5 min-[761px]:px-4 min-[761px]:pb-4">
       <label className="sr-only" htmlFor={`messenger-input-${agentId}`}>Mensaje para {agentAlias}</label>
+      {unpreparedHref ? (
+        <p className="m-0 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn-ink" role="note">
+          Este agente no tiene ordenador: el mensaje quedará en cola hasta prepararlo.{' '}
+          <a href={unpreparedHref} className="font-medium text-brand-ink" onClick={(event) => { onNavClick(event, unpreparedHref); }}>Prepararlo</a>
+        </p>
+      ) : null}
       {roomChoiceRequired ? (
         <label className="flex items-center gap-2 px-1 text-xs text-muted">Room de origen
           <select value={roomId} disabled={sending} onChange={(event) => { onRoomChange(event.target.value); }}

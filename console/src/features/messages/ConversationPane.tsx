@@ -24,6 +24,7 @@ import { publishDurably } from './durable-publish';
 import { MessageDetail } from './MessageDetail';
 import { mergeOptimisticMessages, optimisticMessageOf, publishedMessage, retainOptimisticMessages, type OptimisticMessage } from './optimistic-message';
 import { randomUuid } from '../../random-id';
+import { prepareAgentHref } from '../config/use-agent-route';
 import { LIMITE_MENSAJES, type SaludDeCola } from './queue-health';
 import { fueraDeLaTopologia, motivoDeAgenteSuelto, type AgenteDeMensajeria } from './roster';
 import { useCanonicalReply, type CanonicalReplyRoot } from './use-canonical-reply';
@@ -119,6 +120,8 @@ function ConversationPaneContent({
   const needsRoomChoice = route.sourceRoomIds.length > 1 || roomUnavailable;
   const puedeEnviar = canPublish && route.allowed && Boolean(roomOrigen) && !roomUnavailable;
   // A warning, not a hint: it must survive typing, so it never lives in the placeholder.
+  const hostId = live?.agent.host_id;
+  const sinOrdenador = live?.state === 'unprepared' || hostId === null || (typeof hostId === 'string' && hostId.trim() === '');
   const avisoDeLease = agent.leaseState === 'online' ? undefined
     : agent.leaseState === 'expired'
       ? `El lease de ${agent.alias} está vencido: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a reclamar.`
@@ -437,6 +440,7 @@ function ConversationPaneContent({
             ) : null}
             <ChatAttachmentsComposer
               agentId={agent.id} agentAlias={agent.alias} canPublish={canPublish} route={route}
+              unpreparedHref={sinOrdenador ? prepareAgentHref(agent.tenantId, agent.alias) : undefined}
               roomChoiceRequired={needsRoomChoice} roomId={roomOrigen} roomUnavailable={roomUnavailable}
               lane={lane} text={draft} files={archivos} sending={enviando} confirming={confirmandoPublicacion}
               notice={aviso} onSubmit={(event) => { void enviar(event); }} onTextChange={setDraft}
