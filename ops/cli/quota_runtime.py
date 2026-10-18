@@ -333,8 +333,8 @@ def create_runtime(policy: dict, environment: dict, existing: dict | None) -> di
                '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--memory', '512m',
                *[value for destination, options in TMPFS.items() for value in ('--tmpfs', destination + ':' + options)],
                '--mount', f'type=volume,source={volume},target=/home/node',
-               '--mount', f'type=bind,source={EXECUTOR_SOURCE},target=/cauce/executor,readonly',
-               '--mount', f'type=bind,source={LIFECYCLE_SOURCE},target=/cauce/lifecycle,readonly',
+               '--volume', f'{EXECUTOR_SOURCE}:/cauce/executor:ro,z',
+               '--volume', f'{LIFECYCLE_SOURCE}:/cauce/lifecycle:ro,z',
                *[value for key, item in expected.items() for value in ('--label', key + '=' + item)], approved['image'])
         existing = inspect_container(environment['container_name'])
         if existing is None:
