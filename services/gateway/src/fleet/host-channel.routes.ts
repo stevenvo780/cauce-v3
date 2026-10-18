@@ -56,7 +56,7 @@ async function quotaCommand(repository:QuotaOperationsRepository,client:Database
     case 'execution':return quota.execution(command.claim);
     case 'resume_auth':return {resumed:await quota.resumeAuthentication(command.claim)};
     case 'finish':return quota.finish(command.claim,command.result,command.awaiting_auth);
-    case 'fail':await quota.fail(command.claim,command.code);return {operation_id:command.claim.id,status:'failed'};
+    case 'fail':await quota.fail(command.claim,command.code,command.detail);return {operation_id:command.claim.id,status:'failed'};
   }
 }
 export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,options:HostChannelOptions={}):void {

@@ -41,6 +41,33 @@ const CleanupSchema = z.object({ stopped_verified: z.literal(true) }).strict();
 const OutputSchema = z.object({ type: z.literal('output'), data: z.string().max(87_384).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u) }).strict();
 const EventSchema = z.union([StartedSchema, ExitSchema, OutputSchema]);
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
+export const QUOTA_STEP_REASONS = ['runtime_release_stale', 'runtime_image_stale', 'reader_unreadable', 'environment_not_running', 'isolation_rejected'] as const;
+export type QuotaStepReason = typeof QUOTA_STEP_REASONS[number];
+const QUOTA_STEP_REASON = new Map<string, QuotaStepReason>([
+  ['runtime_release_stale', 'runtime_release_stale'],
+  ['runtime_image_stale', 'runtime_image_stale'],
+  ['reader_unreadable', 'reader_unreadable'],
+  ['environment_not_running', 'environment_not_running'],
+  ['isolation_rejected', 'isolation_rejected'],
+  ['quota container isolation or ownership differs', 'isolation_rejected'],
+  ['quota profile volume ownership differs', 'isolation_rejected'],
+  ['quota CLI image is unavailable', 'runtime_image_stale'],
+  ['quota reader did not return a JSON observation', 'reader_unreadable'],
+  ['quota reader did not return an observation', 'reader_unreadable'],
+  ['quota reader exceeds its output limit', 'reader_unreadable'],
+  ['quota environment is not running', 'environment_not_running'],
+  ['quota CLI executable cannot be inspected', 'reader_unreadable'],
+  ['quota CLI version receipt is invalid', 'reader_unreadable'],
+]);
+export function readQuotaStepReason(error: unknown): QuotaStepReason | undefined {
+  if (!error || typeof error !== 'object' || !('quotaStepReason' in error)) return undefined;
+  const reason = error.quotaStepReason;
+  return QUOTA_STEP_REASONS.find(item => item === reason);
+}
+function quotaStepReason(stderr: string): QuotaStepReason | undefined {
+  const line = stderr.split('\n').find(item => item.startsWith('fleet effect failed: '));
+  return line ? QUOTA_STEP_REASON.get(line.slice('fleet effect failed: '.length).trim()) : undefined;
+}
 const maximumPinBytes = 536_870_912;
 
 export async function readPrivateJson(filename: string): Promise<unknown> {
@@ -91,14 +118,21 @@ function kill(child: ChildProcessWithoutNullStreams): void {
 export async function boundedProviderReceipt(python: string, argv: string[], body: string, signal: AbortSignal, timeoutMs = 60_000): Promise<unknown> {
   if (signal.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw unavailable();
   return new Promise((resolve, reject) => {
-    const child = spawnPrivate(python, argv); const chunks: Buffer[] = []; let length = 0; let invalid = false;
+    const child = spawnPrivate(python, argv); const chunks: Buffer[] = []; let length = 0; let invalid = false; let stderrText = '';
     const stop = () => { invalid = true; kill(child); };
     const timer = setTimeout(stop, timeoutMs); signal.addEventListener('abort', stop, { once: true });
     const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', stop); };
+    const rejectStep = () => {
+      const error = unavailable();
+      const reason = quotaStepReason(stderrText);
+      if (reason) Object.assign(error, { quotaStepReason: reason });
+      reject(error);
+    };
     child.stdout.on('data', (bytes: Buffer) => { length += bytes.length; if (length > 32_768) stop(); else chunks.push(bytes); });
-    child.once('error', () => { finish(); reject(unavailable()); }); child.stdin.once('error', stop);
-    child.once('close', code => { finish(); if (invalid || code !== 0) { reject(unavailable()); return; }
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); } catch { reject(unavailable()); } });
+    child.stderr.on('data', (bytes: Buffer) => { if (stderrText.length < 4096) stderrText += bytes.toString('utf8').slice(0, 4096 - stderrText.length); });
+    child.once('error', () => { finish(); rejectStep(); }); child.stdin.once('error', stop);
+    child.once('close', code => { finish(); if (invalid || code !== 0) { rejectStep(); return; }
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); } catch { rejectStep(); } });
     if (signal.aborted) stop(); child.stdin.end(body);
   });
 }

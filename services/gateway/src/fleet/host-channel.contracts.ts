@@ -28,7 +28,8 @@ export const HostQuotaCommandSchema = z.discriminatedUnion('action',[
   z.object({...Quota,action:z.literal('renew'),claim:QuotaFence,lease_ms:Lease}).strict(),
   z.object({...Quota,action:z.enum(['execution','resume_auth']),claim:QuotaFence}).strict(),
   z.object({...Quota,action:z.literal('finish'),claim:QuotaFence,result:z.record(z.string(),z.unknown()),awaiting_auth:z.boolean().default(false)}).strict(),
-  z.object({...Quota,action:z.literal('fail'),claim:QuotaFence,code:z.enum(['PROVIDER_UNAVAILABLE','RUNTIME_UNAVAILABLE','STEP_FAILED','AUTH_CANCELLED'])}).strict(),
+  z.object({...Quota,action:z.literal('fail'),claim:QuotaFence,code:z.enum(['PROVIDER_UNAVAILABLE','RUNTIME_UNAVAILABLE','STEP_FAILED','AUTH_CANCELLED']),
+    detail:z.enum(['runtime_release_stale','runtime_image_stale','reader_unreadable','environment_not_running','isolation_rejected']).optional()}).strict(),
 ]);
 export const HostAgentQuotaCommandSchema = z.discriminatedUnion('action',[
   z.object({...AgentQuota,action:z.literal('claim'),lease_ms:Lease}).strict(),

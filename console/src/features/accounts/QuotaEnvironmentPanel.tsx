@@ -7,7 +7,7 @@ import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { quotaEnvironmentActionBlock, quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
-import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
+import { describeQuotaEnvironmentError, describeQuotaOperationFailure } from './quota-messages';
 import { diffConflictFields, isCasConflict } from '../../components/conflict';
 import { ConflictNotice } from '../../components/ConflictNotice';
 
@@ -133,7 +133,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, r
           <p className="m-0 text-xs text-muted"><Time value={operation.updated_at} relativo /> · <Time value={operation.updated_at} /></p>
           {operation.status === 'awaiting_auth' ? <p className="m-0 text-sm">Esperando que inicies sesión desde la tarjeta de la cuenta.</p> : null}
           {operation.status === 'pending' || operation.status === 'running' ? <p className="m-0 text-sm">Esta operación está en curso.</p> : null}
-          {operation.error_code ? <Notice tone={cancelled ? 'info' : 'danger'}>{describeOperationError(operation.error_code)}</Notice> : null}
+          {operation.error_code ? <Notice tone={cancelled ? 'info' : 'danger'}>{describeQuotaOperationFailure(operation)}</Notice> : null}
           <QuotaCommandResult result={operation.result} operation={operation} />
         </section> : null}
       </article>;

@@ -11,7 +11,7 @@ import { accountLoginTargets, type AccountLoginTarget } from './account-login-ta
 const ProviderAuthPanel = lazy(async () => ({ default: (await import('./ProviderAuthPanel')).ProviderAuthPanel }));
 import { providerSignInTitle } from './quotas';
 import { quotaHostSupports } from './quota-environment-capabilities';
-import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
+import { describeQuotaEnvironmentError, describeQuotaOperationFailure } from './quota-messages';
 
 const BUSY = ['pending', 'running', 'awaiting_auth'];
 
@@ -81,7 +81,7 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
     if (scope) return;
     if (operation && BUSY.includes(operation.status)) return;
     if (launched && operation?.id === launched && operation.status === 'failed') {
-      setLaunched(undefined); setRequested(false); setTarget(undefined); setError(describeOperationError(operation.error_code ?? 'STEP_FAILED')); return;
+      setLaunched(undefined); setRequested(false); setTarget(undefined); setError(describeQuotaOperationFailure(operation)); return;
     }
     if (!environment) {
       if (!hostId) return;

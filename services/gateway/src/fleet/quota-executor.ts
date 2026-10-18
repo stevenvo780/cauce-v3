@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type { QuotaOperationClaim, QuotaOperationExecution } from '@cauce/store';
 import { assertQuotaEffect, QuotaEffectSchema, QuotaExecutionSchema, type QuotaEffect } from './quota-host-command.js';
+import { readQuotaStepReason, type QuotaStepReason } from './provider-login.js';
 
 export interface QuotaExecutionRepository {
   claim(worker: string, host: string, leaseMs?: number): Promise<QuotaOperationClaim | null>;
@@ -9,7 +10,7 @@ export interface QuotaExecutionRepository {
   execution(claim: QuotaOperationClaim): Promise<QuotaOperationExecution>;
   resumeAuthentication(claim: QuotaOperationClaim): Promise<boolean>;
   finish(claim: QuotaOperationClaim, value: unknown, awaitingAuth?: boolean): Promise<unknown>;
-  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED'): Promise<unknown>;
+  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED', detail?: QuotaStepReason): Promise<unknown>;
 }
 export interface QuotaAuthenticationHandle {
   public_result: { expires_at: string; output?: string; login_url?: string; user_code?: string };
@@ -78,8 +79,12 @@ export class QuotaExecutor {
         abort.signal.throwIfAborted();
         await this.repository.finish(claim, result);
       }
-    } catch {
-      if (!abort.signal.aborted) { try { await this.repository.fail(claim, failure); } catch { /* A replaced lease cannot accept a receipt. */ } }
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        const reason = readQuotaStepReason(error);
+        if (reason) process.stderr.write(`quota step failed reason=${reason}\n`);
+        try { await (reason ? this.repository.fail(claim, failure, reason) : this.repository.fail(claim, failure)); } catch { /* A replaced lease cannot accept a receipt. */ }
+      }
     } finally {
       stopping = true; clearInterval(heartbeat); abort.abort();
       this.options.signal?.removeEventListener('abort', shutdown);
@@ -123,5 +128,7 @@ export class HostChannelQuotaRepository implements QuotaExecutionRepository {
     return z.object({ resumed: z.boolean() }).strict().parse(await this.invoke('resume_auth', { claim })).resumed;
   }
   finish(claim: QuotaOperationClaim, value: unknown, awaitingAuth = false) { return this.terminal('finish', { claim, result: value, awaiting_auth: awaitingAuth }); }
-  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED') { return this.terminal('fail', { claim, code }); }
+  fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED', detail?: QuotaStepReason) {
+    return this.terminal('fail', { claim, code, ...(detail ? { detail } : {}) });
+  }
 }

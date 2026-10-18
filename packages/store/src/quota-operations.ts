@@ -9,6 +9,8 @@ import { StoreError } from './repository/errors.js';
 import { assertQuotaEnvironmentIdentity, bindQuotaEnvironmentIdentity } from './quota-identity.js';
 import { expireQuotaAuthentication } from './quota-auth-expiry.js';
 
+export type QuotaFailureDetail = 'runtime_release_stale' | 'runtime_image_stale' | 'reader_unreadable' | 'environment_not_running' | 'isolation_rejected';
+
 const Result = z.object({ runtime_verified: z.literal(true).optional(), container_name: z.string().regex(/^cauce-quota-[a-f0-9]{32}$/u).optional(),
   authenticated_verified: z.literal(true).optional(), account_identity: z.string().min(1).max(256).optional(), account_id: z.string().optional(),
   cli_updated_verified: z.literal(true).optional(), cli_version: z.string().min(1).max(256).optional(),
@@ -193,12 +195,13 @@ export class QuotaOperationsRepository {
       return { operation_id: claim.id, status: awaitingAuth ? 'awaiting_auth' : 'done' };
     });
   }
-  async fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED') {
+  async fail(claim: QuotaOperationClaim, code: 'PROVIDER_UNAVAILABLE' | 'RUNTIME_UNAVAILABLE' | 'STEP_FAILED' | 'AUTH_CANCELLED', detail?: QuotaFailureDetail) {
     return this.transaction(async client => {
-      const result = await client.query<{ environment_id: string; action: string; result: Record<string, unknown> | null }>(`UPDATE quota_environment_operations SET status='failed',error_code=$5,lease_until=NULL,updated_at=now()
+      const result = await client.query<{ environment_id: string; action: string; result: Record<string, unknown> | null }>(`UPDATE quota_environment_operations SET status='failed',error_code=$5,lease_until=NULL,updated_at=now(),
+        result=CASE WHEN $7::text IS NULL THEN result ELSE COALESCE(result, '{}'::jsonb) || jsonb_build_object('failure_reason', $7::text) END
         WHERE id=$1 AND claim_token=$2 AND claim_epoch=$3 AND worker_id=$4 AND environment_id=$6
           AND status='running' AND lease_until>now() RETURNING environment_id,action,result`,
-      [claim.id, claim.claim_token, claim.claim_epoch, claim.worker_id, code, claim.environment_id]);
+      [claim.id, claim.claim_token, claim.claim_epoch, claim.worker_id, code, claim.environment_id, detail ?? null]);
       if (!result.rowCount) {
         const previous = await client.query(`SELECT 1 FROM quota_environment_operations WHERE id=$1 AND claim_token=$2 AND claim_epoch=$3
           AND worker_id=$4 AND status='failed' AND error_code=$5 AND environment_id=$6`,

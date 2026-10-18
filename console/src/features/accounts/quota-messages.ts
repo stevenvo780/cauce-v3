@@ -108,8 +108,16 @@ const OPERATION_ERROR: Record<string, string> = {
   EXPIRED: 'La consulta caducó sin respuesta del ordenador; vuelve a consultar.',
   SESSION_CONFLICT: 'Ya hay una sesión de autenticación activa. Espera a que termine o relee el entorno.',
   SESSION_EXPIRED: 'La sesión de autenticación venció. Inicia la autenticación de nuevo.',
-  STEP_FAILED: 'Un paso de la operación falló. Revisa la salida e inténtalo de nuevo.',
+  STEP_FAILED: 'Un paso de la operación falló y no dejó salida. Vuelve a intentarlo. Si se repite, el diario del ejecutor en ese ordenador trae el motivo.',
   FUNCTIONAL_CHECK_FAILED: 'La comprobación posterior falló. Autentica de nuevo y reintenta la consulta.',
+};
+
+const QUOTA_STEP_REASON: Record<string, string> = {
+  runtime_release_stale: 'El entorno sigue montado en un release anterior del ejecutor y no se pudo reenganchar. La sesión sigue en su volumen. Vuelve a consultar. Si se repite, hay que recrear el contenedor sin borrar ese volumen.',
+  runtime_image_stale: 'La imagen del entorno no es la del despliegue actual. La sesión sigue en su volumen. No uses «Eliminar entorno»: eso borra la sesión. Hay que recrear el contenedor con la imagen aprobada y conservar el volumen.',
+  reader_unreadable: 'El lector de cuotas no devolvió una medición. Reintenta. Si se repite, actualiza el CLI del entorno.',
+  environment_not_running: 'El contenedor del entorno no está en ejecución. Vuelve a consultar. Si sigue parado, revisa Docker en ese ordenador.',
+  isolation_rejected: 'El contenedor no cumple el aislamiento o la propiedad aprobados. No se tocó la sesión. Revisa el entorno en ese ordenador antes de volver a consultar.',
 };
 
 export function describeKnownOperationError(code: string): string | undefined {
@@ -118,4 +126,12 @@ export function describeKnownOperationError(code: string): string | undefined {
 
 export function describeOperationError(code: string): string {
   return describeKnownOperationError(code) ?? 'La operación falló. Reintenta; si se repite, revisa el entorno.';
+}
+
+export function describeQuotaOperationFailure(operation: { error_code: string | null; result: Record<string, unknown> | null }): string {
+  const reason = operation.result?.failure_reason;
+  if (typeof reason === 'string' && Object.hasOwn(QUOTA_STEP_REASON, reason)) {
+    return QUOTA_STEP_REASON[reason] ?? describeOperationError(operation.error_code ?? 'STEP_FAILED');
+  }
+  return describeOperationError(operation.error_code ?? 'STEP_FAILED');
 }
