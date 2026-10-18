@@ -67,8 +67,21 @@ function confirmed(row: ManagedPerson, patch: PersonPatch): ManagedPerson {
   }
   return row;
 }
-function safeError(status: number): ApiError {
-  const message = status === 409 ? 'La revisión cambió o existe una dependencia protegida. Relee el inventario; el último administrador debe conservar acceso.'
+const CONFLICT_REASON = {
+  stale_revision: 'La revisión cambió. Relee el inventario y vuelve a intentar.',
+  still_active: 'Primero retira la cuenta. Purgar solo aplica a una persona ya retirada.',
+  last_administrator: 'Se perdería el último administrador efectivo. Conserva al menos uno con acceso y relee el inventario.',
+  protected_history: 'Quedan la membresía del alta, la auditoría del retiro o una dependencia anterior. Esta consola no borra ese historial: la cuenta queda retirada y sin acceso. Déjala así.',
+} as const;
+function conflictReason(body: unknown): keyof typeof CONFLICT_REASON | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const reason = (body as { reason?: unknown }).reason;
+  return typeof reason === 'string' && Object.hasOwn(CONFLICT_REASON, reason) ? reason as keyof typeof CONFLICT_REASON : undefined;
+}
+function safeError(status: number, body?: unknown): ApiError {
+  const reason = status === 409 ? conflictReason(body) : undefined;
+  const message = reason ? CONFLICT_REASON[reason]
+    : status === 409 ? 'La revisión cambió o existe una dependencia protegida. Relee el inventario; el último administrador debe conservar acceso.'
     : status === 403 ? 'Esta cuenta no tiene autoridad para administrar personas.'
     : status === 404 ? 'La persona o la administración no está disponible. Relee el inventario.'
     : status === 400 ? 'Revisa los datos de la persona y su contraseña.'
@@ -77,7 +90,7 @@ function safeError(status: number): ApiError {
 }
 export function peopleAdminClient(request: RequestFn): PeopleAdminClient {
   const path = '/v3/console/people';
-  const options = { requireCsrf: true, mapError: (status: number) => safeError(status) };
+  const options = { requireCsrf: true, mapError: (status: number, body: unknown) => safeError(status, body) };
   async function mutate(id: string, expectedRevision: string, method: string, suffix = '', patch?: PersonPatch) {
     revision(expectedRevision);
     const result = await request(`${path}/${identity(id)}${suffix}`, { method, cache: 'no-store',

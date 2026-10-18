@@ -114,7 +114,7 @@ export function PeopleAdminPanel() {
       <p>{confirmation.person.email} · revisión <code>{confirmation.person.revision}</code></p>
       <p>{confirmation.action === 'retire' ? 'Se revocan sesiones y accesos anteriores. La autoría de sus mensajes se conserva.'
         : confirmation.action === 'restore' ? 'La cuenta podrá abrir una nueva sesión. Los accesos revocados no se recuperan.'
-        : 'El registro se elimina definitivamente si el servidor acredita que no tiene históricos ni dependencias.'}</p>
+        : 'El registro se borra solo si no quedan históricos ni dependencias. El alta y el retiro ya dejan la membresía y la auditoría: si el servidor lo rechaza, la cuenta sigue retirada y sin acceso. Esta consola no borra ese historial. Si la revisión cambió, relee el inventario.'}</p>
       <div className="acciones"><button type="button" className="button" disabled={!canUse} title={blockFor(inventory?.capabilities[confirmation.action] ?? false)}
         onClick={() => { void confirm(); }}>Confirmar cambio de persona</button><button type="button" className="button secondary" disabled={busy}
           onClick={() => { setConfirmation(undefined); }}>Cancelar cambio de persona</button></div>

@@ -28,8 +28,11 @@ export const PEOPLE_ADMIN_CAPABILITIES = { create: true, update: true, retire: t
 export const PeopleAdminListSchema = z.object({ items: z.array(PeopleAdminPersonSchema).max(1000).refine(items => new Set(items.map(item => item.id)).size === items.length),
   capabilities: z.object({ create: z.boolean(), update: z.boolean(), retire: z.boolean(), restore: z.boolean(), purge: z.boolean() }).strict() }).strict();
 export const PeopleAdminPurgeSchema = z.object({ id: PeopleAdminIdSchema, revision: PeopleAdminRevisionSchema, purged: z.literal(true) }).strict();
+export type PeopleAdminConflictReason = 'stale_revision' | 'still_active' | 'last_administrator' | 'protected_history';
 export class PeopleAdminError extends Error {
-  constructor(readonly code: 'invalid_request' | 'forbidden' | 'conflict' | 'not_found' | 'unverified') {
+  readonly reason?: PeopleAdminConflictReason;
+  constructor(readonly code: 'invalid_request' | 'forbidden' | 'conflict' | 'not_found' | 'unverified', reason?: PeopleAdminConflictReason) {
     super('human administration could not be verified');
+    if (code === 'conflict' && reason !== undefined) this.reason = reason;
   }
 }

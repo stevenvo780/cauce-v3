@@ -19,7 +19,7 @@ function person(value: unknown): PeopleAdminPerson { return PeopleAdminPersonSch
 async function lockPerson(client: DatabaseClient, id: string, revision: string, company: string): Promise<PeopleAdminPerson> {
   const row = (await client.query<PeopleAdminPerson>(`SELECT ${COLUMNS} FROM console_users WHERE id=$1 AND company_id=$2 FOR UPDATE`, [id, company])).rows[0];
   if (!row) throw new PeopleAdminError('not_found');
-  const current = person(row); if (current.revision !== revision) throw new PeopleAdminError('conflict'); return current;
+  const current = person(row); if (current.revision !== revision) throw new PeopleAdminError('conflict', 'stale_revision'); return current;
 }
 async function syncMembership(client: DatabaseClient, value: PeopleAdminPerson): Promise<void> {
   await client.query(`UPDATE human_tenant_memberships SET enabled=false,revoked_at=COALESCE(revoked_at,clock_timestamp())
@@ -41,7 +41,10 @@ function mapped(error: unknown): never {
   if (error instanceof z.ZodError) throw new PeopleAdminError('invalid_request');
   if (error instanceof StoreError) {
     if (error.code === 'forbidden') throw new PeopleAdminError('forbidden');
-    if (error.code === 'conflict') throw new PeopleAdminError('conflict');
+    if (error.code === 'conflict') {
+      const last = /must keep a qualified owner|platform authority changed/u.test(error.message);
+      throw new PeopleAdminError('conflict', last ? 'last_administrator' : undefined);
+    }
   }
   const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
   if (code === '42501') throw new PeopleAdminError('forbidden');
@@ -53,7 +56,7 @@ function identifier(value: string): string { return `"${value.replace(/"/gu, '""
 async function assertNoHistory(client: DatabaseClient, value: PeopleAdminPerson): Promise<void> {
   const id = value.id;
   const administration = await client.query<{ present: boolean }>('SELECT cauce_human_has_admin_history($1) AS present', [id]);
-  if (administration.rows[0]?.present !== false) throw new PeopleAdminError('conflict');
+  if (administration.rows[0]?.present !== false) throw new PeopleAdminError('conflict', 'protected_history');
   const references = await client.query<{ schema: string; table: string; column: string }>(`SELECT namespace.nspname AS schema,relation.relname AS table,source.attname AS column
     FROM pg_constraint constraint_row JOIN pg_class relation ON relation.oid=constraint_row.conrelid
     JOIN pg_namespace namespace ON namespace.oid=relation.relnamespace
@@ -65,14 +68,14 @@ async function assertNoHistory(client: DatabaseClient, value: PeopleAdminPerson)
     if (reference.schema === 'public' && reference.table === 'company_admin_versions' && reference.column === 'human_id') continue;
     const exists = await client.query<{ present: boolean }>(`SELECT EXISTS(SELECT 1 FROM ${identifier(reference.schema)}.${identifier(reference.table)}
       WHERE ${identifier(reference.column)}=$1) AS present`, [id]);
-    if (exists.rows[0]?.present) throw new PeopleAdminError('conflict');
+    if (exists.rows[0]?.present) throw new PeopleAdminError('conflict', 'protected_history');
   }
   const history = (await client.query<{ present: boolean }>(`SELECT EXISTS(SELECT 1 FROM audit_events WHERE metadata->>'person_id'=$1
     OR metadata->>'actor_subject'=$2) OR EXISTS(SELECT 1 FROM fleet_operation_events WHERE metadata->>'actor_subject'=$2) AS present`, [id, `console:${id}`])).rows[0];
-  if (history?.present) throw new PeopleAdminError('conflict');
+  if (history?.present) throw new PeopleAdminError('conflict', 'protected_history');
   const sessions = await client.query<{ operator_id: string; attributed: boolean; console_subject: string }>(
     "SELECT operator_id,attributed,console_subject FROM terminal_sessions WHERE console_subject LIKE 'h2.%' OR operator_id=$1", [value.email]);
-  if (sessions.rows.some(row => ownsPeopleTerminalSession(value, row))) throw new PeopleAdminError('conflict');
+  if (sessions.rows.some(row => ownsPeopleTerminalSession(value, row))) throw new PeopleAdminError('conflict', 'protected_history');
 }
 
 export class PeopleAdminRepository {
@@ -166,7 +169,7 @@ export class PeopleAdminRepository {
     return this.transaction(actor, async (client, authority) => {
       const previous = await lockPerson(client, id, control.expected_revision, authority.actingCompany);
       await assertMayAdminister(client, authority, previous, undefined);
-      if (previous.active) throw new PeopleAdminError('conflict');
+      if (previous.active) throw new PeopleAdminError('conflict', 'still_active');
       await assertNoHistory(client, previous);
       const removed = await client.query('DELETE FROM console_users WHERE id=$1 RETURNING id', [id]);
       if (!removed.rowCount) throw new PeopleAdminError('conflict');

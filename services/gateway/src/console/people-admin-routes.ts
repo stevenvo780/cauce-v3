@@ -6,7 +6,7 @@ import { PasswordAuthProvider, PasswordWorkSaturated } from '../password-auth.js
 import { principal } from '../routes/shared.js';
 import {
   PeopleAdminControlSchema, PeopleAdminCreateSchema, PeopleAdminError, PeopleAdminIdSchema, PeopleAdminListSchema,
-  PeopleAdminPersonSchema, PeopleAdminPurgeSchema, PeopleAdminUpdateSchema, type PeopleAdminActor,
+  PeopleAdminPersonSchema, PeopleAdminPurgeSchema, PeopleAdminUpdateSchema, type PeopleAdminActor, type PeopleAdminConflictReason,
   type PeopleAdminControl, type PeopleAdminCreate, type PeopleAdminPerson, type PeopleAdminUpdate,
 } from './people-admin-schema.js';
 
@@ -19,6 +19,12 @@ export interface PeopleAdminRepositoryBinding {
   purge(actor: PeopleAdminActor, id: string, input: PeopleAdminControl): Promise<unknown>;
 }
 const STATUS = { invalid_request: 400, forbidden: 403, conflict: 409, not_found: 404, unverified: 503 } as const;
+const CONFLICT_TEXT: Record<PeopleAdminConflictReason, string> = {
+  stale_revision: 'La revisión cambió. Relee el inventario y vuelve a intentar.',
+  still_active: 'Primero retira la cuenta. Purgar solo aplica a una persona ya retirada.',
+  last_administrator: 'Se perdería el último administrador efectivo. Conserva al menos uno con acceso y relee el inventario.',
+  protected_history: 'Quedan la membresía del alta, la auditoría del retiro o una dependencia anterior. Esta consola no borra ese historial: la cuenta queda retirada y sin acceso. Déjala así.',
+};
 function fail(reply: FastifyReply, error: unknown): void {
   if (error instanceof PasswordWorkSaturated) {
     void reply.header('Retry-After', '5').code(429)
@@ -28,6 +34,11 @@ function fail(reply: FastifyReply, error: unknown): void {
   const code = error instanceof PeopleAdminError ? error.code : error instanceof AuthError ? 'unauthorized'
     : error instanceof AuthorizationError ? 'forbidden' : error instanceof z.ZodError ? 'invalid_request' : 'unverified';
   const status = code === 'unauthorized' ? 401 : STATUS[code];
+  const reason = error instanceof PeopleAdminError ? error.reason : undefined;
+  if (code === 'conflict' && reason !== undefined) {
+    void reply.code(status).send({ error: code, reason, message: CONFLICT_TEXT[reason] });
+    return;
+  }
   void reply.code(status).send({ error: code, message: code === 'conflict'
     ? 'La revisión cambió, existen dependencias o se perdería el último administrador efectivo. Relee el estado.'
     : 'No se pudo verificar la administración de esta persona.' });
