@@ -198,7 +198,11 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
                 os.close(child)
         elif stat.S_ISLNK(info.st_mode):
             target = os.readlink(name, dir_fd=parent)
-            if not bundled_plugin(path, target) and (target.startswith('/') or not under(os.path.realpath(os.path.join(os.readlink(f'/proc/self/fd/{parent}'), target)), os.readlink(f'/proc/self/fd/{source}'))):
+            if bundled_plugin(path, target):
+                omissions.append({'path': path, 'reason': 'regenerable', 'kind': 'symlink',
+                                  'targetSha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
+                return
+            if target.startswith('/') or not under(os.path.realpath(os.path.join(os.readlink(f'/proc/self/fd/{parent}'), target)), os.readlink(f'/proc/self/fd/{source}')):
                 raise Failure('a symlink leaves its source root')
             entries.append({**entry, 'kind': 'symlink', 'target': target, 'sha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
         elif stat.S_ISSOCK(info.st_mode):
@@ -371,6 +375,11 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
             if item['reason'] == 'regenerable-socket' and item.get('kind') == 'socket' \
                     and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory':
                 continue
+            if item['reason'] == 'regenerable' and item.get('kind') == 'symlink' \
+                    and path.split('/')[1:] == ['plugin-skills', 'browser-automation'] \
+                    and item.get('targetSha256') in {hashlib.sha256(os.fsencode(target)).hexdigest() for target in BROWSER_PLUGIN_TARGETS} \
+                    and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory':
+                continue
             if item['reason'] == 'git-sensitive-history' and fold_text(path.split('/')[-1]) == '.git' \
                     and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory' \
                     and not any(under(entry_path, path) for entry_path in entries):
@@ -448,6 +457,7 @@ def unpack(args: argparse.Namespace) -> dict:
             restorer = Restorer(scratch, args.destino, apply)
             for path in SPACE:
                 os.mkdir(path, 0o700, dir_fd=root)
+            skipped = []
             for repo in sorted(bundles.values(), key=lambda item: item['path'].count('/')):
                 restorer.repository(repo, checkout=False)
             for path, entry in sorted(entries.items(), key=lambda item: (item[1]['kind'] == 'symlink', item[0].count('/'), item[0])):
@@ -467,8 +477,10 @@ def unpack(args: argparse.Namespace) -> dict:
                             if digest_stream(output.read) != entry['sha256']:
                                 raise Failure('restored digest mismatch')
                     elif entry['kind'] == 'symlink':
-                        if bundled_plugin(path, entry['target']) and not os.path.isdir(entry['target']):
-                            raise Failure('the bundled OpenClaw browser plugin must be installed before restoration')
+                        if bundled_plugin(path, entry['target']):
+                            skipped.append({'path': path, 'reason': 'regenerable', 'kind': 'symlink',
+                                            'targetSha256': entry['sha256'], 'destination_path': target})
+                            continue
                         os.symlink(entry['target'], os.path.basename(target), dir_fd=holder)
                     layout.append({'from': path, 'to': target, 'sha256': entry.get('sha256'), 'kind': entry['kind']})
                 finally:
@@ -499,6 +511,7 @@ def unpack(args: argparse.Namespace) -> dict:
                     mapped['reclone_commands'] = [['git', 'clone', '--', url, target]
                                                  for url in item.get('remotes', {}).values()]
                 omissions.append(mapped)
+            omissions.extend(skipped)
             return {'verified': True, 'manifestSha256': manifest['sha256'], 'alias': args.alias, 'tenant': args.empresa, 'counts': counts(list(entries.values()), manifest['omissions']), 'omissions': omissions, 'layout': layout}
         finally:
             os.close(root)
