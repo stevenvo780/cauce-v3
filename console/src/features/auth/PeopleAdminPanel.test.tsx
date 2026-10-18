@@ -27,8 +27,8 @@ it('creates a person with a current catalog identity and writes the password wit
     return HttpResponse.json(rows[0], { status: 201 });
   }));
   const user = userEvent.setup(); renderWithApi(<PeopleAdminPanel />);
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Crear persona' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'Crear persona' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Invitar persona' })).toBeEnabled(); });
+  await user.click(screen.getByRole('button', { name: 'Invitar persona' }));
   await user.type(screen.getByRole('textbox', { name: 'Correo de acceso' }), 'new@example.test');
   await user.type(screen.getByRole('textbox', { name: 'Nombre de persona' }), 'Nueva persona');
   await user.selectOptions(screen.getByRole('combobox', { name: 'Espacio de la persona' }), 'A');
@@ -101,12 +101,12 @@ it('keeps protected last-admin failures visible and blocks writes when capabilit
   await user.click(screen.getByRole('button', { name: 'Confirmar cambio de persona' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('último administrador');
   expect(screen.getByRole('alert')).not.toHaveTextContent('private-last-admin-detail');
-  expect(screen.getByRole('button', { name: 'Crear persona' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Invitar persona' })).toBeDisabled();
   serve(() => [person], { ...capabilities, create: false, retire: false });
   await user.click(screen.getByRole('button', { name: 'Releer personas y permisos' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar persona one@example.test' })).toBeEnabled(); });
-  expect(screen.getByRole('button', { name: 'Crear persona' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Crear persona' })).toHaveAttribute('title', expect.stringContaining('no habilitó esta acción'));
+  expect(screen.getByRole('button', { name: 'Invitar persona' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Invitar persona' })).toHaveAttribute('title', expect.stringContaining('no habilitó esta acción'));
   expect(screen.getByRole('button', { name: 'Retirar persona one@example.test' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Retirar persona one@example.test' })).toHaveAttribute('title', expect.stringContaining('no habilitó esta acción'));
   server.use(http.post('http://localhost/v3/auth/login', () => HttpResponse.json({ authenticated: true, subject: 'changed', csrf_token: 'changed' })));
@@ -119,5 +119,5 @@ it('fails closed without the people endpoint and never infers permission from th
   server.use(http.get('http://localhost/v3/console/people', () => HttpResponse.json({}, { status: 404 })));
   renderWithApi(<PeopleAdminPanel />);
   expect(await screen.findByRole('alert')).toHaveTextContent('administración no está disponible');
-  expect(screen.getByRole('button', { name: 'Crear persona' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Invitar persona' })).toBeDisabled();
 });

@@ -7,7 +7,7 @@ import { CompanySession } from './company-authority';
 import './PeopleAdmin.css';
 
 type Action = 'retire' | 'restore' | 'purge';
-export function PeopleAdminPanel() {
+export function PeopleAdminPanel({ startCreating = false }: { startCreating?: boolean } = {}) {
   const api = useApi();
   const session = useContext(CompanySession);
   const ownEmail = session?.authenticated === true && session.login_mode === 'password' ? session.subject?.trim().toLowerCase() : undefined;
@@ -35,6 +35,11 @@ export function PeopleAdminPanel() {
     return false;
   }, [api]);
   useEffect(() => { void reload(); return () => { generation.current += 1; }; }, [reload]);
+  const askedToCreate = useRef(false);
+  useEffect(() => {
+    if (!startCreating || askedToCreate.current || loading || !inventory?.capabilities.create) return;
+    askedToCreate.current = true; setEditing({}); setConfirmation(undefined); setNotice('');
+  }, [startCreating, loading, inventory]);
   useEffect(() => api.onAuthGenerationChange(() => {
     generation.current += 1; setStale(true); setLoading(false); setEditing(undefined); setConfirmation(undefined);
     setNotice(''); setError('La sesión cambió. Relee personas y permisos desde la cuenta actual.');
@@ -94,7 +99,7 @@ export function PeopleAdminPanel() {
     {error ? <p className="notice" role="alert">{error}</p> : null}
     {notice ? <p className="notice" role="status">{notice}</p> : null}
     <button type="button" className="button" disabled={!canUse || !inventory.capabilities.create} title={blockFor(inventory?.capabilities.create ?? false)}
-      onClick={() => { setEditing({}); setConfirmation(undefined); setNotice(''); }}>Crear persona</button>
+      onClick={() => { setEditing({}); setConfirmation(undefined); setNotice(''); }}>Invitar persona</button>
     {inventory ? <div className="people-admin-table"><table><caption>Cuentas de personas</caption>
       <thead><tr><th>Persona</th><th>Identidad</th><th>Permiso</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>{inventory.items.map(person => <tr key={person.id}><td><strong>{person.display_name}</strong><br />{person.email}</td>

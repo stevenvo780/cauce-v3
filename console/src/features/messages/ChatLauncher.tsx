@@ -6,12 +6,12 @@ import {
 import { AgentOrb, OrbView } from '../../components/AgentOrb';
 import { AgentContextMenu, AgentKebab } from '../../components/agent-actions/AgentActionsMenu';
 import { useAgentAppearance, useAgentPreferences, usePreferencesSettled } from '../../components/agent-actions/preferences-context';
-import { Button, Notice } from '../../components/kit';
+import { Button, LinkButton, Notice } from '../../components/kit';
 import { ErrorState } from '../../components/ui';
 import { cn } from '../../cn';
 import { haceCuanto, plural } from '../../lib';
 import { orbHues } from '../../orb-hues';
-import { navigate } from '../../router';
+import { navigate, onNavClick } from '../../router';
 import { agentHref } from '../../shell/agent-href';
 import { useFleet } from '../../shell/fleet-context';
 import { useMediaQuery } from '../../shell/use-media-query';
@@ -300,6 +300,11 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
       <p className="m-0 text-sm text-muted">
         {query ? <>Ningún agente coincide con «<strong className="text-fg">{query.trim()}</strong>».</> : 'Todavía no hay agentes en la flota.'}
       </p>
+      {query ? null : (
+        <p className="m-0 flex flex-wrap justify-center gap-2">
+          <LinkButton href="/config?seccion=acceso" onClick={(event) => { onNavClick(event, '/config?seccion=acceso'); }}>Invitar persona</LinkButton>
+        </p>
+      )}
     </div>
   ) : (
     <ul ref={listRef} aria-label={phone ? 'Agentes' : 'Agentes para chatear'} className="m-0 flex list-none flex-wrap gap-x-6 gap-y-7 p-0">

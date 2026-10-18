@@ -49,13 +49,13 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     const email = values.email.trim();
     if (!values.display_name.trim() || values.display_name.trim().length > 120 || email.length > 254
         || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
-      setError('Introduce un correo válido y un nombre de 1 a 120 caracteres.'); return;
+      setError('Escribí un correo válido y un nombre de 1 a 120 caracteres.'); return;
     }
     if (!tenants.some(row => row.id === values.tenant_id)) {
-      setError('Elige un espacio del inventario actual.'); return;
+      setError('Elegí un espacio del inventario actual.'); return;
     }
     if (values.alias !== '' && !aliases.some(row => row.alias === values.alias)) {
-      setError('Elige una identidad del inventario o crea una nueva para este correo.'); return;
+      setError('Elegí una identidad del inventario o creá una nueva para este correo.'); return;
     }
     const alias = values.alias || aliasFromEmail(email, taken);
     if ((!person || password.length > 0) && (password.length < 12 || password.length > 1024)) {
@@ -64,9 +64,9 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     await save({ ...values, email, display_name: values.display_name.trim(), alias });
     setValues(previous => ({ ...previous, password: '' }));
   }
-  return <form className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Crear persona'}
+  return <form className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Invitar persona'}
     onSubmit={event => { event.preventDefault(); if (!busy) void submit(); }}>
-    <h3>{person ? 'Editar persona' : 'Crear persona'}</h3>
+    <h3>{person ? 'Editar persona' : 'Invitar persona'}</h3>
     {person ? <p>Revisión visible: <code>{person.revision}</code>. Cambiar identidad, rol o contraseña revoca las sesiones y accesos anteriores.</p> : null}
     <label>Correo de acceso<input type="email" autoComplete="off" value={values.email} disabled={busy} maxLength={254}
       onChange={event => { edit({ email: event.target.value }); }} /></label>
@@ -75,7 +75,7 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     <label>Permiso web<select value={values.role} disabled={busy} onChange={event => { edit({ role: event.target.value as ManagedPerson['role'] }); }}>
       <option value="reader">Lector</option><option value="operator">Operador</option></select></label>
     <label>Espacio de la persona<select value={values.tenant_id} disabled={busy} onChange={event => { edit({ tenant_id: event.target.value, alias: '' }); }}>
-      <option value="">Elige espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {String(row.id)}</option>)}
+      <option value="">Elegí un espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {String(row.id)}</option>)}
       {person && !tenants.some(row => row.id === person.tenant_id) ? <option value={person.tenant_id} disabled>{person.tenant_id} · no habilitado</option> : null}
     </select></label>
     <label>Identidad de la persona<select value={values.alias} disabled={busy} onChange={event => { edit({ alias: event.target.value }); }}>
