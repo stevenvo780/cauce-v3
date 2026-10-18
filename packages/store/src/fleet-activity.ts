@@ -2,6 +2,7 @@
  * Fleet activity heuristics and queries for GET /v3/console/activity.
  */
 import { hubStarRouteSql } from './repository/acl-edges.js';
+import { runtimePrincipalScopeSql } from './repository/system-principal-scope.js';
 
 /** Own tenant, or an enabled allow_read edge the company star (or a live link) admits; tenant and company state aside. */
 export function fleetReadableSql(reader: string, owner: string): string {
@@ -191,14 +192,17 @@ participants AS (
   -- caído llenaría la oficina de agentes viejos.
   SELECT a.tenant_id, a.alias FROM agents a JOIN visible_tenants v ON v.tenant_id = a.tenant_id
    WHERE a.retired_at IS NULL AND a.purged_at IS NULL
+     AND ${runtimePrincipalScopeSql('a.tenant_id', 'a.alias')}
   UNION
   SELECT w.tenant_id, w.alias FROM work w
    WHERE NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id = w.tenant_id AND gone.alias = w.alias
                       AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
+     AND ${runtimePrincipalScopeSql('w.tenant_id', 'w.alias')}
   UNION
   SELECT l.tenant_id, l.alias FROM connection_leases l JOIN visible_tenants v ON v.tenant_id = l.tenant_id
    WHERE NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id = l.tenant_id AND gone.alias = l.alias
                       AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
+     AND ${runtimePrincipalScopeSql('l.tenant_id', 'l.alias')}
 )
 SELECT p.tenant_id,
        p.alias,

@@ -95,7 +95,7 @@ export function construirRosterDeMensajeria(entrada: {
     });
   }
 
-  return [...registros.values()].sort((izquierda, derecha) => {
+  return [...registros.values()].filter(agente => !esIntermediarioDeContexto(agente.alias)).sort((izquierda, derecha) => {
     const rango = { online: 0, unknown: 1, expired: 2 };
     return rango[izquierda.leaseState] - rango[derecha.leaseState]
       || izquierda.tenantId.localeCompare(derecha.tenantId)
@@ -121,6 +121,10 @@ export function motivoDeAgenteSuelto(agente: AgenteDeMensajeria): string | undef
     return 'Está en el registro de agentes y en NINGUNA sala. Los mensajes se leen igual; para escribirle hace falta una membresía habilitada.';
   }
   return 'Ni sala, ni lease, ni registro: este alias existe acá sólo porque el servidor publicó mensajes suyos. El hilo no se esconde por eso.';
+}
+
+function esIntermediarioDeContexto(alias: string): boolean {
+  return /^context-director(?:-\d+)?$/u.test(alias);
 }
 
 function sumarOrigen(origenes: OrigenDeAgente[], nuevo: OrigenDeAgente): OrigenDeAgente[] {
