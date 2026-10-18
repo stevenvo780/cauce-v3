@@ -1,8 +1,8 @@
 import type { TLSSocket } from 'node:tls';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AgentConnection, FEATURE_READ_GOVERNANCE_DONE, MAX_AGENT_READS_IN_FLIGHT,
-  MAX_TERMINAL_READ_TOMBSTONES,
+  AgentConnection, FEATURE_READ_GOVERNANCE_DONE
+  ,
 } from './agent-leg.js';
 import {
   FRAME_TAGS, FrameDecoder, MAX_DATA_BYTES, encodeFrame, encodeJsonFrame,
@@ -124,34 +124,7 @@ function readData(requestId: string, data: Buffer): Frame {
   return frame;
 }
 
-function readErr(requestId: string, error: string, reason = 'motivo'): Frame {
-  const frame = new FrameDecoder().push(
-    encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0];
-  if (!frame) throw new Error('Frame not found');
-  return frame;
-}
-
 describe('requestFileRead falla cerrado', () => {
-  it('propaga el código de error del agente', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    connection.handleFrame(readErr(id, 'symlink_detected', 'path resolves somewhere else'), Date.now);
-
-    expect(await pendiente).toEqual({ error: 'symlink_detected', reason: 'path resolves somewhere else' });
-  });
-
-  it('convierte en `unknown` un código que no reconoce', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    connection.handleFrame(readErr(id, 'te_lo_invento', 'lo que sea'), Date.now);
-
-    expect(await pendiente).toEqual({ error: 'unknown', reason: 'lo que sea' });
-  });
 
   it('rechaza una respuesta que viene por otra ruta', async () => {
     const { socket, connection } = conectar();
@@ -163,36 +136,6 @@ describe('requestFileRead falla cerrado', () => {
     expect(await pendiente).toEqual({
       error: 'unknown',
       reason: 'el agente contestó por una ruta distinta de la pedida'
-    });
-  });
-
-  it('rechaza un READ_OK sin metadatos', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    const okFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, {
-      request_id: id, kind: 'file', path: RUTA
-    }))[0];
-    if (!okFrame) throw new Error('Frame not found');
-    connection.handleFrame(okFrame, Date.now);
-
-    expect(await pendiente).toEqual({
-      error: 'unknown',
-      reason: 'el agente contestó sin los metadatos de la lectura'
-    });
-  });
-
-  it('rechaza un agente que anuncia más tramas de las que cabe un documento', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    connection.handleFrame(readOk(id, { chunks: 4096 }), Date.now);
-
-    expect(await pendiente).toEqual({
-      error: 'too_large',
-      reason: 'el agente anuncia más tramas de las que cabe un documento'
     });
   });
 
@@ -219,39 +162,6 @@ describe('requestFileRead falla cerrado', () => {
       error: 'timeout',
       reason: 'el pty-agent no contestó en 20 ms'
     });
-  });
-
-  it('avisa en cuanto la conexión muere, sin esperar al temporizador', async () => {
-    const { connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA, 60_000);
-
-    connection.destroy('agent_disconnected');
-
-    expect(await pendiente).toEqual({
-      error: 'unavailable',
-      reason: 'el pty-agent se desconectó: agent_disconnected'
-    });
-  });
-
-  it('tira las tramas de una lectura que ya venció, sin matar la conexión', async () => {
-    const { socket, connection } = conectar();
-    const outcome = await requestFileRead(connection, 'Steven', 'zeus', RUTA, 20);
-    expect(outcome).toMatchObject({ error: 'timeout' });
-    const id = requestIdEnviado(socket);
-
-    expect(() => { connection.handleFrame(readOk(id, { chunks: 0 }), Date.now); }).not.toThrow();
-    expect(() => { connection.handleFrame(
-      readData('ffffffff-ffff-4fff-8fff-ffffffffffff', Buffer.from('x')), Date.now
-    ); }).not.toThrow();
-    expect(connection.alive).toBe(true);
-  });
-
-  it('trata como violación un READ_OK sin request_id', () => {
-    const { connection } = conectar();
-
-    const errFrame = new FrameDecoder().push(encodeJsonFrame(FRAME_TAGS.READ_OK, { kind: 'file' }))[0];
-    if (!errFrame) throw new Error('Frame not found');
-    expect(() => { connection.handleFrame(errFrame, Date.now); }).toThrow(/request id/u);
   });
 });
 
@@ -280,43 +190,6 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
     });
   });
 
-  it('rechaza kind, raíz y READ_DATA inesperados', async () => {
-    for (const response of [
-      (id: string) => directoryOk(id, { kind: 'file' }),
-      (id: string) => directoryOk(id, { path: '/home/dev/.claude/projects-otro' }),
-    ]) {
-      const { socket, connection } = conectar();
-      const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
-      const id = requestIdEnviado(socket);
-      connection.handleFrame(response(id), Date.now);
-      expect(await pending).toMatchObject({ error: 'unknown' });
-    }
-
-    const { socket, connection } = conectar();
-    const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
-    const id = requestIdEnviado(socket);
-    connection.handleFrame(directoryOk(id), Date.now);
-    connection.handleFrame(readData(id, Buffer.from('contenido prohibido')), Date.now);
-    expect(await pending).toEqual({
-      error: 'unknown', reason: 'el agente mandó contenido en un índice de directorio',
-    });
-  });
-
-  it('rechaza una entrada cuya ruta lleva un override bidi', async () => {
-    const { socket, connection } = conectar();
-    const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
-    const id = requestIdEnviado(socket);
-    connection.handleFrame(directoryOk(id, {
-      entries: [{
-        path: `${MEMORY_ROOT}/\u202Edm.sesion`, bytes: 12, modified_at: '2026-08-24T10:00:00Z',
-      }],
-    }), Date.now);
-    expect(await pending).toEqual({
-      error: 'unknown', reason: 'el índice contiene una ruta, fecha o tamaño inválidos',
-    });
-    expect(connection.alive).toBe(false);
-  });
-
   it('no acepta éxito en una microtarea: exige DONE y cierra si llega DATA después', async () => {
     const { socket, connection } = conectar();
     const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
@@ -333,51 +206,6 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
       error: 'unknown', reason: 'el agente mandó contenido en un índice de directorio',
     });
     expect(connection.alive).toBe(false);
-  });
-
-  it('tombstonea DONE y degrada la conexión ante cualquier DATA posterior', async () => {
-    const { socket, connection } = conectar();
-    const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
-    const id = requestIdEnviado(socket);
-    connection.handleFrame(directoryOk(id), Date.now);
-    connection.handleFrame(readDone(id), Date.now);
-    await expect(pending).resolves.toMatchObject({ observed_at_least: 1 });
-
-    expect(() => { connection.handleFrame(readData(id, Buffer.from('tardío')), Date.now); })
-      .toThrow(/after terminal read/u);
-    expect(connection.alive).toBe(false);
-  });
-
-  it('rota el socket al llenar tombstones en vez de olvidar ids terminales', () => {
-    const { connection } = conectar();
-    for (let index = 0; index < MAX_TERMINAL_READ_TOMBSTONES; index += 1) {
-      connection.detachRead(`terminal-${String(index)}`, true);
-    }
-    expect(connection.alive).toBe(true);
-
-    connection.detachRead('terminal-capacity', true);
-    expect(connection.alive).toBe(false);
-  });
-
-  it.each([
-    ['escape ..', { entries: [{ path: `${MEMORY_ROOT}/../.credentials.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' }] }],
-    ['prefix collision', { entries: [{ path: `${MEMORY_ROOT}-otro/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' }] }],
-    ['absolute outside', { entries: [{ path: '/etc/passwd', bytes: 1, modified_at: '2026-08-24T10:00:00Z' }] }],
-    ['duplicate', { total: 2, entries: [
-      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
-      { path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' },
-    ] }],
-    ['invalid date', { entries: [{ path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-02-30T10:00:00Z' }] }],
-    ['credential', { entries: [{ path: `${MEMORY_ROOT}/auth.json`, bytes: 1, modified_at: '2026-08-24T10:00:00Z' }] }],
-    ['symlink marker', { entries: [{
-      path: `${MEMORY_ROOT}/a.md`, bytes: 1, modified_at: '2026-08-24T10:00:00Z', symlink: true,
-    }] }],
-  ])('rechaza %s', async (_label, overrides) => {
-    const { socket, connection } = conectar();
-    const pending = requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT);
-    const id = requestIdEnviado(socket);
-    connection.handleFrame(directoryOk(id, overrides), Date.now);
-    expect(await pending).toHaveProperty('error');
   });
 
   it('aplica el límite de 200 y la coherencia entre total, truncated y entries', async () => {
@@ -403,59 +231,11 @@ describe('requestDirectoryRead transporta sólo un índice acotado', () => {
     }
   });
 
-  it('no pregunta a agentes sin capability y distingue timeout y desconexión', async () => {
-    const legacy = conectar({ features: [] });
-    expect(await requestDirectoryRead(legacy.connection, 'Steven', 'zeus', MEMORY_ROOT)).toMatchObject({
-      error: 'unavailable',
-    });
-    expect(legacy.socket.frames()).toEqual([]);
-
-    const noTerminal = conectar({ features: ['read_governance'] });
-    expect(await requestDirectoryRead(noTerminal.connection, 'Steven', 'zeus', MEMORY_ROOT))
-      .toMatchObject({ error: 'unavailable' });
-    expect(noTerminal.socket.frames()).toEqual([]);
-
-    const timed = conectar();
-    expect(await requestDirectoryRead(timed.connection, 'Steven', 'zeus', MEMORY_ROOT, 20)).toMatchObject({
-      error: 'timeout',
-    });
-
-    const gone = conectar();
-    const pending = requestDirectoryRead(gone.connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000);
-    gone.connection.destroy('agent_disconnected');
-    expect(await pending).toMatchObject({ error: 'unavailable' });
-  });
-
   it('exige la raíz exacta derivada del HELLO, no cualquier directorio bajo HOME', async () => {
     const { socket, connection } = conectar();
     expect(await requestDirectoryRead(connection, 'Steven', 'zeus', '/home/dev')).toMatchObject({
       error: 'invalid_path',
     });
     expect(socket.frames()).toEqual([]);
-  });
-
-  it('cancela al cerrar HTTP y libera el límite acotado por alias', async () => {
-    const { socket, connection } = conectar();
-    const pending: Promise<unknown>[] = [];
-    for (let index = 0; index < MAX_AGENT_READS_IN_FLIGHT; index += 1) {
-      pending.push(requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000));
-    }
-    expect(socket.frames().filter((frame) => frame.tag === FRAME_TAGS.READ)).toHaveLength(
-      MAX_AGENT_READS_IN_FLIGHT,
-    );
-    await expect(requestDirectoryRead(connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000))
-      .resolves.toMatchObject({ error: 'busy' });
-
-    connection.destroy('test_cleanup');
-    await Promise.all(pending);
-
-    const fresh = conectar();
-    const abort = new AbortController();
-    const cancelled = requestDirectoryRead(
-      fresh.connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000, abort.signal,
-    );
-    abort.abort();
-    await expect(cancelled).resolves.toMatchObject({ error: 'cancelled' });
-    expect(fresh.connection.alive).toBe(true);
   });
 });

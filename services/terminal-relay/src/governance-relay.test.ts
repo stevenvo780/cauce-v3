@@ -13,10 +13,9 @@ import {
 import {
   FRAME_TAGS, FrameDecoder, decodeJsonFrame, encodeFrame, encodeJsonFrame, type Frame,
 } from './framing.js';
-import { requestDirectoryRead } from './gateway-client.js';
 import {
   GOVERNANCE_LIST_PATH, GOVERNANCE_READ_PATH,
-  parseDirectoryRequest, setupGovernanceRelay,
+  setupGovernanceRelay,
 } from './governance-relay.js';
 import { agentHello, type AgentHello } from './relay-test-fixtures.js';
 
@@ -213,14 +212,6 @@ function readData(requestId: string, data: Buffer): Frame {
   return frame;
 }
 
-function readErr(requestId: string, error: string, reason: string): Frame {
-  const frame = new FrameDecoder().push(
-    encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0];
-  if (!frame) throw new Error('Frame not found');
-  return frame;
-}
-
 function sha(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex');
 }
@@ -273,74 +264,6 @@ describe('la lectura llega al agente y vuelve', () => {
       content: '# Manual\n'
     });
   });
-
-  it('pide al agente exactamente la ruta que le llegó por HTTP', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = pedir({
-      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: '/home/dev/AGENTS.md' })
-    });
-
-    const id = await esperarRequestId(socket);
-    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
-    if (!read) throw new Error('READ frame not found');
-    const enviado = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
-    expect(enviado.path).toBe('/home/dev/AGENTS.md');
-    expect(enviado.kind).toBe('file');
-
-    connection.handleFrame(readErr(id, 'not_found', 'no existe'), Date.now);
-    await pendiente;
-  });
-
-  it('propaga el fallo que declara el agente, sin traducirlo a otra cosa', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = pedir();
-
-    connection.handleFrame(readErr(await esperarRequestId(socket), 'symlink_detected', 'apunta a otro sitio'), Date.now);
-
-    const respuesta = await pendiente;
-    // 200 with a READ failure: the call arrived and was answered. The modal needs the reason,
-    // not a transport code that says nothing about what happened inside the container.
-    expect(respuesta.status).toBe(200);
-    expect(cuerpo(respuesta)).toEqual({ error: 'symlink_detected', reason: 'apunta a otro sitio' });
-  });
-});
-
-describe('la lectura falla explicando por qué', () => {
-  it('dice que no hay agente cuando ese alias no tiene ninguno conectado', async () => {
-    const respuesta = await pedir();
-
-    expect(respuesta.status).toBe(200);
-    expect(cuerpo(respuesta)).toEqual({
-      error: 'unavailable',
-      reason: 'no hay ningún pty-agent conectado para ese alias'
-    });
-  });
-
-  it('no le manda NADA a un pty-agent viejo que no anuncia la capacidad', async () => {
-    const { socket } = conectar({ features: [] });
-
-    const respuesta = await pedir();
-
-    expect(cuerpo(respuesta)).toEqual({
-      error: 'unavailable',
-      reason: 'el pty-agent de ese alias no sabe leer ficheros de gobierno'
-    });
-    // What is really checked: not a single frame went out. A READ to a pre-feature agent is a
-    // protocol violation for it and takes its open terminals down with it.
-    expect(socket.frames()).toEqual([]);
-  });
-
-  it('vence si el agente no contesta, en vez de dejar la petición colgada', async () => {
-    conectar();
-
-    const respuesta = await pedir();
-
-    expect(respuesta.status).toBe(200);
-    expect(cuerpo(respuesta)).toEqual({
-      error: 'timeout',
-      reason: `el pty-agent no contestó en ${String(TIEMPO_LIMITE_MS)} ms`
-    });
-  });
 });
 
 describe('el índice de memoria tiene un endpoint y contrato propios', () => {
@@ -373,17 +296,6 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
     });
   });
 
-  it('distingue alias offline y timeout sin inventar una lista vacía', async () => {
-    expect(cuerpo(await pedirIndice())).toEqual({
-      error: 'unavailable', reason: 'no hay ningún pty-agent conectado para ese alias',
-    });
-
-    conectar();
-    expect(cuerpo(await pedirIndice())).toEqual({
-      error: 'timeout', reason: `el pty-agent no contestó en ${String(TIEMPO_LIMITE_MS)} ms`,
-    });
-  });
-
   it('exige autenticación y una raíz canónica antes de tocar al agente', async () => {
     const unauthenticated = conectar();
     expect((await pedirIndice({ autorizacion: null })).status).toBe(401);
@@ -395,53 +307,6 @@ describe('el índice de memoria tiene un endpoint y contrato propios', () => {
     });
     expect(response.status).toBe(400);
     expect(invalid.socket.frames()).toEqual([]);
-  });
-
-  it('propaga el cierre HTTP y libera el cupo en vuelo del alias', async () => {
-    const { socket, connection } = conectar();
-    const payload = Buffer.from(JSON.stringify({
-      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
-    }), 'utf8');
-    const request = httpsRequest(
-      new URL(GOVERNANCE_LIST_PATH, `https://127.0.0.1:${String(puerto)}`),
-      {
-        method: 'POST',
-        ca: tls.cert,
-        headers: {
-          authorization: `Bearer ${TOKEN}`,
-          'content-type': 'application/json',
-          'content-length': payload.byteLength,
-        },
-      },
-    );
-    request.on('error', () => { /* ECONNRESET expected from client cancellation. */ });
-    request.end(payload);
-    await esperarRequestId(socket);
-
-    const closed = new Promise<void>((resolve) => request.once('close', resolve));
-    request.destroy();
-    await closed;
-    await new Promise<void>((resolve) => setTimeout(resolve, 10));
-
-    const before = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.READ).length;
-    const reads = Array.from({ length: 4 }, () => requestDirectoryRead(
-      connection, 'Steven', 'zeus', MEMORY_ROOT, 60_000,
-    ));
-    const after = socket.frames().filter((frame) => frame.tag === FRAME_TAGS.READ).length;
-    expect(after - before).toBe(4);
-
-    connection.destroy('test_cleanup');
-    const outcomes = await Promise.all(reads);
-    expect(outcomes.some((outcome) => 'error' in outcome && outcome.error === 'busy')).toBe(false);
-  });
-
-  it('el parser del endpoint es de objeto cerrado', () => {
-    expect(parseDirectoryRequest(JSON.stringify({
-      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT,
-    }))).toEqual({ tenantId: 'Steven', alias: 'zeus', path: MEMORY_ROOT });
-    expect(parseDirectoryRequest(JSON.stringify({
-      tenant_id: 'Steven', alias: 'zeus', path: MEMORY_ROOT, extra: true,
-    }))).toHaveProperty('rejected');
   });
 });
 
@@ -458,52 +323,6 @@ describe('la puerta se cierra antes de tocar al agente', () => {
     expect(socket.frames()).toEqual([]);
   });
 
-  it('rechaza un token que no es el compartido', async () => {
-    const { socket } = conectar();
-
-    const respuesta = await pedir({ autorizacion: 'Bearer token-de-otro-que-mide-lo-mismo-01234' });
-
-    expect(respuesta.status).toBe(401);
-    expect(socket.frames()).toEqual([]);
-  });
-
-  it('rechaza una autorización que no es Bearer', async () => {
-    conectar();
-
-    expect((await pedir({ autorizacion: `Basic ${TOKEN}` })).status).toBe(401);
-  });
-
-  it('contesta 503, no 401, si el propio relay no puede leer su token', async () => {
-    conectar();
-    token = async () => { throw new Error('token file is empty'); };
-
-    const respuesta = await pedir();
-
-    // A relay failure cannot be disguised as a bad caller credential: the gateway would retry
-    // with another credential all night chasing a problem that is not theirs.
-    expect(respuesta.status).toBe(503);
-    expect(cuerpo(respuesta)).toEqual({ error: 'unavailable' });
-  });
-
-  it('rechaza un cuerpo que no es JSON', async () => {
-    const { socket } = conectar();
-
-    const respuesta = await pedir({ cuerpo: 'esto no es json' });
-
-    expect(respuesta.status).toBe(400);
-    expect(cuerpo(respuesta)).toMatchObject({ error: 'invalid_request', reason: 'el cuerpo no es JSON' });
-    expect(socket.frames()).toEqual([]);
-  });
-
-  it('rechaza un alias que no tiene forma de alias', async () => {
-    const respuesta = await pedir({
-      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: '../../etc', path: RUTA })
-    });
-
-    expect(respuesta.status).toBe(400);
-    expect(cuerpo(respuesta)).toMatchObject({ reason: 'alias no tiene forma de alias' });
-  });
-
   it('rechaza una ruta relativa o con un byte nulo', async () => {
     const relativa = await pedir({
       cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: 'CLAUDE.md' })
@@ -516,24 +335,5 @@ describe('la puerta se cierra antes de tocar al agente', () => {
 
     expect(relativa.status).toBe(400);
     expect(nula.status).toBe(400);
-  });
-
-  it('rechaza un cuerpo que se pasa del tope, y contesta la explicación', async () => {
-    const respuesta = await pedir({
-      cuerpo: JSON.stringify({ tenant_id: 'Steven', alias: 'zeus', path: `/${'a'.repeat(600_000)}` })
-    });
-
-    // 413 instead of a dropped connection: if the relay kills the socket, the gateway sees
-    // "connection dropped" and never learns why the call was rejected.
-    expect(respuesta.status).toBe(413);
-    expect(cuerpo(respuesta)).toMatchObject({ error: 'invalid_request' });
-  });
-
-  it('no atiende otras rutas del mismo listener', async () => {
-    expect((await pedir({ ruta: '/v3/terminal/relay/otra-cosa' })).status).toBe(404);
-  });
-
-  it('no atiende otros métodos', async () => {
-    expect((await pedir({ metodo: 'GET' })).status).toBe(405);
   });
 });

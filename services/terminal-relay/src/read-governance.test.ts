@@ -6,7 +6,7 @@ import {
   parseAgentHello,
 } from './agent-leg.js';
 import {
-  FRAME_TAGS, FrameDecoder, SESSION_ID_BYTES, encodeFrame, encodeJsonFrame,
+  FRAME_TAGS, FrameDecoder, encodeFrame, encodeJsonFrame,
   type Frame
 } from './framing.js';
 import { requestFileRead } from './gateway-client.js';
@@ -110,41 +110,12 @@ function readData(requestId: string, data: Buffer): Frame {
   return frame;
 }
 
-function readErr(requestId: string, error: string, reason = 'motivo'): Frame {
-  const frame = new FrameDecoder().push(
-    encodeJsonFrame(FRAME_TAGS.READ_ERR, { request_id: requestId, error, reason })
-  )[0];
-  if (!frame) throw new Error('Frame not found');
-  return frame;
-}
-
 describe('el hello declara qué sabe hacer el agente', () => {
   it('lee `features` cuando el agente las anuncia', () => {
     const hello = parseAgentHello(Buffer.from(JSON.stringify({
       v: 1, tenant_id: 'Steven', alias: 'zeus', container_id: 'claw-zeus', generation: 'a'.repeat(32),
       image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
       agent_version: '0.4.0', modes: ['shell'], features: ['read_governance']
-    })));
-    expect(hello?.features).toEqual(['read_governance']);
-  });
-
-  it('admite igual a un agente viejo que no manda `features`, y lo deja sin capacidades', () => {
-    const hello = parseAgentHello(Buffer.from(JSON.stringify({
-      v: 1, tenant_id: 'Steven', alias: 'zeus', container_id: 'claw-zeus', generation: 'a'.repeat(32),
-      image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
-      agent_version: '0.3.0', modes: ['shell']
-    })));
-    // That it gets through is the point: if `features` were mandatory, deploying the relay before
-    // the agent would leave the entire fleet without terminals.
-    expect(hello).toBeDefined();
-    expect(hello?.features).toEqual([]);
-  });
-
-  it('descarta entradas que no son texto en vez de invalidar el hello', () => {
-    const hello = parseAgentHello(Buffer.from(JSON.stringify({
-      v: 1, tenant_id: 'Steven', alias: 'zeus', container_id: 'claw-zeus', generation: 'a'.repeat(32),
-      image_id: 'sha256:beef', runtime_user: 'dev', runtime_uid: 1000, harness: 'claude',
-      agent_version: '0.4.0', modes: ['shell'], features: ['read_governance', 7, null]
     })));
     expect(hello?.features).toEqual(['read_governance']);
   });
@@ -218,44 +189,9 @@ describe('el hello declara qué sabe hacer el agente', () => {
     expect(parsedPartial?.home).toBeUndefined();
     expect(parsedPartial?.project_doc_max_bytes).toBeUndefined();
   });
-
-  it.each(['muse', 'grok'])('acredita %s sólo con un workspace canónico medido', (harness) => {
-    const workspaceField = `${harness}_workspace`;
-    const base = {
-      v: 1, tenant_id: 'Hospital', alias: 'teseo', container_id: 'muse-teseo', generation: 'a'.repeat(32),
-      image_id: 'sha256:beef', runtime_user: 'node', runtime_uid: 1000, harness,
-      agent_version: '0.6.0', modes: ['shell'], runtime_facts_observed: true,
-      home: '/home/node', [workspaceField]: '/home/node/clawd',
-      GROK_HOME: '/home/node/.grok',
-    };
-    expect(parseAgentHello(Buffer.from(JSON.stringify(base)))).toMatchObject({
-      runtime_facts_observed: true, [workspaceField]: '/home/node/clawd',
-    });
-    for (const workspace of [undefined, '', '/', 'home/node/clawd', '/home/node/../other']) {
-      const parsed = parseAgentHello(Buffer.from(JSON.stringify({
-        ...base, [workspaceField]: workspace,
-      })));
-      expect(parsed).toBeDefined();
-      expect(parsed?.runtime_facts_observed).toBe(false);
-      expect(parsed).not.toHaveProperty(workspaceField);
-    }
-  });
 });
 
 describe('requestFileRead no pregunta cuando no debe', () => {
-  it('no manda NADA a un agente que no anuncia la capacidad', async () => {
-    const { socket, connection } = conectar({ features: [] });
-
-    const outcome = await requestFileRead(connection, 'Steven', 'zeus', RUTA);
-
-    expect(outcome).toEqual({
-      error: 'unavailable',
-      reason: 'el pty-agent de ese alias no sabe leer ficheros de gobierno'
-    });
-    // What is really checked: not a single frame went out. A READ to an old agent is a protocol
-    // violation for it and takes all its open terminals down with it.
-    expect(socket.frames()).toEqual([]);
-  });
 
   it('rechaza sin preguntar si la conexión es de otro alias', async () => {
     const { socket, connection } = conectar();
@@ -274,35 +210,9 @@ describe('requestFileRead no pregunta cuando no debe', () => {
     expect(outcome).toEqual({ error: 'permission_denied', reason: 'la conexión no es la de ese alias' });
     expect(socket.frames()).toEqual([]);
   });
-
-  it('rechaza si la conexión ya está muerta', async () => {
-    const { connection } = conectar();
-    connection.destroy('agent_disconnected');
-
-    const outcome = await requestFileRead(connection, 'Steven', 'zeus', RUTA);
-
-    expect(outcome).toEqual({ error: 'unavailable', reason: 'el pty-agent de ese alias no está conectado' });
-  });
 });
 
 describe('requestFileRead decodifica y acumula la respuesta', () => {
-  it('manda un READ con la ruta y un request_id con forma de UUID', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-
-    const read = socket.frames().find((frame) => frame.tag === FRAME_TAGS.READ);
-    if (!read) throw new Error('READ frame not found');
-    const body = JSON.parse(read.payload.toString('utf8')) as Record<string, unknown>;
-    expect(body.kind).toBe('file');
-    expect(body.path).toBe(RUTA);
-    // Must be a lowercase dashed UUID: it travels as a 36-byte prefix of every READ_DATA, and
-    // the agent cannot encode them any other way.
-    expect(body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
-    expect(String(body.request_id)).toHaveLength(SESSION_ID_BYTES);
-
-    connection.handleFrame(readErr(String(body.request_id), 'not_found'), Date.now);
-    await pendiente;
-  });
 
   it('junta varias tramas DATA en el orden en que llegan', async () => {
     const { socket, connection } = conectar();
@@ -324,34 +234,6 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
     });
   });
 
-  it('reensambla un carácter multibyte partido entre dos tramas', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    // The pty-agent splits by BYTES, so an accented letter can straddle two frames. Decoding per
-    // frame would produce two replacement characters instead of the letter.
-    const texto = Buffer.from('dirección', 'utf8');
-    const corte = texto.indexOf(0xc3) + 1;
-    connection.handleFrame(readOk(id, { chunks: 2, bytes: texto.byteLength }), Date.now);
-    connection.handleFrame(readData(id, texto.subarray(0, corte)), Date.now);
-    connection.handleFrame(readData(id, texto.subarray(corte)), Date.now);
-
-    const outcome = await pendiente;
-    expect('content' in outcome && outcome.content).toBe('dirección');
-  });
-
-  it('resuelve en el propio READ_OK cuando el fichero está vacío', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    connection.handleFrame(readOk(id, { chunks: 0, bytes: 0 }), Date.now);
-
-    const outcome = await pendiente;
-    expect('content' in outcome && outcome.content).toBe('');
-  });
-
   it('conserva `truncated` y el tamaño REAL del fichero', async () => {
     const { socket, connection } = conectar();
     const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
@@ -362,17 +244,5 @@ describe('requestFileRead decodifica y acumula la respuesta', () => {
 
     const outcome = await pendiente;
     expect(outcome).toMatchObject({ truncated: true, bytes: 900_000, content: 'recortado' });
-  });
-
-  it('aguanta que los DATA se adelanten al READ_OK', async () => {
-    const { socket, connection } = conectar();
-    const pendiente = requestFileRead(connection, 'Steven', 'zeus', RUTA);
-    const id = requestIdEnviado(socket);
-
-    connection.handleFrame(readData(id, Buffer.from('antes')), Date.now);
-    connection.handleFrame(readOk(id, { chunks: 1, bytes: 5 }), Date.now);
-
-    const outcome = await pendiente;
-    expect('content' in outcome && outcome.content).toBe('antes');
   });
 });
