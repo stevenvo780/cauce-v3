@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { AliasSchema, TenantSchema, hasGovernanceSensitivePathSegment, hasUnsafeTextCodePoint, redactSecrets } from '@cauce/protocol';
 import { COMPANY_ID_PATTERN } from './company-authority.js';
@@ -17,11 +20,56 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   /["']?\b(?:access_token|refresh_token|client_secret|api_key|password)["']?\s{0,16}[:=]\s{0,16}["']?(?!\$\{)[^\s"']{6,}/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/u,
 ];
-/** `context.max_bytes` of each packaged descriptor in packages/adapter-sdk/descriptors; a test fails when they drift. */
-const HARNESS_CONTEXT_MAX_BYTES: ReadonlyMap<string, number> = new Map([
-  ['claude', 65_536], ['codex', 65_536], ['fake', 65_536], ['fake2', 65_536], ['grok', 65_536],
-  ['hermes', 65_536], ['muse', 65_536], ['openclaw', 65_536], ['opencode', 65_536],
-]);
+const DESCRIPTOR_NAME = /^[a-z][a-z0-9_-]{0,63}\.json$/u;
+
+function descriptorDirectory(): URL {
+  const configured = process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+  if (configured !== undefined) {
+    if (!isAbsolute(configured)) throw new Error('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY must be an absolute path');
+    return pathToFileURL(configured.endsWith('/') ? configured : `${configured}/`);
+  }
+  const here = import.meta.url;
+  const candidates = [
+    new URL('../../adapter-sdk/descriptors/', here),
+    new URL('../../adapter-sdk/dist/descriptors/', here),
+    new URL('../../../../packages/adapter-sdk/descriptors/', here),
+    new URL('../../../../packages/adapter-sdk/dist/descriptors/', here),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (readdirSync(candidate).some((name) => DESCRIPTOR_NAME.test(name))) return candidate;
+    } catch {
+      // The next candidate is another layout of the same package (source, package dist, repo dist).
+    }
+  }
+  throw new Error('packaged harness descriptors were not found');
+}
+
+/** `context.max_bytes` read from the packaged descriptors. A missing or unreadable directory refuses the limit. */
+function loadHarnessContextMaxBytes(): ReadonlyMap<string, number> {
+  const directory = descriptorDirectory();
+  const limits = new Map<string, number>();
+  for (const name of readdirSync(directory)) {
+    if (!DESCRIPTOR_NAME.test(name)) continue;
+    const id = name.slice(0, -5);
+    const parsed: unknown = JSON.parse(readFileSync(new URL(name, directory), 'utf8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(`descriptor ${id} is not an object`);
+    }
+    const context = 'context' in parsed ? parsed.context : undefined;
+    const harness = 'harness' in parsed ? parsed.harness : undefined;
+    const maxBytes = context !== null && typeof context === 'object' && 'max_bytes' in context
+      ? context.max_bytes : undefined;
+    if (harness !== id || typeof maxBytes !== 'number' || !Number.isSafeInteger(maxBytes)) {
+      throw new Error(`descriptor ${id} has no context.max_bytes`);
+    }
+    limits.set(id, maxBytes);
+  }
+  if (limits.size === 0) throw new Error('packaged harness descriptors were not found');
+  return limits;
+}
+
+const HARNESS_CONTEXT_MAX_BYTES: ReadonlyMap<string, number> = loadHarnessContextMaxBytes();
 /** The only files an agent may change through native ingest: the rest of a version is governed by its operators. */
 export const NATIVE_CONTEXT_WRITABLE_PREFIX = 'context/notes/';
 /** Where the legacy hook versions the native document of one kind (directive, identity, tools...). */
