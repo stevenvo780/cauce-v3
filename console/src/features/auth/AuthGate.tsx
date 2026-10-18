@@ -39,8 +39,8 @@ const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entr
 
 const FINEPRINT = (
   <p className="m-0 text-xs text-muted">
-    El servidor decide. La sesión vive en una cookie <code className="font-mono">__Host-</code> HttpOnly que este
-    navegador no puede leer, y toda escritura viaja además con un token CSRF de un solo origen.
+    Tu sesión queda guardada solo en este navegador y el servidor la valida en cada paso.
+    No tenés que configurar nada: si algo no coincide, te lo pedimos de nuevo acá mismo.
   </p>
 );
 

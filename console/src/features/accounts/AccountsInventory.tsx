@@ -167,6 +167,7 @@ export function AccountsInventory({ config, access, registry }: {
     </KpiGrid>
 
     <section aria-label="Inventario de cuentas">
+      <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» acá significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="m-0 text-sm font-semibold">Inventario</h2>
         <Button variant="primary" {...writeProps} onClick={() => { open(form?.kind === 'create' ? form : { kind: 'create', draft: emptyDraft }); }}>
