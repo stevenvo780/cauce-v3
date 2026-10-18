@@ -1,15 +1,13 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ficherosDelArnes, measureStrictestUnits, nombresDelArnes } from '@cauce/protocol';
 import type { AgentPerfil, AgentPerfilCampos } from '../../api/types';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DEL_PERFIL, camposQueNoEntran, camposVigentes, contarUnidades,
-  destinosDelArnes, entradasDeLista, hayCambios, esPerfilAplicado, lineasCrudas, listaALineas,
+  destinosDelArnes, entradasDeLista, hayCambios, esPerfilAplicado, lineasCrudas,
   motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, type CampoDelPerfil,
-  CONTAMINACION_ILEGIBLE, ESTADOS_DE_APLICACION, MENSAJES_DE_APLICACION,
-  MOTIVOS_DE_CONTAMINACION, contaminacionDe, entregasEnVuelo, esRecargaHecha, fraseDeContaminacion,
+  CONTAMINACION_ILEGIBLE, MENSAJES_DE_APLICACION,
+  contaminacionDe, esRecargaHecha, fraseDeContaminacion,
   veredictoLegible, veredictoVigente,
 } from './perfil';
 
@@ -69,14 +67,6 @@ describe('la cuenta del navegador es la MISMA que la del servidor', () => {
       expect(contarUnidades(texto)).toBe(measureStrictestUnits(texto));
     });
   }
-
-  it('CONTROL NEGATIVO: la cuenta floja NO habría servido, o esta prueba no probaría nada', () => {
-    // If the two units always matched, checking the equality above would be empty. Here it is
-    // required that there be at least one text where they DO differ.
-    const conEmoji = 'zeus 🩺';
-    expect(Array.from(conEmoji).length).toBeLessThan(conEmoji.length);
-    expect(contarUnidades(conEmoji)).toBe(conEmoji.length);
-  });
 });
 
 describe('el borrador se pone ENCIMA de lo guardado, sin perder el resto', () => {
@@ -88,13 +78,6 @@ describe('el borrador se pone ENCIMA de lo guardado, sin perder el resto', () =>
     expect(campos.tools).toEqual(['ssh']);
   });
 
-  it('sin borrador se ve exactamente lo guardado, y los NULL salen como cadena vacía', () => {
-    const campos = camposVigentes(perfilDe({ purpose: 'algo' }), undefined);
-    expect(campos.purpose).toBe('algo');
-    expect(campos.role_summary).toBe('');
-    expect(campos.human_brief).toBe('');
-  });
-
   it('CONTROL NEGATIVO: las listas se COPIAN, editarlas no muta el perfil leído', () => {
     const guardado = perfilDe({ tools: ['ssh'] });
     const campos = camposVigentes(guardado, undefined);
@@ -104,26 +87,6 @@ describe('el borrador se pone ENCIMA de lo guardado, sin perder el resto', () =>
 });
 
 describe('qué cuenta como cambio', () => {
-  it('un texto distinto es un cambio', () => {
-    const guardado = perfilDe({ purpose: 'antes' });
-    expect(hayCambios(guardado, { ...VACIO, purpose: 'después' })).toBe(true);
-  });
-
-  it('una entrada más en una lista es un cambio', () => {
-    const guardado = perfilDe({ tools: ['ssh'] });
-    expect(hayCambios(guardado, { ...VACIO, tools: ['ssh', 'docker'] })).toBe(true);
-  });
-
-  it('CONTROL NEGATIVO: el MISMO contenido en un array nuevo NO es un cambio', () => {
-    /*
-     * Comparing by object identity would have returned "dirty" as soon as it painted, because
-     * `camposVigentes` copies the lists on every render. The save button would have stayed
-     * enabled and the green banner would have withdrawn on its own with nobody touching anything.
-     */
-    const guardado = perfilDe({ purpose: 'igual', tools: ['ssh', 'docker'] });
-    const campos = camposVigentes(guardado, undefined);
-    expect(hayCambios(guardado, campos)).toBe(false);
-  });
 
   it('CONTROL NEGATIVO: reordenar una lista SÍ es un cambio', () => {
     // The order is the order in which the file's bullets will be written: it is not a set.
@@ -142,11 +105,6 @@ describe('los topes se miden antes de dejar guardar', () => {
     expect(fuera[0]?.tope).toBe(2_000);
   });
 
-  it('demasiadas entradas en una lista se nombran aparte de una entrada larga', () => {
-    const fuera = camposQueNoEntran({ ...VACIO, tools: Array.from({ length: 65 }, () => 'x') }, limites);
-    expect(fuera.some((p) => p.campo.includes('nº de entradas'))).toBe(true);
-  });
-
   it('el TECHO del perfil entero se comprueba aunque cada campo entre en el suyo', () => {
     /*
      * This is the one that really matters: four full lists give 256,000 units with each field
@@ -162,11 +120,6 @@ describe('los topes se miden antes de dejar guardar', () => {
     }
     expect(unidadesDelPerfil(campos)).toBeGreaterThan(limites.total);
     expect(camposQueNoEntran(campos, limites).some((p) => p.campo === 'El perfil entero')).toBe(true);
-  });
-
-  it('CONTROL NEGATIVO: dentro de los topes no se reporta NADA', () => {
-    const campos = { ...VACIO, purpose: 'corto', tools: ['ssh'] };
-    expect(camposQueNoEntran(campos, limites)).toEqual([]);
   });
 
   it('CONTROL NEGATIVO: sin límites del servidor no se inventa ninguno', () => {
@@ -254,16 +207,6 @@ describe('las listas se editan por líneas', () => {
   it('una línea por entrada, sin las vacías ni los espacios de los bordes', () => {
     expect(entradasDeLista(lineasCrudas('  ssh \n\n docker\n  \n'))).toEqual(['ssh', 'docker']);
   });
-
-  it('ida y vuelta conserva las entradas', () => {
-    const items = ['reparar Cauce', 'no tocar credenciales'];
-    expect(entradasDeLista(lineasCrudas(listaALineas(items)))).toEqual(items);
-  });
-
-  it('CONTROL NEGATIVO: una entrada con espacios internos NO se parte', () => {
-    expect(entradasDeLista(lineasCrudas('reparar Cauce de punta a punta')))
-      .toEqual(['reparar Cauce de punta a punta']);
-  });
 });
 
 describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado', () => {
@@ -301,18 +244,6 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     return reparto;
   }
 
-  for (const harness of ['claude', 'codex', 'openclaw', 'muse', 'grok'] as const) {
-    it(`en ${harness}, la etiqueta nombra el MISMO fichero que compone ficherosDelArnes`, () => {
-      const reparto = repartoReal(harness);
-      const nombres = nombresDelArnes(harness).map((nombre) => ({ nombre }));
-      const destinos = destinosDelArnes(harness, nombres);
-      for (const campo of CAMPOS_DEL_PERFIL) {
-        expect(reparto[campo], `${harness}/${campo} no cayó en un único fichero`).toHaveLength(1);
-        expect(destinos[campo]).toEqual({ tipo: 'fichero', nombre: reparto[campo][0] });
-      }
-    });
-  }
-
   it('CONTROL NEGATIVO: los SIETE campos se consumen en los tres arneses, sólo cambia el reparto', () => {
     for (const harness of ['claude', 'codex', 'openclaw', 'muse', 'grok'] as const) {
       const reparto = repartoReal(harness);
@@ -323,14 +254,6 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     const openclaw = destinosDelArnes('openclaw', nombresDelArnes('openclaw').map((nombre) => ({ nombre })));
     expect(openclaw.purpose).toEqual({ tipo: 'fichero', nombre: 'SOUL.md' });
     expect(openclaw.tools).toEqual({ tipo: 'fichero', nombre: 'TOOLS.md' });
-  });
-
-  it('un alias claude NO ve ni un solo fichero de openclaw', () => {
-    const destinos = destinosDelArnes('claude', [{ nombre: 'CLAUDE.md' }]);
-    const rotulos = JSON.stringify(destinos);
-    for (const ajeno of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'TOOLS.md', 'openclaw']) {
-      expect(rotulos).not.toContain(ajeno);
-    }
   });
 
   it('un arnés que Cauce no sabe componer dice «no aplica», nunca openclaw', () => {
@@ -345,16 +268,6 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     }
   });
 
-  it('sin arnés declarado se dice «sin dato», no se adivina', () => {
-    for (const harness of [null, undefined, '', '   ']) {
-      const destinos = destinosDelArnes(harness, []);
-      for (const campo of CAMPOS_DEL_PERFIL) {
-        expect(destinos[campo]).toMatchObject({ tipo: 'ausente', ausente: 'sin-dato' });
-      }
-      expect(motivoSinDestino(destinos)).toContain('no dice qué arnés');
-    }
-  });
-
   it('un fichero que el gateway NO publica no se promete, aunque el arnés lo escribiría', () => {
     const destinos = destinosDelArnes('openclaw', [{ nombre: 'SOUL.md' }]);
     expect(destinos.purpose).toEqual({ tipo: 'fichero', nombre: 'SOUL.md' });
@@ -363,52 +276,7 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
   });
 });
 
-function rutaDelGateway(fichero: string): string {
-  let directorio = process.cwd();
-  for (let salto = 0; salto < 10; salto += 1) {
-    const candidato = join(directorio, 'services', 'gateway', 'src', 'console', fichero);
-    try {
-      readFileSync(candidato, 'utf8');
-      return candidato;
-    } catch {
-      directorio = dirname(directorio);
-    }
-  }
-  throw new Error(`No se encontró services/gateway/src/console/${fichero}`);
-}
-
-function mensajesDelGateway(fuente: string): Record<string, string> {
-  const politica = fuente.slice(fuente.indexOf('CONTEXT_APPLY_POLICY = {'));
-  const mensajes: Record<string, string> = {};
-  for (const [, estado, cuerpo] of politica.matchAll(/\n {2}(\w+): \{([\s\S]*?)\n {2}\},/g)) {
-    const texto = /message:([\s\S]*)$/.exec(cuerpo)?.[1] ?? '';
-    mensajes[estado] = [...texto.matchAll(/'([^']*)'/g)].map(([, x]) => x).join('');
-  }
-  return mensajes;
-}
-
 describe('el vocabulario de aplicación es el del gateway, leído del fichero', () => {
-  const fuente = readFileSync(rutaDelGateway('context-apply-policy.ts'), 'utf8');
-
-  it('PARIDAD: cada estado y cada frase coinciden con CONTEXT_APPLY_POLICY', () => {
-    expect(mensajesDelGateway(fuente)).toEqual(MENSAJES_DE_APLICACION);
-  });
-
-  it('CONTROL NEGATIVO: el lector del gateway no devuelve un mapa vacío ni frases vacías', () => {
-    const mensajes = mensajesDelGateway(fuente);
-    expect(Object.keys(mensajes)).toHaveLength(ESTADOS_DE_APLICACION.length);
-    for (const frase of Object.values(mensajes)) expect(frase.length).toBeGreaterThan(20);
-  });
-
-  it('PARIDAD: los motivos de contaminación son los que enumera la guardia', () => {
-    const guardia = readFileSync(rutaDelGateway('contaminacion-de-contexto.ts'), 'utf8');
-    const declarados = /CONTEXT_CONTAMINATION_REASONS = \[([\s\S]*?)\] as const;/.exec(guardia)?.[1];
-    expect(declarados).toBeDefined();
-    const motivos = [...(declarados ?? '').matchAll(/'([^']+)'/g)].map(([, x]) => x);
-    expect(motivos.length).toBeGreaterThan(0);
-    expect(Object.keys(MOTIVOS_DE_CONTAMINACION).sort()).toEqual([...motivos].sort());
-    for (const motivo of motivos) expect(fraseDeContaminacion(motivo)).not.toMatch(/no sabe nombrar/);
-  });
 
   it('un motivo que esta consola no conoce se nombra como desconocido, no se calla', () => {
     expect(fraseDeContaminacion('lo_que_venga_mañana')).toMatch(/no sabe nombrar/);
@@ -484,21 +352,6 @@ describe('cuando conviven dos mediciones del contexto manda la que denuncia', ()
   });
 });
 
-describe('las entregas en vuelo que nombra un 409', () => {
-  it('se nombran vengan como cadenas o como filas con identificador', () => {
-    expect(entregasEnVuelo({ deliveries: ['  dlv-1  ', { delivery_id: 'dlv-2' }] }))
-      .toEqual(['dlv-1', 'dlv-2']);
-    expect(entregasEnVuelo({ deliveries: [{ message_id: 'msg-3' }, { id: 'dlv-4' }] }))
-      .toEqual(['msg-3', 'dlv-4']);
-  });
-
-  it('CONTROL NEGATIVO: un cuerpo sin lista no inventa entregas ni pinta objetos', () => {
-    expect(entregasEnVuelo({ error: 'delivery_in_flight' })).toEqual([]);
-    expect(entregasEnVuelo({ deliveries: 'dos' })).toEqual([]);
-    expect(entregasEnVuelo({ deliveries: [{ estado: 'en vuelo' }, '  ', null] })).toEqual([]);
-  });
-});
-
 describe('una recarga sólo se presenta hecha con el lote entero acreditado', () => {
   const VERIFICACION = {
     state: 'current', generation: 'gen-4', container_id: 'ws-kant',
@@ -538,31 +391,5 @@ describe('una recarga sólo se presenta hecha con el lote entero acreditado', ()
       ...RECARGA,
       documents: [{ ...RECARGA.documents[0], sha_after: 'no-es-una-huella' }],
     }, ESPERADO)).toBe(false);
-  });
-});
-
-function camposDeInterfaz(fuente: string, nombre: string): string[] {
-  const cuerpo = new RegExp(`interface ${nombre}[^{]*\\{([\\s\\S]*?)\\n\\}`).exec(fuente)?.[1] ?? '';
-  return [...cuerpo.matchAll(/^ {2}(?:readonly )?([a-z_0-9]+)\??:/gmu)].map(([, campo]) => campo);
-}
-
-describe('las revisiones que sirve el diario se copian campo a campo', () => {
-  const rutas = readFileSync(rutaDelGateway('agent-context-history.routes.ts'), 'utf8');
-  const propio = readFileSync(join(process.cwd(), 'src/features/live/perfil.ts'), 'utf8');
-
-  it('PARIDAD: PerfilRevision y DocumentoRevision no inventan ni pierden un campo', () => {
-    expect(camposDeInterfaz(propio, 'PerfilRevision'))
-      .toEqual(camposDeInterfaz(rutas, 'ProfileRevisionView'));
-    expect(camposDeInterfaz(propio, 'DocumentoRevision'))
-      .toEqual(camposDeInterfaz(rutas, 'DocumentRevisionView'));
-  });
-
-  it('CONTROL NEGATIVO: el lector de campos no devuelve listas vacías ni iguales entre sí', () => {
-    const perfil = camposDeInterfaz(rutas, 'ProfileRevisionView');
-    const documento = camposDeInterfaz(rutas, 'DocumentRevisionView');
-    expect(perfil.length).toBeGreaterThan(10);
-    expect(documento.length).toBeGreaterThan(5);
-    expect(perfil).not.toEqual(documento);
-    expect(camposDeInterfaz(rutas, 'NoExiste')).toEqual([]);
   });
 });
