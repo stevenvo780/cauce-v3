@@ -136,6 +136,10 @@ async function legacyMutation(pool: DatabasePool, source: CompanyAuthoritySource
     }
     const next: Row = restore ? { ...comparable(original), runtime_key: current.runtime_key ?? original.runtime_key ?? null }
       : { ...comparable(current), enabled: false, lifecycle_state: 'draft' };
+    if (!restore && input.target !== null && input.target !== undefined) {
+      const effort = record(input.target).reasoning_effort;
+      if (effort !== undefined) next.reasoning_effort = BootstrapRecordSchema.shape.probe.shape.reasoning_effort.parse(effort);
+    }
     if (!restore && next.primary_room_id === null && input.target !== null && input.target !== undefined) {
       const primaryRoom = z.string().min(1).max(128).parse(record(input.target).primary_room_id);
       if (!(await client.query(`SELECT 1 FROM memberships member JOIN role_policies policy ON policy.role=member.role
