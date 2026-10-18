@@ -180,6 +180,7 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
   scoped('GET', '/v3/console/companies/:company_id', '/v3/console/companies/{company}'),
   scoped('PATCH', '/v3/console/companies/:company_id', '/v3/console/companies/{company}', { expected_version: 1, name: 'isolation' }),
   scoped('DELETE', '/v3/console/companies/:company_id', '/v3/console/companies/{company}?expected_version=1'),
+  scoped('POST', '/v3/console/companies/:company_id/purge', '/v3/console/companies/{company}/purge', { confirmation: '{company}' }),
   scoped('GET', '/v3/console/companies/:company_id/admins', '/v3/console/companies/{company}/admins'),
   scoped('PUT', '/v3/console/companies/:company_id/admins', '/v3/console/companies/{company}/admins',
     { user_id: '{human}', role: 'admin', expected_version: 0 }),
