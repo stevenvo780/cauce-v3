@@ -206,9 +206,11 @@ class Executor:
         return {'certificate_fingerprint': proof['certificate_fingerprint']}
 
     def runtime(self):
-        if self.context['request']['kind'] == 'start' and 'generation' not in self.journal:
-            self.artifacts()
-            self.credentials()
+        if self.context['request']['kind'] == 'start':
+            if 'generation' not in self.journal:
+                self.artifacts()
+            if 'bootstrap_credentials' not in self.journal:
+                self.credentials()
         self.generation()
         agent = self.agent()
         if self.context['request']['kind'] == 'update' and placement_role(self.context) != 'destination':
