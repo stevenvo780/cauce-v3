@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { withTransaction, type DatabasePool } from './db.js';
 import { contextSnapshot, lockContextTarget, persistContextVersionInTransaction } from './context-version.js';
 import { CONTEXT_PROFILE_PATH, canonicalProfileContext } from './context-version-profile.js';
-import { ContextFilesSchema, assertContextTarget, canonicalContextFiles, contextDigest, type ContextFile,
+import { ContextFilesSchema, ContextRejectedError, assertContextTarget, canonicalContextFiles, contextDigest,
+  harnessContextMaxBytes, versionableContextFiles, type ContextFile,
   type ContextTarget } from './context-version-model.js';
 
 export type NativeContextSource = (target: ContextTarget) => Promise<readonly ContextFile[]>;
@@ -74,7 +75,9 @@ async function seedTarget(pool: DatabasePool, target: ContextTarget, natives: Na
       return { ...target, state: 'existing', version: current.desired_version, files: current.files.length, digest: current.digest };
     }
     const profile = await canonicalProfileContext(client, target);
-    const planned = canonicalContextFiles(profile ? [...supplied, profile] : supplied);
+    const harness = (await client.query<{ harness_id: string | null }>('SELECT harness_id FROM agents WHERE tenant_id=$1 AND alias=$2',
+      [target.tenant_id, target.alias])).rows[0];
+    const planned = versionableContextFiles(profile ? [...supplied, profile] : supplied, harnessContextMaxBytes(harness?.harness_id ?? null));
     if (planned.length === 0) return { ...target, state: 'empty', version: 0, files: 0, digest: null };
     if (dryRun) return { ...target, state: 'planned', version: 1, files: planned.length, digest: contextDigest(planned) };
     const seeded = await persistContextVersionInTransaction(client, target,
@@ -89,7 +92,12 @@ async function seedTarget(pool: DatabasePool, target: ContextTarget, natives: Na
 export async function seedAgentContextHistory(pool: DatabasePool, options: ContextSeedOptions = {}): Promise<ContextSeedResult[]> {
   const results: ContextSeedResult[] = [];
   for (const target of await activeContextTargets(pool, options.company)) {
-    results.push(await seedTarget(pool, target, options.natives, options.dryRun === true));
+    try { results.push(await seedTarget(pool, target, options.natives, options.dryRun === true)); }
+    catch (error) {
+      if (!(error instanceof ContextRejectedError)) throw error;
+      throw new Error(`native context rejected for ${target.company_id}/${target.tenant_id}/${target.alias} (${error.reason}): ${error.message}`,
+        { cause: error });
+    }
   }
   return results;
 }
