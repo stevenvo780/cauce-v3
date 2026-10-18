@@ -1,5 +1,7 @@
 # Despliegue del buzón de Cronos
 
+> Histórico: recibo del despliegue indicado, conservado como evidencia de esa versión. Para operar y publicar la versión actual, usa [Operación](operacion.md#desplegar-v4).
+
 El runtime que admite buzones por grant OAuth local declarado está desplegado en `df2544a0efa8b3359b988eadba5769aa633c9d62`, árbol `f7c3e733ffa4c77d0d06d3cf48023ea1cb795484`. La activación del SDK compatible quedó bloqueada y la comunicación Jarvis↔Cronos desde este chat no está acreditada.
 
 ## Alcance y resultado

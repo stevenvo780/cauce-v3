@@ -1,5 +1,7 @@
 # V4: plan multiempresa
 
+> Histórico: plan y auditoría previos al cierre V4; sus matrices, gates y estados no describen la operación vigente. Usa la [guía V4](v4-guia.md) y [Operación](operacion.md).
+
 Auditoría de solo lectura sobre `5311c165`; las citas `archivo:línea` salen del código de ese commit.
 
 ## 0. Verificación propia de las afirmaciones críticas

@@ -1,5 +1,7 @@
 # Inventario de pruebas reales de V4
 
+> Histórico: este inventario, sus conteos y pendientes pertenecen al cierre anterior; para verificar y operar la versión actual, consulta [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md).
+
 Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos son por los patrones indicados y se recalculan en `tests/unit/docs-v4-pruebas.test.ts`; no cuentan casos ejecutados ni equivalen a un resultado PASS. Las categorías se pueden solapar.
 
 | ID | Categoría | Archivos | Ejecución | Cubre | No cubre todavía |

@@ -1,5 +1,7 @@
 # Matriz de verificación local de Cauce V4
 
+> Histórico: estos recibos y pendientes corresponden a una revisión local anterior y no describen la producción actual; consulta la [guía V4](v4-guia.md), [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md).
+
 Esta matriz lee los 97 requisitos de [la especificación del dueño](v4-objetivo-del-dueno.md) y registra la evidencia disponible en el checkout aislado. **97/97 mantienen `status:unverified`; ninguna fila acredita aceptación de despliegue.** `partial` describe cobertura local limitada; `not_run` indica ausencia de comprobación del requisito en este corte. Una prueba focal verde no convierte el párrafo completo en aprobado.
 
 La matriz privada es `directorio de estado del operador/cauce-v3/v4-complete-20261011/aceptacion.json`. Sólo se añadieron `local_verification` y `evidence`; requisito, fuente, hash objetivo, status y deployment_verification se conservaron. No hay SHA/digest final desplegado acreditado aquí.

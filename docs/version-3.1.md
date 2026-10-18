@@ -1,5 +1,7 @@
 # Cauce V3 — versión 3.1
 
+> Histórico: estas notas y sus procedimientos corresponden a V3.1; la versión publicada se consulta en [HISTORIAL](../deploy/HISTORIAL.md) y las instrucciones actuales en la [guía V4](v4-guia.md), [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md).
+
 Qué entrega v3.1, cómo se despliega y qué queda fuera de este árbol. Las decisiones que la
 gobiernan están en `docs/v3.1-programa.md` (D1–D10); este documento es la cara de salida: lo que
 cambia para quien opera, despliega o revisa. El detalle de cada cambio vive en los commits de `dev`
@@ -127,7 +129,7 @@ ordenadores (`CAUCE_FLEET_HOST_SETUP_CONFIG_FILE`) sin migraciones, tras el desp
 decisión del dueño, con el motivo en la fila. Los nueve servicios quedaron sanos, la flota 14/14 y el
 humo en verde; el controlador de flota y el enclave se actualizaron al mismo commit.
 
-La sesión Steven recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
+La sesión del operador recargada mostró el grafo primero y la lista cerrada al final. Se comprobó un
 ping canónico de Zeus y su shell; el control se devolvió y la shell se cerró. El journal de Main
 `f3e5bf6e` cambia sólo documentación y no supone otra promoción. El candidato posterior sigue
 sin desplegar; sus gates deben corresponder a su fuente exacta.

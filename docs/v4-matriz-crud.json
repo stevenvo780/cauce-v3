@@ -1,4 +1,5 @@
 {
+  "historical_notice": "Histórico: matriz del proceso de aceptación retirado; no representa el estado actual. Consulta docs/v4-guia.md, docs/calidad-y-gates.md y docs/operacion.md.",
   "schema_version": 1,
   "pending": [
     {

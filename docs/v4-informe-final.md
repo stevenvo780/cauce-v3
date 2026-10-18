@@ -1,5 +1,7 @@
 # Informe final de Cauce V4
 
+> Histórico: informe de la revisión y despliegue identificados en este documento. Los pendientes, matrices y conteos siguientes pertenecen a ese snapshot; el estado de publicación actual está en `deploy/HISTORIAL.md` y el procedimiento en [Operación](operacion.md#desplegar-v4).
+
 **Estado: V4 no está terminada.** Ninguno de los nueve criterios de cierre de [`GOAL.md`](../GOAL.md) §12 se cumple entero. Este informe separa tres niveles: lo implementado, lo probado en local y lo verificado en el despliegue. No presenta como cerrado nada que siga abierto. Cada marca sale de `GOAL.md`; aquí se resume con su evidencia.
 
 Los niveles son los de `GOAL.md`:
@@ -53,7 +55,7 @@ Gate de `87c7eece` (recibo secuencial, 9/9 con `exit` 0):
 - **Matriz `pnpm test`**: 12/12 suites en verde. Pruebas ejecutadas: `test:unit` 7 590, `test:services` 3 915, `test:runtime-role` 3 967, `test:store-hardening` 2 148, `test:gateway-hardening` 248, `test:e2e` 182, `test:terminal-pty` 134, `test:integration` 85, y `test:container-supervisor` y `test:container-cutover` una cada una. `test:pty` y `test:ops` imprimen su propio recuento.
 - **Cobertura de líneas**: 94,50 % fusionada (97 210 de 102 869). La consola tiene 95,41 % y su base es 94,69 %, así que el mínimo del trinquete es 94,49 %. `adapter-sdk` tiene 92,12 %. Ningún paquete bajó.
 - **Gate paralelo**: [`scripts/release-gates.sh`](../scripts/release-gates.sh) reparte los nueve gates en carriles paralelos, cada uno un checkout del mismo commit. Ya pasó sus pruebas unitarias y un humo con worktrees reales. Todavía no ha certificado ningún candidato real.
-- **Pendiente**: `typecheck`, `lint` y `test:unit` sobre el HEAD final con log durable; un gate completo del SHA final; el recorrido autenticado de los flujos esenciales en producción. El procedimiento está en el [ciclo del candidato](operacion.md#desplegar-v4).
+- **Pendiente histórico de esta revisión**: completar la validación de su candidato y el recorrido autenticado de los flujos esenciales. Para un candidato actual, aplica el [procedimiento vigente de publicación](operacion.md#desplegar-v4); esta lista no impone el antiguo gate completo.
 
 ## Los tres niveles por sección
 

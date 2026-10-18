@@ -1,5 +1,7 @@
 # Plan de implementación del buzón cliente
 
+> Histórico: plan de una entrega anterior; sus gates y asignaciones no son instrucciones vigentes. Consulta la [guía V4](../../v4-guia.md) y [Operación](../../operacion.md#desplegar-v4).
+
 1. Codex implementa resolución durable y publicación en store, sin migraciones ni cambios de credenciales.
 2. Codex extiende protocolo e inventario bajo capability; implementa lectura autenticada y cursor en gateway/MCP.
 3. Claude Sonnet adapta sólo adapter-sdk: capacidades, proyección, parser y emisión. Mantiene broadcast dirigido a agentes.

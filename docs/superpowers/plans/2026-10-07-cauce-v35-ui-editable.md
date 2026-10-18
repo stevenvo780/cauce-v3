@@ -1,5 +1,7 @@
 # Cauce V3.5: plan de administración completa desde la UI
 
+> Histórico: plan V3.5 previo al cierre V4; sus matrices, gates y tareas no describen el procedimiento vigente. Consulta la [guía V4](../../v4-guia.md) y [Operación](../../operacion.md#desplegar-v4).
+
 > Para ejecución por agentes: usar `superpowers:subagent-driven-development` o `superpowers:executing-plans` por tarea, respetando sectores, un escritor por fichero y revisión independiente. Este documento propone trabajo; no acredita implementación ni autoriza integrar/desplegar.
 
 **Objetivo:** crear, actualizar y eliminar agentes, grupos y configuración operativa desde la consola actual, incluyendo aprovisionamiento y autenticación verificados.

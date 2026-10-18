@@ -61,5 +61,5 @@ el executor y transporte reales con un proceso remoto de prueba; la de terminal 
 gateway, relay y agente Python reales. Ninguno de los cuatro ensayos sustituye componentes
 por mocks. Después del rechazo Git se verifica la recuperación a `synced`. Las limpiezas
 cierran bases y procesos propios, y el ensayo terminal verifica ID y etiqueta del
-contenedor antes de matarlo. El gate completo y la verificación desplegada corresponden
-al orquestador del cierre.
+contenedor antes de matarlo. La publicación y la verificación desplegada corresponden
+al integrador autorizado, siguiendo el [gate vigente](operacion.md#desplegar-v4).

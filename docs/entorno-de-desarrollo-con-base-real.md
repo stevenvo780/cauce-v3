@@ -1,5 +1,7 @@
 # Entorno de desarrollo con base de datos real
 
+> Snapshot histórico de un entorno de desarrollo: comprueba herramientas, esquema y servicios antes de reproducirlo. Sus resultados y matrices no son requisitos del gate vigente de [Operación](operacion.md#desplegar-v4).
+
 - **Para qué:** dejar de trabajar contra mocks. Sin base, las suites de Postgres y las del gateway
   no arrancan.
 - **Dónde aplica:** un contenedor de workspace de desarrollo. **Nada de esto toca producción.**

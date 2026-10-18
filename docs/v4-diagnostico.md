@@ -1,5 +1,7 @@
 # Diagnóstico V4: inventario de uso real de auditoría y diagnóstico
 
+> Snapshot histórico: conteos y estados de unidades medidos en V3. Las propuestas de poda y matrices siguientes requieren comprobar el sistema actual; no sustituyen los procedimientos vigentes de [Operación](operacion.md).
+
 Medido el 12-oct-2026 en producción V3 (VPS del gateway) **en solo lectura**: `SELECT` sobre
 PostgreSQL, `systemctl list-timers/show`, `journalctl`, API de Prometheus y `ls`/`wc` sobre ficheros.
 Ninguna escritura, DDL ni reinicio. El documento solo contiene conteos, nombres de acciones y rutas de

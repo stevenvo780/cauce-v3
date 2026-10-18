@@ -1,5 +1,7 @@
 # Matriz CRUD verificable de Cauce V4
 
+> Histórico: esta matriz y sus validadores describen un proceso de aceptación retirado; usa la [guía V4](v4-guia.md), [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md) para el uso y la comprobación actuales.
+
 La fuente de datos es [`v4-matriz-crud.json`](v4-matriz-crud.json). El validador comprueba las operaciones declaradas frente a las rutas registradas, los controles de la consola y los nombres de prueba citados:
 
 ```sh
