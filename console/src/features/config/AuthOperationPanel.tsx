@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FleetOperation } from '@cauce/protocol/fleet-operation';
 import type { ProviderAuthRequest } from '../../api/client/provider-auth-client';
 import { ActionButton } from '../../components/action-button';
+import { Button } from '../../components/kit';
 import { useApi } from '../../api/context';
 import { ProviderAuthPanel } from '../accounts/ProviderAuthPanel';
+import { ProviderSignInDialog } from '../accounts/ProviderSignIn';
 
 interface Props { operation: FleetOperation; allowed: boolean; onRefreshed: (value: FleetOperation) => void }
 interface Scope { key: string; request?: ProviderAuthRequest; error?: string }
@@ -16,6 +18,7 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
   const [scope, setScope] = useState<Scope>();
   const [retry, setRetry] = useState(0);
   const [reading, setReading] = useState(false);
+  const [open, setOpen] = useState(false);
   const [verified, setVerified] = useState<{ identity: string; version: number }>();
   const permitted = allowed && operation.status === 'awaiting_auth';
   useEffect(() => { setReading(false); }, [key]);
@@ -62,7 +65,11 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
     {error ? <><p role="alert">{error}</p>
       <ActionButton label="Releer autorización de conexión" disabled={!permitted || reading} done={false} announceError={false}
         action={() => { setRetry(value => value + 1); }} /></> : null}
-    {request ? <ProviderAuthPanel request={request} client={api} onAuthenticated={() => { void reread(); }} /> : null}
+    {request ? <Button size="sm" variant="primary" disabled={open} onClick={() => { setOpen(true); }}>Iniciar sesión</Button> : null}
+    <ProviderSignInDialog open={open && !!request} providerId={request?.provider_id} description={request ? `${request.host_id} · ${request.account_id}` : undefined}
+      onClose={() => { setOpen(false); }}>
+      {request ? <ProviderAuthPanel request={request} client={api} autoStart onAuthenticated={() => { setOpen(false); void reread(); }} /> : null}
+    </ProviderSignInDialog>
     {reading ? <p role="status">Releyendo la operación después de verificar la cuenta…</p> : null}
     {allowed && verified?.identity === identity ? <p role="status">Cuenta verificada. Operación releída en versión {verified.version}.
       Revisa los pasos y usa «Reanudar operación» con su lectura actual.</p> : null}

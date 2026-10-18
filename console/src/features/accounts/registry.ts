@@ -523,7 +523,7 @@ export function describeRegistryError(
     && error.message === 'quota account must be authenticated before it can be enabled') {
     return {
       conflict: false,
-      message: 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» (o «Conectar cuenta» desde el agente que la usa): la cuenta se habilita sola cuando el proveedor confirma la sesión.',
+      message: 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» o en el agente que la usa: la cuenta se habilita sola cuando el proveedor confirma la sesión.',
     };
   }
   const base = describeConfigError(error, 'El servidor rechazó el cambio y no dijo por qué');

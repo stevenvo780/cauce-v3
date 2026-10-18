@@ -2,6 +2,11 @@ export const PROVIDER_LABEL: Record<string, string> = {
   claude: 'Claude', codex: 'GPT / Codex', gemini: 'Antigravity', grok: 'Grok', muse: 'Muse', agy: 'Antigravity (agy)',
 };
 
+export function providerSignInTitle(providerId: string | null | undefined): string {
+  const label = providerId ? PROVIDER_LABEL[providerId] ?? providerId : 'el proveedor';
+  return `Iniciar sesión en ${label}`;
+}
+
 /** At most one decimal: the collectors publish ratios like `33.333333333333336`, unreadable and unactionable. */
 export function formatPercent(value: number): string {
   return `${String(Math.round(value * 10) / 10)}%`;

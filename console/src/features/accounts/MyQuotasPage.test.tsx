@@ -104,7 +104,7 @@ it('iniciar sesión pide el login con un solo clic y muestra la operación pendi
       return HttpResponse.json({ environment, operation }, { status: 202 }); }));
   const user = userEvent.setup(); renderWithApi(owner());
   await user.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
-  expect(await screen.findByRole('dialog', { name: 'Iniciar sesión en Cuenta compartida' })).toBeVisible();
+  expect(await screen.findByRole('dialog', { name: 'Iniciar sesión en GPT / Codex' })).toBeVisible();
   await waitFor(() => { expect(actions).toHaveLength(1); });
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cerrar' }));
   expect(await screen.findByRole('link', { name: 'Abrir autorización del proveedor' })).toHaveAttribute('href', 'https://provider.example.test/auth');

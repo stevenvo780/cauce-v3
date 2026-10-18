@@ -55,7 +55,7 @@ export function describeQuotaError(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
   if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
   if (isQuotaAuthEnableBlock(cause)) {
-    return 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» (o «Conectar cuenta» desde el agente que la usa): la cuenta se habilita sola cuando el proveedor confirma la sesión.';
+    return 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» o en el agente que la usa: la cuenta se habilita sola cuando el proveedor confirma la sesión.';
   }
   if (cause.status === 409 && cause.code === 'conflict'
     && cause.message === 'quota account version changed or the change is not allowed') {

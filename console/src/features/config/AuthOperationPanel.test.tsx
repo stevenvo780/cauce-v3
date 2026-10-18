@@ -28,7 +28,7 @@ function login() {
     http.post(`http://localhost/v3/console/provider-auth/sessions/${sessionId}/cancel`, () => HttpResponse.json({ ...session, status: 'cancelled' })));
 }
 async function authenticate() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Conectar cuenta' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Verificar conexión' }));
 }
 describe('operation-scoped provider authentication', () => {
@@ -50,14 +50,14 @@ describe('operation-scoped provider authentication', () => {
     'does not resolve private scope with allowed=$allowed and status=$status', async ({ allowed, status }) => {
       const read = vi.fn(); server.use(http.get(path, () => { read(); return HttpResponse.json(scope); }));
       renderWithApi(<AuthOperationPanel operation={{ ...operation, status }} allowed={allowed} onRefreshed={vi.fn()} />);
-      await waitFor(() => { expect(screen.queryByRole('button', { name: 'Conectar cuenta' })).toBeNull(); });
+      await waitFor(() => { expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).toBeNull(); });
       expect(read).not.toHaveBeenCalled();
     });
   it.each([{ expected_operation_version: 3 }, { operation_id: sessionId }])('refuses a private scope for another operation or version: %j', async (patch) => {
     server.use(http.get(path, () => HttpResponse.json({ ...scope, ...patch })));
     renderWithApi(<AuthOperationPanel operation={operation} allowed onRefreshed={vi.fn()} />);
     await screen.findByRole('alert');
-    expect(screen.queryByRole('button', { name: 'Conectar cuenta' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).toBeNull();
     expect(document.body.textContent).not.toContain(scope.profile_id);
   });
   it.each([{ version: 1 }, { request_sha256: 'b'.repeat(64) }, { target: { resource: 'agent', tenant_id: 'Other', alias: 'kant' } }])(
@@ -84,7 +84,7 @@ describe('operation-scoped provider authentication', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/otra operación o versión/i);
     fireEvent.click(screen.getByRole('button', { name: 'Releer autorización de conexión' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo acreditar el ámbito/i);
-    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Conectar cuenta' })).toBeNull(); });
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).toBeNull(); });
     expect(document.body.textContent).not.toContain('PRIVATE_PROFILE_LOCATOR');
   });
 
@@ -95,7 +95,7 @@ describe('operation-scoped provider authentication', () => {
         cancelled(); return HttpResponse.json({ ...session, status: 'cancelled' });
       }), http.get(operationPath, () => HttpResponse.json({ ...operation, version: 4 })));
     const view = renderWithApi(<AuthOperationPanel operation={operation} allowed onRefreshed={refreshed} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conectar cuenta' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
     await screen.findByRole('button', { name: 'Verificar conexión' });
     view.rerender(<ApiProvider api={testApi}><AuthOperationPanel operation={{ ...operation, version: 3 }} allowed onRefreshed={refreshed} /></ApiProvider>);
     expect(await screen.findByRole('button', { name: 'Verificar conexión' })).toBeEnabled();

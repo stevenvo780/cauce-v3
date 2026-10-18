@@ -9,13 +9,14 @@ import { randomUuid } from '../../random-id';
 import { accountLoginTargets, type AccountLoginTarget } from './account-login-targets';
 /* The auth terminal pulls in xterm: load it only when a login actually starts. */
 const ProviderAuthPanel = lazy(async () => ({ default: (await import('./ProviderAuthPanel')).ProviderAuthPanel }));
+import { providerSignInTitle } from './quotas';
 import { quotaHostSupports } from './quota-environment-capabilities';
 import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
 
 const BUSY = ['pending', 'running', 'awaiting_auth'];
 
-export function AccountLogin({ account, snapshot, allowed, reload, environmentId }: {
-  account: QuotaAccount; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>; environmentId?: string;
+export function AccountLogin({ account, snapshot, allowed, reload }: {
+  account: QuotaAccount; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>;
 }) {
   const api = useApi();
   const [requested, setRequested] = useState(false);
@@ -30,9 +31,8 @@ export function AccountLogin({ account, snapshot, allowed, reload, environmentId
   const cycle = useRef(0);
   const keyFor = (signature: string) => { const existing = keys.current.get(signature) ?? randomUuid(); keys.current.set(signature, existing); return existing; };
   const targets = accountLoginTargets(snapshot, account);
-  const selected = environmentId ? targets.find(item => item.environmentId === environmentId)
-    : targets.find(item => item.key === choice) ?? targets.find(item => item.available && item.withoutSession)
-      ?? targets.find(item => item.available) ?? targets[0];
+  const selected = targets.find(item => item.key === choice) ?? targets.find(item => item.available && item.withoutSession)
+    ?? targets.find(item => item.available) ?? targets.at(0);
   const destination = target ?? selected;
   const environment = snapshot?.environments.find(item => item.id === destination?.environmentId && item.account_id === account.id);
   const operation = environment ? snapshot?.operations.find(item => item.environment_id === environment.id) : undefined;
@@ -142,18 +142,17 @@ export function AccountLogin({ account, snapshot, allowed, reload, environmentId
     : !environment ? 'Preparando el entorno de la cuenta…'
       : (environment.status === 'pending' || environment.status === 'running') ? 'Preparando el entorno de la cuenta…'
         : awaitingLogin ? 'Abriendo la terminal de inicio de sesión…' : 'Pidiendo el inicio de sesión…';
-  if (environmentId && !requested && !busy && !verified && !error && environment?.refresh_status !== 'not_authenticated') return null;
-  return <section aria-label={`Inicio de sesión de ${environmentId ? environment?.label ?? account.label : account.label}`} className="grid gap-2">
+  return <section aria-label={`Inicio de sesión de ${account.label}`} className="grid gap-2">
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="primary" disabled={!!block || busy || requested} title={block}
         onClick={() => { void begin(); }}>Iniciar sesión</Button>
-      {!environmentId && targets.length > 1 ? <label className="min-w-0 text-sm">Entorno u ordenador <select aria-label="Entorno u ordenador" className="max-w-full" value={selected?.key ?? ''} disabled={busy || requested}
+      {targets.length > 1 ? <label className="min-w-0 text-sm">Entorno u ordenador <select aria-label="Entorno u ordenador" className="max-w-full" value={selected?.key ?? ''} disabled={busy || requested}
         onChange={event => { setChoice(event.target.value); setVerified(false); }}>{targets.map(item => <option key={item.key} value={item.key}>{item.label}{item.withoutSession && item.environmentId ? ' · Sin sesión' : ''}{!item.available ? ' · No disponible' : ''}</option>)}</select></label> : null}
     </div>
     {block && !requested && !error && (snapshot || !allowed) ? <p className="m-0 text-sm text-muted">{block}</p> : null}
     {verified && !requested ? <Notice tone="ok" role="status">Sesión iniciada y verificada.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <FormDialog open={requested} wide anchorTop title={`Iniciar sesión en ${account.label}`}
+    <FormDialog open={requested} wide anchorTop title={providerSignInTitle(account.provider)}
       description={`${account.provider}${destination ? ` · ${destination.label}` : ''}`} onClose={close}>
       {progress ? <p className="m-0 text-sm" role="status">{progress}</p> : null}
       {activeScope?.error ? <Notice tone="danger" role="alert">{activeScope.error}</Notice> : null}

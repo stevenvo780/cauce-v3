@@ -4,7 +4,6 @@ import { useApi } from '../../api/context';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
-import { AccountLogin } from './AccountLogin';
 import { quotaEnvironmentActionBlock, quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
 import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
@@ -15,8 +14,8 @@ const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear en
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
 const OPERATION_LABEL: Record<QuotaEnvironmentOperation['status'], string> = { pending: 'Pendiente', running: 'En ejecución', awaiting_auth: 'Esperando autenticación', done: 'Completada', failed: 'Fallida' };
 
-export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, canLogin = canWrite, reload }: {
-  snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; canLogin?: boolean; reload: () => Promise<void>;
+export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, reload }: {
+  snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; reload: () => Promise<void>;
 }) {
   const api = useApi();
   const [draft, setDraft] = useState({ account_id: '', host_id: '', label: '' });
@@ -76,7 +75,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
     `${ACTION_LABEL[action]}: solicitud registrada. Su estado aparece en el entorno.`, signature);
   }
   return <section aria-label="Entornos de Mis cuotas" className="grid gap-4">
-    <div><h2 className="m-0 text-lg">Entornos de consulta</h2><p className="text-sm text-muted">Cada entorno aísla el CLI de una cuenta. Inicia sesión aquí o elige el destino en la tarjeta de la cuenta.</p></div>
+    <div><h2 className="m-0 text-lg">Entornos de consulta</h2><p className="text-sm text-muted">Cada entorno aísla el CLI de una cuenta. El inicio de sesión está en la tarjeta de la cuenta.</p></div>
     {loading && !snapshot ? <p role="status">Leyendo entornos de consulta… El formulario se habilita cuando llega la lectura.</p> : null}
     {snapshot && !snapshot.capabilities.available ? <Notice tone="warn">No hay un ejecutor disponible para esta empresa. Los entornos conservan su estado; las operaciones requieren recuperar la conexión.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}{notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
@@ -94,7 +93,6 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
     </form>
     <div className="grid gap-3 md:grid-cols-2">{snapshot?.environments.map(environment => {
       const operation = snapshot.operations.find(item => item.environment_id === environment.id);
-      const account = accounts.find(account => account.id === environment.account_id);
       const withoutSession = environment.status === 'ready' && environment.refresh_status === 'not_authenticated';
       const cancelled = operation?.action === 'authenticate' && operation.error_code === 'AUTH_CANCELLED';
       const statusLabel = cancelled && environment.status === 'ready' ? 'Listo para iniciar sesión'
@@ -105,8 +103,6 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
         <header><h3 className="m-0 text-base">{environment.label}</h3><p className="m-0 text-sm">{statusLabel}</p>
           <p className="m-0 text-xs text-muted">{environment.provider} · {environment.host_id} · {accounts.find(account => account.id === environment.account_id)?.label ?? 'Cuenta no disponible'}</p></header>
         <QuotaRefreshNotice status={updating ? 'updating' : environment.refresh_status} />
-        {account && !['deleted', 'deleting'].includes(environment.status)
-          ? <AccountLogin account={account} snapshot={snapshot} allowed={canLogin} reload={reload} environmentId={environment.id} /> : null}
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
           {(['query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)} title={actionBlock(environment, action)}
             onClick={() => { act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}

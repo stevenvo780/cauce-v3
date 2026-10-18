@@ -162,7 +162,7 @@ it('authenticates within the operation and resumes manually only with its reread
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
   await user.click(await screen.findByRole('button', { name: `Abrir operación ${id}` }));
-  await user.click(await screen.findByRole('button', { name: 'Conectar cuenta' }));
+  await user.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
   await screen.findByText(/Operación releída en versión 4/i);
   expect(resumed).toEqual([]);
   expect(document.body.textContent).not.toContain('private-test-profile');
