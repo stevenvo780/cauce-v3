@@ -4,7 +4,7 @@ import type { Socket } from 'node:net';
 import { dirname } from 'node:path';
 import Fastify from 'fastify';
 import { z } from 'zod';
-import { HostEnrollmentRepository, StoreError, type DatabasePool } from '@cauce/store';
+import { HostEnrollmentRepository, StoreError, migrationSourcesForApply, type DatabasePool } from '@cauce/store';
 import { assertAuthBridgeParent, prepareAuthBridgeSocket } from '../auth-bridge-socket.js';
 import { SignedAuthorityEnvelopeSchema, assertSignedAuthoritySocket, type SignedFleetAuthoritySocketPolicy } from './signed-client.js';
 import { AuthorityRequestSchema, FleetAuthorityError } from './schemas.js';
@@ -12,6 +12,14 @@ import { createFleetAuthorityService } from './service.js';
 import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
 
 const Ready = z.object({ action: z.literal('ready') }).strict();
+let bundledSchema: Promise<string | undefined> | undefined;
+function bundledSchemaVersion(): Promise<string | undefined> {
+  bundledSchema ??= migrationSourcesForApply().then(
+    sources => sources.at(-1)?.version,
+    () => undefined,
+  );
+  return bundledSchema;
+}
 export interface SignedFleetAuthorityBridgeOptions extends SignedFleetAuthoritySocketPolicy { command: AuthorityCommand }
 function unavailable(): FleetAuthorityError { return new FleetAuthorityError('AUTHORITY_UNAVAILABLE'); }
 async function peerUid(socket: Socket): Promise<number> {
@@ -49,6 +57,9 @@ export async function startSignedFleetAuthorityBridge(filename: string, pool: Da
     try {
       const { host_id, packet } = SignedAuthorityEnvelopeSchema.parse(request.body);
       return await enrollment.request(host_id, 'POST', `/v3/fleet/hosts/${host_id}/authority`, packet, async (client, identity) => {
+        const applied = (await client.query<{ version: string | null }>('SELECT max(version) AS version FROM schema_migrations')).rows[0]?.version;
+        const bundled = await bundledSchemaVersion();
+        if (bundled !== undefined && applied !== bundled) throw unavailable();
         if (Ready.safeParse(packet.payload).success) { await runAuthorityReadiness(options.command); return { ready: true, host_id: identity.host_id }; }
         const input = AuthorityRequestSchema.parse(packet.payload);
         if (input.scope.host_id !== identity.host_id) throw new FleetAuthorityError('AUTHORITY_REVOKED');
