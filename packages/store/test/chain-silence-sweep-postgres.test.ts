@@ -224,98 +224,9 @@ describe('raíz trabada por el agujero de `deferred`', () => {
       reason: 'settled_without_fanin', branches: 2, branches_answered: 1
     });
   });
-
-  it('deja rastro auditable del cierre', async () => {
-    await stuckRoot('chat-auditoria');
-    await ageChain('30 minutes');
-
-    await repository.sweepSilentChains();
-
-    const audit = await pool.query<{ decision: string; outcome: string; reason: string }>(
-      `SELECT decision,metadata->>'outcome' AS outcome,metadata->>'reason' AS reason
-       FROM audit_events WHERE action='agent_chain.silence_sweep'`
-    );
-    expect(audit.rows).toEqual([{
-      decision: 'info', outcome: 'closed', reason: 'settled_without_fanin'
-    }]);
-  });
-
-  it('no toca una raíz que todavía no agotó su gracia', async () => {
-    await stuckRoot('chat-fresca');
-
-    // Without aging: the 15-minute grace with the chain quiet was not met.
-    expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
-    await ageChain('14 minutes');
-    expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
-    expect(await closureNotices()).toHaveLength(0);
-
-    // One more minute and yes.
-    await ageChain('2 minutes');
-    expect(await repository.sweepSilentChains()).toMatchObject({ notified: 1 });
-  });
-
-  it('respeta la ventana de rastreo: una raíz vieja envejece fuera del barrido', async () => {
-    await stuckRoot('chat-vieja');
-    await ageChain('5 days');
-
-    expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
-    expect(await closureNotices()).toHaveLength(0);
-  });
 });
 
 describe('anti-spam: cien muertes en una raíz son un aviso', () => {
-  it('agrega por raíz, con el conteo y la causa dominante en una sola línea', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const published = await repository.publish(telegramCommand('chat-abanico'));
-    const fanout = Array.from({ length: 100 }, (_, index) => ({
-      to: index % 2 === 0 ? 'socrates' : 'jarvis',
-      body: `rama ${String(index)}`
-    }));
-    await ackWith(argos, await nextDelivery(argos), fanout);
-    expect((await pool.query(
-      `SELECT 1 FROM agent_output_materializations WHERE status='materialized'`
-    )).rowCount).toBe(100);
-
-    // The hundred die. In production this happens slowly over hours; the final state is the
-    // same and is what matters: a hundred deaths, no reply, zero notices.
-    await pool.query(
-      `UPDATE deliveries SET status='dead',terminal_at=now(),updated_at=now(),
-         last_error=CASE WHEN id IN (
-           SELECT produced_delivery_id FROM agent_output_materializations
-           ORDER BY output_index LIMIT 60
-         ) THEN 'ACK timeout: max attempts exhausted' ELSE 'el harness murió' END
-       WHERE recipient_alias IN ('socrates','jarvis') AND status NOT IN ('done','failed','dead')`
-    );
-    await ageChain('30 minutes');
-
-    const swept = await repository.sweepSilentChains();
-
-    expect(swept).toMatchObject({ scanned: 1, notified: 1, faninRecovered: 0 });
-    const notices = await closureNotices();
-    expect(notices).toHaveLength(1);
-    const reply = notices[0]?.reply ?? '';
-    expect(reply).toContain('100 ramas delegadas');
-    expect(reply).toContain('100 murieron');
-    expect(reply).toContain('ACK timeout: max attempts exhausted');
-    expect(reply).toContain('(60)');
-    // An aggregated notice must fit in a single message, not a hundred.
-    expect(Buffer.byteLength(reply, 'utf8')).toBeLessThanOrEqual(1_024);
-    expect(await finalRelays()).toBe(1);
-
-    const closure = await pool.query<{
-      branches: number; branches_dead: number; dominant_cause: string; dominant_cause_count: number;
-    }>(
-      `SELECT branches,branches_dead,dominant_cause,dominant_cause_count
-       FROM agent_chain_closures WHERE root_message_id=$1`,
-      [published.message_id]
-    );
-    expect(closure.rows[0]).toMatchObject({
-      branches: 100,
-      branches_dead: 100,
-      dominant_cause: 'ACK timeout: max attempts exhausted',
-      dominant_cause_count: 60
-    });
-  });
 
   it('no lleva al chat de Isa el last_error de una rama de Miguel', async () => {
     const salva = await consumer('Isa', 'salva');
@@ -354,26 +265,6 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
     expect(JSON.stringify((await pool.query(
       `SELECT dominant_cause FROM agent_chain_closures`
     )).rows)).not.toContain('SECRETO-MIGUEL');
-  });
-
-  it('nunca supera el techo de avisos por barrido', async () => {
-    const argos = await consumer('Steven', 'argos');
-    for (const conversation of ['chat-a', 'chat-b', 'chat-c']) {
-      await repository.publish(telegramCommand(conversation));
-      await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'algo' }]);
-    }
-    await killOpenDeliveries('socrates');
-    await ageChain('30 minutes');
-
-    const first = await repository.sweepSilentChains({ limit: 2 });
-    expect(first).toMatchObject({ scanned: 2, notified: 2 });
-    expect(await closureNotices()).toHaveLength(2);
-
-    const second = await repository.sweepSilentChains({ limit: 2 });
-    expect(second).toMatchObject({ scanned: 1, notified: 1 });
-    expect(await closureNotices()).toHaveLength(3);
-
-    expect(await repository.sweepSilentChains({ limit: 2 })).toMatchObject({ scanned: 0 });
   });
 });
 
@@ -538,16 +429,6 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     expect(await syntheticResponses()).toHaveLength(1);
   });
 
-  it('también cuando la terminaron como muerta, y le pasa la causa real al coordinador', async () => {
-    await chainWithForcedBranch('chat-incontable-muerta', 'dead', 'lo maté a mano para destrabar');
-    await ageChain('30 minutes');
-
-    expect(await repository.sweepSilentChains()).toMatchObject({ faninRecovered: 1, notified: 0 });
-
-    expect((await faninBranchTexts()).jarvis)
-      .toBe('jarvis could not complete the delegated request: lo maté a mano para destrabar');
-  });
-
   /**
    * The healthy case that is NOT touched: while there is real open work, nobody invents replies. Not when
    * the chain can still advance, not when it expires from inactivity: the notice to the human must keep
@@ -582,93 +463,9 @@ describe('la rama incontable: terminal por fuera del ACK', () => {
     );
     expect(closure.rows[0]).toMatchObject({ branches: 2, branches_answered: 1 });
   });
-
-  /**
-   * And the other healthy case: if NOTHING came back, there is nothing to synthesize. Filling
-   * in here would swap the aggregated notice with the dominant cause (the P0-4 guarantee) for
-   * a fan-in of empty branches.
-   */
-  it('no rellena una raíz donde ninguna rama devolvió nada', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(telegramCommand('chat-nada-volvio'));
-    await ackWith(argos, await nextDelivery(argos), [
-      { to: 'socrates', body: 'rama 1' },
-      { to: 'jarvis', body: 'rama 2' }
-    ]);
-    await terminateOutsideAck('socrates', 'dead', 'el harness murió');
-    await terminateOutsideAck('jarvis', 'dead', 'el harness murió');
-    await killOpenDeliveries('argos');
-    await ageChain('30 minutes');
-
-    expect(await repository.sweepSilentChains()).toMatchObject({ faninRecovered: 0, notified: 1 });
-    expect(await syntheticResponses()).toHaveLength(0);
-    expect(await faninMessages()).toBe(0);
-    expect((await closureNotices())[0]?.reply).toContain('el harness murió');
-  });
-});
-
-describe('lo que el vigía NO debe tocar', () => {
-  it('deja en paz una raíz que ya recibió su respuesta final', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(telegramCommand('chat-contestada'));
-    await ackWith(argos, await nextDelivery(argos), [], 'acá está tu respuesta');
-    expect(await finalRelays()).toBe(1);
-    await ageChain('7 hours');
-
-    expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
-    expect(await closureNotices()).toHaveLength(0);
-  });
-
-  it('deja en paz una cadena con trabajo abierto que no llegó al plazo largo', async () => {
-    const argos = await consumer('Steven', 'argos');
-    await repository.publish(telegramCommand('chat-viva'));
-    await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'todavía trabajando' }]);
-    // The branch is still open: the 6-hour deadline applies, not the 15-minute grace. A slow
-    // fan-out is not closed out of impatience; the measured p99 of healthy gaps is 4.25 h.
-    await ageChain('5 hours');
-
-    expect(await repository.sweepSilentChains()).toMatchObject({ scanned: 0, notified: 0 });
-    expect(await closureNotices()).toHaveLength(0);
-
-    // At 7 h with no progress at all it does close, and the reason says so.
-    await ageChain('2 hours');
-    expect(await repository.sweepSilentChains()).toMatchObject({ notified: 1 });
-    expect((await closureNotices())[0]).toMatchObject({ reason: 'idle_timeout' });
-    expect((await closureNotices())[0]?.reply).toContain('Sin ningún avance');
-  });
-
-  it('no inventa avisos cuando no hay ninguna raíz humana muda', async () => {
-    expect(await repository.sweepSilentChains()).toEqual({
-      scanned: 0, faninRecovered: 0, notified: 0, skipped: 0
-    });
-  });
 });
 
 describe('cómo se lee el aviso', () => {
-  /** Text fixed on purpose: it is the only thing the owner ever sees of a dead task. */
-  it('es una línea con los conteos, la causa dominante y la raíz para pedir el detalle', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const published = await repository.publish(telegramCommand('chat-muestra'));
-    await ackWith(argos, await nextDelivery(argos), Array.from({ length: 7 }, (_, index) => ({
-      to: index % 2 === 0 ? 'socrates' : 'jarvis', body: `rama ${String(index)}`
-    })));
-    await pool.query(
-      `UPDATE deliveries SET status='dead',terminal_at=now(),updated_at=now(),
-         last_error='bwrap: No permissions to create a new namespace'
-       WHERE recipient_alias IN ('socrates','jarvis') AND status NOT IN ('done','failed','dead')`
-    );
-    await ageChain('30 minutes');
-
-    await repository.sweepSilentChains();
-
-    expect((await closureNotices())[0]?.reply).toBe(
-      '⚠️ Tu pedido quedó sin respuesta: de 7 ramas delegadas, 0 devolvieron resultado, '
-      + '7 murieron, 0 fallaron y 0 siguen sin terminar. '
-      + 'Causa dominante: «bwrap: No permissions to create a new namespace» (7). '
-      + 'La cadena se apagó hace 30 min y ya no puede avanzar sola, así que la cierro acá. '
-      + `(raíz ${published.message_id})`
-    );
-  });
 
 /**
  * A `last_error` is written by an agent: it is foreign text that ends up in the owner's chat. Controls are

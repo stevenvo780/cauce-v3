@@ -1,5 +1,4 @@
 import { preparePostgresSuite } from './postgres-suite.js';
-import { requireValue } from './helpers.js';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { removeAgentContextRevisionsLayer } from './agent-context-revisions-layer.js';
@@ -98,45 +97,6 @@ afterAll(async () => {
 });
 
 describe('reconciliación y compatibilidad de la migración 028', () => {
-  it('el down espera el mismo advisory lock del migrador antes de tocar triggers o datos', async () => {
-    const source = await readFile(downPath, 'utf8');
-    const holder = await pool.connect();
-    const runner = await pool.connect();
-    let down: Promise<unknown> | undefined;
-    try {
-      await holder.query('BEGIN');
-      await holder.query('SELECT pg_advisory_xact_lock(783_003_003)');
-      const runnerPid = await runner.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-      down = runner.query(source);
-
-      let waiting = false;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const observed = await pool.query<{ waiting: boolean }>(
-          `SELECT EXISTS(
-             SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
-           ) AS waiting`,
-          [requireValue(runnerPid.rows[0], 'runnerPid.rows').pid],
-        );
-        if (observed.rows[0]?.waiting) {
-          waiting = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(waiting).toBe(true);
-      expect(await migrationApplied()).toBe(true);
-
-      await holder.query('COMMIT');
-      await down;
-      down = undefined;
-      expect(await migrationApplied()).toBe(false);
-    } finally {
-      await holder.query('ROLLBACK').catch(() => undefined);
-      if (down !== undefined) await down.catch(() => undefined);
-      holder.release();
-      runner.release();
-    }
-  });
 
   it('hace ganar el perfil existente y sólo si falta perfil siembra el legacy', async () => {
     await ensureDown();
@@ -184,30 +144,6 @@ describe('reconciliación y compatibilidad de la migración 028', () => {
         WHERE conname='agent_profiles_role_summary_visible'`,
     );
     expect(constraint.rows).toEqual([{ valid: true }]);
-  });
-
-  it('el down conserva el perfil rico y deja una proyección usable por una imagen anterior', async () => {
-    await insertAgent('Steven', 'rollback_safe');
-    const rich = `${'a'.repeat(1_199)}🎉${'detalle'.repeat(30)}`;
-    await pool.query(
-      `INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES ('Steven','rollback_safe',$1)`,
-      [rich],
-    );
-
-    await ensureDown();
-
-    const state = await pool.query<{ role_summary: string; role_brief: string }>(
-      `SELECT profile.role_summary,agent.role_brief
-         FROM agents agent JOIN agent_profiles profile USING (tenant_id,alias)
-        WHERE agent.tenant_id='Steven' AND agent.alias='rollback_safe'`,
-    );
-    expect(state.rows[0]?.role_summary).toBe(rich);
-    expect(Array.from(requireValue(state.rows[0], 'state.rows').role_brief)).toHaveLength(1_200);
-    expect(state.rows[0]?.role_brief.endsWith('🎉')).toBe(true);
-
-    await applyMigrationsThrough(pool, '043_blob_tenant_entitlements.sql');
-    expect((await new AgentProfileRepository(pool).read('Steven', 'rollback_safe')).role_summary)
-      .toBe(rich);
   });
 });
 

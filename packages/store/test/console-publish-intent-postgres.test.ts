@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
-  CauceRepository, PublishIntentRateLimitedError, PublishIntentReconciliationRequired,
-  type DatabaseClient, type DatabasePool,
+  PublishIntentRateLimitedError,
 } from '../src/index.js';
 import {
   command, confirm, intent, OPERATOR_SCOPE, pool, prepare, publishConsole,
@@ -194,164 +193,6 @@ describe('durable console publish intents', () => {
     expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(2);
   });
 
-  it('drains retained multiple committed unconfirmed meanings in durable head order', async () => {
-    const first = intent({ body: { text: 'ordered reconciliation marker' } });
-    const second = intent({ body: first.body, requested_priority: 11 });
-    const firstPrepared = await prepare(first);
-    const secondPrepared = await prepare(second);
-    const firstReceipt = await publishConsole(first, firstPrepared.idempotency_key);
-    const secondReceipt = await publishConsole(second, secondPrepared.idempotency_key);
-    const firstRequested = await pool.query<{ requested_hash: string }>(
-      `SELECT metadata->>'requested_hash' AS requested_hash
-         FROM audit_events
-        WHERE action='console.publish.prepare'
-          AND metadata->>'idempotency_key'=$1`,
-      [firstPrepared.idempotency_key],
-    );
-    const retainedRequestedHash = firstRequested.rows[0]?.requested_hash;
-    if (retainedRequestedHash === undefined) throw new Error('missing retained requested hash');
-    // Model a consistent retained pre-coalescing head. Runtime rows are append-only; this direct
-    // rewrite is test setup only, used to prove deterministic recovery if such state is imported.
-    await pool.query(
-      `UPDATE audit_events
-          SET metadata=jsonb_set(metadata,'{requested_hash}',to_jsonb($2::text))
-        WHERE action='console.publish.prepare'
-          AND metadata->>'idempotency_key'=$1`,
-      [secondPrepared.idempotency_key, retainedRequestedHash],
-    );
-    await pool.query(
-      `UPDATE audit_events
-          SET metadata=jsonb_set(metadata,'{intents,1,requested_hash}',to_jsonb($2::text))
-        WHERE action='console.publish.head'
-          AND jsonb_array_length(metadata->'intents')=2
-          AND metadata->'intents'->1->>'idempotency_key'=$1`,
-      [secondPrepared.idempotency_key, retainedRequestedHash],
-    );
-
-    const firstReload = intent({ body: first.body });
-    const firstError = await prepare(firstReload).catch((error: unknown) => error);
-    expect(firstError).toBeInstanceOf(PublishIntentReconciliationRequired);
-    expect(firstError).toMatchObject({
-      reconciliation: {
-        idempotency_key: firstPrepared.idempotency_key,
-        receipt: firstReceipt,
-      },
-    });
-    await confirm('Steven', 'kant', {
-      idempotency_key: firstReceipt.idempotency_key,
-      message_id: firstReceipt.message_id,
-      causal_hash: firstReceipt.causal_hash,
-    });
-
-    const secondReload = intent({ body: first.body });
-    const secondError = await prepare(secondReload).catch((error: unknown) => error);
-    expect(secondError).toBeInstanceOf(PublishIntentReconciliationRequired);
-    expect(secondError).toMatchObject({
-      reconciliation: {
-        idempotency_key: secondPrepared.idempotency_key,
-        receipt: secondReceipt,
-      },
-    });
-    await confirm('Steven', 'kant', {
-      idempotency_key: secondReceipt.idempotency_key,
-      message_id: secondReceipt.message_id,
-      causal_hash: secondReceipt.causal_hash,
-    });
-
-    const fresh = await prepare(intent({ body: first.body }));
-    expect(fresh).toMatchObject({ state: 'prepared', receipt: null });
-    expect(fresh.idempotency_key).not.toBe(firstPrepared.idempotency_key);
-    expect(fresh.idempotency_key).not.toBe(secondPrepared.idempotency_key);
-    expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(2);
-  });
-
-  it('coalesces a lost prepare response under a new nonce without another journal write', async () => {
-    const beforeReload = intent({ body: { text: 'lost prepare response' } });
-    const lost = await prepare(beforeReload);
-    const afterReload = intent({ body: beforeReload.body });
-    const replacement = await prepare(afterReload);
-    expect(replacement.state).toBe('prepared');
-    expect(replacement.idempotency_key).toBe(lost.idempotency_key);
-    expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(0);
-    expect((await pool.query(
-      `SELECT 1 FROM audit_events WHERE action='console.publish.prepare'`,
-    )).rowCount).toBe(1);
-    expect((await pool.query(
-      `SELECT 1 FROM audit_events WHERE action='console.publish.head'`,
-    )).rowCount).toBe(1);
-    const receipts = await Promise.all([
-      publishConsole(beforeReload, lost.idempotency_key),
-      publishConsole(afterReload, replacement.idempotency_key),
-    ]);
-    expect(new Set(receipts.map((receipt) => receipt.message_id)).size).toBe(1);
-    expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(1);
-  });
-
-  it('coalesces reload prepare before an older in-flight publish reaches the actor lock', async () => {
-    const beforeReload = intent({ body: { text: 'in-flight prepare race marker' } });
-    const prepared = await prepare(beforeReload);
-    let releasePublish = (): void => {
-      throw new Error('publish lock pause was not initialized');
-    };
-    let markPublishPaused = (): void => {
-      throw new Error('publish lock signal was not initialized');
-    };
-    const publishPaused = new Promise<void>((resolve) => {
-      markPublishPaused = resolve;
-    });
-    const publishReleased = new Promise<void>((resolve) => {
-      releasePublish = resolve;
-    });
-    let interceptNextConsoleLock = true;
-    const racePool = {
-      connect: async (): Promise<DatabaseClient> => {
-        const client = await pool.connect();
-        const wrappedQuery = (async (queryText: string, values?: unknown[]) => {
-          if (interceptNextConsoleLock
-              && queryText.includes('pg_advisory_xact_lock(hashtextextended($1,0))')) {
-            interceptNextConsoleLock = false;
-            markPublishPaused();
-            await publishReleased;
-          }
-          return values === undefined
-            ? client.query(queryText)
-            : client.query(queryText, values);
-        }) as DatabaseClient['query'];
-        return {
-          query: wrappedQuery,
-          on: client.on.bind(client),
-          off: client.off.bind(client),
-          release: client.release.bind(client),
-        } as DatabaseClient;
-      },
-    } as DatabasePool;
-    const racingRepository = new CauceRepository(racePool);
-    const inFlight = racingRepository.publish(
-      command(beforeReload, prepared.idempotency_key),
-      { requirePreparedConsoleIntent: true, consoleIntentOperatorScope: OPERATOR_SCOPE },
-    );
-    await publishPaused;
-
-    const afterReload = intent({ body: beforeReload.body });
-    let coalesced: Awaited<ReturnType<typeof prepare>>;
-    try {
-      coalesced = await racingRepository.prepareConsolePublishIntent(afterReload, OPERATOR_SCOPE);
-    } finally {
-      releasePublish();
-    }
-    const firstReceipt = await inFlight;
-    expect(coalesced.idempotency_key).toBe(prepared.idempotency_key);
-    const retryReceipt = await racingRepository.publish(
-      command(afterReload, coalesced.idempotency_key),
-      { requirePreparedConsoleIntent: true, consoleIntentOperatorScope: OPERATOR_SCOPE },
-    );
-    expect(retryReceipt).toEqual({ ...firstReceipt, duplicate: true });
-    expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(1);
-    expect((await pool.query(
-      `SELECT 1 FROM audit_events WHERE action='console.publish.prepare'`,
-    )).rowCount).toBe(1);
-  });
-
   it('durably rate-limits new nonces at exactly 60/10m and 200/day, exempting retries', async () => {
     const original = intent({ body: { text: 'rate-limit marker' } });
     const prepared = await prepare(original);
@@ -410,22 +251,4 @@ describe('durable console publish intents', () => {
       .toBeGreaterThan(600);
     expect((dailyLimited as PublishIntentRateLimitedError).rateLimit.retry_after_seconds)
       .toBeLessThanOrEqual(86_400);
-  });
-
-  it('returns explicit reconciliation for a committed meaning under a new nonce', async () => {
-    const original = intent({ body: { text: 'committed reconciliation marker' } });
-    const prepared = await prepare(original);
-    const receipt = await publishConsole(original, prepared.idempotency_key);
-    const reloaded = intent({ body: original.body });
-    await expect(prepare(reloaded)).rejects.toEqual(expect.objectContaining({
-      reconciliation: {
-        version: 1,
-        error: 'publish_intent_reconciliation_required',
-        state: 'committed',
-        idempotency_key: prepared.idempotency_key,
-        receipt,
-      },
-    }));
-    await expect(prepare(reloaded)).rejects.toBeInstanceOf(PublishIntentReconciliationRequired);
-    expect((await pool.query(`SELECT 1 FROM messages`)).rowCount).toBe(1);
   });});

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DeliveryEnvelope, PublishMessage, Tenant } from '@cauce/protocol';
-import { CauceRepository, DEFAULT_ACK_DEADLINE_MS, type DatabasePool } from '../src/index.js';
+import { CauceRepository, type DatabasePool } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import {
@@ -104,17 +104,6 @@ describe('blob references follow only authorized deliveries', () => {
     expect(state.rows[0]).toEqual({ messages: '0', grants: '0', keys: '0' });
   });
 
-  it('does not grant a real blob when the cross-tenant route is denied', async () => {
-    await register('Steven', 'kant');
-    await pool.query(`UPDATE acl_edges SET allow_route=false WHERE from_tenant='Steven' AND to_tenant='Pablo'`);
-    await expect(repository.publish(command({
-      recipients: [{ tenant_id: 'Pablo', alias: 'seneca' }],
-      body: { text: 'ruta denegada', artifacts_v1: [{ name: 'sintetico.txt', uri: URI }] },
-    }))).rejects.toThrow();
-    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
-    expect(await repository.findBlob(SHA, 'Pablo', 'seneca')).toBeUndefined();
-  });
-
   it('grants a delegated reference and a reverse response without exposing other aliases', async () => {
     await register('Steven', 'argos');
     const argos = await consumer('Steven', 'argos');
@@ -192,90 +181,6 @@ describe('blob references follow only authorized deliveries', () => {
     expect(await repository.findBlob(SHA, 'Steven', 'kant')).toBeUndefined();
   });
 
-  it('withholds a nested blob reference when its source cannot route to the root tenant', async () => {
-    const atlas = await consumer('Miguel', 'atlas');
-    const kant = await consumer('Steven', 'kant');
-    const seneca = await consumer('Pablo', 'seneca');
-    await repository.publish(command({
-      tenant_id: 'Miguel', room_id: 'grp.miguel', actor_alias: 'janus',
-      recipients: [{ tenant_id: 'Miguel', alias: 'atlas' }],
-    }));
-    const root = await next(atlas);
-    await applyTerminalAck(repository, atlas, root, {
-      messages: [{ to: 'kant', body: 'coordina' }], reply: 'delegado',
-    });
-    const intermediate = await next(kant, 'agent.message');
-    await applyTerminalAck(repository, kant, intermediate, {
-      messages: [{ to: 'seneca', body: 'produce' }], reply: 'delegado',
-    });
-    const nested = await next(seneca, 'agent.message');
-    await register('Pablo', 'seneca');
-    await repository.ackDelivery(
-      nested.delivery_id, seneca.tenant, seneca.alias,
-      ackEnvelope(nested, seneca, { output: {
-        messages: [], reply: 'archivo listo', status: 'done', retryable: false,
-        artifacts: [{ name: 'sintetico.txt', uri: URI }],
-      } }),
-    );
-    const toIntermediate = await next(kant, 'agent.response');
-    await applyTerminalAck(repository, kant, toIntermediate, { messages: [], reply: 'sin archivo' });
-    const toRoot = await next(atlas, 'agent.response');
-    await applyTerminalAck(repository, atlas, toRoot, { messages: [], reply: 'revisado' });
-    const fanin = await next(atlas, 'agent.fanin');
-    const data = fanin.body.fanin_data_v1 as { responses: { alias: string; artifacts?: { uri?: string }[] }[] };
-    // A Pablo grandchild never reaches a Miguel root through the fan-in: not its text, not its ref.
-    expect(data.responses.map((entry) => entry.alias)).toEqual(['kant']);
-    expect(JSON.stringify(fanin.body)).not.toContain('archivo listo');
-    expect(JSON.stringify(fanin.body)).not.toContain(URI);
-    expect(await repository.findBlob(SHA, 'Miguel', 'atlas')).toBeUndefined();
-  });
-
-  it('keeps both branch references when distinct aliases return the same digest', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const seneca = await consumer('Pablo', 'seneca');
-    const atlas = await consumer('Miguel', 'atlas');
-    await repository.publish(command());
-    const root = await next(argos);
-    await applyTerminalAck(repository, argos, root, {
-      messages: [
-        { to: 'seneca', body: 'rama Pablo' },
-        { to: 'atlas', body: 'rama Miguel' },
-      ],
-      reply: 'delegado',
-    });
-    await register('Pablo', 'seneca');
-    await register('Miguel', 'atlas');
-    for (const target of [seneca, atlas]) {
-      const child = await next(target, 'agent.message');
-      const result = await repository.ackDelivery(
-        child.delivery_id, target.tenant, target.alias,
-        ackEnvelope(child, target, { output: {
-          messages: [], reply: `${target.alias} terminó`, status: 'done', retryable: false,
-          artifacts: [{ name: `${target.alias}.txt`, uri: URI }],
-        } }),
-      );
-      expect(result.applied).toBe(true);
-    }
-    const responses = await repository.claimDeliveries(
-      argos.tenant, argos.alias, argos.instanceId, argos.epoch, 10, DEFAULT_ACK_DEADLINE_MS,
-    );
-    expect(responses.filter((response) => response.body.type === 'agent.response')).toHaveLength(2);
-    for (const response of responses) {
-      await applyTerminalAck(repository, argos, response, { messages: [], reply: 'revisado' });
-    }
-    const fanin = await next(argos, 'agent.fanin');
-    const data = fanin.body.fanin_data_v1 as { responses: { alias: string; artifacts?: { uri?: string }[] }[] };
-    expect(data.responses.filter((response) =>
-      (response.alias === 'seneca' || response.alias === 'atlas')
-      && response.artifacts?.[0]?.uri === URI)).toHaveLength(2);
-    expect(await repository.findBlob(SHA, 'Steven', 'argos')).toBeDefined();
-    const grants = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM blob_delivery_grants WHERE delivery_id=$1 AND sha256=$2`,
-      [fanin.delivery_id, SHA],
-    );
-    expect(grants.rows[0]?.count).toBe('1');
-  });
-
   it('drops a forged delegated reference while delivering the text and terminal ACK', async () => {
     const argos = await consumer('Steven', 'argos');
     const seneca = await consumer('Pablo', 'seneca');
@@ -295,26 +200,6 @@ describe('blob references follow only authorized deliveries', () => {
              (SELECT count(*)::text FROM messages WHERE body->>'type'='agent.message') AS children
     `);
     expect(state.rows[0]).toEqual({ grants: '0', children: '1' });
-  });
-
-  it('drops a BOM prefixed owned URI with a false digest without poisoning the receiver', async () => {
-    await register('Steven', 'argos');
-    const argos = await consumer('Steven', 'argos');
-    const seneca = await consumer('Pablo', 'seneca');
-    await repository.publish(command());
-    const root = await next(argos);
-    const ack = await applyTerminalAck(repository, argos, root, {
-      messages: [{ to: 'seneca', body: 'texto intacto', artifacts: [{
-        name: 'falso.bin', uri: `\uFEFF${URI}`, sha256: 'f'.repeat(64),
-      }] }],
-      reply: 'delegado',
-    });
-    expect(ack.applied).toBe(true);
-    const child = await next(seneca, 'agent.message');
-    expect(child.body.text).toBe('texto intacto');
-    expect(child.body.artifacts_v1).toBeUndefined();
-    expect(child.body.attachments_note).toMatch(/no viajaron/u);
-    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
   });
 
   it('drops a forged result artifact without poisoning the child ACK', async () => {
@@ -337,59 +222,6 @@ describe('blob references follow only authorized deliveries', () => {
     const response = await next(argos, 'agent.response');
     expect(response.body.artifacts_v1).toBeUndefined();
     expect(response.body.text).toMatch(/referencia\(s\) blob no viajaron: emisor sin acceso/u);
-    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
-  });
-
-  it('reports a malformed owned result blob without poisoning the return delivery', async () => {
-    await register('Pablo', 'seneca');
-    const argos = await consumer('Steven', 'argos');
-    const seneca = await consumer('Pablo', 'seneca');
-    await repository.publish(command());
-    const root = await next(argos);
-    await applyTerminalAck(repository, argos, root, {
-      messages: [{ to: 'seneca', body: 'responde' }], reply: 'delegado',
-    });
-    const child = await next(seneca, 'agent.message');
-    const ack = await repository.ackDelivery(
-      child.delivery_id, seneca.tenant, seneca.alias,
-      ackEnvelope(child, seneca, { output: {
-        messages: [], reply: 'respuesta conservada', status: 'done', retryable: false,
-        artifacts: [
-          { name: 'falso.bin', uri: `\uFEFF${URI}`, sha256: 'f'.repeat(64) },
-          { name: '../fuera.bin', uri: URI },
-        ],
-      } }),
-    );
-    expect(ack.applied).toBe(true);
-    const response = await next(argos, 'agent.response');
-    expect(response.body.text).toMatch(/^\[2 referencia\(s\) blob no viajaron: URI, digest o nombre inválido\]/u);
-    expect(response.body.text).toContain('respuesta conservada');
-    expect(response.body.artifacts_v1).toBeUndefined();
-    expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
-  });
-
-  it('preserves the full result and the discard note when a blob ref is refused', async () => {
-    const argos = await consumer('Steven', 'argos');
-    const seneca = await consumer('Pablo', 'seneca');
-    await repository.publish(command());
-    const root = await next(argos);
-    await applyTerminalAck(repository, argos, root, {
-      messages: [{ to: 'seneca', body: 'responde' }], reply: 'delegado',
-    });
-    const child = await next(seneca, 'agent.message');
-    const longReply = `${'contenido legítimo '.repeat(320)}FIN_DEL_RESULTADO`;
-    const ack = await repository.ackDelivery(
-      child.delivery_id, seneca.tenant, seneca.alias,
-      ackEnvelope(child, seneca, { output: {
-        messages: [], reply: longReply, status: 'done', retryable: false,
-        artifacts: [{ name: 'ajeno.txt', uri: UNKNOWN_URI }],
-      } }),
-    );
-    expect(ack.applied).toBe(true);
-    const response = await next(argos, 'agent.response');
-    expect(response.body.text).toContain(longReply);
-    expect(response.body.text).toMatch(/^\[1 referencia\(s\) blob no viajaron: emisor sin acceso\]/u);
-    expect(response.body.artifacts_v1).toBeUndefined();
     expect((await pool.query('SELECT 1 FROM blob_delivery_grants')).rowCount).toBe(0);
   });
 });

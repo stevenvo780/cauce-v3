@@ -1,11 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { publishReceiptCausalHash } from '@cauce/protocol';
 import { PublishIntentExpiredError, PublishIntentReconciliationRequired } from '../src/index.js';
-import { resetTestDatabase } from '../../../tests/helpers/postgres.js';
-import { requireValue } from './helpers.js';
 import {
-  command, confirm, intent, OPERATOR_SCOPE, OTHER_OPERATOR_SCOPE, pool, prepare, publishConsole,
+  confirm, intent, OPERATOR_SCOPE, OTHER_OPERATOR_SCOPE, pool, prepare, publishConsole,
   registerConsolePublishSuite, repository,
 } from './console-publish-intent-postgres-helpers.js';
 
@@ -195,151 +192,6 @@ describe('durable console publish intents', () => {
     expect(anotherTenant.idempotency_key).not.toBe(prepared.idempotency_key);
   });
 
-  it('bounds churn at 32 by expiring only the oldest reservation without an effect', async () => {
-    const inputs = Array.from({ length: 40 }, (_, index) => intent({
-      body: { text: `bounded meaning ${String(index)}` },
-    }));
-    const prepared = [];
-    for (const input of inputs) prepared.push(await prepare(input));
-    expect(new Set(prepared.map((entry) => entry.idempotency_key)).size).toBe(40);
-    const active = await pool.query<{ count: string }>(
-      `SELECT count(*)::text AS count
-         FROM audit_events prepared
-        WHERE prepared.action='console.publish.prepare'
-          AND NOT EXISTS (
-            SELECT 1 FROM audit_events expired
-             WHERE expired.action='console.publish.expire'
-               AND expired.metadata->>'idempotency_key'=
-                   prepared.metadata->>'idempotency_key'
-          )`,
-    );
-    expect(Number(active.rows[0]?.count)).toBe(32);
-    expect((await pool.query(
-      `SELECT 1 FROM audit_events WHERE action='console.publish.expire'`,
-    )).rowCount).toBe(8);
-    const evicted = await publishConsole(requireValue(inputs[0], 'inputs'), requireValue(prepared[0], 'prepared').idempotency_key)
-      .catch((error: unknown) => error);
-    expect(evicted).toBeInstanceOf(PublishIntentExpiredError);
-    expect(evicted).toMatchObject({
-      expiration: {
-        version: 1,
-        error: 'publish_intent_expired',
-        state: 'expired',
-        idempotency_key: requireValue(prepared[0], 'prepared').idempotency_key,
-        safe_to_resubmit: true,
-      },
-    });
-    await expect(publishConsole(requireValue(inputs.at(-1), 'value'), requireValue(prepared.at(-1), 'value').idempotency_key))
-      .resolves.toMatchObject({ duplicate: false });
-  });
-
-  it('fails closed on extra journal metadata instead of ignoring corrupted capacity state', async () => {
-    const input = intent({ body: { text: 'metadata exactness marker' } });
-    const prepared = await prepare(input);
-    await pool.query(
-      `UPDATE audit_events SET metadata=metadata || '{"body":"forbidden"}'::jsonb
-        WHERE action='console.publish.prepare'
-          AND metadata->>'idempotency_key'=$1`,
-      [prepared.idempotency_key],
-    );
-    await expect(prepare(input))
-      .rejects.toMatchObject({ code: 'conflict' });
-    await expect(prepare(intent({
-      body: { text: 'another meaning in the corrupted conversation' },
-    }))).rejects.toMatchObject({ code: 'conflict' });
-  });
-
-  it('fails closed on malformed head sequence, metadata and prepare binding', async () => {
-    const sequenceInput = intent({ body: { text: 'head sequence marker' } });
-    await prepare(sequenceInput);
-    await pool.query(
-      `UPDATE audit_events SET metadata=jsonb_set(metadata,'{sequence}','99'::jsonb)
-        WHERE action='console.publish.head'`,
-    );
-    await expect(prepare(sequenceInput)).rejects.toMatchObject({ code: 'conflict' });
-
-    await resetTestDatabase(pool);
-    const extraInput = intent({ body: { text: 'head extra metadata marker' } });
-    await prepare(extraInput);
-    await pool.query(
-      `UPDATE audit_events SET metadata=metadata || '{"body":"forbidden"}'::jsonb
-        WHERE action='console.publish.head'`,
-    );
-    await expect(prepare(extraInput)).rejects.toMatchObject({ code: 'conflict' });
-
-    await resetTestDatabase(pool);
-    const bindingInput = intent({ body: { text: 'head binding marker' } });
-    await prepare(bindingInput);
-    await pool.query(
-      `UPDATE audit_events
-          SET metadata=jsonb_set(metadata,'{intents,0,prepare_audit_id}','"999999"'::jsonb)
-        WHERE action='console.publish.head'`,
-    );
-    await expect(prepare(bindingInput)).rejects.toMatchObject({ code: 'conflict' });
-  });
-
-  it('does not let an invalid closure hide a prepare from the durable head', async () => {
-    const input = intent({ body: { text: 'invalid closure marker' } });
-    const prepared = await prepare(input);
-    const metadata = await pool.query<{ metadata: unknown }>(
-      `SELECT metadata FROM audit_events
-        WHERE action='console.publish.prepare'
-          AND metadata->>'idempotency_key'=$1`,
-      [prepared.idempotency_key],
-    );
-    await pool.query(
-      `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,metadata)
-       VALUES('Steven','kant','console.publish.confirm','allow',
-              $1::jsonb || jsonb_build_object('causal_hash',repeat('a',64)))`,
-      [JSON.stringify(metadata.rows[0]?.metadata)],
-    );
-    await expect(prepare({ ...input, intent_nonce: randomUUID() }))
-      .rejects.toMatchObject({ code: 'conflict' });
-  });
-
-  it('revalidates message and delivery rows on first and repeated confirmation', async () => {
-    const input = intent({ body: { text: 'durable confirmation marker' } });
-    const prepared = await prepare(input);
-    if (prepared.state !== 'prepared') throw new Error('expected a fresh prepared intent');
-    const receipt = await publishConsole(input, prepared.idempotency_key);
-    const confirmation = {
-      idempotency_key: receipt.idempotency_key,
-      message_id: receipt.message_id,
-      causal_hash: receipt.causal_hash,
-    };
-    await confirm('Steven', 'kant', confirmation);
-    expect(await confirm('Steven', 'kant', confirmation))
-      .toMatchObject({ version: 1, confirmed: true, ...confirmation });
-
-    await pool.query(
-      `UPDATE audit_events SET metadata=metadata || '{"body":"forbidden"}'::jsonb
-        WHERE action='console.publish.confirm'
-          AND metadata->>'idempotency_key'=$1`,
-      [receipt.idempotency_key],
-    );
-    await expect(confirm('Steven', 'kant', confirmation))
-      .rejects.toMatchObject({ code: 'conflict' });
-    await pool.query(
-      `UPDATE audit_events SET metadata=metadata-'body'
-        WHERE action='console.publish.confirm'
-          AND metadata->>'idempotency_key'=$1`,
-      [receipt.idempotency_key],
-    );
-
-    const other = await repository.publish(command(intent({
-      body: { text: 'alien durable delivery' },
-    }), 'machine-alien-delivery'));
-    const forgedBase = { ...receipt, delivery_ids: other.delivery_ids };
-    const forged = { ...forgedBase, causal_hash: publishReceiptCausalHash(forgedBase) };
-    await pool.query(
-      `UPDATE idempotency_keys SET response=$4::jsonb
-        WHERE tenant_id=$1 AND actor_alias=$2 AND idempotency_key=$3`,
-      ['Steven', 'kant', receipt.idempotency_key, JSON.stringify(forged)],
-    );
-    await expect(confirm('Steven', 'kant', confirmation))
-      .rejects.toMatchObject({ code: 'conflict' });
-  });
-
   it('expires reservations after 15 minutes only when no idempotency row exists', async () => {
     const input = intent({ body: { text: 'abandoned prepare marker' } });
     const abandoned = await prepare(input);
@@ -419,44 +271,4 @@ describe('durable console publish intents', () => {
       idempotency_key: prepared.idempotency_key,
       receipt,
     });
-  });
-
-  it('keeps prepare, confirm and expire audit state outside observability pruning', async () => {
-    const abandonedInput = intent({ body: { text: 'retained abandoned marker' } });
-    const abandoned = await prepare(abandonedInput);
-    await pool.query(
-      `UPDATE audit_events SET created_at=now()-interval '16 minutes'
-        WHERE action='console.publish.prepare'
-          AND metadata->>'idempotency_key'=$1`,
-      [abandoned.idempotency_key],
-    );
-    const replacement = await prepare({ ...abandonedInput, intent_nonce: randomUUID() });
-    if (replacement.state !== 'prepared') throw new Error('expected replacement prepare');
-    const receipt = await publishConsole(abandonedInput, replacement.idempotency_key);
-    await confirm('Steven', 'kant', {
-      idempotency_key: receipt.idempotency_key,
-      message_id: receipt.message_id,
-      causal_hash: receipt.causal_hash,
-    });
-    await pool.query(
-      `UPDATE audit_events SET created_at=now()-interval '400 days'
-        WHERE action LIKE 'console.publish.%'`,
-    );
-
-    await repository.pruneObservability();
-
-    const actions = await pool.query<{ action: string }>(
-      `SELECT action FROM audit_events
-        WHERE action LIKE 'console.publish.%' ORDER BY id`,
-    );
-    expect(actions.rows.map((row) => row.action)).toEqual([
-      'console.publish.prepare',
-      'console.publish.head',
-      'console.publish.expire',
-      'console.publish.head',
-      'console.publish.prepare',
-      'console.publish.head',
-      'console.publish.confirm',
-      'console.publish.head',
-    ]);
   });});

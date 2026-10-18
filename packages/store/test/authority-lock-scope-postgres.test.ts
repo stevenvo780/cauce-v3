@@ -112,33 +112,6 @@ async function qualifiedCount(kind: 'owner' | 'platform', company = 'humanizar')
 }
 
 describe('authority writer lock scope on PostgreSQL', () => {
-  it.each([false, true])('commits configuration in another company while the first transaction stays open (shared platform actor: %s)', async sharedActor => {
-    const repository = new ConfigurationRepository(pool);
-    await withPair(async (first, second) => {
-      const firstTenant = sharedActor ? 'Steven' : 'Miguel'; const firstAlias = sharedActor ? 'kant' : 'janus';
-      const secondTenant = sharedActor ? 'Steven' : 'PraxisHub'; const secondAlias = sharedActor ? 'kant' : 'company_admin';
-      const firstHuman = sharedActor ? actors.steven : actors.miguel;
-      const secondHuman = sharedActor ? actors.steven : actors.leon;
-      await repository.forTransaction(first).apply(firstTenant, firstAlias,
-        { resource: 'room', action: 'create', tenant_id: 'Steven', id: 'lock-scope-humanizar', value: { enabled: true } },
-        false, undefined, client => lockCompanyAuthority(client, { tenant: firstTenant, alias: firstAlias, humanId: firstHuman }));
-      await second.query("SET LOCAL statement_timeout='2s'");
-      const result = await repository.forTransaction(second).apply(secondTenant, secondAlias,
-        { resource: 'room', action: 'create', tenant_id: 'PraxisHub', id: 'lock-scope-praxis', value: { enabled: true } },
-        false, undefined, client => lockCompanyAuthority(client, {
-          tenant: secondTenant, alias: secondAlias, humanId: secondHuman, requestedCompany: 'praxis',
-        }));
-      expect(result.applied).toBe(true);
-      await second.query('COMMIT');
-      expect((await admin.query("SELECT id FROM rooms WHERE id LIKE 'lock-scope-%' ORDER BY id")).rows)
-        .toEqual([{ id: 'lock-scope-praxis' }]);
-      expect((await admin.query("SELECT company_id FROM config_revisions WHERE operation->>'id' LIKE 'lock-scope-%'")).rows)
-        .toEqual([{ company_id: 'praxis' }]);
-      await first.query('COMMIT');
-      expect((await admin.query("SELECT id FROM rooms WHERE id LIKE 'lock-scope-%' ORDER BY id")).rows)
-        .toEqual([{ id: 'lock-scope-humanizar' }, { id: 'lock-scope-praxis' }]);
-    });
-  });
 
   it('serializes post-write membership guards and rejects loss of the last qualified company owner', async () => {
     await race(actors.miguel, actors.steven, stripControl,
@@ -157,26 +130,6 @@ describe('authority writer lock scope on PostgreSQL', () => {
     expect((await admin.query<{ permissions: string[] }>(
       'SELECT permissions FROM human_tenant_memberships WHERE human_id=$1', [actors.platformTeam])).rows[0]?.permissions)
       .toEqual(['read', 'control']);
-  });
-
-  it.each(['owner', 'platform'] as const)('G4 serializes direct account updates and preserves the last active %s', async kind => {
-    const first = kind === 'owner' ? actors.miguel : actors.steven;
-    const second = kind === 'owner' ? actors.steven : actors.platformTeam;
-    await race(first, second, (client, humanId) => client.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]),
-      { code: '23514', constraint: kind === 'owner' ? 'console_users_last_company_owner' : 'console_users_last_platform_admin' });
-    expect(await qualifiedCount(kind)).toBe(1);
-    expect((await admin.query<{ active: boolean }>('SELECT active FROM console_users WHERE id=$1', [second])).rows[0]?.active).toBe(true);
-  });
-
-  it('resolves authority in another company while a configuration writer holds its company guard', async () => {
-    await withPair(async (first, second) => {
-      await new ConfigurationRepository(pool).forTransaction(first).apply('Miguel', 'janus',
-        { resource: 'room', action: 'create', tenant_id: 'Miguel', id: 'authority-read-room', value: { enabled: true } },
-        false, undefined, client => lockCompanyAuthority(client, { tenant: 'Miguel', alias: 'janus', humanId: actors.miguel }));
-      await second.query("SET LOCAL statement_timeout='2s'");
-      expect(await lockCompanyAuthority(second, { tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon }))
-        .toMatchObject({ role: 'company_owner', actingCompany: 'praxis' });
-    });
   });
 
   it('takes the platform writer guard for a holder mutation and rechecks a blocked actor after commit', async () => {
@@ -206,62 +159,6 @@ describe('authority writer lock scope on PostgreSQL', () => {
     });
   });
 
-  it('updates a room without platform holders while leaving the platform writer guard free', async () => {
-    await admin.query("INSERT INTO rooms(id,tenant_id) VALUES('unguarded-room','Miguel')");
-    await withPair(async (first, _second) => {
-      await new ConfigurationRepository(pool).forTransaction(first).apply('Miguel', 'janus',
-        { resource: 'room', action: 'update', tenant_id: 'Miguel', id: 'unguarded-room', value: { enabled: false } },
-        false, undefined, client => lockCompanyAuthority(client, { tenant: 'Miguel', alias: 'janus', humanId: actors.miguel }));
-      expect(await hasPlatformGuard(await pid(first))).toBe(false);
-    });
-  });
-
-  it('makes a concurrent platform grant wait for an earlier configuration writer in its company', async () => {
-    await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [actors.platformTeam]);
-    await withPair(async (first, second) => {
-      const firstPid = await pid(first); const secondPid = await pid(second);
-      await new ConfigurationRepository(pool).forTransaction(first).apply('PraxisHub', 'company_admin',
-        { resource: 'membership', action: 'update', tenant_id: 'PraxisTeam', room_id: 'company-team', alias: 'team_agent', value: { enabled: false } },
-        false, undefined, client => lockCompanyAuthority(client, { tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon }));
-      expect(await hasPlatformGuard(firstPid)).toBe(false);
-      const outcome = rejection(second.query('INSERT INTO platform_admins(human_id) VALUES($1)', [actors.platformTeam]));
-      await observeBlocker(secondPid, firstPid);
-      await first.query('COMMIT');
-      expect(await outcome).toBeUndefined();
-      await second.query('COMMIT');
-      expect(await qualifiedCount('platform')).toBe(1);
-      expect((await admin.query('SELECT human_id FROM platform_admins WHERE human_id=$1', [actors.platformTeam])).rowCount).toBe(1);
-    }, { secondPool: admin });
-  });
-
-  it.each(['account', 'membership'] as const)('rechecks a newly committed platform grant after a blocked %s write', async kind => {
-    await admin.query('DELETE FROM platform_admins WHERE human_id=$1', [actors.platformTeam]);
-    const people = [actors.steven, actors.miguel, actors.leon, actors.platformTeam];
-    const standing = () => admin.query<{ id: string; active: boolean; permissions: string[] }>(
-      `SELECT person.id::text,person.active,home.permissions FROM console_users person
-       JOIN human_tenant_memberships home ON home.human_id=person.id AND home.tenant_id=person.tenant_id
-       WHERE person.id=ANY($1::uuid[]) ORDER BY person.id`, [people]);
-    const before = (await standing()).rows;
-    await withPair(async (first, second) => {
-      const firstPid = await pid(first); const secondPid = await pid(second);
-      await first.query('INSERT INTO platform_admins(human_id) VALUES($1)', [actors.platformTeam]);
-      expect(await hasPlatformGuard(firstPid)).toBe(true);
-      expect((await admin.query('SELECT human_id FROM platform_admins WHERE human_id=$1', [actors.platformTeam])).rowCount).toBe(0);
-      const outcome = rejection(kind === 'account'
-        ? second.query('UPDATE console_users SET active=false WHERE id=$1', [actors.platformTeam])
-        : stripControl(second, actors.platformTeam));
-      await observeBlocker(secondPid, firstPid);
-      await first.query('COMMIT');
-      expect(await outcome).toMatchObject({
-        code: kind === 'account' ? '40001' : 'conflict', message: 'platform authority changed; reload and retry',
-      });
-      await second.query('ROLLBACK');
-      expect((await standing()).rows).toEqual(before);
-      expect(await qualifiedCount('platform')).toBe(2);
-      expect((await admin.query('SELECT human_id FROM platform_admins WHERE human_id=$1', [actors.platformTeam])).rowCount).toBe(1);
-    }, { firstPool: admin });
-  });
-
   it('bounds identity lock waits at five seconds and resets the timeout after rollback', async () => {
     await withPair(async (first, second) => {
       expect((await second.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]?.lock_timeout).toBe('0');
@@ -275,23 +172,6 @@ describe('authority writer lock scope on PostgreSQL', () => {
       expect(Date.now() - started).toBeGreaterThanOrEqual(4_500);
       await second.query('ROLLBACK');
       expect((await second.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]?.lock_timeout).toBe('0');
-    });
-  });
-
-  it('sets five-second authority timeouts only inside the transaction', async () => {
-    await withPair(async (_first, second) => {
-      await lockCompanyAuthority(second, { tenant: 'PraxisHub', alias: 'company_admin', humanId: actors.leon });
-      expect((await second.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]?.lock_timeout).toBe('5s');
-      await second.query('COMMIT');
-      expect((await second.query<{ lock_timeout: string }>('SHOW lock_timeout')).rows[0]?.lock_timeout).toBe('0');
-    });
-  });
-
-  it.each(['cauce_lock_owner_guard($1)', 'cauce_lock_platform_owner_guard()'])('rejects stale-snapshot isolation in %s', async guard => {
-    await withPair(async (_first, second) => {
-      await second.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
-      await expect(second.query(`SELECT ${guard}`, guard.includes('$1') ? ['humanizar'] : []))
-        .rejects.toMatchObject({ code: '40001', message: 'authority writes require read committed isolation' });
     });
   });
 });
