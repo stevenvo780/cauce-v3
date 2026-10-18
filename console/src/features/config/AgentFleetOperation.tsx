@@ -41,7 +41,7 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
 function removedLabel(removed: NonNullable<FleetEvidence['removed']>): string {
   return removed.map((item) => `${RESOURCE_TYPES[item.type]} ${item.name}`).join(', ');
 }
-function PurgeOutcome({ operation }: { operation: FleetOperation }) {
+export function PurgeOutcome({ operation }: { operation: FleetOperation }) {
   const step = operation.steps.find((value) => value.name === 'purge');
   const removed = step?.evidence?.removed;
   const text = step?.status === 'succeeded'

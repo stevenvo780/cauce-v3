@@ -6,6 +6,7 @@ import { useApi } from '../../api/context';
 import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SectionCard } from '../../components/kit';
 import { Time } from '../../components/ui';
+import { PurgeOutcome } from './AgentFleetOperation';
 import { cancellable, operationSummary, resumable } from './fleet-operation-text';
 
 const LIMIT = 50;
@@ -91,6 +92,7 @@ export function RecentFleetOperations() {
             <div className="grid min-w-0 gap-0.5">
               <span className="break-words text-sm font-semibold">{fleetTargetText(operation.target)}</span>
               <span className="break-words text-xs text-muted">{operationSummary(operation)}</span>
+              {operation.kind === 'purge' ? <PurgeOutcome operation={operation} /> : null}
               <span className="text-xs text-muted"><Time value={operation.created_at} relativo /></span>
             </div>
             <div className="flex flex-wrap gap-1.5">

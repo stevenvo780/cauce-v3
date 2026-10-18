@@ -61,7 +61,7 @@ describe('liveState', () => {
     expect(draft.reason).toContain('no tiene ordenador');
     expect(liveState(agent({
       agent_enabled: false, lifecycle_state: 'draft', host_id: 'kratos', flags: ['never_connected'],
-    }), { nowMs: NOW }).state).toBe('down');
+    }), { nowMs: NOW }).state).toBe('unprepared');
   });
 
   it.each([1, undefined, null])('cola disponible sin tomar con lease vivo es Trabado y no se oculta (%s)', (ready) => {

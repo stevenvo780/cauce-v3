@@ -58,8 +58,8 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
     hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
   },
   unprepared: {
-    label: 'Borrador · sin ordenador',
-    hint: 'Nunca se preparó: sigue en borrador y no tiene ordenador. No es una caída.',
+    label: 'Sin preparar',
+    hint: 'Sigue en borrador: su entorno todavía no está preparado para trabajar. No es una caída.',
   },
 };
 
@@ -138,7 +138,9 @@ function decidirEstado(
   if (nuncaPreparado(agent)) {
     return {
       state: 'unprepared',
-      reason: 'Nació en borrador y todavía no tiene ordenador. No es una caída: prepáralo para que pueda trabajar.',
+      reason: agent.host_id
+        ? 'Sigue en borrador y su entorno todavía no está preparado. Prepáralo para que pueda trabajar.'
+        : 'Nació en borrador y todavía no tiene ordenador. No es una caída: prepáralo para que pueda trabajar.',
       overloaded,
     };
   }
@@ -277,9 +279,7 @@ function decidirEstado(
 function nuncaPreparado(agent: FleetActivityAgent): boolean {
   const flags = agent.flags ?? [];
   if (flags.includes('unregistered') || agent.registered === false) return false;
-  if (agent.lifecycle_state !== 'draft' || agent.agent_enabled === true) return false;
-  const host = agent.host_id;
-  return host == null || host === '';
+  return agent.lifecycle_state === 'draft' && agent.agent_enabled !== true;
 }
 
 /** Count per state, for the summary bar. Always publishes every state, even at zero. */
