@@ -110,7 +110,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
     const companyOwned = (owner: string): string => `${owner} IN (SELECT id FROM tenants WHERE company_id=$1)`;
     const [
       tenants, rooms, memberships, edges, harnesses, policies, destinations, chainPolicies,
-      agents, providerAccounts, routingCeiling, agentAccountBindings, revisions, agentProfiles
+      agents, providerAccounts, routingCeiling, agentAccountBindings, revisions, agentProfiles, hostExtensions
     ] = await Promise.all([
         this.queryable.query<Record<string, unknown>>(
           `SELECT id,display_name,is_hub,enabled,created_at,to_jsonb(tenants)->>'retired_at' AS retired_at FROM tenants
@@ -194,6 +194,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
         // material and stay behind the payer scope.
         this.queryable.query<Record<string, unknown>>(
           `SELECT id,provider,payer_tenant_id,label,shared_with_pool,enabled,created_at,updated_at,
+                  (quota_registration_key IS NOT NULL AND quota_identity_hash IS NULL) AS quota_pending,
                   CASE WHEN $2::text IS NULL OR payer_tenant_id=$2 THEN external_account_id END AS external_account_id,
                   CASE WHEN $2::text IS NULL OR payer_tenant_id=$2 THEN credential_ref_kind END AS credential_ref_kind
            FROM provider_accounts
@@ -240,6 +241,9 @@ export class ConfigurationRepository extends ConfigurationMutations {
              AND NOT EXISTS(SELECT 1 FROM tenants WHERE tenants.id=agent_profiles.tenant_id AND to_jsonb(tenants)->>'purged_at' IS NOT NULL)
              AND NOT EXISTS(SELECT 1 FROM agents WHERE agents.tenant_id=agent_profiles.tenant_id AND agents.alias=agent_profiles.alias AND to_jsonb(agents)->>'purged_at' IS NOT NULL)
            ORDER BY tenant_id,alias`, scope
+        ),
+        this.queryable.query<Record<string, unknown>>(
+          `SELECT host_id,extensions_allowed FROM fleet_hosts WHERE company_id=$1 ORDER BY host_id`, [current.actingCompany]
         )
     ]);
     return {
@@ -254,7 +258,7 @@ export class ConfigurationRepository extends ConfigurationMutations {
       egress_destinations: destinations.rows,
       agents: agents.rows.filter((row) => !row.retired_at), provider_accounts: providerAccounts.rows,
       alias_routing_ceiling: routingCeiling.rows, agent_account_bindings: agentAccountBindings.rows,
-      agent_profiles: agentProfiles.rows,
+      agent_profiles: agentProfiles.rows, host_extensions_allowed: hostExtensions.rows,
       revisions: revisions.rows.map(revisionForSnapshot)
     };
   }

@@ -159,7 +159,8 @@ export async function validateFleetTarget(
         }
       }
       if (parameters.primary_account_id && !(await client.query(
-        `SELECT 1 FROM provider_accounts WHERE id=$1 AND enabled AND ${providerAccountConsentSql('provider_accounts', '$2')} FOR SHARE`,
+        `SELECT 1 FROM provider_accounts WHERE id=$1 AND (enabled OR (quota_registration_key IS NOT NULL AND quota_identity_hash IS NULL))
+          AND ${providerAccountConsentSql('provider_accounts', '$2')} FOR SHARE`,
         [parameters.primary_account_id, target.tenant_id])).rowCount) throw new FleetOperationError('forbidden', 'provider account has no current payer consent');
       host = parameters.placement.host_id;
     } else {
