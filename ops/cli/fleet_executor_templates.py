@@ -289,9 +289,10 @@ def runtime_candidates(policy: dict) -> list[dict]:
                 if module is not None and hasattr(module, 'measured_definition'):
                     approved = False
                     for row in templates + profiles:
-                        key = json.dumps(row, sort_keys=True)
+                        key = json.dumps([row, candidate if mode == 'container' else None], sort_keys=True)
                         if key not in measured:
-                            measured[key] = module.measured_definition(row)
+                            measure_container = getattr(module, 'measured_container_definition', None) if mode == 'container' else None
+                            measured[key] = measure_container(row, candidate) if measure_container else module.measured_definition(row)
                         approved = approved or measured[key]
                     if not approved:
                         continue
