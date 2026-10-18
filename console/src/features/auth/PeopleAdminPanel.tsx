@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useApi } from '../../api/context';
 import type { ManagedPerson, PeopleInventory, PersonValues } from '../../api/client/people-admin-client';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { PeopleAdminForm } from './PeopleAdminForm';
+import { CompanySession } from './company-authority';
 import './PeopleAdmin.css';
 
 type Action = 'retire' | 'restore' | 'purge';
 export function PeopleAdminPanel() {
   const api = useApi();
+  const session = useContext(CompanySession);
+  const ownEmail = session?.authenticated === true && session.login_mode === 'password' ? session.subject?.trim().toLowerCase() : undefined;
+  const isOwnPerson = (person: ManagedPerson) => !!ownEmail && person.email.trim().toLowerCase() === ownEmail;
   const [inventory, setInventory] = useState<PeopleInventory>();
   const [snapshot, setSnapshot] = useState<ConfigurationSnapshot>();
   const [loading, setLoading] = useState(true);
@@ -72,13 +76,16 @@ export function PeopleAdminPanel() {
     }, person ? 'Persona actualizada' : 'Persona creada');
   }
   async function confirm() {
-    if (!confirmation || !inventory?.capabilities[confirmation.action]) return;
+    if (!confirmation || isOwnPerson(confirmation.person) || !inventory?.capabilities[confirmation.action]) return;
     const { person, action } = confirmation;
     await perform(() => action === 'retire' ? api.retirePerson(person.id, person.revision)
       : action === 'restore' ? api.restorePerson(person.id, person.revision) : api.purgePerson(person.id, person.revision),
     action === 'retire' ? 'Acceso de persona retirado' : action === 'restore' ? 'Acceso de persona restaurado' : 'Registro de persona purgado');
   }
-  function ask(person: ManagedPerson, action: Action) { setEditing(undefined); setNotice(''); setConfirmation({ person, action }); }
+  function ask(person: ManagedPerson, action: Action) {
+    if (isOwnPerson(person)) return;
+    setEditing(undefined); setNotice(''); setConfirmation({ person, action });
+  }
   return <section className="people-admin" aria-label="Administración de personas">
     <div className="people-admin-heading"><div><h2>Personas y acceso web</h2>
       <p>Gestiona cuentas, identidad, rol y contraseña. Retirar conserva la autoría histórica y revoca acceso; purgar exige ausencia de dependencias.</p></div>
@@ -95,10 +102,10 @@ export function PeopleAdminPanel() {
         <td>{person.active ? 'Habilitada' : 'Retirada'}</td><td><div className="acciones">
           <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.update} title={blockFor(inventory.capabilities.update)}
             onClick={() => { setEditing({ person }); setConfirmation(undefined); setNotice(''); }} aria-label={`Editar persona ${person.email}`}>Editar</button>
-          <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities[person.active ? 'retire' : 'restore']} title={blockFor(inventory.capabilities[person.active ? 'retire' : 'restore'])}
+          {isOwnPerson(person) ? <p className="m-0 text-sm text-muted" role="note">No puedes retirar, restaurar ni purgar tu propia cuenta. Pide a otro administrador con autoridad sobre tu cuenta que lo haga.</p> : <><button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities[person.active ? 'retire' : 'restore']} title={blockFor(inventory.capabilities[person.active ? 'retire' : 'restore'])}
             onClick={() => { ask(person, person.active ? 'retire' : 'restore'); }} aria-label={`${person.active ? 'Retirar' : 'Restaurar'} persona ${person.email}`}>{person.active ? 'Retirar' : 'Restaurar'}</button>
           {!person.active ? <button type="button" className="button secondary" disabled={!canUse || !inventory.capabilities.purge} title={blockFor(inventory.capabilities.purge)}
-            onClick={() => { ask(person, 'purge'); }} aria-label={`Purgar persona ${person.email}`}>Purgar</button> : null}
+            onClick={() => { ask(person, 'purge'); }} aria-label={`Purgar persona ${person.email}`}>Purgar</button> : null}</>}
         </div></td></tr>)}</tbody></table>{!inventory.items.length ? <p>No hay personas en este inventario.</p> : null}</div> : null}
     {editing && snapshot ? <PeopleAdminForm key={editing.person?.id ?? 'create'} person={editing.person} snapshot={snapshot}
       occupied={inventory?.items ?? []} busy={!canUse} save={save} cancel={() => { setEditing(undefined); }} /> : null}
