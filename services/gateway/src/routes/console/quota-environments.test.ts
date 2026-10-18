@@ -144,11 +144,6 @@ describe('quota console routes under a real password session and company authori
     expect(foreign.statusCode).toBe(403);
     expect((await accounts(await login('leon@example.test'))).accounts.map(row => row.id)).toEqual(['praxis-account']);
   });
-  it('rejects creating a gemini quota account with 400', async () => {
-    const session = await login('miguel@example.test');
-    const gemini = await mutation(session,'POST','/v3/console/quota-accounts', { provider: 'gemini', label: 'Gemini', idempotency_key: 'quota-gemini' });
-    expect(gemini.statusCode).toBe(400);
-  });
   it('requires the session CSRF token and rejects arbitrary commands', async () => {
     const session = await login('miguel@example.test');
     const withoutCsrf = await app.inject({ method: 'POST', url: '/v3/console/quota-accounts', headers: { cookie: session.cookie, origin: ORIGIN },

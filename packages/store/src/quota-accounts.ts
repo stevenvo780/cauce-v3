@@ -62,6 +62,8 @@ export async function quotaAccountSnapshot(client: DatabaseClient, authority: Co
         AND (pr.account_id IS NULL OR pr.account_id=s.account_id)
       ORDER BY qc.captured_at DESC,qc.received_at DESC LIMIT 1) report ON true
     WHERE s.company_id=$1 AND s.account_id=ANY($2::text[])
+      AND s.received_at=(SELECT max(latest.received_at) FROM quota_window_state latest
+        WHERE latest.company_id=s.company_id AND latest.account_id=s.account_id)
     ORDER BY s.account_id,s.group_key,s.window_key,s.model_key,s.captured_at DESC,s.received_at DESC`, [authority.actingCompany, ids]);
   const reports = await client.query<ReportRow>(`SELECT DISTINCT ON (pr.account_id) pr.account_id,pr.ok,
     COALESCE(pr.observed_at,qc.captured_at) AS captured_at,qc.received_at,pr.note

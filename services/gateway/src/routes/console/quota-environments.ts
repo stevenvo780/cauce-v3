@@ -9,7 +9,6 @@ import { driverErrorCode, replyError } from '../shared.js';
 import { HostCapabilityRegistry } from '../../fleet/host-channel.capabilities.js';
 
 const AccountParams = z.object({ id: QuotaAccountIdSchema }).strict();
-const AccountCreate = QuotaAccountCreateSchema.extend({ provider: z.enum(['claude', 'codex', 'grok']) }).strict();
 const EnvironmentParams = z.object({ id: z.uuid() }).strict();
 const DeleteVersion = z.object({ expected_version: z.string().regex(/^[1-9][0-9]{0,15}$/u).transform(Number)
   .pipe(z.number().int().positive().max(Number.MAX_SAFE_INTEGER)) }).strict();
@@ -51,7 +50,10 @@ export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: A
       if (!access) throw new AuthorizationError('a console session is required');
       try { return await work(client => access.companyAuthority(client), request); } finally { access.close(); }
     } catch (error) {
-      if (error instanceof z.ZodError) return reply.code(400).send({ error: 'invalid_request', message: 'invalid quota request' });
+      if (error instanceof z.ZodError) {
+        const fields = [...new Set(error.issues.map(issue => issue.path.join('.') || 'body'))];
+        return reply.code(400).send({ error: 'invalid_request', message: `invalid quota request: ${fields.join(', ')}`, fields });
+      }
       if (error instanceof AuthError || error instanceof AuthorizationError || error instanceof StoreError) { replyError(reply, error); return; }
       if (['23503', '23505', '23514'].includes(driverErrorCode(error) ?? '')) {
         return reply.code(409).send({ error: 'conflict', message: 'the change conflicts with existing data' });
@@ -66,7 +68,7 @@ export function registerQuotaEnvironmentRoutes(app: FastifyInstance, provider: A
     return { ...snapshot, accounts: snapshot.accounts.map(account => ({ ...account,
       refresh_status: accountRefreshStatus(refresh.refreshes, account.id) })) };
   }));
-  app.post('/v3/console/quota-accounts', handler((source, request) => createQuotaAccount(pool, source, AccountCreate.parse(request.body))));
+  app.post('/v3/console/quota-accounts', handler((source, request) => createQuotaAccount(pool, source, QuotaAccountCreateSchema.parse(request.body))));
   app.patch('/v3/console/quota-accounts/:id', handler((source, request) => updateQuotaAccount(pool, source, AccountParams.parse(request.params).id, request.body)));
   app.delete('/v3/console/quota-accounts/:id', handler((source, request) => deleteQuotaAccount(pool, source, AccountParams.parse(request.params).id,
     DeleteVersion.parse(request.query).expected_version)));
