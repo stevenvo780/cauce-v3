@@ -5,8 +5,8 @@ import { agentQuotaClient, type AgentQuotaClient } from '../../features/accounts
 
 export type QuotaObservationStatus = 'unknown' | 'error' | 'stale' | 'ok';
 export type QuotaRefreshStatus = 'fresh' | 'updating' | 'not_authenticated' | 'executor_unavailable' | 'deleted' | 'busy' | 'read_only' | 'failed' | 'stale';
-export type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok';
-export const QUOTA_ACCOUNT_PROVIDERS = ['claude', 'codex', 'gemini', 'grok', 'muse'] as const;
+export type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok' | 'muse' | 'agy';
+export const QUOTA_ACCOUNT_PROVIDERS = ['claude', 'codex', 'gemini', 'grok', 'muse', 'agy'] as const;
 export type QuotaAccountProvider = typeof QUOTA_ACCOUNT_PROVIDERS[number];
 export interface AccountQuotaWindow {
   group_key: string; window_key: string; model: string | null; label: string | null; host: string;

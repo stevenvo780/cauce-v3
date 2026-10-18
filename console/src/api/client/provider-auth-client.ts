@@ -2,7 +2,7 @@ import type { RequestFn } from './system-client';
 
 export interface ProviderAuthRequest {
   operation_id: string; expected_operation_version: number; request_id: string;
-  provider_id: 'codex' | 'claude' | 'gemini' | 'minimax' | 'grok' | 'feihoa' | 'muse';
+  provider_id: 'codex' | 'claude' | 'gemini' | 'minimax' | 'grok' | 'feihoa' | 'muse' | 'agy';
   account_id: string; harness_id: string; host_id: string; runtime_user: string; profile_id: string;
 }
 export type ProviderAuthStatus = 'opening' | 'awaiting_login' | 'verifying' | 'authenticated' | 'cancelled' | 'expired' | 'failed';
@@ -21,7 +21,7 @@ export interface ProviderAuthClient {
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,63}$/u;
-const PROVIDERS = ['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse'];
+const PROVIDERS = ['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse', 'agy'];
 const STATUSES = ['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed'];
 const CODES = ['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'STOP_UNCONFIRMED',
   'IDENTITY_MISMATCH', 'FUNCTIONAL_CHECK_FAILED', 'LOGIN_FAILED', 'SESSION_EXPIRED'];

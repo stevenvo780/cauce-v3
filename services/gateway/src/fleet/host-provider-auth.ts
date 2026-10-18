@@ -25,7 +25,7 @@ const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const User = z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u);
 const Hash = z.string().regex(/^[0-9a-f]{64}$/u);
 const Text = z.string().min(1).max(4096).refine(value => !/[\p{Cc}]/u.test(value));
-const Provider = z.enum(['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse']);
+const Provider = z.enum(['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse', 'agy']);
 const Profile = z.object({ provider: Provider, path: LoginPathSchema, identity: Text, runtime_user: User,
   container_name: Text.optional(), command: LoginPathSchema.optional(), command_sha256: Hash.optional(), command_files: LoginPinsSchema.optional(), openclaw: OpenClawDriver.optional(), muse: MuseDriver.optional(),
 }).strict().refine(openClawCompatible).refine(nativeProviderCompatible).refine(value => (value.command === undefined) === (value.command_sha256 === undefined));

@@ -19,8 +19,8 @@ El único camino desde la web es **Mis cuotas → tarjeta de la cuenta → «Ini
 | Claude | `claude auth login` (enlace OAuth y «Paste code here») | soportado |
 | Codex | `codex login --device-auth` (enlace y código de dispositivo) | soportado |
 | Grok | `grok login --device-auth` (enlace y código de dispositivo) | soportado |
-| Muse | `muse login` (código de dispositivo de Meta) | sin soporte en entornos de cuotas: la imagen no instala Muse, no hay lector de cuotas y `quota_environments.provider` no admite `muse` |
-| Antigravity (`agy`) | sin subcomando de login: `agy` abre el asistente de primer uso (tema, términos, inicio de sesión de Google) | sin soporte: no hay paquete fijable para la imagen ni lector de cuotas |
+| Muse | `muse login` (código de dispositivo de Meta) | soportado sin lector de cuotas: la imagen instala el lanzador y el binario fijados de `muse` 1.4.10-R6427.1; «Verificar conexión» valida el `id_token` contra el JWKS de Meta (`verificar-muse.py`) y guarda solo el hash de la identidad. Sin ventanas de cuota. |
+| Antigravity (`agy`) | sin subcomando de login: `agy` abre el asistente de primer uso (tema, términos, inicio de sesión de Google) | soportado sin lector de cuotas: la terminal lanza `agy` y el dueño completa el asistente; «Verificar conexión» solo comprueba que `agy models` responde, así que acredita que el CLI vive, no qué cuenta de Google entró. La identidad guardada es local (`agy-local:`) y nunca fusiona dos cuentas de Cauce. Sin ventanas de cuota. |
 
 La autenticación de un agente (Muse incluido) sigue en la ficha del agente, como paso de su operación de flota.
 
@@ -34,6 +34,16 @@ docker image inspect cauce-cuotas-local --format '{{.Id}}'
 ```
 
 Actualizar una versión requiere reconstruir la imagen y cambiar `policy.quota_environments.image`. Los entornos existentes conservan su imagen hasta recrearse; `update_cli` actualiza el paquete definido por el descriptor en el perfil del entorno. La comprobación local es `docker image inspect <etiqueta> --format '{{.Id}}'` igual al digest declarado en esa política. La imagen no instala Gemini: el build falla si aparece el binario o el paquete, y el repositorio de entornos rechaza el proveedor `gemini`.
+
+Muse se descarga del manifiesto público del canal `muse-stable` con la versión y el SHA-256 del binario fijados en el `Dockerfile`; se instala directamente como `/usr/local/bin/muse`, sin el lanzador bash, porque este rompe la comprobación de identidad del proceso de login. Antigravity no publica un paquete fijable (solo su auto-actualizador), así que su binario —el `~/.local/bin/agy` de kratos, instalado por ese auto-actualizador— se pasa al build como contexto externo fuera del repositorio y el `Dockerfile` verifica su SHA-256 fijado al construir:
+
+```bash
+mkdir -p ~/.local/share/cauce/agy-bin
+cp ~/.local/bin/agy ~/.local/share/cauce/agy-bin/agy-1.4.2-linux-x86-64
+docker build --build-context agybin=$HOME/.local/share/cauce/agy-bin -t cauce-cuotas-local ops/cuotas
+```
+
+Sin ese contexto la imagen se construye igual, pero `/usr/local/bin/agy` queda como un stub que falla con ese mismo aviso y ningún entorno `agy` puede crearse. El binario nunca se commitea.
 
 ## Binding de la credencial del agente
 

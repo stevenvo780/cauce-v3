@@ -7,7 +7,7 @@ import { StoreError } from './repository/errors.js';
 import { assertQuotaAuthority } from './quota-accounts.js';
 import { expireQuotaAuthentication } from './quota-auth-expiry.js';
 
-type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok';
+type QuotaProvider = 'claude' | 'codex' | 'gemini' | 'grok' | 'muse' | 'agy';
 type QuotaAction = 'create' | 'authenticate' | 'query' | 'update_cli' | 'delete';
 export interface QuotaEnvironmentHostCapability {
   readonly host_id: string;

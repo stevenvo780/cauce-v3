@@ -19,7 +19,7 @@ import { AgentQuotaExecutor, HostChannelAgentQuotaRepository } from './agent-quo
 import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
 
-const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok'])),
+const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok','muse','agy'])),
   actions: z.record(z.string(), z.array(z.enum(['create','authenticate','query','update_cli','delete']))),
   unavailable: HostCapabilitiesSchema.shape.quota_provider_unavailable }).strict();
 

@@ -1,6 +1,6 @@
 import type { QuotaEnvironment, QuotaEnvironmentAction, QuotaEnvironmentsSnapshot, QuotaHostCapabilities, QuotaProvider } from '../../api/client/my-quotas-client';
 
-export const EXECUTABLE_QUOTA_PROVIDERS = new Set<QuotaProvider>(['claude', 'codex', 'grok']);
+export const EXECUTABLE_QUOTA_PROVIDERS = new Set<QuotaProvider>(['claude', 'codex', 'grok', 'muse', 'agy']);
 
 export function quotaHostSupports(host: QuotaHostCapabilities, provider: string, action: QuotaEnvironmentAction): boolean {
   return EXECUTABLE_QUOTA_PROVIDERS.has(provider as QuotaProvider)

@@ -99,14 +99,14 @@ export const QuotaSampleRequestSchema = z.object({
   }
 });
 
-export const QuotaEnvironmentProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok']);
+export const QuotaEnvironmentProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok', 'muse', 'agy']);
 export const QuotaEnvironmentCreateSchema = z.object({
   account_id: QuotaAccountIdSchema,
   host_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
   label: z.string().trim().min(1).max(80),
   idempotency_key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u),
 }).strict();
-export const QuotaAccountProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok', 'muse']);
+export const QuotaAccountProviderSchema = z.enum(['claude', 'codex', 'gemini', 'grok', 'muse', 'agy']);
 export const QuotaAccountCreateSchema = z.object({
   provider: QuotaAccountProviderSchema,
   label: z.string().trim().min(1).max(80),

@@ -1,5 +1,5 @@
 export const PROVIDER_LABEL: Record<string, string> = {
-  claude: 'Claude', codex: 'GPT / Codex', gemini: 'Antigravity', grok: 'Grok', muse: 'Muse',
+  claude: 'Claude', codex: 'GPT / Codex', gemini: 'Antigravity', grok: 'Grok', muse: 'Muse', agy: 'Antigravity (agy)',
 };
 
 /** At most one decimal: the collectors publish ratios like `33.333333333333336`, unreadable and unactionable. */

@@ -13,7 +13,7 @@ function version(value: unknown): boolean { return typeof value === 'number' && 
 function nullableText(value: unknown): boolean { return value === null || typeof value === 'string'; }
 function date(value: unknown): boolean { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/u.test(value) && Number.isFinite(Date.parse(value)); }
 function nullableDate(value: unknown): boolean { return value === null || date(value); }
-function provider(value: unknown): boolean { return ['claude', 'codex', 'gemini', 'grok'].includes(String(value)); }
+function provider(value: unknown): boolean { return ['claude', 'codex', 'gemini', 'grok', 'muse', 'agy'].includes(String(value)); }
 function action(value: unknown): boolean { return ['create', 'authenticate', 'query', 'update_cli', 'delete'].includes(String(value)); }
 function refreshStatus(value: unknown): boolean {
   return value === undefined || typeof value === 'string' && ['fresh', 'updating', 'not_authenticated', 'executor_unavailable', 'deleted', 'busy', 'read_only', 'failed', 'stale'].includes(value);

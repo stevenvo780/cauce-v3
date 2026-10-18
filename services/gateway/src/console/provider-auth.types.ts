@@ -3,7 +3,7 @@ export interface ProviderAuthRequest {
   operation_id: string;
   expected_operation_version: number;
   request_id: string;
-  provider_id: 'codex' | 'claude' | 'gemini' | 'minimax' | 'grok' | 'feihoa' | 'muse';
+  provider_id: 'codex' | 'claude' | 'gemini' | 'minimax' | 'grok' | 'feihoa' | 'muse' | 'agy';
   account_id: string;
   harness_id: string;
   host_id: string;
