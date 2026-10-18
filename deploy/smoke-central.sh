@@ -74,7 +74,13 @@ else
   elif [[ "$vivas" =~ ^[0-9]+$ ]] && [ "$vivas" -ge 1 ]; then
     echo "OK  bus: $vivas ejecuciones con ACK reciente y arriendo vigente (sin resultado final acreditado)"
   else
-    echo "ROJO bus: ni entregas done ni actividad en vuelo desde el arranque del despliegue ($arranque)"; fallo=1
+    # Without new traffic there is nothing to deliver: that is quiet, not broken.
+    nuevas="$("${PG[@]}" "SELECT count(*) FROM deliveries WHERE created_at > '$arranque'::timestamptz" 2>/dev/null)"
+    if [ "${nuevas:-1}" = 0 ]; then
+      echo "AVISO bus: sin mensajes nuevos desde el arranque ($arranque); nada que entregar todavía"
+    else
+      echo "ROJO bus: $nuevas entregas creadas desde el arranque ($arranque) y ninguna done ni en vuelo"; fallo=1
+    fi
   fi
 fi
 
