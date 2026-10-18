@@ -97,7 +97,7 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
     {notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
     {enrollments.loading ? <p role="status">Leyendo invitaciones…</p> : null}
     {form ? <form aria-label="Invitar ordenador" className="grid gap-3 sm:grid-cols-2" onSubmit={event => { event.preventDefault(); void create(); }}>
-      <label>Identificador del ordenador<span className="flex items-center gap-1">{prefix ? <span aria-hidden="true" className="font-mono text-sm">{prefix}</span> : null}
+      <label>Identificador del ordenador<span className="flex flex-col gap-1 sm:flex-row sm:items-center">{prefix ? <span aria-hidden="true" className="font-mono text-sm break-all">{prefix}</span> : null}
         <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} disabled={!ready} onChange={event => { setHostId(event.target.value); }} /></span></label>
       <label>Nombre del ordenador<input required maxLength={120} value={name} disabled={!ready} onChange={event => { setName(event.target.value); }} /></label>
       <div className="flex gap-2 sm:col-span-2"><Button type="submit" disabled={!ready}>Crear invitación</Button><Button disabled={busy} onClick={() => { setForm(false); }}>Cancelar</Button></div>
