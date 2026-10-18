@@ -138,7 +138,7 @@ describe('la ficha del agente', () => {
     const lista = await screen.findByRole('listbox', { name: /oficina con \d+ agentes/i });
     await user.click(within(lista).getByRole('option', { name: /^kant:/ }));
     const ficha = await screen.findByRole('dialog', { name: 'kant' });
-    expect(window.location.search).toBe('?agente=Steven%2Fkant');
+    expect(window.location.search).toBe('?agente=Steven%2Fkant&ficha=0');
     expect(within(ficha).getByRole('link', { name: /abrir chat/i })).toHaveAttribute('href', '/messages/Steven/kant');
     expect(within(ficha).getByRole('link', { name: /abrir terminal/i })).toHaveAttribute('href', '/terminal/Steven/kant');
     expect(within(ficha).getByRole('link', { name: /perfil y contexto/i }))
@@ -161,7 +161,7 @@ describe('la ficha del agente', () => {
 
   it('la tarjeta abre la ficha completa, que se puede volver a cerrar hasta la tarjeta', async () => {
     const user = userEvent.setup();
-    window.history.replaceState({}, '', '/live?agente=Steven%2Fkant');
+    window.history.replaceState({}, '', '/live?agente=Steven%2Fkant&ficha=0');
     conActividad(mockActivity());
     renderLive();
 
@@ -172,7 +172,7 @@ describe('la ficha del agente', () => {
     const ficha = await screen.findByRole('dialog', { name: 'kant' });
     expect(within(ficha).getByRole('tab', { name: 'Conexión' })).toBeInTheDocument();
     await user.click(within(ficha).getByRole('button', { name: 'Cerrar el detalle' }));
-    await waitFor(() => { expect(window.location.search).toBe('?agente=Steven%2Fkant'); });
+    await waitFor(() => { expect(window.location.search).toBe('?agente=Steven%2Fkant&ficha=0'); });
     expect(await screen.findByRole('group', { name: 'Gestos' })).toBeInTheDocument();
   });
 

@@ -75,7 +75,9 @@ export function LiveFleetPage() {
   const now = useNow();
   const search = new URLSearchParams(useRouteSearch());
   const selectedKey = search.get('agente');
-  const sheetWanted = search.get('ficha') === '1';
+  // A bare `?agente=` link opens the full sheet; only an explicit `ficha=0` (set by an in-campus
+  // click) keeps the mini card alone, and `ficha=1` keeps working for older links.
+  const sheetWanted = search.get('ficha') !== '0';
   const [filter, setFilter] = useState<ReadonlySet<LiveState>>(new Set());
   const [talkKey, setTalkKey] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -156,7 +158,7 @@ export function LiveFleetPage() {
 
   const select = (key: string) => {
     if (visitors.some((visitor) => visitor.id === key)) { setTalkKey(key); return; }
-    redirect(`/live?agente=${encodeURIComponent(key)}`);
+    redirect(`/live?agente=${encodeURIComponent(key)}&ficha=0`);
   };
   const deselect = () => { redirect('/live'); };
   const talkTo = (key: string) => {
