@@ -1,5 +1,5 @@
 import {
-  BookOpen, Building2, CreditCard, Gauge, ListRestart, MessageSquareText,
+  BatteryMedium, BookOpen, Building2, CreditCard, Gauge, ListRestart, MessageSquareText,
   Settings2, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
@@ -27,8 +27,8 @@ export const PRIMARY_NAV_IDS: readonly string[] = ['messages', 'live', 'terminal
 export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Chat', icon: MessageSquareText },
   { id: 'live', label: 'Oficina', icon: Building2 },
-  { id: 'accounts', label: 'Cuentas y cuotas', icon: CreditCard },
-  { id: 'my-quotas', label: 'Mis cuotas', icon: CreditCard },
+  { id: 'accounts', label: 'Cuentas', icon: CreditCard },
+  { id: 'my-quotas', label: 'Mis cuotas', icon: BatteryMedium },
   { id: 'queues', label: 'Colas y DLQ', icon: ListRestart },
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge },
   { id: 'config', label: 'Ajustes', icon: Settings2 },

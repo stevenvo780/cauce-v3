@@ -63,18 +63,18 @@ function assignmentActions() {
  * broken tab.
  */
 async function openMatrix(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
+  await screen.findByRole('heading', { level: 1, name: /cuentas/i });
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
 }
 
-it('la matriz vive DENTRO de «Cuentas y cuotas», sin segunda ruta y sin segundo h1', async () => {
+it('la matriz vive DENTRO de «Cuentas», sin segunda ruta y sin segundo h1', async () => {
   configuration();
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
   const headings = await screen.findAllByRole('heading', { level: 1 });
   expect(headings).toHaveLength(1);
-  expect(headings[0]).toHaveTextContent(/cuentas y cuotas/i);
+  expect(headings[0]).toHaveTextContent(/cuentas/i);
 
   // The three halves, on the same screen and one click away: consumption, inventory, and ceiling per alias.
   await user.click(screen.getByRole('tab', { name: 'Inventario' }));

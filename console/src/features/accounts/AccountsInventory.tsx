@@ -1,10 +1,6 @@
-import {
-  ChevronDown, ChevronRight, PencilLine, Plus, Power, PowerOff, Lock, Share2, Trash2,
-} from 'lucide-react';
-import { Fragment, useState, type ReactNode } from 'react';
-import type {
-  ConfigurationSnapshot, ConsoleAccess, QuotaSeverity, QuotaSnapshot, QuotaThresholds,
-} from '../../api/types';
+import { PencilLine, Plus, Power, PowerOff, Lock, Share2, Trash2 } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import type { ConfigurationSnapshot, ConsoleAccess } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { cn } from '../../cn';
 import { Button, CARD_TABLE, Explain, Kpi, KpiGrid, Notice, SCROLL } from '../../components/kit';
@@ -12,15 +8,12 @@ import { FormDialog } from '../../components/dialogs';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { useConfigMutation } from '../config/use-config-mutation';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
-import { AccountDetail } from './AccountDetail';
-import { accountConsumption, type AccountConsumption } from './licenses';
 import { MutationBar } from './MutationBar';
 import {
   CREDENTIAL_REF_HINTS, CREDENTIAL_REF_KINDS, accountDraftError, createAccountMutation,
   deleteAccountMutation, describeRegistryError, redactPreview, updateAccountMutation, viewerTenant,
   type AccountDraft, type CredentialRefKind, type ProviderAccount, type RegistryModel,
 } from './registry';
-import { SEVERITY_TONE, balanceSeverity, formatPercent } from './quotas';
 
 const emptyDraft: AccountDraft = {
   id: 'codex-steven',
@@ -72,17 +65,15 @@ function editFrom(account: ProviderAccount, patch: Partial<AccountEdit> = {}): A
   };
 }
 
-/** Inventory and management of AI provider accounts and consumption state. */
-export function AccountsInventory({ config, access, quotas, registry }: {
+/** Inventory and management of AI provider accounts. */
+export function AccountsInventory({ config, access, registry }: {
   config: Resource<ConfigurationSnapshot>;
   access: Resource<ConsoleAccess>;
-  quotas: Resource<QuotaSnapshot>;
   registry: RegistryModel;
 }) {
   const [form, setForm] = useState<FormState>();
   // Closing a form hides it without discarding what was typed: only starting another one replaces it.
   const [shown, setShown] = useState(false);
-  const [openDetail, setOpenDetail] = useState<Set<string>>(new Set());
 
   const { accounts, ceiling } = registry;
   const runner = useConfigMutation({
@@ -156,14 +147,6 @@ export function AccountsInventory({ config, access, quotas, registry }: {
     runner.clear();
   }
 
-  function toggleDetail(accountId: string) {
-    setOpenDetail((current) => {
-      const next = new Set(current);
-      if (next.has(accountId)) next.delete(accountId); else next.add(accountId);
-      return next;
-    });
-  }
-
   return <div className="grid gap-4">
     <KpiGrid label="Indicadores">
       <Kpi label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las del pool' : 'el servidor no publica el inventario'} />
@@ -190,14 +173,11 @@ export function AccountsInventory({ config, access, quotas, registry }: {
               <caption className="sr-only">Inventario de cuentas de proveedores de IA</caption>
               <thead><tr>
                 <th>Cuenta</th><th>Proveedor</th><th>Paga</th><th>Pool</th>
-                <th>Estado</th><th>Consumo</th><th>Actualizada</th><th>Acciones</th>
+                <th>Estado</th><th>Actualizada</th><th>Acciones</th>
               </tr></thead>
               <tbody>
                 {accounts.items.map((account) => {
-                  const consumption = accountConsumption(account.id, quotas.data, quotas.data?.thresholds);
-                  const detailOpen = openDetail.has(account.id);
-                  return <Fragment key={account.id}>
-                    <tr>
+                  return <tr key={account.id}>
                       <td data-label="Cuenta"><strong className="mono">{account.id}</strong><small className="subline"><Unknown value={account.label} /></small></td>
                       <td data-label="Proveedor"><span className="mono"><Unknown value={account.provider} /></span></td>
                       <td data-label="Paga">
@@ -212,12 +192,8 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                       <td data-label="Estado">{account.enabled === null
                         ? <Badge tone="unknown">SIN DATO</Badge>
                         : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
-                      <td data-label="Consumo"><AccountUsage consumption={consumption} thresholds={quotas.data?.thresholds} /></td>
                       <td data-label="Actualizada"><Time value={account.updatedAt} relativo /></td>
                       <td data-label="Acciones" data-wide><span className="-ml-1 inline-flex flex-wrap gap-0.5">
-                        <RowAction label={`Detalle de ${account.id}`} expanded={detailOpen} onClick={() => { toggleDetail(account.id); }}>
-                          {detailOpen ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
-                        </RowAction>
                         <RowAction {...writeProps} label={`Editar «${account.id}»`} onClick={() => { open({ kind: 'edit', edit: editFrom(account) }); }}>
                           <PencilLine size={15} aria-hidden="true" />
                         </RowAction>
@@ -241,13 +217,7 @@ export function AccountsInventory({ config, access, quotas, registry }: {
                           <Trash2 size={15} aria-hidden="true" />
                         </RowAction>
                       </span></td>
-                    </tr>
-                    {detailOpen ? <tr className="row-detail">
-                      <td colSpan={8} className="max-md:!block max-md:!p-0">
-                        <AccountDetail accountId={account.id} account={account} quotas={quotas.data} />
-                      </td>
-                    </tr> : null}
-                  </Fragment>;
+                    </tr>;
                 })}
               </tbody>
             </table>
@@ -341,10 +311,9 @@ export function AccountsInventory({ config, access, quotas, registry }: {
  * A row action in the width of an icon: the accessible name carries the verb and the account, and
  * `undoes` tints the direction that takes something away. No click here writes anything —it opens
  * a form whose write still goes through its dry-run before applying. */
-function RowAction({ label, onClick, expanded, undoes = false, disabled = false, title, children }: {
+function RowAction({ label, onClick, undoes = false, disabled = false, title, children }: {
   label: string;
   onClick: () => void;
-  expanded?: boolean;
   undoes?: boolean;
   disabled?: boolean;
   title?: string;
@@ -359,52 +328,10 @@ function RowAction({ label, onClick, expanded, undoes = false, disabled = false,
       type="button"
       title={title ?? label}
       aria-label={label}
-      aria-expanded={expanded}
       disabled={disabled}
       onClick={onClick}
     >
       {children}
     </button>
-  );
-}
-
-/**
- * The consumption of an account in the width of a cell: worst remaining across its windows, how
- * many windows, and the plan when the provider declares one. Amber is kept for a fault —a probe
- * that answered `ok: false`, or a sample whose percentages are unusable. An account the collector
- * simply does not watch gets a grey dash: painting an expected absence amber on every row is what
- * stops amber from meaning anything. The color comes from `balanceSeverity`, the criterion of the
- * Consumption tab and of the server.
- */
-function AccountUsage({ consumption, thresholds }: {
-  consumption: AccountConsumption;
-  thresholds: QuotaThresholds | null | undefined;
-}) {
-  const plan = consumption.plan ? `plan ${consumption.plan}` : null;
-  if (!consumption.available || consumption.windows.length === 0) {
-    return <span>
-      {consumption.probeDown
-        ? <span className="unknown" title={consumption.reason}>?</span>
-        : <span className="muted" title={consumption.reason} aria-label="sin muestra">—</span>}
-      {plan ? <small className="subline">{plan}</small> : null}
-    </span>;
-  }
-  let worst: { percent: number; severity: QuotaSeverity | null } | null = null;
-  for (const window of consumption.windows) {
-    const percent = window.remaining_percent;
-    if (typeof percent !== 'number') continue;
-    if (worst === null || percent < worst.percent) worst = { percent, severity: window.severity };
-  }
-  if (worst === null) {
-    return <span className="unknown" title="Ninguna ventana trajo un porcentaje utilizable">?</span>;
-  }
-  const windows = `${String(consumption.windows.length)} ${consumption.windows.length === 1 ? 'ventana' : 'ventanas'}`;
-  return (
-    <span>
-      <Badge tone={SEVERITY_TONE[balanceSeverity(worst.percent, worst.severity, thresholds)]}>
-        {formatPercent(worst.percent)} libre
-      </Badge>
-      <small className="subline">{plan ? `${windows} · ${plan}` : windows}</small>
-    </span>
   );
 }

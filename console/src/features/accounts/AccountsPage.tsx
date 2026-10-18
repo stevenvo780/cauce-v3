@@ -5,7 +5,6 @@ import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { PageFreshness } from '../../components/PageFreshness';
 import { ErrorState, LoadingState, PageHeader, PermissionBadge, ViewTabPanel, ViewTabs } from '../../components/ui';
-import { ConsumptionSection } from './ConsumptionSection';
 import { AccountsInventory } from './AccountsInventory';
 import { AssignmentMatrix } from './AssignmentMatrix';
 import { readRegistry } from './registry';
@@ -14,16 +13,15 @@ const REFRESH_OPTIONS = [
   { ms: 30_000, label: '30 s' }, { ms: 60_000, label: '60 s' }, { ms: 300_000, label: '5 min' }, { ms: 0, label: 'En pausa' },
 ] as const;
 
-type Tab = 'consumo' | 'inventario' | 'asignaciones';
+type Tab = 'inventario' | 'asignaciones';
 
 const TABS = [
-  { id: 'consumo' as const, label: 'Consumo' },
   { id: 'inventario' as const, label: 'Inventario' },
   { id: 'asignaciones' as const, label: 'Asignaciones' },
 ];
 
 /**
- * Unified view for managing AI accounts, consumption quotas and assignments.
+ * Registry of AI provider accounts and their assignment to agents. Quotas live in «Mis cuotas».
  */
 export function AccountsPage() {
   return <ConsoleAccessBoundary><AccountsPageContent /></ConsoleAccessBoundary>;
@@ -31,62 +29,48 @@ export function AccountsPage() {
 
 function AccountsPageContent() {
   const api = useApi();
-  const quotas = useResource('quotas', () => api.getQuotas());
   const config = useResource('registry-configuration', () => api.getConfiguration());
   const access = useConsoleAccess();
   const registry = useMemo(() => readRegistry(config.data), [config.data]);
-  const [tab, setTab] = useState<Tab>('consumo');
+  const [tab, setTab] = useState<Tab>('inventario');
   const [refreshMs, setRefreshMs] = useState(60_000);
 
-  const reloadQuotas = quotas.reload;
   const reloadConfig = config.reload;
 
   const reloadAll = useCallback(() => {
-    void reloadQuotas();
     void reloadConfig();
-  }, [reloadQuotas, reloadConfig]);
+  }, [reloadConfig]);
 
   usePolling(reloadAll, refreshMs);
 
-  if (quotas.loading && !quotas.data && config.loading && !config.data) {
-    return <LoadingState label="Leyendo cuentas, cuotas y asignaciones…" />;
+  if (config.loading && !config.data) {
+    return <LoadingState label="Leyendo cuentas y asignaciones…" />;
   }
-  // Full error screen only when BOTH sources are down: with one alive, the view renders and each
-  // half declares its own failure, which is more information than a single banner — and above
-  // all, the registry can still be written while the collector is down.
-  if (quotas.error && !quotas.data && config.error && !config.data) {
+  if (config.error && !config.data) {
     return <ErrorState error={config.error} onRetry={reloadAll} />;
   }
 
   return <div>
     <PageHeader
       eyebrow="Pool de suscripciones"
-      title="Cuentas y cuotas"
-      description="Qué cuentas de IA existen, cuánto saldo les queda y quién las usa. El saldo sale de la última corrida del recolector externo y tiene su propia frescura: si el recolector está caído, el inventario se sigue leyendo y editando, y el saldo se declara desconocido en vez de cero."
+      title="Cuentas"
+      description="Qué cuentas de IA existen, quién las paga y qué agentes pueden usarlas. El saldo de cada cuenta se consulta en «Mis cuotas»."
       notes={
         <>
-          <p><strong>Consumo:</strong> no es un dato en vivo del bus, es la última corrida del recolector que interroga a los CLIs de claude, codex, antigravity y opencode en kratos y en los contenedores de agente.</p>
           <p><strong>Inventario:</strong> una cuenta tiene UN pagador y sólo se presta si su pagador la publicó al pool. La credencial no vive en la base: <code>credential_ref</code> es siempre un locator y el servidor no lo devuelve, ni siquiera a quien paga.</p>
-          <p><strong>Un número por proveedor miente:</strong> si un grupo está agotado y otro libre, un porcentaje efectivo haría creer que hay saldo en la cuenta que justo no lo tiene. Por eso cada proveedor muestra el <em>peor</em> porcentaje de sus ventanas.</p>
-          <p><strong>Los dientes de sierra son normales:</strong> las ventanas de sesión resetean solas; una caída del sparkline en el horario de reset es la ventana reiniciando.</p>
           <PermissionBadge access={access.error ? undefined : access.data} permission="config.write" />
         </>
       }
-      actions={<PageFreshness loading={quotas.loading || config.loading} onRefresh={reloadAll} what="las cuotas"
+      actions={<PageFreshness loading={config.loading} onRefresh={reloadAll} what="las cuentas"
         interval={{ value: refreshMs, onChange: setRefreshMs, options: REFRESH_OPTIONS }} />}
     />
 
-    <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Cuentas y cuotas" />
+    <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Cuentas" />
 
-    {/* All three panels stay mounted and the inactive one is hidden: two of the three carry
-        forms, and unmounting them would discard whatever the operator was typing every time they
-        peek at another tab. None fetches its own data, so mounting them costs no request. */}
-    <ViewTabPanel id="consumo" hidden={tab !== 'consumo'}>
-      <ConsumptionSection quotas={quotas} config={config} registry={registry} />
-    </ViewTabPanel>
-
+    {/* Both panels stay mounted and the inactive one is hidden: they carry forms, and unmounting them
+        would discard whatever the operator was typing every time they peek at the other tab. */}
     <ViewTabPanel id="inventario" hidden={tab !== 'inventario'}>
-      <AccountsInventory config={config} access={access} quotas={quotas} registry={registry} />
+      <AccountsInventory config={config} access={access} registry={registry} />
     </ViewTabPanel>
 
     <ViewTabPanel id="asignaciones" hidden={tab !== 'asignaciones'}>

@@ -18,7 +18,7 @@ interface Destino {
 
 const DESTINOS: Record<string, Destino> = {
   live: { encabezado: /^oficina$/i },
-  accounts: { encabezado: /^cuentas y cuotas$/i },
+  accounts: { encabezado: /^cuentas$/i },
   'my-quotas': { encabezado: /^mis cuotas$/i },
   messages: { encabezado: /con quién trabajamos hoy/i },
   queues: { encabezado: /^colas y dlq/i },

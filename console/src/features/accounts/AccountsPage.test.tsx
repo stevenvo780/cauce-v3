@@ -49,11 +49,6 @@ const ownAccount = {
   shared_with_pool: true, enabled: true, external_account_id: 'org-9f21',
   credential_ref_kind: 'env_path', updated_at: '2026-07-22T10:00:00.000Z',
 };
-const borrowedAccount = {
-  id: 'minimax-pablo', provider: 'minimax', payer_tenant_id: 'Pablo', label: 'MiniMax de Pablo',
-  shared_with_pool: true, enabled: true, external_account_id: null, credential_ref_kind: null,
-  updated_at: '2026-07-20T10:00:00.000Z',
-};
 
 it.each([
   ['explicitly denied', false],
@@ -74,17 +69,13 @@ it.each([
 
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
-  const inventory = await openInventory(user);
+  const inventory = await openInventory();
   const row = (await inventory.findByText('codex-steven')).closest('tr');
   expect(row).not.toBeNull();
   if (!row) return;
 
-  expect(within(row).getByRole('button', { name: /detalle de/i })).toBeEnabled();
   expect(within(row).getByRole('button', { name: /editar/i })).toBeDisabled();
   expect(within(row).getByRole('button', { name: /habilitar|deshabilitar/i })).toBeDisabled();
-  await user.click(within(row).getByRole('button', { name: /detalle de/i }));
-  expect(await inventory.findByRole('heading', { name: /identidad/i })).toBeInTheDocument();
-  expect(inventory.getByText('org-9f21')).toBeInTheDocument();
   expect(inventory.getByRole('button', { name: /nueva cuenta/i })).toBeDisabled();
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
@@ -103,9 +94,8 @@ function deleteActions() {
   return within(screen.getByRole('group', { name: /acciones de retiro o rotación de cuenta/i }));
 }
 
-async function openInventory(user: ReturnType<typeof userEvent.setup>) {
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i });
-  await user.click(screen.getByRole('tab', { name: 'Inventario' }));
+async function openInventory() {
+  await screen.findByRole('heading', { level: 1, name: /cuentas/i });
   const el = document.getElementById('view-panel-inventario');
   expect(el).not.toBeNull();
   return within(el ?? document.body);
@@ -114,7 +104,7 @@ async function openInventory(user: ReturnType<typeof userEvent.setup>) {
 it('queda enrutada en /accounts sin desplazar a las pantallas existentes', async () => {
   window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas/i })).toBeInTheDocument();
 
   act(() => {
     window.history.pushState({}, '', '/config');
@@ -128,16 +118,15 @@ it('/assignments no da 404 ni cae al fallback: redirige a /accounts y reescribe 
   renderWithApi(<App />);
 
   // The right view is chosen in the match, not after a bounce: the matrix is on screen.
-  expect(await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: /cuentas/i })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
 });
 
 it('lista el inventario con pagador, publicación al pool y estado', async () => {
   configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  const inventario = await openInventory(user);
+  const inventario = await openInventory();
   const cell = await inventario.findByText('codex-steven');
   const row = cell.closest('tr');
   expect(row).not.toBeNull();
@@ -145,26 +134,6 @@ it('lista el inventario con pagador, publicación al pool y estado', async () =>
     expect(within(row).getByText('Steven')).toBeInTheDocument();
     expect(within(row).getByText('PUBLICADA')).toBeInTheDocument();
     expect(within(row).getByText('HABILITADA')).toBeInTheDocument();
-  }
-  // The identifiers only the payer sees live in the row detail.
-  await user.click(within(row ?? document.body).getByRole('button', { name: /detalle de/i }));
-  expect(inventario.getByText('org-9f21')).toBeInTheDocument();
-  expect(inventario.getByText('env_path')).toBeInTheDocument();
-});
-
-it('dice que los campos del pagador no son visibles en vez de mostrarlos vacíos', async () => {
-  configuration({ provider_accounts: [borrowedAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  const inventario = await openInventory(user);
-  const cell = await inventario.findByText('minimax-pablo');
-  const row = cell.closest('tr');
-  expect(row).not.toBeNull();
-  if (row) {
-    await user.click(within(row).getByRole('button', { name: /detalle de/i }));
-    expect(inventario.getAllByText(/no visible: la paga pablo/i)).toHaveLength(2);
-    expect(inventario.queryByText('UNKNOWN')).not.toBeInTheDocument();
   }
 });
 
@@ -176,7 +145,7 @@ it('declara no disponible el inventario cuando el gateway no publica provider_ac
   // Both halves declare it separately, each with what is missing for them: inventory cannot be
   // listed, the matrix cannot be formed. Merging the views did not merge the warnings, because
   // they are not the same fact — and now that they are tabs of the same page, it still isn't.
-  const inventario = await openInventory(user);
+  const inventario = await openInventory();
   expect(await inventario.findByText(/no se muestra nada porque no hay dato/i)).toBeInTheDocument();
   expect(inventario.queryByRole('table')).not.toBeInTheDocument();
 
@@ -191,7 +160,7 @@ it('exige dry-run antes de aplicar el alta y manda la mutación de provider_acco
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -230,7 +199,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -249,7 +218,7 @@ it('no reimprime el locator en el dry-run que el servidor devuelve', async () =>
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -271,7 +240,7 @@ it('bloquea aplicar si el recibo confirma otro locator aunque la proyección vis
   });
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
   await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
   await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
@@ -288,7 +257,7 @@ it('deshabilita sin borrar: la acción abre el update con enabled en false', asy
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   // Retiring is a separate affordance from disabling: disabling never offers the delete.
   expect(await screen.findByRole('button', { name: /retirar o rotar/i })).toBeInTheDocument();
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
@@ -311,7 +280,7 @@ it('invalida el dry-run si Actualizar cambia la revisión y exige previsualizar 
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
   const preview = accountActions().getByRole('button', { name: /previsualizar/i });
   const apply = accountActions().getByRole('button', { name: /^aplicar$/i });
@@ -339,7 +308,7 @@ it('ofrece el delete necesario para retiro o rotación con confirmación exacta 
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
   expect(deleteActions().getByRole('button', { name: /previsualizar/i })).toBeDisabled();
   await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
@@ -370,7 +339,7 @@ it('no deja borrar una cuenta mientras un techo la referencia', async () => {
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
   await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
 
@@ -389,7 +358,7 @@ it('ante 409 por revisión relee y obliga a validar otra vez la mutación del re
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(screen.getByRole('button', { name: /deshabilitar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar/i }));
 
@@ -414,7 +383,7 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
   const user = userEvent.setup();
   renderWithApi(<AccountsPage />);
 
-  await openInventory(user);
+  await openInventory();
   await user.click(await screen.findByRole('button', { name: /despublicar/i }));
   await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
@@ -423,115 +392,4 @@ it('explica la causa real cuando el servidor bloquea despublicar una cuenta pres
   expect(alert).toHaveTextContent(/alias_routing_ceiling_borrow_requires_pool/);
   expect(alert).toHaveTextContent(/Miguel\/iza/);
   expect(alert).not.toHaveTextContent(/durable constraint/);
-});
-
-/**
- * The point that decided fusion (b), and the objection that was written in `App.tsx`: "Cuotas y
- * licencias" is for READING and depends on the external collector; "Cuentas de IA" WRITES to the
- * registry and must work even with the collector down. The conclusion that was drawn from that —
- * that they had to be two views — was false: it is solved by degrading per RESOURCE.
- *
- * The two tests come as a pair on purpose. The second is the negative control of the first:
- * without it, a version that painted an invented `0%` with a dead collector would pass anyway.
- */
-it('con el recolector CAÍDO el registro se sigue escribiendo: alta con dry-run y apply', async () => {
-  const changes: ChangeRequest[] = [];
-  configuration({ provider_accounts: [], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  recordChanges(changes);
-  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json(
-    { error: 'boom', message: 'el recolector no publicó nunca' }, { status: 500 },
-  )));
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  // The view does NOT collapse entirely: a dead source does not turn off the other.
-  await openInventory(user);
-  await user.click(await screen.findByRole('button', { name: /nueva cuenta/i }));
-  await user.type(await screen.findByLabelText(/id externo de la suscripción/i), 'org-9f21');
-  await user.type(screen.getByLabelText(/tenant pagador/i), 'Steven');
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
-  expect(changes[0]?.dry_run).toBe(true);
-
-  await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
-  expect(await screen.findByText(/aplicado en revisión 5/i)).toBeInTheDocument();
-  expect(changes[1]?.dry_run).toBe(false);
-});
-
-it('🔴 CONTROL NEGATIVO: con el recolector caído el saldo dice «?», nunca un número', async () => {
-  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json(
-    { error: 'boom', message: 'el recolector no publicó nunca' }, { status: 500 },
-  )));
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  const inventario = await openInventory(user);
-  const cell = await inventario.findByText('codex-steven');
-  const fila = cell.closest('tr');
-  expect(fila).not.toBeNull();
-  if (fila) {
-    // Consumo declares there is no sample. A `0%` here would read as "this account is exhausted",
-    // which is a statement about a datum that never arrived.
-    expect(within(fila).getByLabelText('sin muestra')).toBeInTheDocument();
-    expect(fila.textContent).not.toMatch(/\d+%/);
-    expect(fila.textContent).not.toMatch(/libre/);
-  }
-});
-
-it('la sonda caída sí grita en ámbar: el gris es sólo para la cuenta que el recolector no mira', async () => {
-  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
-    observed_at: '2026-08-22T10:00:00.000Z',
-    thresholds: { stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10 },
-    collectors: [{ host: 'kratos', received_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, stale: false }],
-    providers: [{
-      host: 'kratos', provider: 'codex', ok: false, available: false, plan: 'pro',
-      note: 'el CLI no respondió', observed_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, severity: 'ok',
-      groups: [{ group_key: 'codex', account_id: 'codex-steven', min_remaining_percent: null, severity: null, windows: [] }],
-    }],
-    unbound_groups: [], paused_accounts: [],
-  })));
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  const inventario = await openInventory(user);
-  const fila = (await inventario.findByText('codex-steven')).closest('tr');
-  expect(fila).not.toBeNull();
-  if (fila) {
-    const interrogante = within(fila).getByText('?');
-    expect(interrogante).toHaveClass('unknown');
-    expect(interrogante.getAttribute('title')).toMatch(/sonda caída/i);
-    expect(within(fila).queryByLabelText('sin muestra')).not.toBeInTheDocument();
-  }
-});
-
-it('con el recolector VIVO la misma columna sí trae el número: el «?» no es un cartel fijo', async () => {
-  // The other arm of the control: if the cell always said "?", the test above would pass without
-  // proving anything. Here the same component, with a sample, has to give the percentage.
-  configuration({ provider_accounts: [ownAccount], agents: [], alias_routing_ceiling: [], agent_account_bindings: [] });
-  server.use(http.get('http://localhost/v3/console/quotas', () => HttpResponse.json({
-    observed_at: '2026-08-22T10:00:00.000Z',
-    thresholds: { stale_after_seconds: 900, warn_remaining_percent: 25, critical_remaining_percent: 10 },
-    collectors: [{ host: 'kratos', received_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, stale: false }],
-    providers: [{
-      host: 'kratos', provider: 'codex', ok: true, available: true, plan: 'pro',
-      observed_at: '2026-08-22T09:59:30.000Z', age_seconds: 30, severity: 'ok',
-      groups: [{
-        group_key: 'codex', account_id: 'codex-steven', min_remaining_percent: 42, severity: 'ok',
-        windows: [{ window_key: 'semana', label: 'semana', used_percent: 58, remaining_percent: 42, reset_at: '2026-08-29T10:00:00.000Z', reset_in_seconds: 600_000, severity: 'ok' }],
-      }],
-    }],
-    unbound_groups: [], paused_accounts: [],
-  })));
-  const user = userEvent.setup();
-  renderWithApi(<AccountsPage />);
-
-  const inventario = await openInventory(user);
-  const cell = await inventario.findByText('codex-steven');
-  const fila = cell.closest('tr');
-  expect(fila).not.toBeNull();
-  if (fila) {
-    expect(within(fila).getByText(/plan pro/)).toBeInTheDocument();
-    expect(within(fila).getByText('42% libre')).toBeInTheDocument();
-  }
 });

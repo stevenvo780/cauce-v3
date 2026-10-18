@@ -102,7 +102,7 @@ const ROUTE_ALIASES: Partial<Record<string, string>> = {
   office: 'live',
   overview: 'live',
   licenses: 'accounts',
-  quotas: 'accounts',
+  quotas: 'my-quotas',
   assignments: 'accounts',
   audit: 'observability',
   relays: 'observability',

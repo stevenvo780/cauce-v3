@@ -87,7 +87,7 @@ it('«Gestión» se abre sola cuando la sección activa pertenece al grupo', () 
   renderShell({ routeId: 'accounts' });
 
   expect(within(nav()).getByRole('button', { name: 'Gestión' })).toHaveAttribute('aria-expanded', 'true');
-  expect(within(nav()).getByRole('link', { name: 'Cuentas y cuotas' })).toHaveAttribute('aria-current', 'page');
+  expect(within(nav()).getByRole('link', { name: 'Cuentas' })).toHaveAttribute('aria-current', 'page');
 });
 
 it('«Gestión» se abre al llegar a una sección del grupo y respeta el pliegue manual en las demás', async () => {

@@ -114,7 +114,7 @@ it('la barra y las páginas activas comparten una sola consulta de acceso', asyn
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' }, { timeout: 10_000 }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas' }, { timeout: 10_000 }))
     .toBeInTheDocument();
   await waitFor(() => { expect(accessReads).toBe(1); });
   await openTools();
@@ -132,19 +132,26 @@ it('el menú conserva cuentas de agentes y distingue Mis cuotas sin agente', asy
   await openTools();
   const entries = within(nav).getAllByRole('link')
     .filter((link) => /cuota|licencia|cuenta/i.test(link.textContent));
-  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas y cuotas', 'Mis cuotas']);
+  expect(entries.map((link) => link.textContent)).toEqual(['Cuentas', 'Mis cuotas']);
 });
 
 it.each([
   ['/licenses'],
-  ['/quotas'],
   ['/assignments'],
-])('redirige %s a «Cuentas y cuotas» en vez de dejar el enlace guardado en la nada', async (ruta) => {
+])('redirige %s a «Cuentas» en vez de dejar el enlace guardado en la nada', async (ruta) => {
   window.history.pushState({}, '', ruta);
   renderWithApi(<App />);
 
-  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas y cuotas' }, { timeout: 10_000 })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 1, name: 'Cuentas' }, { timeout: 10_000 })).toBeInTheDocument();
   await waitFor(() => { expect(window.location.pathname).toBe('/accounts'); });
+});
+
+it('redirige /quotas a «Mis cuotas» en vez de dejar el enlace guardado en la nada', async () => {
+  window.history.pushState({}, '', '/quotas');
+  renderWithApi(<App />);
+
+  expect(await screen.findByRole('heading', { level: 1, name: 'Mis cuotas' }, { timeout: 10_000 })).toBeInTheDocument();
+  await waitFor(() => { expect(window.location.pathname).toBe('/my-quotas'); });
 });
 
 it('redirige /audit a «Señales y auditoría», donde la auditoría es una pestaña', async () => {
@@ -212,7 +219,7 @@ it('navega dentro de la aplicación sin recargar la página al hacer clic en el 
   const user = userEvent.setup();
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
+  await screen.findByRole('heading', { level: 1, name: /cuentas/i }, { timeout: 10_000 });
   await openTools();
   await user.click(screen.getByRole('link', { name: 'Colas y DLQ' }));
 
@@ -225,7 +232,7 @@ it('conserva el href real que permite abrir una ruta en otra pestaña', async ()
   window.history.pushState({}, '', '/accounts');
   renderWithApi(<App />);
 
-  await screen.findByRole('heading', { level: 1, name: /cuentas y cuotas/i }, { timeout: 10_000 });
+  await screen.findByRole('heading', { level: 1, name: /cuentas/i }, { timeout: 10_000 });
   await openTools();
   expect(screen.getByRole('link', { name: 'Colas y DLQ' })).toHaveAttribute('href', '/queues');
   expect(window.location.pathname).toBe('/accounts');
@@ -243,7 +250,7 @@ it('el menú contiene las nueve entradas consolidadas', async () => {
     'Chat',
     'Oficina',
     'Terminal',
-    'Cuentas y cuotas',
+    'Cuentas',
     'Mis cuotas',
     'Colas y DLQ',
     'Señales y auditoría',
@@ -354,8 +361,8 @@ it('conserva el borrador y su carril al visitar herramientas, aislado por agente
   await user.type(input, 'Revisá el trabajo pendiente');
   await pickLane(user, /^Batch/);
   await openTools();
-  await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
-  await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+  await user.click(screen.getByRole('link', { name: 'Cuentas' }));
+  await screen.findByRole('heading', { name: 'Cuentas' });
   await user.click(await agentLink('argos'));
   expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
   expect(screen.getByText('Batch')).toBeInTheDocument();
@@ -405,8 +412,8 @@ it.each([
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await waitFor(() => { expect(calls).toBe(1); });
     await openTools();
-    await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
-    await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+    await user.click(screen.getByRole('link', { name: 'Cuentas' }));
+    await screen.findByRole('heading', { name: 'Cuentas' });
     await user.click(await agentLink('argos'));
     const pendingInput = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
     expect(pendingInput).toBeEnabled();
@@ -425,8 +432,8 @@ it.each([
     expect(calls).toBe(1);
     expect(publishedInput).toMatchObject({ body: { text: originalDraft }, recipients: [{ tenant_id: 'Steven', alias: 'argos' }] });
     await openTools();
-    await user.click(screen.getByRole('link', { name: 'Cuentas y cuotas' }));
-    await screen.findByRole('heading', { name: 'Cuentas y cuotas' });
+    await user.click(screen.getByRole('link', { name: 'Cuentas' }));
+    await screen.findByRole('heading', { name: 'Cuentas' });
     release();
     await waitFor(() => { expect(settled).toBe(true); });
     await user.click(await agentLink('argos'));

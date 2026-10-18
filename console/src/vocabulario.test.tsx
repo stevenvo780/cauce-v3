@@ -12,7 +12,7 @@ import { HelpPage } from './features/help/HelpPage';
 
 const VISTAS = [
   ['/live', LiveFleetPage, 'Oficina'],
-  ['/accounts', AccountsPage, /cuentas y cuotas/i],
+  ['/accounts', AccountsPage, /cuentas/i],
   ['/queues', QueuesPage, /colas y dlq/i],
   ['/observability', ObservabilityPage, /señales y auditoría/i],
   ['/terminal', () => <TerminalPage params={['Steven', 'kant']} />, 'Terminal de agentes'],
