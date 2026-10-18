@@ -38,7 +38,7 @@ export interface AvisoDeColeccion {
  */
 export function CollectionTable({
   coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
-  onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, retiredRows, onGroupOperation,
+  onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, bloqueoDeCatalogo, retiredRows, onGroupOperation,
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` from the snapshot: feeds the role selector of memberships. */
@@ -54,6 +54,8 @@ export function CollectionTable({
   editor?: ReactNode;
   onFormAction?: (target: ConfigFormTarget) => void;
   onFormAllowed?: (target: ConfigFormTarget) => boolean;
+  /** Set when this collection is a platform catalog and the signed-in role is not the platform administrator. */
+  bloqueoDeCatalogo?: string;
   retiredRows?: Record<string, unknown>[];
   onGroupOperation?: (target: FleetTarget, kind: 'retire' | 'restore' | 'purge') => void;
 }) {
@@ -71,10 +73,13 @@ export function CollectionTable({
   const confirmandoAqui = control.confirmacion?.interruptor.coleccion === key;
   const formDefinition = configFormDefinition(key);
 
+  const catalogo = Boolean(bloqueoDeCatalogo);
   return <SectionCard level={3} title={title}
     actions={rows ? <span className="text-xs text-muted tabular-nums">{filas.length} {filas.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
+    {bloqueoDeCatalogo ? <Notice role="note">{bloqueoDeCatalogo}</Notice> : null}
     {formDefinition && onFormAction && !formDefinition.singleton ? <div className="flex flex-wrap gap-2">
-      <Button disabled={soloLectura || busy || !rows || onFormAllowed?.({ collection: key, action: 'create' }) === false}
+      <Button disabled={catalogo || soloLectura || busy || !rows || onFormAllowed?.({ collection: key, action: 'create' }) === false}
+        {...(bloqueoDeCatalogo ? { title: bloqueoDeCatalogo } : {})}
         onClick={() => { onFormAction({ collection: key, action: 'create' }); }}>Crear {formDefinition.label}</Button>
     </div> : null}
     {editor}
@@ -141,18 +146,21 @@ export function CollectionTable({
                   >
                     <Celda
                       coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
-                      politicasDeRol={politicasDeRol} soloLectura={soloLectura} busy={busy}
+                      politicasDeRol={politicasDeRol} soloLectura={soloLectura || catalogo} busy={busy}
+                      {...(bloqueoDeCatalogo ? { motivo: bloqueoDeCatalogo } : {})}
                       control={control} onPedir={onPedir}
                     />
                   </td>)}
                   {formDefinition && onFormAction ? <td><div className="flex flex-wrap gap-2">
-                    <Button size="sm" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'update', row: fila }) === false}
+                    <Button size="sm" disabled={catalogo || soloLectura || busy || onFormAllowed?.({ collection: key, action: 'update', row: fila }) === false}
+                      {...(bloqueoDeCatalogo ? { title: bloqueoDeCatalogo } : {})}
                       aria-label={`Editar ${formDefinition.label} ${filaId}`}
                       onClick={() => { onFormAction({ collection: key, action: 'update', row: fila }); }}>Editar</Button>
                     {fleetTarget && onGroupOperation ? <Button size="sm" disabled={soloLectura || busy}
                       aria-label={`Retiro y recuperación de ${formDefinition.label} ${filaId}`}
                       onClick={() => { onGroupOperation(fleetTarget, 'retire'); }}>Retiro y recuperación</Button> : null}
-                    {!formDefinition.singleton ? <Button size="sm" disabled={soloLectura || busy || onFormAllowed?.({ collection: key, action: 'delete', row: fila }) === false}
+                    {!formDefinition.singleton ? <Button size="sm" disabled={catalogo || soloLectura || busy || onFormAllowed?.({ collection: key, action: 'delete', row: fila }) === false}
+                      {...(bloqueoDeCatalogo ? { title: bloqueoDeCatalogo } : {})}
                       aria-label={`Eliminar ${formDefinition.label} ${filaId}`}
                       onClick={() => { onFormAction({ collection: key, action: 'delete', row: fila }); }}>Eliminar</Button> : null}
                     {['tenant', 'room', 'membership'].includes(formDefinition.resource) && onFormAllowed?.({ collection: key, action: 'retire', row: fila }) ? <Button
@@ -202,7 +210,7 @@ export function CollectionTable({
 }
 
 function Celda({
-  coleccion, columna, fila, filaId, indice, politicasDeRol, soloLectura, busy, control, onPedir,
+  coleccion, columna, fila, filaId, indice, politicasDeRol, soloLectura, busy, motivo, control, onPedir,
 }: {
   coleccion: string;
   columna: ColumnaTabla;
@@ -212,6 +220,7 @@ function Celda({
   politicasDeRol: readonly Record<string, unknown>[] | undefined;
   soloLectura: boolean;
   busy: boolean;
+  motivo?: string;
   control: ControlDeInterruptores;
   onPedir: (pendiente: AccionPendiente) => void;
 }) {
@@ -230,6 +239,7 @@ function Celda({
     if (interruptor) {
       return <InterruptorDeCelda
         interruptor={interruptor} control={control} soloLectura={soloLectura} busy={busy}
+        {...(motivo ? { motivo } : {})}
       />;
     }
   }

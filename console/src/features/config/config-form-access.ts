@@ -41,6 +41,16 @@ export function scopedFormIdentity(snapshot: ConfigurationSnapshot, definition: 
   return { [key]: resource.tenant_id ?? access.actor.tenant_id };
 }
 
+export const PLATFORM_CATALOG_REASON = 'Solo el administrador de plataforma puede cambiar esta política.';
+
+/** Hides platform catalogs when the snapshot names a role other than platform_admin. A snapshot without a role stays unchanged. */
+export function platformCatalogReason(snapshot: ConfigurationSnapshot | undefined, resource: string): string | undefined {
+  if (!snapshot || (resource !== 'role_policy' && resource !== 'chain_policy')) return undefined;
+  const role = (snapshot as { capabilities?: { actor?: { role?: unknown } } }).capabilities?.actor?.role;
+  if (typeof role === 'string' && role !== 'platform_admin') return PLATFORM_CATALOG_REASON;
+  return undefined;
+}
+
 export function canUseConfigForm(snapshot: ConfigurationSnapshot, definition: ConfigFormDefinition, action: ConfigAction, row?: Record<string, unknown>): boolean {
   const access = capabilities(snapshot);
   if (access === undefined) return action !== 'retire' && action !== 'restore';

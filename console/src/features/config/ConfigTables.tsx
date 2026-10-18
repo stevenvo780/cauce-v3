@@ -2,7 +2,7 @@ import { ConfigCollectionForm } from './ConfigCollectionForm';
 import { GroupEditor } from './GroupEditor';
 import { groupHasRuntime, groupOperationTarget } from './GroupMembershipModel';
 import { configFormDefinition } from './config-form-model';
-import { canUseConfigForm, retiredConfigRows } from './config-form-access';
+import { canUseConfigForm, platformCatalogReason, retiredConfigRows } from './config-form-access';
 import { CollectionTable, type AvisoDeColeccion } from './CollectionTable';
 import { coleccionesDe, type ConfigSectionId } from './sections';
 import { alcanceDeAccion, type ConfigWrites } from './use-config-writes';
@@ -43,6 +43,9 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
           definition={definition} target={ctx.formTarget} snapshot={ctx.config.data} runner={ctx.canalFormulario} busy={ctx.busy}
           onCancel={() => { ctx.setFormTarget(undefined); ctx.canalFormulario.clear(); }} onRelated={ctx.openForm} />
         : undefined;
+      const bloqueoDeCatalogo = definition && ctx.config.data
+        ? platformCatalogReason(ctx.config.data, definition.resource)
+        : undefined;
       return <CollectionTable
         key={coleccion.key}
         coleccion={coleccion}
@@ -51,6 +54,7 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
         busy={ctx.busy}
         control={ctx.interruptores}
         editor={form}
+        {...(bloqueoDeCatalogo ? { bloqueoDeCatalogo } : {})}
         onFormAction={ctx.openForm}
         onFormAllowed={(target) => {
           const fleetTarget = target.row ? groupOperationTarget(target.collection, target.row) : undefined;

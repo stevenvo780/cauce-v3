@@ -101,7 +101,7 @@ export function PeopleAdminPanel() {
             onClick={() => { ask(person, 'purge'); }} aria-label={`Purgar persona ${person.email}`}>Purgar</button> : null}
         </div></td></tr>)}</tbody></table>{!inventory.items.length ? <p>No hay personas en este inventario.</p> : null}</div> : null}
     {editing && snapshot ? <PeopleAdminForm key={editing.person?.id ?? 'create'} person={editing.person} snapshot={snapshot}
-      busy={!canUse} save={save} cancel={() => { setEditing(undefined); }} /> : null}
+      occupied={inventory?.items ?? []} busy={!canUse} save={save} cancel={() => { setEditing(undefined); }} /> : null}
     {confirmation ? <section className="people-admin-confirm" aria-label="Confirmar cambio de acceso">
       <h3>{confirmation.action === 'retire' ? 'Retirar acceso' : confirmation.action === 'restore' ? 'Restaurar acceso' : 'Purgar definitivamente'}</h3>
       <p>{confirmation.person.email} · revisión <code>{confirmation.person.revision}</code></p>

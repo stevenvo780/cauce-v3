@@ -16,11 +16,12 @@ const SWITCH = 'relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded
   + 'motion-reduce:transition-none motion-reduce:before:transition-none motion-reduce:before:animate-none';
 
 /** Real `<input type="checkbox" role="switch">`; `aria-label` names the row and permission; `aria-busy` while the write is in flight. */
-export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: {
+export function InterruptorDeCelda({ interruptor, control, soloLectura, busy, motivo }: {
   interruptor: Interruptor;
   control: ControlDeInterruptores;
   soloLectura: boolean;
   busy: boolean;
+  motivo?: string;
 }) {
   const valor = control.valorPintado(interruptor);
   const enVuelo = control.enVuelo(interruptor.clave);
@@ -49,8 +50,8 @@ export function InterruptorDeCelda({ interruptor, control, soloLectura, busy }: 
       aria-busy={enVuelo || undefined}
       aria-invalid={fallo ? true : undefined}
       checked={valor}
-      disabled={soloLectura || busy}
-      title={soloLectura ? CONFIG_SIN_CONTROL_REASON : interruptor.aria}
+      disabled={soloLectura || busy || motivo !== undefined}
+      title={motivo ?? (soloLectura ? CONFIG_SIN_CONTROL_REASON : interruptor.aria)}
       onChange={() => {
         devolverElFoco.current = typeof document !== 'undefined' && document.activeElement === nodo.current;
         control.pulsar(interruptor);
