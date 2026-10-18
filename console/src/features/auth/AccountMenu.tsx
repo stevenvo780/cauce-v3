@@ -64,14 +64,15 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
         <Popover.Positioner side="top" align="start" sideOffset={8} collisionPadding={12} className="z-[60]">
           <Popover.Popup
             initialFocus={heading}
-            className="grid max-h-[var(--available-height)] grid-cols-[minmax(0,1fr)] w-80 max-w-[calc(100vw-1.5rem)] gap-3 overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-4 text-[13px] text-fg shadow-pop outline-none"
+            className="flex max-h-[min(var(--available-height),calc(100dvh-4.5rem))] w-[min(20rem,calc(100vw-1.5rem))] flex-col overflow-hidden overscroll-contain rounded-xl border border-line bg-surface text-[13px] text-fg shadow-pop outline-none"
           >
-            <header className="flex items-center justify-between gap-2">
+            <header className="flex shrink-0 items-center justify-between gap-2 px-4 pt-4">
               <Popover.Title ref={heading} tabIndex={-1} className="m-0 text-sm font-semibold outline-none">Cuenta y apariencia</Popover.Title>
               <Popover.Close aria-label="Cerrar cuenta y apariencia" className="grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent text-muted hover:bg-subtle hover:text-fg">
                 <X size={16} aria-hidden="true" />
               </Popover.Close>
             </header>
+            <div className="grid min-h-0 flex-1 content-start gap-3 overflow-y-auto px-4 py-3">
 
             {signedIn && state ? (
               <div className="grid gap-2 [&_p]:m-0 [&_p]:break-words">
@@ -129,9 +130,10 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
             </div>
 
             {error ? <Notice tone="danger" role="alert">{error.message}</Notice> : null}
+            </div>
 
             {signedIn ? (
-              <div className={cn(SECTION, 'gap-2')}>
+              <div className={cn(SECTION, 'shrink-0 gap-2 bg-surface px-4 pt-3 pb-4')}>
                 <Button ref={switchTrigger} className="justify-start" disabled={busy} aria-expanded={confirmSwitch} onClick={() => { setConfirmSwitch(!confirmSwitch); }}>
                   Cambiar cuenta
                 </Button>
