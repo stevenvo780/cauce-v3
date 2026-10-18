@@ -148,6 +148,7 @@ export function AccountLogin({ account, snapshot, allowed, reload, environmentId
       {!environmentId && targets.length > 1 ? <label className="min-w-0 text-sm">Entorno u ordenador <select aria-label="Entorno u ordenador" className="max-w-full" value={selected?.key ?? ''} disabled={busy || requested}
         onChange={event => { setChoice(event.target.value); setVerified(false); }}>{targets.map(item => <option key={item.key} value={item.key}>{item.label}{item.withoutSession && item.environmentId ? ' · Sin sesión' : ''}{!item.available ? ' · No disponible' : ''}</option>)}</select></label> : null}
     </div>
+    {block && !requested && !error && (snapshot || !allowed) ? <p className="m-0 text-sm text-muted">{block}</p> : null}
     {verified && !requested ? <Notice tone="ok" role="status">Sesión iniciada y verificada.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     <FormDialog open={requested} wide anchorTop title={`Iniciar sesión en ${account.label}`}
