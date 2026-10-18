@@ -31,6 +31,7 @@ export const STATE_PIXEL: Readonly<Record<LiveState, string>> = {
   thinking: '#38b764',
   settled: '#73eff7',
   idle: '#94b0c2',
+  unprepared: '#566c86',
 };
 
 export const relativeTime = (ms: number, now: number): string => {

@@ -67,7 +67,7 @@ function stateRank(state: FleetWorkState | null | undefined): number {
  * middle, the "sorted by urgency" subtitle stops being true.
  */
 export const ORDEN_VIVO: readonly LiveState[] = [
-  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle',
+  'down', 'blocked', 'delegating', 'receiving', 'thinking', 'settled', 'idle', 'unprepared',
 ];
 
 /** Triage order: the most urgent at the top, so that 71 in-flight deliveries do not go unnoticed

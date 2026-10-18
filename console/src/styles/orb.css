@@ -39,6 +39,7 @@
 
 .agent-orb[data-state='delegating'] { animation-duration: 5s; }
 .agent-orb[data-state='blocked'] { animation-duration: 22s; filter: saturate(0.7); }
+.agent-orb[data-state='unprepared'] { animation-duration: 14s; filter: saturate(0.55); opacity: 0.92; }
 .agent-orb[data-state='down'] { animation: none; filter: grayscale(1) brightness(0.85); opacity: 0.7; }
 .agent-orb[data-state='down'] .agent-orb-core { animation: none; }
 .agent-orb[data-state='down'] *, .agent-orb[data-state='down']::before, .agent-orb[data-state='down']::after { animation-play-state: paused; }

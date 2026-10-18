@@ -54,6 +54,14 @@ describe('liveState', () => {
     expect(liveState(agent({ flags: ['lease_expired'] }), { nowMs: NOW }).state).toBe('down');
     expect(liveState(agent({ flags: ['never_connected'] }), { nowMs: NOW }).state).toBe('down');
     expect(liveState(agent({ agent_enabled: false }), { nowMs: NOW }).state).toBe('down');
+    const draft = liveState(agent({
+      agent_enabled: false, lifecycle_state: 'draft', host_id: null, flags: ['never_connected'],
+    }), { nowMs: NOW });
+    expect(draft.state).toBe('unprepared');
+    expect(draft.reason).toContain('no tiene ordenador');
+    expect(liveState(agent({
+      agent_enabled: false, lifecycle_state: 'draft', host_id: 'kratos', flags: ['never_connected'],
+    }), { nowMs: NOW }).state).toBe('down');
   });
 
   it.each([1, undefined, null])('cola disponible sin tomar con lease vivo es Trabado y no se oculta (%s)', (ready) => {
@@ -248,11 +256,11 @@ describe('detectPulses', () => {
 });
 
 describe('stateTally', () => {
-  it('el recuento publica los siete estados aunque estén en cero', () => {
+  it('el recuento publica cada estado aunque esté en cero', () => {
     const { views } = buildLiveViews(snapshot([agent()]), {}, NOW);
     const tally = stateTally(views);
     expect(Object.keys(tally).sort()).toEqual(
-      ['blocked', 'delegating', 'down', 'idle', 'receiving', 'settled', 'thinking'],
+      ['blocked', 'delegating', 'down', 'idle', 'receiving', 'settled', 'thinking', 'unprepared'],
     );
     expect(tally.idle).toBe(1);
     expect(tally.down).toBe(0);

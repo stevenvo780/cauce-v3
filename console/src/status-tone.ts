@@ -11,6 +11,7 @@ export const STATE_TONE: Record<LiveState, Tone> = {
   receiving: 'info',
   thinking: 'ok',
   idle: 'neutral',
+  unprepared: 'neutral',
 };
 
 /** Utility classes per tone: a dot, a soft pill and plain ink. Literal strings so Tailwind sees them. */

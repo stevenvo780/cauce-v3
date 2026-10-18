@@ -227,6 +227,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         lifecycle_state: typeof row.lifecycle_state === 'string' ? row.lifecycle_state : null,
         registered,
         agent_enabled: row.agent_enabled === true,
+        host_id: typeof row.host_id === 'string' && row.host_id.trim() !== '' ? row.host_id.trim() : null,
         presence: {
           online: leaseOnline,
           instance_id: row.instance_id ?? null,

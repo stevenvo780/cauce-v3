@@ -10,6 +10,7 @@ import { cn } from '../../cn';
 import { Time } from '../../components/ui';
 import { onNavClick } from '../../router';
 import { LEASE_LABEL } from '../../vocabulario';
+import { PrepareAgentLink } from '../config/prepare-agent-link';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { MENU_ITEM, MENU_POPUP, StatePill } from '../../components/kit';
 import { LIMITE_MENSAJES, textoDeCifra, type SaludDeCola } from './queue-health';
@@ -65,6 +66,9 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
           <p className="m-0 truncate text-xs text-muted">{agent.tenantId}</p>
         </div>
       </AgentContextMenu>
+      {state === 'unprepared' ? (
+        <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias} className="shrink-0 text-xs font-medium text-brand-ink underline" />
+      ) : null}
 
       <Menu.Root>
         <Menu.Trigger ref={moreTriggerRef} aria-label="Opciones de la conversación" title="Opciones de la conversación"
@@ -116,9 +120,10 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
               </Dialog.Close>
             </div>
             <Section title="Estado del agente">
-              <p className="m-0 flex items-center gap-2">
+              <p className="m-0 flex flex-wrap items-center gap-2">
                 <StatePill state={state} />
                 <span className="text-fg-2">{reason ?? meta.hint}</span>
+                {state === 'unprepared' ? <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias} className="font-medium text-brand-ink underline" /> : null}
               </p>
               <p className="m-0 text-fg-2">
                 Lease {LEASE_LABEL[agent.leaseState]} · epoch {agent.presence?.epoch ?? 'UNKNOWN'} · vence <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} />

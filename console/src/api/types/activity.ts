@@ -66,6 +66,7 @@ export interface FleetActivityAgent {
   /** false: the alias appeared via deliveries or lease, not via the agent registry. */
   registered?: boolean | null;
   agent_enabled?: boolean | null;
+  host_id?: string | null;
   presence?: FleetActivityPresence | null;
   work_state?: FleetWorkState | null;
   flags?: FleetActivityFlag[] | null;

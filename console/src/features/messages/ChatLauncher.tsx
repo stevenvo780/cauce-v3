@@ -16,6 +16,7 @@ import { agentHref } from '../../shell/agent-href';
 import { useFleet } from '../../shell/fleet-context';
 import { useMediaQuery } from '../../shell/use-media-query';
 import { STATE_TONE, TONE_CLASS } from '../../status-tone';
+import { PrepareAgentLink } from '../config/prepare-agent-link';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import {
   SECTION_TITLE, lastMessages, launcherSections, needsAttention, nextCardIndex,
@@ -339,6 +340,11 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
                       onOpen={open}
                       onFocus={setActive}
                     />
+                    {stateOf(agent) === 'unprepared' && !bubbles ? (
+                      <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias}
+                        className={cn('absolute z-10 rounded-md bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-brand-ink underline',
+                          phone ? 'right-12 bottom-2' : 'right-3 bottom-3')} />
+                    ) : null}
                     {phone && !bubbles ? <AgentKebab agent={agent} className="absolute top-1/2 right-2 size-9 -translate-y-1/2" /> : null}
                   </AgentContextMenu>
                 ))}

@@ -5,6 +5,7 @@ import { agentKey } from '../components/agent-actions/agent-actions';
 import { AgentContextMenu, AgentKebab, FavoriteStar } from '../components/agent-actions/AgentActionsMenu';
 import { useAgentPreferences, usePreferencesSettled } from '../components/agent-actions/preferences-context';
 import { cn } from '../cn';
+import { PrepareAgentLink } from '../features/config/prepare-agent-link';
 import { LIVE_STATE_META } from '../features/live/agent-state';
 import { colaNecesitaAtencion, ordenarPorSaludDeCola } from '../features/messages/queue-health';
 import type { AgenteDeMensajeria } from '../features/messages/roster';
@@ -69,6 +70,10 @@ function AgentRow({ agent, routeId, active, rail }: { agent: AgenteDeMensajeria;
             </span>
           )}
         </a>
+        {!rail && state === 'unprepared' ? (
+          <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias}
+            className="absolute bottom-1 left-11 z-10 text-[11px] font-medium text-brand-ink underline" />
+        ) : null}
         {rail ? null : (
           <span className={cn(
             'absolute top-1/2 right-1 flex -translate-y-1/2 items-center rounded-md pl-1 opacity-0 transition-opacity',

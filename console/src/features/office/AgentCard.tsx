@@ -3,6 +3,7 @@ import { useEffect, useId, type KeyboardEvent } from 'react';
 import { cn } from '../../cn';
 import { AgentOrb } from '../../components/AgentOrb';
 import { onNavClick } from '../../router';
+import { PrepareAgentLink } from '../config/prepare-agent-link';
 import { LIVE_STATE_META } from '../live/agent-state';
 import { HUD_BUTTON, HUD_ON, HUD_PANEL, HUD_TEXT, STATE_PIXEL } from './hud-style';
 import type { OfficeAgent } from './office-agent';
@@ -92,6 +93,10 @@ export function AgentCard({ agent, place, following, onClose, onTalk, onSheet, o
           <button type="button" onClick={onTalk} className={cn(HUD_BUTTON, HUD_TEXT, HUD_ON, 'h-8 px-2.5')}>
             <MessageCircle size={13} aria-hidden="true" /> Hablar
           </button>
+        ) : null}
+        {!agent.visitor && agent.state === 'unprepared' ? (
+          <PrepareAgentLink tenantId={agent.id.slice(0, cut)} alias={agent.id.slice(cut + 1)}
+            className={cn(HUD_BUTTON, HUD_TEXT, 'h-8 px-2.5 no-underline')} />
         ) : null}
         {links.map(({ href, label, icon: Icon }) => (
           <a key={label} href={href} aria-label={label} title={label} onClick={(event) => { onNavClick(event, href); }} className={cn(HUD_BUTTON, 'size-8 no-underline')}>

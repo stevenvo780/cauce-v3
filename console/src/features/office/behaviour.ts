@@ -25,6 +25,7 @@ export const BEHAVIOUR: Record<LiveState, Behaviour> = {
   settled: { rest: 'routine', pose: 'stand', bubble: null, shake: false, monitor: 'dim' },
   idle: { rest: 'routine', pose: 'stand', bubble: null, shake: false, monitor: 'dim' },
   down: { rest: 'shop', pose: 'lie', bubble: null, shake: false, monitor: 'error' },
+  unprepared: { rest: 'routine', pose: 'stand', bubble: null, shake: false, monitor: 'off' },
 };
 
 export function behaviourFor(state: LiveState): Behaviour {

@@ -16,7 +16,7 @@ import {
 } from './agent-state-helpers';
 
 /**
- * The seven states the console distinguishes, each with its own doll. The order of the union
+ * The eight states the console distinguishes, each with its own doll. The order of the union
  * is the precedence: `down` wins over everything, `idle` loses to everything.
  *
  * A live lease does not prove the agent responds: `blocked` is derived from stall signals
@@ -30,10 +30,11 @@ export type LiveState =
   | 'settled'
   | 'receiving'
   | 'thinking'
-  | 'idle';
+  | 'idle'
+  | 'unprepared';
 
 export const LIVE_STATES: readonly LiveState[] = [
-  'down', 'blocked', 'delegating', 'settled', 'receiving', 'thinking', 'idle',
+  'down', 'blocked', 'delegating', 'settled', 'receiving', 'thinking', 'idle', 'unprepared',
 ];
 
 interface LiveStateMeta {
@@ -55,6 +56,10 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   idle: {
     label: 'Libre',
     hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
+  },
+  unprepared: {
+    label: 'Borrador · sin ordenador',
+    hint: 'Nunca se preparó: sigue en borrador y no tiene ordenador. No es una caída.',
   },
 };
 
@@ -130,6 +135,13 @@ function decidirEstado(
 
   const sinRegistro = flags.includes('unregistered') || agent.registered === false;
 
+  if (nuncaPreparado(agent)) {
+    return {
+      state: 'unprepared',
+      reason: 'Nació en borrador y todavía no tiene ordenador. No es una caída: prepáralo para que pueda trabajar.',
+      overloaded,
+    };
+  }
   if (agent.agent_enabled === false && !sinRegistro) {
     return { state: 'down', reason: 'Deshabilitado en el registro de agentes: no se le asigna trabajo.', overloaded };
   }
@@ -262,7 +274,15 @@ function decidirEstado(
   return { state: 'idle', reason: 'Conectado, con lease vigente y nada en vuelo.', overloaded };
 }
 
-/** Count per state, for the summary bar. Always publishes all seven, even at zero. */
+function nuncaPreparado(agent: FleetActivityAgent): boolean {
+  const flags = agent.flags ?? [];
+  if (flags.includes('unregistered') || agent.registered === false) return false;
+  if (agent.lifecycle_state !== 'draft' || agent.agent_enabled === true) return false;
+  const host = agent.host_id;
+  return host == null || host === '';
+}
+
+/** Count per state, for the summary bar. Always publishes every state, even at zero. */
 export function stateTally(views: readonly LiveAgentView[]): Record<LiveState, number> {
   const tally = Object.fromEntries(LIVE_STATES.map((state) => [state, 0])) as Record<LiveState, number>;
   for (const view of views) tally[view.state] += 1;

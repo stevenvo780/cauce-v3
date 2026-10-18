@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 import { redirect, useRouteSearch } from '../../router';
 
+export function prepareAgentHref(tenantId: string, alias: string): string {
+  const params = new URLSearchParams({ seccion: 'agentes', agente: `${tenantId}/${alias}`, ficha: 'operacion' });
+  return `/config?${params.toString()}`;
+}
+
 /** The agent whose sheet is open lives in `?agente=<tenant>/<alias>`, so a reload keeps the context. */
 export function useAgentParam(): [string | undefined, (ref: string | undefined) => void] {
   const search = useRouteSearch();
