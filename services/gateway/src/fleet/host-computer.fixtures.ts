@@ -1,11 +1,13 @@
 import { execFile, spawn } from 'node:child_process';
 import { createHash, generateKeyPairSync } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { CauceRepository, FleetOperationsRepository, createPool, type DatabasePool } from '@cauce/store';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
+import { restrictedBrowserProxy } from '../../../../tests/e2e/ui-bootstrap-network.js';
 import { buildGateway } from '../app.js';
 import { PostgresConsoleUserStore } from '../console-users.js';
 import { PasswordAuthProvider } from '../password-auth.js';
@@ -99,6 +101,44 @@ const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
   'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
 const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
+const AGENT_FORWARDER = `import { writeFileSync } from 'node:fs';
+import { createConnection, createServer } from 'node:net';
+const [socketPath, target] = process.argv.slice(2);
+const port = Number(target);
+if (!socketPath || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid transport target');
+createServer(client => {
+  client.pause();
+  const upstream = createConnection(socketPath);
+  const close = () => { client.destroy(); upstream.destroy(); };
+  for (const socket of [client, upstream]) {
+    socket.on('error', close);
+    socket.once('close', close);
+    socket.setTimeout(5000, close);
+  }
+  let greeted = false;
+  let buffered = Buffer.alloc(0);
+  const receive = chunk => {
+    buffered = Buffer.concat([buffered, chunk]);
+    if (buffered.length > 512) { close(); return; }
+    if (!greeted) {
+      if (buffered.length < 2) return;
+      if (!buffered.subarray(0, 2).equals(Buffer.from([5, 0]))) { close(); return; }
+      greeted = true;
+      buffered = buffered.subarray(2);
+      upstream.write(Buffer.from([5, 1, 0, 1, 127, 0, 0, 1, port >> 8, port & 255]));
+    }
+    if (buffered.length < 10) return;
+    if (!buffered.subarray(0, 10).equals(Buffer.from([5, 0, 0, 1, 127, 0, 0, 1, 0, 0]))) { close(); return; }
+    upstream.off('data', receive);
+    client.setTimeout(0); upstream.setTimeout(0);
+    if (buffered.length > 10) client.write(buffered.subarray(10));
+    buffered = Buffer.alloc(0);
+    client.pipe(upstream); upstream.pipe(client); client.resume();
+  };
+  upstream.on('data', receive);
+  upstream.once('connect', () => { upstream.write(Buffer.from([5, 1, 0])); });
+}).listen(9443, '0.0.0.0', () => { writeFileSync('/tmp/transport-ready', '9443'); });
+`;
 
 export interface CommandResult { code: number; stdout: string; stderr: string }
 export interface DockerInventory { containers: string; volumes: string; images: string }
@@ -147,6 +187,44 @@ interface Owned {
   work?: string; database?: TestDatabase; current?: EmptyTestDatabase; pool?: DatabasePool; container?: string; image?: string;
   agentImage?: string; imageReference?: string; app?: Awaited<ReturnType<typeof buildGateway>>; bootstrapApp?: Awaited<ReturnType<typeof buildGateway>>;
   bridge?: Awaited<ReturnType<typeof startSignedFleetAuthorityBridge>>;
+  transportProxy?: Awaited<ReturnType<typeof restrictedBrowserProxy>>;
+}
+
+async function createAgentTransport(work: string, prefix: string, image: string, network: string) {
+  const directory = join(work, 'transport'); await mkdir(directory, { mode: 0o700 });
+  await chmod(directory, 0o700);
+  const socketPath = join(directory, 'proxy.sock');
+  if (Buffer.byteLength(socketPath) > 107) throw new Error('Agent transport path exceeds Unix socket limit');
+  await writeFile(join(directory, 'forwarder.mjs'), AGENT_FORWARDER, { mode: 0o400 });
+  const user = `${String(process.getuid?.() ?? 1000)}:${String(process.getgid?.() ?? 1000)}`;
+  const container = `${prefix}-transport`;
+  await docker(['run', '-d', '--name', container, '--network', network, '--user', user, '--read-only', '--cap-drop', 'ALL',
+    '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777',
+    '--mount', `type=bind,src=${directory},dst=/transport,readonly`, image, '/bin/sleep', 'infinity']);
+  const networks = JSON.parse(await docker(['inspect', '--format', '{{json .NetworkSettings.Networks}}', container])) as
+    Record<string, { IPAddress: string }>;
+  const address = networks[network]?.IPAddress;
+  if (address === undefined || isIP(address) !== 4) throw new Error('Agent transport has no IPv4 address on its exact network');
+  return { container, user, address, socketPath };
+}
+
+async function startAgentForwarder(transport: Awaited<ReturnType<typeof createAgentTransport>>, owned: Owned,
+  bootstrapPort: number, gatewayPort: number) {
+  owned.transportProxy = await restrictedBrowserProxy({ socketPath: transport.socketPath }, [bootstrapPort, gatewayPort]);
+  const socket = await lstat(transport.socketPath);
+  if (!socket.isSocket() || socket.uid !== process.getuid?.() || (socket.mode & 0o777) !== 0o600) {
+    throw new Error('Agent transport socket ownership or mode differs');
+  }
+  await docker(['exec', '-d', '--user', transport.user, transport.container, '/usr/local/bin/node', '/transport/forwarder.mjs',
+    '/transport/proxy.sock', String(bootstrapPort)]);
+  const readiness = `import { readFile } from 'node:fs/promises';
+for (let attempt = 0; attempt < 50; attempt++) {
+  try { if (await readFile('/tmp/transport-ready', 'utf8') === '9443') process.exit(0); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
+throw new Error('Agent transport did not become ready');`;
+  await docker(['exec', '--user', transport.user, transport.container, '/usr/local/bin/node', '--input-type=module', '-e', readiness]);
 }
 
 async function buildRelease(work: string, tree: string, agentImage: string, providers: string[]) {
@@ -233,6 +311,7 @@ async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory
   }
   for (const name of present.containers.split('\n').filter(Boolean)) await attempt(() => docker(['rm', '-f', name]));
   for (const name of present.volumes.split('\n').filter(Boolean)) await attempt(() => docker(['volume', 'rm', name]));
+  await attempt(async () => owned.transportProxy?.close());
   await attempt(async () => owned.app?.close());
   await attempt(async () => owned.bootstrapApp?.close());
   await attempt(async () => owned.bridge?.close());
@@ -271,7 +350,7 @@ async function buildComputerImage(work: string, image: string, providerLogin: bo
 }
 
 export async function startComputerHarness(options: {
-  prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string; gatewayAddress: string };
+  prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string };
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
@@ -297,7 +376,9 @@ export async function startComputerHarness(options: {
       owned.agentImage = agent.stdout.trim();
       return { computer: owned.image, agent: `${prefix}:agent` };
     };
-    const [built, authority] = await Promise.all([images(), signedAuthority(work, pool, owned, options.agentNetwork?.gatewayAddress)]);
+    const built = await images();
+    const transport = options.agentNetwork === undefined ? undefined : await createAgentTransport(work, prefix, built.computer, options.agentNetwork.name);
+    const authority = await signedAuthority(work, pool, owned, transport?.address);
     // With the login fixture the pack measures the provider CLI inside the agent image, as the real build does.
     const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`]);
     const imageReference = `cauce-host-image:${release.manifest.image.id.replace(/^sha256:/u, '')}`;
@@ -314,7 +395,8 @@ export async function startComputerHarness(options: {
       : { command: '@pin:codex_command@', command_sha256: '@pin:codex_command_sha256@',
         login: { method: 'device', command: ['@pin:codex_command@', 'login', '--device-auth'], sha256: '@pin:codex_command_sha256@' } };
     if (!owned.bootstrapApp) throw new Error('bootstrap gateway absent');
-    const bootstrapOrigin = await owned.bootstrapApp.listen({ host: options.agentNetwork?.gatewayAddress ?? '127.0.0.1', port: 0 });
+    const bootstrapOrigin = await owned.bootstrapApp.listen({ host: '127.0.0.1', port: 0 });
+    const agentOrigin = transport === undefined ? bootstrapOrigin : `https://${transport.address}:9443`;
     console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
       archive_sha256: release.manifest.release.sha256, image_id: release.manifest.image.id, image_archive_bytes: release.manifest.image.size,
       pins: release.manifest.pins }));
@@ -332,7 +414,7 @@ export async function startComputerHarness(options: {
         profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           ...provider, runtime_mode: 'container', container_prefix: `${prefix}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
-        transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca',
+        transport: { bootstrap_url: agentOrigin, gateway_url: agentOrigin, ca_certificate: '@install@/files/fleet-ca',
           network: options.agentNetwork?.name ?? 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
       } }), generateKeyPairSync('ed25519').privateKey);
@@ -341,6 +423,7 @@ export async function startComputerHarness(options: {
       hostSetup: packager, signedFleetAuthorityClient: authority.client, fleetOperationsRepository: new FleetOperationsRepository(pool) });
     owned.app = app;
     const gatewayUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+    if (transport !== undefined) await startAgentForwarder(transport, owned, Number(new URL(bootstrapOrigin).port), Number(new URL(gatewayUrl).port));
     const container = prefix;
     const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
       '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
