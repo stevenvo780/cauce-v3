@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from '../patterns.js';
 import { AliasSchema, TenantSchema } from './core.js';
 import { EgressHandleSchema, NotifyKindSchema } from './messages.js';
+import { AgentExtensionsSchema, ExtensionsAllowedSchema } from '../agent-extensions.js';
+import { FleetHostIdSchema } from '../fleet-hosts.js';
 
 const ConfigActionSchema = z.enum(['create', 'update', 'delete']);
 const RetirableConfigActionSchema = z.enum(['create', 'update', 'delete', 'retire', 'restore']);
@@ -192,12 +194,22 @@ export const AgentAccountBindingConfigMutationSchema = z.object({
   }).strict().optional()
 }).strict();
 
+export const AgentExtensionsConfigMutationSchema = z.object({
+  resource: z.literal('agent_extensions'), action: z.literal('set'), tenant_id: TenantSchema, alias: AliasSchema,
+  extensions: AgentExtensionsSchema,
+}).strict();
+export const HostExtensionsAllowedConfigMutationSchema = z.object({
+  resource: z.literal('host_extensions_allowed'), action: z.literal('set'), host_id: FleetHostIdSchema,
+  extensions_allowed: ExtensionsAllowedSchema,
+}).strict();
+
 export const ConfigLeafMutationSchema = z.discriminatedUnion('resource', [
   TenantConfigMutationSchema, RoomConfigMutationSchema, MembershipConfigMutationSchema,
   AclEdgeConfigMutationSchema, HarnessConfigMutationSchema, RolePolicyConfigMutationSchema,
   ChainPolicyConfigMutationSchema, EgressDestinationConfigMutationSchema,
   AgentConfigMutationSchema, ProviderAccountConfigMutationSchema,
-  AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema
+  AliasRoutingCeilingConfigMutationSchema, AgentAccountBindingConfigMutationSchema,
+  AgentExtensionsConfigMutationSchema, HostExtensionsAllowedConfigMutationSchema
 ]);
 export const ConfigBatchMutationSchema = z.object({
   resource: z.literal('batch'), action: z.literal('apply'),

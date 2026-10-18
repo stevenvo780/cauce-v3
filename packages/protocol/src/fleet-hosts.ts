@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ExtensionsAllowedSchema } from './agent-extensions.js';
 
 export const FleetHostIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 export const FleetHostStatusSchema = z.enum(['unknown', 'reachable', 'unreachable']);
@@ -33,6 +34,7 @@ export const FleetHostSchema = z.object({
   approved: z.boolean(),
   version: z.number().int().nonnegative(),
   agents: z.array(FleetHostAgentSchema).max(1000),
+  extensions_allowed: ExtensionsAllowedSchema.optional(),
 }).strict();
 export type FleetHost = z.infer<typeof FleetHostSchema>;
 

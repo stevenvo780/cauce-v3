@@ -32,3 +32,4 @@ export * from './schemas/agent-preferences.js';
 export * from './configuration-receipt.js';
 export * from './native-admin.js';
 export * from './agent-quota.js';
+export * from './agent-extensions.js';
