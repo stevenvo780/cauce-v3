@@ -125,7 +125,7 @@ function selected(policy: z.infer<typeof Policy>, accountId: string, provider: s
   }
   if (profile.provider !== provider || profile.identity !== identity || profile.runtime_user !== runtimeUser
       || !['codex', 'claude', 'grok', 'muse'].includes(provider) || (harness === 'openclaw') !== (profile.openclaw !== undefined) || (harness === 'muse') !== (profile.muse !== undefined)
-      || (provider === 'grok' && harness !== 'grok')
+      || (provider === 'grok' && harness !== 'grok' && harness !== 'openclaw')
       || (placement.runtime_mode === 'container' ? profile.container_name !== placement.container_name : profile.container_name !== undefined)) throw denied();
   const loginKey = LoginKey.safeParse(harness === 'openclaw' ? 'openclaw' : provider); if (!loginKey.success) throw denied();
   const login = Login.safeParse(templateLogin ?? policy.logins[loginKey.data]); if (!login.success) throw denied();

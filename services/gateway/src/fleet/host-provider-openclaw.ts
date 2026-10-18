@@ -9,11 +9,12 @@ const Pinned = { version: z.literal('2026.6.6'), auth_list_source: LoginPathSche
   auth_list_sha256: z.literal('31f4f35423fa6d909eaa448612f06a2030d43f91872f90c07d11e4638bff2c90'),
   node_command: LoginPathSchema, node_command_sha256: Hash, bridge: LoginPathSchema, bridge_sha256: Hash };
 /** The paying binding decides the OpenClaw provider; a binding provider without a flow here is refused. */
-export const OPENCLAW_PROVIDER_BY_BINDING: Readonly<Record<string, 'openai' | 'anthropic'>> = Object.freeze({ codex: 'openai', claude: 'anthropic' });
+export const OPENCLAW_PROVIDER_BY_BINDING: Readonly<Record<string, 'openai' | 'anthropic' | 'xai'>> = Object.freeze({ codex: 'openai', claude: 'anthropic', grok: 'xai' });
 export const OpenClawDriver = z.discriminatedUnion('provider_id', [
   z.object({ provider_id: z.literal('openai'), method_id: z.enum(['oauth', 'device-code']), ...Pinned }).strict(),
   // Isolated Anthropic login: a pasted setup-token stored under the account's own profile id, never the external Claude CLI.
   z.object({ provider_id: z.literal('anthropic'), method_id: z.literal('setup-token'), ...Pinned }).strict(),
+  z.object({ provider_id: z.literal('xai'), method_id: z.enum(['oauth', 'device-code']), ...Pinned }).strict(),
 ]);
 export const openClawCompatible = (profile: { provider: string; openclaw?: { provider_id: string } | undefined }): boolean =>
   profile.openclaw === undefined || (Object.hasOwn(OPENCLAW_PROVIDER_BY_BINDING, profile.provider)
