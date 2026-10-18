@@ -199,9 +199,10 @@ test('imports Praxis with its owner once, isolated from Humanizar, and a re-run 
     [{ id: 'Hospital', company_id: 'praxis', is_hub: false }]);
   assert.deepEqual((await pool.query("SELECT alias,enabled,company_id FROM agents WHERE tenant_id='Hospital' ORDER BY alias")).rows,
     ['operador', 'perseo', 'teseo'].map(alias => ({ alias, enabled: false, company_id: 'praxis' })), 'agents stay inactive drafts');
-  assert.deepEqual((await pool.query(`SELECT from_tenant,to_tenant,allow_route,allow_read,allow_control FROM acl_edges
-    WHERE from_tenant='Hospital' OR to_tenant='Hospital' ORDER BY from_tenant`)).rows.map(row => [row.allow_route, row.allow_read, row.allow_control]),
-  [[true, true, false], [true, true, false]]);
+  assert.deepEqual((await pool.query(`SELECT (from_tenant=$1) AS owner_hub,allow_route,allow_read,allow_control FROM acl_edges
+    WHERE from_tenant='Hospital' OR to_tenant='Hospital' ORDER BY from_tenant=$1`, [hub])).rows
+    .map(row => [row.owner_hub, row.allow_route, row.allow_read, row.allow_control]),
+  [[false, true, true, false], [true, true, true, true]]);
   const exported = JSON.parse(await readFile(files.profiles, 'utf8'));
   for (const alias of ['operador', 'perseo', 'teseo']) {
     const profile = (await pool.query(`SELECT purpose,responsibilities FROM agent_profiles WHERE tenant_id='Hospital' AND alias=$1`, [alias])).rows[0];
@@ -276,7 +277,7 @@ test('the bundle copies the registered hub and keeps the runtime of an already p
   const bundle = buildBundle(value => JSON.stringify(value).length.toString(16).padStart(64, '0'), current, inventory);
   assert.deepEqual(bundle.records.tenants.map(tenant => [tenant.id, tenant.is_hub]), [['hub-x', true], ['Hospital', false]]);
   assert.equal(bundle.records.agents[0].runtime, runtime);
-  assert.deepEqual(bundle.records.acl_edges.map(edge => [edge.from_tenant, edge.to_tenant, edge.allow_read]),
-    [['hub-x', 'Hospital', false], ['Hospital', 'hub-x', false]]);
+  assert.deepEqual(bundle.records.acl_edges.map(edge => [edge.from_tenant, edge.to_tenant, edge.allow_route, edge.allow_read, edge.allow_control]),
+    [['hub-x', 'Hospital', true, true, true], ['Hospital', 'hub-x', true, false, false]]);
   assert.throws(() => buildBundle(() => '', { ...current, records: { tenants: [], agents: [] } }, inventory), /no tiene hub/u);
 });

@@ -149,7 +149,18 @@ async function load(source, compiled) {
   throw new Error('falta tsx y la capa compilada del runtime; usá cauce platform contenedor');
 }
 
-/** The company hub comes from the registration: it is copied as it is so the hub edges stay inside the bundle. */
+/** The owner's hub always routes, reads and controls an imported tenant. The reverse edge keeps the inventory flags. */
+function ownerHubEdge(from, to, hubId, declared) {
+  const outgoing = from === hubId;
+  return {
+    from_tenant: from, to_tenant: to, enabled: true,
+    allow_route: outgoing ? true : declared.allow_route,
+    allow_read: outgoing ? true : declared.allow_read,
+    allow_control: outgoing ? true : declared.allow_control,
+  };
+}
+
+/** The company hub comes from the registration and is copied as it is. */
 export function buildBundle(sha256Hex, current, inventory) {
   const hub = current.records.tenants.find(tenant => tenant.is_hub);
   if (!hub) throw new ImportRejected(`la empresa ${current.company_id} no tiene hub`);
@@ -160,8 +171,10 @@ export function buildBundle(sha256Hex, current, inventory) {
     rooms: inventory.rooms,
     agents: inventory.agents.map(agent => ({ ...agent, runtime: placed.get(`${agent.tenant_id}/${agent.alias}`) ?? null })),
     memberships: inventory.memberships,
-    acl_edges: inventory.tenants.flatMap(tenant => [[hub.id, tenant.id], [tenant.id, hub.id]]
-      .map(([from, to]) => ({ from_tenant: from, to_tenant: to, enabled: true, ...inventory.hub_edges }))),
+    acl_edges: inventory.tenants.flatMap(tenant => [
+      ownerHubEdge(hub.id, tenant.id, hub.id, inventory.hub_edges),
+      ownerHubEdge(tenant.id, hub.id, hub.id, inventory.hub_edges),
+    ]),
   };
   const payload = { format: 'cauce-company-configuration', version: 1, company_id: current.company_id,
     schema_version: current.schema_version, source_revision: current.source_revision, mode: 'upsert_only', records };
