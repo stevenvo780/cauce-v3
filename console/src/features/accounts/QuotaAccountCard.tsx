@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { AccountQuotaWindow, QuotaAccount, QuotaRefreshStatus } from '../../api/client/my-quotas-client';
 import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
@@ -5,7 +6,7 @@ import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL, quotaFailureReason } 
 import { formatPercent, formatResetIn, PROVIDER_LABEL } from './quotas';
 
 const REFRESH_LABEL: Partial<Record<QuotaRefreshStatus, string>> = {
-  not_authenticated: 'Cuenta sin autenticar: autentícala desde su entorno.',
+  not_authenticated: 'Cuenta sin sesión iniciada: pulsa «Iniciar sesión».',
   executor_unavailable: 'No hay un ejecutor disponible para actualizar esta cuenta.',
   deleted: 'El entorno de consulta fue eliminado.',
   busy: 'El entorno está ocupado. La cuota se consultará cuando termine su operación.',
@@ -64,9 +65,9 @@ function orderedWindows(windows: readonly AccountQuotaWindow[]): AccountQuotaWin
     || (left.window_minutes ?? 0) - (right.window_minutes ?? 0));
 }
 
-export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEdit, onRemove }: {
+export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEdit, onRemove, login }: {
   account: QuotaAccount; pinned: boolean; canPin?: boolean; onPin?: () => void;
-  canEdit?: boolean; onEdit?: () => void; onRemove?: () => void;
+  canEdit?: boolean; onEdit?: () => void; onRemove?: () => void; login?: ReactNode;
 }) {
   const now = Date.now();
   const fatigue = accountFatigue(account, now);
@@ -78,6 +79,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
     <header className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="m-0 text-base">{account.label}</h3>
       <p className="m-0 text-xs text-muted">{PROVIDER_LABEL[account.provider] ?? account.provider}</p></div><Pill tone={tone}>{FATIGUE_LABEL[fatigue]}</Pill></header>
     <QuotaRefreshNotice status={account.refresh_status} />
+    {login}
     {account.agents.length ? <p className="m-0 text-xs text-muted">Usada por {account.agents.map(agent => `${agent.tenant_id}/${agent.alias}`).join(', ')}
       {account.agent_count > account.agents.length ? ` y ${String(account.agent_count - account.agents.length)} más` : ''}</p> : null}
     {failure ? <Notice tone={account.note?.trim() === 'rate_limited' ? 'warn' : 'danger'}>{failure}</Notice>

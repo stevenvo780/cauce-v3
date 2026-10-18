@@ -7,6 +7,7 @@ import { Button, Notice } from '../../components/kit';
 import { onNavClick } from '../../router';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { randomUuid } from '../../random-id';
+import { AccountLogin } from './AccountLogin';
 import { QuotaAccountCard } from './QuotaAccountCard';
 import { PROVIDER_LABEL } from './quotas';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
@@ -95,10 +96,11 @@ export function MyQuotasPage() {
         <Button disabled={busy} onClick={() => { setRemoving(undefined); }}>Cancelar</Button></div></section> : null}
     <section aria-label="Tarjetas de Mis cuotas" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(account => <QuotaAccountCard key={account.id} account={accounts.error ? failedQuotaRead(account) : account}
       pinned={pinned.includes(account.id)} canPin={!!preferences.data && !preferences.error && !preferences.loading && !busy} onPin={() => { void pin(account); }}
-      canEdit={canWriteAccounts} onEdit={() => { setEditing(account); }} onRemove={() => { setRemoving(account); }} />)}</section>
+      canEdit={canWriteAccounts} onEdit={() => { setEditing(account); }} onRemove={() => { setRemoving(account); }}
+      login={<AccountLogin account={account} snapshot={environments.error ? undefined : environments.data} allowed={canManageCompany(authority?.role)} reload={reload} />} />)}</section>
     {accounts.data && !visible.length ? <Notice tone="info">{filterPinned ? 'No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.' : 'Aún no hay cuentas. Registra una suscripción para empezar.'}</Notice> : null}
     <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite}
-      canAuthenticate={canManageCompany(authority?.role) && !!accounts.data && !accounts.error && !busy} reload={reload} />
+      reload={reload} />
   </div>;
 }
 

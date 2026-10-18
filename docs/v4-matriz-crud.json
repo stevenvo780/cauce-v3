@@ -2879,7 +2879,7 @@
           "tests": [
             {
               "file": "console/src/features/accounts/MyQuotasPage.test.tsx",
-              "name": "autenticar pide consentimiento y muestra operación pendiente sin afirmar autenticación completa"
+              "name": "iniciar sesión pide el login con un solo clic y muestra la operación pendiente sin afirmar autenticación completa"
             }
           ]
         },

@@ -90,7 +90,7 @@ it('datos antiguos con saldo cero no muestran el cansancio de agotado', async ()
   expect(card.getAllByText('Datos antiguos').length).toBeGreaterThan(0);
   expect(card.queryByText('Sin disponibilidad')).not.toBeInTheDocument();
 });
-it('autenticar pide consentimiento y muestra operación pendiente sin afirmar autenticación completa', async () => {
+it('iniciar sesión pide el login con un solo clic y muestra la operación pendiente sin afirmar autenticación completa', async () => {
   const environment = { id: 'env-1', company_id: 'one', account_id: 'subscription', host_id: 'host', provider: 'codex', label: 'Consulta GPT',
     status: 'ready', version: 2, created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z' };
   let operation: Record<string, unknown> | undefined; const actions: unknown[] = [];
@@ -103,15 +103,17 @@ it('autenticar pide consentimiento y muestra operación pendiente sin afirmar au
         result: { login_url: 'https://provider.example.test/auth', user_code: 'TEST-CODE' }, created_at: environment.created_at, updated_at: environment.updated_at };
       return HttpResponse.json({ environment, operation }, { status: 202 }); }));
   const user = userEvent.setup(); renderWithApi(owner());
-  await user.click(await screen.findByRole('button', { name: 'Autenticar cuenta' }));
-  expect(actions).toHaveLength(0); await user.click(screen.getByRole('button', { name: 'Confirmar autenticación' }));
+  await user.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
+  expect(await screen.findByRole('dialog', { name: 'Iniciar sesión en Cuenta compartida' })).toBeVisible();
+  await waitFor(() => { expect(actions).toHaveLength(1); });
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cerrar' }));
   expect(await screen.findByRole('link', { name: 'Abrir autorización del proveedor' })).toHaveAttribute('href', 'https://provider.example.test/auth');
   expect(screen.getByText(/TEST-CODE/u)).toBeVisible();
   expect(actions[0]).toMatchObject({ action: 'authenticate', expected_version: 2, consent: true });
   expect(JSON.stringify(actions[0])).not.toMatch(/shell|command|mount/iu);
   expect(screen.getAllByText(/Esperando autenticación/u).length).toBeGreaterThan(0);
   expect(screen.queryByText(/Cuenta autenticada/u)).not.toBeInTheDocument();
-  for (const action of ['Autenticar cuenta', 'Consultar cuotas', 'Actualizar CLI', 'Eliminar entorno']) {
+  for (const action of ['Consultar cuotas', 'Actualizar CLI', 'Eliminar entorno']) {
     expect(screen.getByRole('button', { name: action })).toBeDisabled();
   }
 });
@@ -176,10 +178,10 @@ it('releer cuentas conserva la sesión de autenticación del entorno mientras la
     http.post('*/v3/console/provider-auth/sessions', () => HttpResponse.json(session)),
     http.post(`*/v3/console/provider-auth/sessions/${sessionId}/cancel`, () => { cancelled(); return HttpResponse.json({ ...session, status: 'cancelled' }); }));
   const user = userEvent.setup(); const view = renderWithApi(owner());
-  await user.click(await screen.findByRole('button', { name: 'Conectar cuenta' }));
+  await user.click(await screen.findByRole('button', { name: 'Iniciar sesión' }));
   await screen.findByRole('button', { name: 'Verificar conexión' });
-  await user.click(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Actualizar cuotas y entornos' })).toBeEnabled(); });
+  fireEvent.click(screen.getByRole('button', { name: 'Actualizar cuotas y entornos', hidden: true }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Actualizar cuotas y entornos', hidden: true })).toBeEnabled(); });
   expect(screen.getByRole('button', { name: 'Verificar conexión' })).toBeVisible();
   expect(cancelled).not.toHaveBeenCalled(); expect(scopes).toHaveBeenCalledOnce();
   view.unmount(); await waitFor(() => { expect(cancelled).toHaveBeenCalledOnce(); });

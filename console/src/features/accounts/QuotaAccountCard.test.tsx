@@ -23,7 +23,7 @@ it('muestra la actualización automática sin acreditar disponibilidad con una l
 
 it.each([
   ['executor_unavailable', 'No hay un ejecutor disponible para actualizar esta cuenta.'],
-  ['not_authenticated', 'Cuenta sin autenticar: autentícala desde su entorno.'],
+  ['not_authenticated', 'Cuenta sin sesión iniciada: pulsa «Iniciar sesión».'],
   ['read_only', 'La consulta automática requiere permiso para operar el entorno.'],
   ['failed', 'La consulta automática falló. Relee el entorno para revisar su resultado.'],
   ['stale', 'La consulta terminó y la captura sigue antigua. Se consultará de nuevo en la próxima ventana.'],

@@ -360,32 +360,26 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       "SELECT status FROM quota_environment_operations WHERE environment_id=$1 AND action='delete'", [ownerEnvironmentId])).rows).toEqual([{ status: 'done' }]);
   }, 300_000);
 
-  it('prepara la autenticación web con el CLI real y cancelar conserva la identidad sin verificar', async () => {
+  it('«Iniciar sesión» abre el CLI real en la terminal web y cancelar conserva la identidad sin verificar', async () => {
     const page = companyOwnerPage();
-    const label = `zz-canary-login-environment-${run}`;
-    await createEnvironment(page, label);
-    const environment = (await quotaSnapshot(page)).environments.find(item => item.label === label);
-    if (!environment) throw new Error('quota login environment was not created');
-    await hostRuntime().waitOperation(environment.id, 'create');
     await page.reload({ waitUntil: 'domcontentloaded' });
-    const card = page.getByRole('article', { name: `Entorno ${label}`, exact: true });
-    await card.getByRole('button', { name: 'Autenticar cuenta', exact: true }).click();
-    await page.getByRole('region', { name: 'Confirmar operación del entorno', exact: true })
-      .getByRole('button', { name: 'Confirmar autenticación', exact: true }).click();
-    await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'awaiting_auth' });
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    const card = page.getByRole('article', { name: `Cuotas de ${accountLabel}`, exact: true });
     await Promise.all([
       waitForQuotaAuthenticationStream(page),
-      card.getByRole('button', { name: 'Conectar cuenta', exact: true }).click(),
+      card.getByRole('button', { name: 'Iniciar sesión', exact: true }).click(),
     ]);
-    await card.getByLabel('Terminal privada de autenticación', { exact: true }).waitFor({ timeout: 30_000 });
-    await card.getByRole('button', { name: 'Cancelar conexión', exact: true }).click();
-    await card.getByText('Conexión cancelada', { exact: true }).waitFor({ timeout: 20_000 });
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Terminal privada de autenticación', { exact: true }).waitFor({ timeout: 30_000 });
+    const environment = (await quotaSnapshot(page)).environments.find(item => item.account_id === accountId && item.status !== 'deleted');
+    if (!environment) throw new Error('quota login environment was not created');
+    await dialog.getByRole('button', { name: 'Cancelar conexión', exact: true }).click();
+    await dialog.getByText('Conexión cancelada', { exact: true }).waitFor({ timeout: 20_000 });
+    await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
     await hostRuntime().waitOperation(environment.id, 'authenticate', { status: 'failed' });
     expect((await pool().query('SELECT quota_identity_hash,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows)
       .toEqual([{ quota_identity_hash: null, enabled: false }]);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await deleteEnvironment(page, label);
+    await deleteEnvironment(page, environment.label);
     await hostRuntime().waitOperation(environment.id, 'delete');
     await assertContainerRemoved(environment.id);
   }, 180_000);

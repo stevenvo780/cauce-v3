@@ -10,6 +10,20 @@
 - La lista de proveedores de un host depende de sus capacidades firmadas vigentes. Las identidades enroladas revocadas o vencidas no usan el fallback estático. `gemini` se excluye de la creación de entornos de cuotas en `quota-environments.ts`.
 - La autenticación final debe comprobar una identidad aceptada por el proveedor; una etiqueta o correo local no basta. Las cuentas compartidas muestran el consumo como compartido.
 
+## Iniciar sesión en una cuenta
+
+El único camino desde la web es **Mis cuotas → tarjeta de la cuenta → «Iniciar sesión»**. Ese clic es el consentimiento: crea el entorno de la cuenta si falta (en el único ordenador compatible, o en el que se elija al lado del botón), pide la operación `authenticate` y abre en un diálogo la terminal del CLI del proveedor dentro de ese contenedor. Se completa el login ahí (abrir el enlace, pegar el código) y se pulsa «Verificar conexión»; cancelar o cerrar el diálogo detiene el proceso de login y la operación queda fallida sin identidad. Sin un ordenador con ejecutor de cuotas que declare `authenticate` para el proveedor, el botón queda deshabilitado con el motivo.
+
+| Proveedor | Comando de login (descriptor) | Estado |
+|---|---|---|
+| Claude | `claude auth login` (enlace OAuth y «Paste code here») | soportado |
+| Codex | `codex login --device-auth` (enlace y código de dispositivo) | soportado |
+| Grok | `grok login --device-auth` (enlace y código de dispositivo) | soportado |
+| Muse | `muse login` (código de dispositivo de Meta) | sin soporte en entornos de cuotas: la imagen no instala Muse, no hay lector de cuotas y `quota_environments.provider` no admite `muse` |
+| Antigravity (`agy`) | sin subcomando de login: `agy` abre el asistente de primer uso (tema, términos, inicio de sesión de Google) | sin soporte: no hay paquete fijable para la imagen ni lector de cuotas |
+
+La autenticación de un agente (Muse incluido) sigue en la ficha del agente, como paso de su operación de flota.
+
 ## Imagen de cuotas
 
 `ops/cuotas/Dockerfile` fija la imagen base y las versiones de los CLI. La política del host exige el digest de la imagen:

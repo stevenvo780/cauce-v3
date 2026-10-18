@@ -48,19 +48,10 @@ it('habilita únicamente acciones del host y proveedor del entorno y bloquea hos
   const view = renderWithApi(<QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} />);
   const card = within(screen.getByRole('article', { name: 'Entorno GPT' }));
   expect(card.getByRole('button', { name: 'Consultar cuotas' })).toBeEnabled();
-  for (const name of ['Autenticar cuenta', 'Actualizar CLI', 'Eliminar entorno']) expect(card.getByRole('button', { name })).toBeDisabled();
+  for (const name of ['Actualizar CLI', 'Eliminar entorno']) expect(card.getByRole('button', { name })).toBeDisabled();
   expect(card.getByRole('button', { name: 'Actualizar CLI' })).toHaveAttribute('title', expect.stringContaining('no puede ejecutar esta acción'));
   view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={{ ...snapshot, capabilities: { ...snapshot.capabilities, hosts: snapshot.capabilities.hosts.slice(1) } }} accounts={accounts} canWrite reload={vi.fn()} /></ApiProvider>);
   expect(card.getByRole('button', { name: 'Consultar cuotas' })).toBeDisabled();
-});
-
-it('revocar capacidad tras el consentimiento bloquea la confirmación sin enviar una acción', async () => {
-  const action = vi.spyOn(testApi, 'actQuotaEnvironment'); const user = userEvent.setup();
-  const allowed = { ...snapshot, capabilities: { ...snapshot.capabilities, hosts: [{ ...snapshot.capabilities.hosts[0], provider_actions: { codex: ['authenticate' as const] } }] } };
-  const view = renderWithApi(<QuotaEnvironmentPanel snapshot={allowed} accounts={accounts} canWrite reload={vi.fn()} />);
-  await user.click(screen.getByRole('button', { name: 'Autenticar cuenta' }));
-  view.rerender(<ApiProvider api={testApi}><QuotaEnvironmentPanel snapshot={snapshot} accounts={accounts} canWrite reload={vi.fn()} /></ApiProvider>);
-  expect(screen.getByRole('button', { name: 'Confirmar autenticación' })).toBeDisabled(); expect(action).not.toHaveBeenCalled();
 });
 
 it.each<[string, QuotaEnvironmentsSnapshot | undefined, boolean]>([
@@ -130,7 +121,7 @@ it('muestra el estado de refresco del servidor aunque la operación no esté en 
 
 it.each([
   ['executor_unavailable', 'No hay un ejecutor disponible para actualizar esta cuenta.'],
-  ['not_authenticated', 'Cuenta sin autenticar: autentícala desde su entorno.'],
+  ['not_authenticated', 'Cuenta sin sesión iniciada: pulsa «Iniciar sesión».'],
 ] as const)('muestra %s para el entorno incluso si otro ejecutor sigue disponible', (refresh_status, message) => {
   renderWithApi(<QuotaEnvironmentPanel snapshot={{ ...snapshot, environments: [{ ...environment, refresh_status }] }}
     accounts={accounts} canWrite reload={vi.fn()} />);

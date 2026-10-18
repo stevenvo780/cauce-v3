@@ -5,22 +5,21 @@ import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { randomUuid } from '../../random-id';
 import { quotaEnvironmentActionBlock, quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
-import { QuotaAuthPanel } from './QuotaAuthPanel';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
 import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
 
-const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Autenticar cuenta', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
+const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Iniciar sesión', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
 const OPERATION_LABEL: Record<QuotaEnvironmentOperation['status'], string> = { pending: 'Pendiente', running: 'En ejecución', awaiting_auth: 'Esperando autenticación', done: 'Completada', failed: 'Fallida' };
 
-export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, canAuthenticate = canWrite, reload }: {
-  snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; canAuthenticate?: boolean; reload: () => Promise<void>;
+export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, reload }: {
+  snapshot?: QuotaEnvironmentsSnapshot; loading?: boolean; accounts: readonly QuotaAccount[]; canWrite: boolean; reload: () => Promise<void>;
 }) {
   const api = useApi();
   const [draft, setDraft] = useState({ account_id: '', host_id: '', label: '' });
   const [editing, setEditing] = useState<QuotaEnvironment>();
   const [label, setLabel] = useState('');
-  const [confirm, setConfirm] = useState<{ environment: QuotaEnvironment; action: 'authenticate' | 'delete' }>();
+  const [confirm, setConfirm] = useState<QuotaEnvironment>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -58,11 +57,11 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
     const signature = `${environment.id}:${String(environment.version)}:${action}`;
     const input = { expected_version: environment.version, idempotency_key: keyFor(signature) };
     void perform(() => action === 'delete' ? api.deleteQuotaEnvironment(environment.id, input)
-      : api.actQuotaEnvironment(environment.id, { ...input, action, ...(action === 'authenticate' ? { consent: true as const } : {}) }),
+      : api.actQuotaEnvironment(environment.id, { ...input, action }),
     `${ACTION_LABEL[action]}: solicitud registrada. Su estado aparece en el entorno.`, signature);
   }
   return <section aria-label="Entornos de Mis cuotas" className="grid gap-4">
-    <div><h2 className="m-0 text-lg">Entornos de consulta</h2><p className="text-sm text-muted">Cada entorno aísla el CLI de una cuenta. La terminal admite las operaciones mostradas debajo.</p></div>
+    <div><h2 className="m-0 text-lg">Entornos de consulta</h2><p className="text-sm text-muted">Cada entorno aísla el CLI de una cuenta. Para iniciar sesión usa «Iniciar sesión» en la tarjeta de la cuenta.</p></div>
     {loading && !snapshot ? <p role="status">Leyendo entornos de consulta… El formulario se habilita cuando llega la lectura.</p> : null}
     {snapshot && !snapshot.capabilities.available ? <Notice tone="warn">No hay un ejecutor disponible para esta empresa. Los entornos conservan su estado; las operaciones requieren recuperar la conexión.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}{notice ? <Notice tone="info" role="status">{notice}</Notice> : null}
@@ -87,25 +86,22 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
           <p className="m-0 text-xs text-muted">{environment.provider} · {environment.host_id} · {accounts.find(account => account.id === environment.account_id)?.label ?? 'Cuenta no disponible'}</p></header>
         <QuotaRefreshNotice status={updating ? 'updating' : environment.refresh_status} />
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
-          {(['authenticate', 'query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)} title={actionBlock(environment, action)}
-            onClick={() => { if (action === 'authenticate') setConfirm({ environment, action }); else act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}
+          {(['query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)} title={actionBlock(environment, action)}
+            onClick={() => { act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}
           <Button size="sm" disabled={!canEdit(environment)} title={editBlock(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); }}>Editar entorno</Button>
-          <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} title={actionBlock(environment, 'delete')} onClick={() => { setConfirm({ environment, action: 'delete' }); }}>Eliminar entorno</Button>
+          <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} title={actionBlock(environment, 'delete')} onClick={() => { setConfirm(environment); }}>Eliminar entorno</Button>
         </div>
         {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
           {operation.error_code ? <Notice tone="danger">{describeOperationError(operation.error_code)}</Notice> : null}<QuotaCommandResult result={operation.result} /></section> : null}
-        {operation?.status === 'awaiting_auth' && operation.action === 'authenticate' ? <QuotaAuthPanel environment={environment} operation={operation}
-          allowed={canAuthenticate && !busy && snapshot.capabilities.available && hosts.some(host => host.host_id === environment.host_id && quotaHostSupports(host, environment.provider, 'authenticate'))} reload={reload} /> : null}
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
     {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing) || !label.trim()) return; void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
       <label>Nombre del entorno<input required maxLength={80} value={label} disabled={!canEdit(editing)} onChange={event => { setLabel(event.target.value); }} /></label>
       <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing) || !label.trim()} title={!canEdit(editing) ? editBlock(editing) : !label.trim() ? 'Escribe el nombre del entorno.' : undefined}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
-    {confirm ? <section aria-label="Confirmar operación del entorno" className="grid gap-2 rounded-xl border border-line bg-surface p-4"><p>{confirm.action === 'authenticate'
-      ? `Autenticar ${confirm.environment.label} inicia una sesión propia del entorno. Completa la autorización del proveedor en el enlace o código que aparezca.`
-      : `Eliminar ${confirm.environment.label} retira su entorno y su autenticación. La cuenta y sus agentes vinculados se conservan.`}</p>
-      <div className="flex gap-2"><Button disabled={!supports(confirm.environment, confirm.action)} title={actionBlock(confirm.environment, confirm.action)} onClick={() => { act(confirm.environment, confirm.action); }}>Confirmar {confirm.action === 'authenticate' ? 'autenticación' : 'eliminación'}</Button>
+    {confirm ? <section aria-label="Confirmar operación del entorno" className="grid gap-2 rounded-xl border border-line bg-surface p-4">
+      <p>Eliminar {confirm.label} retira su entorno y su sesión. La cuenta y sus agentes vinculados se conservan.</p>
+      <div className="flex gap-2"><Button disabled={!supports(confirm, 'delete')} title={actionBlock(confirm, 'delete')} onClick={() => { act(confirm, 'delete'); }}>Confirmar eliminación</Button>
         <Button disabled={busy} onClick={() => { setConfirm(undefined); }}>Cancelar</Button></div></section> : null}
   </section>;
 }

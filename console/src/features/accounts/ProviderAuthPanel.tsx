@@ -3,9 +3,14 @@ import { assertProviderAuthTarget, type ProviderAuthClient, type ProviderAuthReq
 import { ApiError } from '../../api/client/core';
 import { spanishWithReason } from '../../api/error-message';
 import { describeKnownOperationError } from './quota-messages';
+import { Button } from '../../components/kit';
 import { ProviderAuthTerminal } from './ProviderAuthTerminal';
 
-interface Props { request: ProviderAuthRequest; client: ProviderAuthClient; onAuthenticated?: (snapshot: ProviderAuthSnapshot) => void; title?: string; showRuntime?: boolean }
+interface Props {
+  request: ProviderAuthRequest; client: ProviderAuthClient; onAuthenticated?: (snapshot: ProviderAuthSnapshot) => void; title?: string; showRuntime?: boolean;
+  /** Opens the provider login as soon as the panel mounts; the click that mounted it was the consent. */
+  autoStart?: boolean;
+}
 const active = (value: ProviderAuthSnapshot) => ['opening', 'awaiting_login', 'verifying'].includes(value.status);
 const message = (value: ProviderAuthSnapshot) => value.cleanup_pending ? 'No se confirmó la parada. El perfil sigue reservado; revisa su recuperación.'
   : value.error === 'IDENTITY_MISMATCH' ? 'La cuenta conectada no corresponde a la identidad autorizada.'
@@ -42,7 +47,7 @@ function requestError(cause: unknown): string {
   return spanishWithReason(fallback, cause.message);
 }
 
-export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'Conectar la cuenta del agente', showRuntime = true }: Props) {
+export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'Conectar la cuenta del agente', showRuntime = true, autoStart = false }: Props) {
   const [session, setSession] = useState<ProviderAuthSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,21 +98,32 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
     } catch (cause) { if (alive.current) setError(requestError(cause)); }
     finally { if (alive.current) setBusy(false); }
   };
+  const started = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoStart || started.current === scopeKey) return;
+    started.current = scopeKey; void run('start');
+  });
   const disconnected = useCallback(() => { if (alive.current && current.current && active(current.current)) {
     setError('El terminal de autenticación se cerró. Relee el estado de la operación.');
   } }, []);
-  return <section aria-label="Conexión de proveedor">
-    <h3>{title}</h3>
-    <p>{request.provider_id} · {request.account_id}{showRuntime ? ` · ${request.harness_id}` : ''}</p>
-    <p>{request.host_id}{showRuntime ? ` · ${request.runtime_user}` : ''}</p>
-    {error && <p role="alert">{error}</p>}
-    {!session && <button disabled={busy} onClick={() => { void run('start'); }}>Conectar cuenta</button>}
-    {session?.status === 'awaiting_login' && <>
-      <p>{session.method === 'device' ? 'Sigue la autorización del proveedor en el terminal.' : 'Completa el inicio de sesión en el terminal.'}</p>
-      <ProviderAuthTerminal session={session} client={client} onDisconnect={disconnected} />
-      <button disabled={busy} onClick={() => { void run('verify'); }}>Verificar conexión</button>
+  return <section aria-label="Conexión de proveedor" className="grid gap-2">
+    {autoStart ? null : <>
+      <h3>{title}</h3>
+      <p>{request.provider_id} · {request.account_id}{showRuntime ? ` · ${request.harness_id}` : ''}</p>
+      <p>{request.host_id}{showRuntime ? ` · ${request.runtime_user}` : ''}</p>
     </>}
-    {session && active(session) && <button disabled={busy} onClick={() => { void run('cancel'); }}>Cancelar conexión</button>}
+    {error && <p role="alert">{error}</p>}
+    {autoStart && !session && !error ? <p role="status">Abriendo el inicio de sesión del proveedor…</p> : null}
+    {!session && (!autoStart || (!busy && error)) && <Button size="sm" disabled={busy} onClick={() => { void run('start'); }}>{autoStart ? 'Reintentar' : 'Conectar cuenta'}</Button>}
+    {session?.status === 'awaiting_login' && <>
+      <p>{session.method === 'device' ? 'Sigue la autorización del proveedor en el terminal.' : 'Completa el inicio de sesión en el terminal.'}
+        {autoStart ? ' Cuando el proveedor confirme el inicio de sesión, pulsa «Verificar conexión».' : ''}</p>
+      <ProviderAuthTerminal session={session} client={client} onDisconnect={disconnected} />
+    </>}
+    <div className="flex flex-wrap gap-2">
+      {session?.status === 'awaiting_login' && <Button size="sm" variant="primary" disabled={busy} onClick={() => { void run('verify'); }}>Verificar conexión</Button>}
+      {session && active(session) && <Button size="sm" disabled={busy} onClick={() => { void run('cancel'); }}>Cancelar conexión</Button>}
+    </div>
     {session?.status === 'authenticated' && <p role="status">Cuenta e identidad verificadas</p>}
     {session?.status === 'cancelled' && <p role="status">Conexión cancelada</p>}
   </section>;
