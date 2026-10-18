@@ -110,10 +110,10 @@ it('explains an unavailable executor in Spanish on the notice and the disabled a
   })));
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Preparar agente' }));
-  expect(await screen.findByText(/no está configurado en el servidor/)).toBeInTheDocument();
+  expect(await screen.findByText(/ninguna computadora de esta empresa está conectada/)).toBeInTheDocument();
   expect(screen.queryByText(/executor_unconfigured/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toHaveAttribute('title', expect.stringContaining('no está configurado en el servidor'));
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toHaveAttribute('title', expect.stringContaining('ninguna computadora de esta empresa está conectada'));
 });
 it('reads durable history and performs cancel/resume using the latest operation version', async () => {
   const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
