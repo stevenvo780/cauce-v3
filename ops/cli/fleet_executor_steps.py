@@ -46,6 +46,68 @@ def script(name: str):
     return module
 
 
+_PREVIOUS_FIELDS = ('tenant_id', 'alias', 'runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name',
+                    'runtime_user', 'systemd_user', 'home_directory', 'state_directory', 'primary_room_id',
+                    'primary_account_id', 'model_id', 'reasoning_effort', 'enabled', 'lifecycle_state')
+
+
+def _canonical_extensions(value) -> list:
+    rows = value if isinstance(value, list) else []
+    normalized = [{key: row[key] for key in sorted(row)} if isinstance(row, dict) else row for row in rows]
+    return sorted(normalized, key=lambda row: json.dumps(row, sort_keys=True, separators=(',', ':')))
+
+
+def _canonical_previous(rows) -> list:
+    if not isinstance(rows, list):
+        return rows
+    normalized = []
+    for row in rows:
+        if not isinstance(row, dict):
+            normalized.append(row)
+            continue
+        if (row.get('runtime_key') is None or ('runtime_mode' in row and row.get('runtime_mode') is None
+                and isinstance(row.get('primary_room_id'), str))) \
+                and row.get('lifecycle_state') == 'draft' and row.get('enabled') is not True:
+            continue
+        agent = {field: row.get(field) for field in _PREVIOUS_FIELDS}
+        agent['extensions'] = _canonical_extensions(row.get('extensions', []))
+        normalized.append(agent)
+    return sorted(normalized, key=lambda row: (str(row.get('tenant_id')), str(row.get('alias')), str(row.get('runtime_key'))))
+
+
+def _canonical_memberships(rows) -> list:
+    if not isinstance(rows, list):
+        return rows
+    normalized = [{'tenant_id': row.get('tenant_id'), 'alias': row.get('alias'), 'room_id': row.get('room_id'),
+                   'role': row.get('role'), 'enabled': row.get('enabled', True)} if isinstance(row, dict) else row for row in rows]
+    return sorted(normalized, key=lambda row: (str(row.get('tenant_id')), str(row.get('alias')), str(row.get('room_id'))))
+
+
+def _canonical_fenced(rows, context: dict) -> list:
+    if not isinstance(rows, list):
+        return rows
+    normalized = [{'resource': row.get('resource'), 'tenant_id': row.get('tenant_id'), 'alias': row.get('alias')}
+                  if isinstance(row, dict) else row for row in rows]
+    normalized = sorted(normalized, key=lambda row: (str(row.get('tenant_id')), str(row.get('alias'))))
+    request, target = context['request'], context['request']['target']
+    if request['kind'] == 'create' and target['resource'] == 'agent' \
+            and {(row.get('tenant_id'), row.get('alias')) for row in normalized if isinstance(row, dict)} \
+            <= {(target['tenant_id'], target['alias'])}:
+        return [{'resource': 'agent', 'tenant_id': target['tenant_id'], 'alias': target['alias']}]
+    return normalized
+
+
+def _canonical_inputs(context: dict) -> dict:
+    inputs = {'fenced_targets': _canonical_fenced(context['fenced_targets'], context),
+              'previous_agents': _canonical_previous(context['previous_agents']),
+              'desired_memberships': _canonical_memberships(context['desired_memberships'])}
+    if placement_role(context) is not None:
+        inputs['placement_role'] = placement_role(context)
+    if 'global_desired_memberships' in context:
+        inputs['global_desired_memberships'] = _canonical_memberships(context['global_desired_memberships'])
+    return inputs
+
+
 class Executor:
     def __init__(self, policy: dict, context: dict):
         self.policy, self.context = policy, context
@@ -58,14 +120,18 @@ class Executor:
         self.journal = json.loads(self.journal_path.read_bytes()) if self.journal_path.exists() else {'request_sha256': self.request_hash}
         if self.journal.get('request_sha256') != self.request_hash:
             raise SafeFailure('operation replay changed its declarative request')
-        inputs = {name: context[name] for name in ('fenced_targets', 'previous_agents', 'desired_memberships')}
+        raw_inputs = {name: context[name] for name in ('fenced_targets', 'previous_agents', 'desired_memberships')}
         if placement_role(context) is not None:
-            inputs['placement_role'] = placement_role(context)
+            raw_inputs['placement_role'] = placement_role(context)
         if 'global_desired_memberships' in context:
-            inputs['global_desired_memberships'] = context['global_desired_memberships']
-        inputs_hash = hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-        if self.journal.setdefault('inputs_sha256', inputs_hash) != inputs_hash:
+            raw_inputs['global_desired_memberships'] = context['global_desired_memberships']
+        raw_hash = hashlib.sha256(json.dumps(raw_inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        inputs_hash = hashlib.sha256(json.dumps(_canonical_inputs(context), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        stored_hash = self.journal.setdefault('inputs_sha256', inputs_hash)
+        if stored_hash not in (inputs_hash, raw_hash):
             raise SafeFailure('operation replay changed its fenced placements or membership intent')
+        if stored_hash == raw_hash and stored_hash != inputs_hash:
+            self.journal['inputs_sha256'] = inputs_hash
         self.journal.setdefault('expected_applied', load_applied_fleet(self.state)['generation'] if (self.state / 'applied-fleet.json').exists() else None)
         self.save()
 
