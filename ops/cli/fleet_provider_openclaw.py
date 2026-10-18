@@ -162,21 +162,32 @@ def prepare(binding: dict, agent: dict) -> None:
             target = os.open('openclaw.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         except FileExistsError:
             read_config(binding, agent)
-            return
-        try:
-            model = canonical_model(agent['model_id']) if agent.get('model_id') is not None else None
-            config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
-                                          'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
-                      'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}
-            body = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
-            if os.write(target, body) != len(body):
-                raise ValueError('OpenClaw public configuration write was incomplete')
-            os.fsync(target)
-        finally:
-            os.close(target)
-        os.fsync(descriptor)
+        else:
+            _write_openclaw(target, binding, agent, env)
+            os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
+    try:
+        model = canonical_model(agent['model_id']) if agent.get('model_id') is not None else None
+        config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
+                                      'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
+                  'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}
+        body = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
+        if os.write(target, body) != len(body):
+            raise ValueError('OpenClaw public configuration write was incomplete')
+        os.fsync(target)
+    finally:
+        os.close(target)
+
+
+def prepare_extensions(agent: dict, profile, state=None) -> dict:
+    from fleet_provider_identity import prepare_extensions as prepare_shared
+    if agent.get('harness_id') not in (None, 'openclaw'):
+        raise ValueError('openclaw extension prepare refuses another harness')
+    return prepare_shared({**agent, 'harness_id': 'openclaw'}, pathlib.Path(profile), None if state is None else pathlib.Path(state))
 
 
 def pinned_packet(packet: dict) -> dict:

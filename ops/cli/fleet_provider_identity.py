@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import pathlib
@@ -10,6 +11,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 
@@ -380,3 +382,503 @@ def authenticated_provider(packet: dict) -> bool:
         return output.get("is_error") is False and output.get("result") == expected
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return False
+
+
+EXTENSION_LIMIT = 262144
+MCP_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}')
+ENV_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,127}')
+COMMAND_TOKEN = re.compile(r'[^\s\x00-\x1f\x7f-\x9f]{1,512}')
+NPM_PACKAGE = re.compile(r'^npm:((?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*)@([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$')
+PIP_PACKAGE = re.compile(r'^pip:([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][A-Za-z0-9.!+_-]*)$')
+TOML_TABLE = re.compile(r'^\[{1,2}[^\[\]\n]+\]{1,2}\s*(#.*)?$')
+INSTALL_ENV_KEYS = ('HOME', 'PATH', 'LANG', 'npm_config_prefix', 'npm_config_cache', 'npm_config_update_notifier',
+                    'PYTHONUSERBASE', 'PIP_DISABLE_PIP_VERSION_CHECK')
+
+
+def extension_directory(value) -> pathlib.Path:
+    directory = value if isinstance(value, pathlib.Path) else pathlib.Path(value)
+    if not directory.is_absolute() or directory.is_symlink() or not directory.is_dir():
+        raise ProviderProofError('extension directory is not a real directory')
+    return directory
+
+
+def extension_rows(agent: dict) -> list:
+    rows = agent.get('extensions')
+    if rows is None:
+        return []
+    if not isinstance(rows, list) or len(rows) > 100 or any(not isinstance(row, dict) for row in rows):
+        raise ProviderProofError('extensions must be a bounded list')
+    return rows
+
+
+def one_extension(rows: list, kind: str) -> dict | None:
+    found = [row for row in rows if row.get('type') == kind]
+    if len(found) > 1:
+        raise ProviderProofError(f'extension {kind} is ambiguous')
+    return found[0] if found else None
+
+
+def write_private(path: pathlib.Path, body: bytes) -> None:
+    if len(body) > EXTENSION_LIMIT:
+        raise ProviderProofError('extension write exceeds its bound')
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name('.' + path.name + '.tmp')
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        if os.write(descriptor, body) != len(body):
+            raise ProviderProofError('extension write was incomplete')
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        os.unlink(temporary)
+        raise
+    os.close(descriptor)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def read_bounded(path: pathlib.Path) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        return b''
+    with path.open('rb') as stream:
+        body = stream.read(EXTENSION_LIMIT + 1)
+    if len(body) > EXTENSION_LIMIT:
+        raise ProviderProofError('extension file exceeds its bound')
+    return body
+
+
+def command_token(value) -> str:
+    if not isinstance(value, str) or COMMAND_TOKEN.fullmatch(value) is None:
+        raise ProviderProofError('mcp command is outside the contract')
+    return value
+
+
+def argument_list(value) -> list:
+    if not isinstance(value, list) or len(value) > 100 or any(
+            not isinstance(item, str) or len(item) > 4096 or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in item)
+            for item in value):
+        raise ProviderProofError('mcp args are outside the contract')
+    return list(value)
+
+
+def environment_map(value) -> dict:
+    """Env carries names or ${NAME} references. A literal value is rejected."""
+    if value is None or value == [] or value == {}:
+        return {}
+    if isinstance(value, list):
+        if any(not isinstance(item, str) or ENV_NAME.fullmatch(item) is None for item in value):
+            raise ProviderProofError('mcp env must name profile variables')
+        return {item: '${' + item + '}' for item in value}
+    if isinstance(value, dict) and all(isinstance(key, str) and ENV_NAME.fullmatch(key) is not None and item == '${' + key + '}'
+                                        for key, item in value.items()):
+        return dict(value)
+    raise ProviderProofError('mcp env must reference profile variables')
+
+
+def mcp_entry(row: dict) -> dict:
+    if set(row) != {'type', 'name', 'command', 'args', 'env'} or MCP_NAME.fullmatch(str(row.get('name'))) is None:
+        raise ProviderProofError('mcp extension is outside the contract')
+    return {'name': row['name'], 'command': command_token(row['command']), 'args': argument_list(row['args']),
+            'env': environment_map(row['env'])}
+
+
+def public_mcp(entry: dict) -> dict:
+    published = {'command': entry['command'], 'args': entry['args']}
+    if entry['env']:
+        published['env'] = entry['env']
+    return published
+
+
+def stdio_mcp(entry: dict) -> dict:
+    return {'type': 'stdio', **public_mcp(entry)}
+
+
+MANAGED_MCP = '.cauce-managed-mcp.json'
+EXTENSION_RECEIPT = 'cauce-extension-receipt.json'
+PREPARE_HARNESSES = ('claude', 'codex', 'openclaw', 'grok', 'muse')
+RECEIPT_KEYS = {'extensions_sha256', 'ssh', 'mcp', 'tools', 'browser'}
+
+
+def mcp_target(profile: pathlib.Path, harness: str) -> tuple[str, pathlib.Path]:
+    relative = {'claude': '.claude.json', 'codex': 'config.toml', 'openclaw': 'openclaw.json', 'grok': 'config.toml',
+                'muse': 'config/muse/settings.json'}.get(harness)
+    if relative is None:
+        raise ProviderProofError('mcp harness is outside the contract')
+    return relative, profile.joinpath(*relative.split('/'))
+
+
+def managed_mcp_names(profile: pathlib.Path) -> list[str]:
+    path = profile / MANAGED_MCP
+    if not path.exists():
+        return []
+    document = json.loads(read_bounded(path) or b'{}')
+    names = document.get('names') if isinstance(document, dict) else None
+    if not isinstance(names, list) or any(not isinstance(item, str) or MCP_NAME.fullmatch(item) is None for item in names) \
+            or len(set(names)) != len(names):
+        raise ProviderProofError('managed mcp registry is outside the contract')
+    return list(names)
+
+
+def write_managed_mcp(profile: pathlib.Path, names: list[str]) -> None:
+    path = profile / MANAGED_MCP
+    if not names:
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ProviderProofError('managed mcp registry is not a regular file')
+        if path.exists():
+            path.unlink()
+        return
+    write_private(path, (json.dumps({'names': names}, indent=2) + '\n').encode())
+
+
+def server_map(document: dict, harness: str) -> dict:
+    if harness == 'openclaw':
+        parent = document.setdefault('mcp', {})
+        if not isinstance(parent, dict):
+            raise ProviderProofError('mcp configuration is not an object')
+        servers = parent.setdefault('servers', {})
+    else:
+        servers = document.setdefault('mcpServers', {})
+    if not isinstance(servers, dict):
+        raise ProviderProofError('mcp configuration is not an object')
+    return servers
+
+
+def write_json_mcp(path: pathlib.Path, harness: str, entries: list, remove: set[str]) -> None:
+    if not entries and not remove:
+        return
+    if not path.exists() and not entries:
+        return
+    existing = path.exists()
+    document = json.loads(read_bounded(path) or b'{}')
+    if not isinstance(document, dict):
+        raise ProviderProofError('mcp configuration is not an object')
+    servers = server_map(document, harness)
+    stored = public_mcp if harness == 'openclaw' else stdio_mcp
+    for name in remove:
+        servers.pop(name, None)
+    for entry in entries:
+        servers[entry['name']] = stored(entry)
+    if harness == 'muse' and not existing:
+        document['schema_version'] = 1
+    write_private(path, (json.dumps(document, indent=2, ensure_ascii=False) + '\n').encode())
+
+
+def toml_header(line: str) -> str | None:
+    if TOML_TABLE.match(line.rstrip('\n')) is None:
+        return None
+    return line.split('#', 1)[0].strip().strip('[]')
+
+
+def toml_mcp(path: pathlib.Path, harness: str, entries: list, remove: set[str]) -> None:
+    import tomllib
+    if any('.' in entry['name'] for entry in entries):
+        raise ProviderProofError('mcp name is not a single toml key')
+    if not entries and not remove:
+        return
+    if not path.exists() and not entries:
+        return
+    original = read_bounded(path).decode() if path.exists() else ''
+    lines = original.splitlines(keepends=True)
+    names = {entry['name'] for entry in entries} | remove
+    kept, skipping = [], False
+    for line in lines:
+        header = toml_header(line)
+        if header is not None:
+            skipping = any(header == f'mcp_servers.{name}' or header.startswith(f'mcp_servers.{name}.') for name in names)
+        if not skipping:
+            kept.append(line)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    if kept and not kept[-1].endswith('\n'):
+        kept[-1] += '\n'
+    blocks = []
+    for entry in entries:
+        body = [f'[mcp_servers.{entry["name"]}]', f'command = {json.dumps(entry["command"])}',
+                'args = [', *(f'  {json.dumps(item)},' for item in entry['args']), ']']
+        if harness == 'grok':
+            body.append('enabled = true')
+        if entry['env']:
+            body.extend(['', f'[mcp_servers.{entry["name"]}.env]',
+                         *(f'{key} = {json.dumps(value)}' for key, value in entry['env'].items())])
+        blocks.append('\n'.join(body) + '\n')
+    text = ''.join(kept)
+    if text and blocks:
+        text += '\n'
+    text += '\n'.join(blocks)
+    before = tomllib.loads(original) if original.strip() else {}
+    after = tomllib.loads(text) if text.strip() else {}
+    for name in names:
+        (before.get('mcp_servers') or {}).pop(name, None)
+        observed = (after.get('mcp_servers') or {}).get(name)
+        expected = next((entry for entry in entries if entry['name'] == name), None)
+        if expected is None:
+            if observed is not None:
+                raise ProviderProofError('retired mcp entry is still present')
+            continue
+        if not isinstance(observed, dict) or observed.get('command') != expected['command'] \
+                or observed.get('args') != expected['args'] or (expected['env'] and observed.get('env') != expected['env']):
+            raise ProviderProofError('mcp configuration does not contain the requested entry')
+    if before.get('mcp_servers') == {}:
+        before.pop('mcp_servers')
+    after_rest = dict(after)
+    remaining = dict(after_rest.get('mcp_servers') or {})
+    for name in names:
+        remaining.pop(name, None)
+    if remaining:
+        after_rest['mcp_servers'] = remaining
+    else:
+        after_rest.pop('mcp_servers', None)
+    if before != after_rest:
+        raise ProviderProofError('mcp configuration would change more than the requested entries')
+    write_private(path, text.encode())
+
+
+def apply_mcp(profile: pathlib.Path, harness: str, entries: list) -> dict:
+    """Reconcile Cauce-managed MCP names, including an empty desired list. Foreign names stay."""
+    relative, path = mcp_target(profile, harness)
+    previous = managed_mcp_names(profile)
+    desired = [entry['name'] for entry in entries]
+    remove = [name for name in previous if name not in set(desired)]
+    if harness in {'claude', 'openclaw', 'muse'}:
+        write_json_mcp(path, harness, entries, set(remove))
+    else:
+        toml_mcp(path, harness, entries, set(remove))
+    write_managed_mcp(profile, desired)
+    return {'harness': harness, 'path': relative, 'names': desired, 'removed': remove}
+
+
+def host_token(value) -> bool:
+    if not isinstance(value, str) or not 1 <= len(value) <= 253:
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*', value) is not None
+
+
+def parse_ssh_host(value) -> tuple[str, int | None]:
+    match = re.fullmatch(r'([a-z_][a-z0-9_-]{0,31})@(\[[0-9A-Fa-f:]+\]|[^:\s]+)(?::([0-9]{1,5}))?', value) \
+        if isinstance(value, str) and len(value) <= 512 else None
+    if match is None:
+        raise ProviderProofError('ssh host is outside the contract')
+    raw_host, raw_port = match.group(2), match.group(3)
+    host = raw_host[1:-1] if raw_host.startswith('[') else raw_host
+    port = int(raw_port) if raw_port is not None else None
+    if not host_token(host) or port is not None and not 1 <= port <= 65535:
+        raise ProviderProofError('ssh host is outside the contract')
+    return f'{match.group(1)}@{raw_host}', port
+
+
+def endpoint_host(destination: str) -> str:
+    raw = destination.split('@', 1)[1]
+    return raw[1:-1] if raw.startswith('[') and raw.endswith(']') else raw
+
+
+def ssh_text(command: list[str]) -> str:
+    result = subprocess.run(command, capture_output=True, timeout=15, check=False, env={'PATH': '/usr/bin:/bin'})
+    if result.returncode:
+        raise ProviderProofError('ssh key material is not usable')
+    return result.stdout.decode()
+
+
+def prepare_ssh(profile: pathlib.Path, hosts: list[str]) -> dict:
+    directory = profile / 'ssh'
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    private, public = directory / 'id_ed25519', directory / 'id_ed25519.pub'
+    if private.exists():
+        info = private.lstat()
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise ProviderProofError('ssh private key is not a private file')
+    else:
+        result = subprocess.run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-q', '-f', str(private), '-C', 'cauce-agent'],
+                                capture_output=True, timeout=15, check=False, env={'PATH': '/usr/bin:/bin'})
+        if result.returncode:
+            raise ProviderProofError('ssh key generation failed')
+        os.chmod(private, 0o600)
+    if not public.exists():
+        public.write_text(ssh_text(['ssh-keygen', '-y', '-f', str(private)]))
+        os.chmod(public, 0o644)
+    listing = ssh_text(['ssh-keygen', '-lf', str(public)]).split()
+    public_key = public.read_text().strip()
+    if len(listing) < 4 or not listing[1].startswith('SHA256:') or listing[-1] != '(ED25519)' \
+            or not public_key.startswith('ssh-ed25519 '):
+        raise ProviderProofError('ssh public key is not ed25519')
+    return {'fingerprint': listing[1], 'public_key': public_key, 'hosts': hosts}
+
+
+def run_install(command: list[str], environment: dict, directory: pathlib.Path) -> None:
+    result = subprocess.run(command, cwd=directory, env=environment, timeout=180, check=False, capture_output=True)
+    if result.returncode:
+        detail = re.sub(r'[\x00-\x1f]+', ' ', result.stderr.decode('utf-8', 'replace')).strip()[-240:]
+        raise ProviderProofError('tool install failed: ' + (detail or 'no stderr'))
+
+
+def install_tools(state: pathlib.Path, packages: list[str]) -> list[str]:
+    if os.geteuid() == 0:
+        raise ProviderProofError('tool install refuses root')
+    local = state / '.local'
+    local.mkdir(mode=0o700, parents=True, exist_ok=True)
+    environment = {'HOME': str(state), 'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'npm_config_prefix': str(local),
+                   'npm_config_cache': str(state / '.npm'), 'npm_config_update_notifier': 'false',
+                   'PYTHONUSERBASE': str(local), 'PIP_DISABLE_PIP_VERSION_CHECK': '1'}
+    if set(environment) != set(INSTALL_ENV_KEYS):
+        raise ProviderProofError('tool install environment is outside its allowlist')
+    for package in packages:
+        npm, pip = NPM_PACKAGE.fullmatch(package), PIP_PACKAGE.fullmatch(package)
+        if npm is not None:
+            name, version = npm.group(1), npm.group(2)
+            run_install(['npm', 'install', '--global', '--prefix', str(local), f'{name}@{version}'], environment, state)
+            metadata = json.loads((local / 'lib' / 'node_modules' / name / 'package.json').read_text())
+            if metadata.get('version') != version:
+                raise ProviderProofError('installed npm package version differs')
+        elif pip is not None:
+            name, version = pip.group(1), pip.group(2)
+            run_install([sys.executable, '-m', 'pip', 'install', '--prefix', str(local), '--no-cache-dir',
+                         f'{name}=={version}'], environment, state)
+            normalized = re.sub(r'[-_.]+', '_', name)
+            versions = {version, version.replace('+', '_')}
+            found = {path for item in versions for path in (local / 'lib').glob(f'python*/site-packages/{normalized}-{item}.dist-info')}
+            if len(found) != 1:
+                raise ProviderProofError('installed pip package version differs')
+        else:
+            raise ProviderProofError('tool package must be an exact npm or pip version')
+    return packages
+
+
+def prepare_browser_tunnel(profile: pathlib.Path, row: dict, endpoints: list[tuple[str, int | None]]) -> dict:
+    if set(row) != {'type', 'mode', 'host', 'port'} or row.get('mode') != 'ssh_tunnel' or not host_token(row.get('host')):
+        raise ProviderProofError('browser extension is outside the contract')
+    if type(row.get('port')) is not int or not 1 <= row['port'] <= 65535:
+        raise ProviderProofError('browser tunnel port is outside the contract')
+    if not (profile / 'ssh' / 'id_ed25519').is_file():
+        raise ProviderProofError('browser tunnel requires the ssh extension key')
+    matched = [endpoint for endpoint in endpoints if endpoint_host(endpoint[0]) == row['host']]
+    if len(matched) != 1:
+        raise ProviderProofError('browser tunnel host must match one ssh endpoint')
+    target, ssh_port = matched[0]
+    command = ['ssh', '-N', '-i', str(profile / 'ssh' / 'id_ed25519'), '-o', 'IdentitiesOnly=yes',
+               '-o', 'ExitOnForwardFailure=yes', '-o', 'StrictHostKeyChecking=yes',
+               '-o', 'UserKnownHostsFile=' + str(profile / 'ssh' / 'known_hosts'),
+               '-L', f'127.0.0.1:9222:127.0.0.1:{row["port"]}']
+    if ssh_port is not None:
+        command.extend(['-p', str(ssh_port)])
+    command.append(target)
+    host = row['host']
+    descriptor = {'mode': 'ssh_tunnel', 'host': host, 'port': row['port'], 'ssh_port': ssh_port,
+                  'cdp_url': 'http://127.0.0.1:9222', 'identity': 'ssh/id_ed25519', 'command': command}
+    write_private(profile / 'browser' / 'tunnel.json', (json.dumps(descriptor, indent=2) + '\n').encode())
+    return {'mode': 'ssh_tunnel', 'host': host, 'port': row['port'], 'cdp_url': descriptor['cdp_url']}
+
+
+def assert_public_result(profile: pathlib.Path, result: dict) -> None:
+    text = json.dumps(result)
+    if 'PRIVATE KEY' in text or 'BEGIN ' in text:
+        raise ProviderProofError('extension result contains private key material')
+    private = profile / 'ssh' / 'id_ed25519'
+    if not private.is_file():
+        return
+    for line in private.read_text().splitlines():
+        if len(line) >= 40 and line in text:
+            raise ProviderProofError('extension result contains private key material')
+
+
+def extensions_sha256(rows: list) -> str:
+    body = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+    return hashlib.sha256(body).hexdigest()
+
+
+def public_receipt(rows: list, result: dict) -> dict:
+    """Public prepare receipt. It carries the extensions hash and no proof identity or nonce."""
+    receipt: dict = {'extensions_sha256': extensions_sha256(rows)}
+    if 'ssh' in result:
+        ssh = result['ssh']
+        receipt['ssh'] = {'fingerprint': ssh['fingerprint'], 'public_key': ssh['public_key'], 'hosts': ssh['hosts']}
+    if 'mcp' in result and (result['mcp'].get('names') or result['mcp'].get('removed')):
+        receipt['mcp'] = {key: result['mcp'][key] for key in ('harness', 'path', 'names', 'removed')}
+    if 'tools' in result:
+        receipt['tools'] = {'packages': result['tools']['packages']}
+    if 'browser' in result:
+        receipt['browser'] = {key: result['browser'][key] for key in ('mode', 'host', 'port', 'cdp_url')}
+    if set(receipt) - RECEIPT_KEYS or any(key in receipt for key in ('nonce', 'identity', 'account_id')):
+        raise ProviderProofError('extension receipt is outside its public shape')
+    return receipt
+
+
+def prepare_extensions(agent: dict, profile, state=None) -> dict:
+    """Write ssh, mcp, tools and browser tunnel material. The private key is not returned."""
+    root = extension_directory(profile)
+    rows = extension_rows(agent)
+    result: dict = {}
+    endpoints: list[tuple[str, int | None]] = []
+    ssh_row = one_extension(rows, 'ssh')
+    if ssh_row is not None:
+        if set(ssh_row) != {'type', 'hosts'} or not isinstance(ssh_row.get('hosts'), list) or not 1 <= len(ssh_row['hosts']) <= 100:
+            raise ProviderProofError('ssh extension is outside the contract')
+        endpoints = [parse_ssh_host(item) for item in ssh_row['hosts']]
+        declared = [host if port is None else f'{host}:{port}' for host, port in endpoints]
+        result['ssh'] = prepare_ssh(root, declared)
+    mcp_rows = [row for row in rows if row.get('type') == 'mcp']
+    harness = agent.get('harness_id')
+    if mcp_rows or harness in PREPARE_HARNESSES:
+        entries = [mcp_entry(row) for row in mcp_rows]
+        if len({entry['name'] for entry in entries}) != len(entries):
+            raise ProviderProofError('mcp extension name is ambiguous')
+        if harness not in PREPARE_HARNESSES:
+            raise ProviderProofError('mcp harness is outside the contract')
+        result['mcp'] = apply_mcp(root, harness, entries)
+    tools_row = one_extension(rows, 'tools')
+    if tools_row is not None:
+        if set(tools_row) != {'type', 'packages'} or not isinstance(tools_row.get('packages'), list) \
+                or not 1 <= len(tools_row['packages']) <= 100:
+            raise ProviderProofError('tools extension is outside the contract')
+        if state is None:
+            raise ProviderProofError('tool install requires the state volume')
+        result['tools'] = {'packages': install_tools(extension_directory(state), list(tools_row['packages']))}
+    tunnel = [row for row in rows if row.get('type') == 'browser' and row.get('mode') == 'ssh_tunnel']
+    if len(tunnel) > 1:
+        raise ProviderProofError('extension browser is ambiguous')
+    if tunnel:
+        if ssh_row is None:
+            raise ProviderProofError('browser tunnel requires the ssh extension')
+        result['browser'] = prepare_browser_tunnel(root, tunnel[0], endpoints)
+    receipt = public_receipt(rows, result)
+    assert_public_result(root, receipt)
+    write_private(root / EXTENSION_RECEIPT, (json.dumps(receipt, indent=2, sort_keys=True) + '\n').encode())
+    return receipt
+
+
+def prepare_extension_packet(packet: dict) -> dict:
+    agent = packet.get('agent') if isinstance(packet, dict) else None
+    if not isinstance(agent, dict) or not isinstance(packet.get('profile'), str):
+        raise ProviderProofError('extension prepare packet is outside the contract')
+    if any(key in packet for key in ('nonce', 'identity', 'account_id')):
+        raise ProviderProofError('extension prepare packet must not carry proof identity')
+    harness = agent.get('harness_id')
+    state = packet.get('state')
+    if harness in {'grok', 'muse', 'openclaw'}:
+        import importlib
+        module = importlib.import_module('fleet_provider_' + harness)
+        return module.prepare_extensions(agent, packet['profile'], state)
+    if harness in {'claude', 'codex'}:
+        return prepare_extensions(agent, packet['profile'], state)
+    raise ProviderProofError('extension harness is outside the contract')
+
+
+if __name__ == '__main__':
+    import argparse
+    try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--prepare-extensions', action='store_true', required=True)
+        parser.parse_args()
+        raw = sys.stdin.buffer.read(EXTENSION_LIMIT + 1)
+        if len(raw) > EXTENSION_LIMIT:
+            raise ValueError('extension prepare packet exceeds its bound')
+        receipt = prepare_extension_packet(json.loads(raw))
+        body = json.dumps(receipt, sort_keys=True).encode()
+        if len(body) > 8192 or set(receipt) - RECEIPT_KEYS:
+            raise ValueError('extension receipt exceeds its public bound')
+        sys.stdout.buffer.write(body)
+    except Exception:
+        raise SystemExit('extension prepare was not verified') from None

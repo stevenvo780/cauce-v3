@@ -72,6 +72,15 @@ class Executor:
     def save(self):
         atomic_write(_destination(self.operation, 'effects.json'), json.dumps(self.journal, sort_keys=True).encode(), mode=0o600)
 
+    def record_extension_receipt(self) -> None:
+        receipt_path = self.operation / 'extension-receipt.json'
+        if not receipt_path.is_file() or receipt_path.is_symlink():
+            return
+        receipt = json.loads(receipt_path.read_bytes())
+        if isinstance(receipt, dict) and isinstance(receipt.get('extensions_sha256'), str) \
+                and 'nonce' not in receipt and 'identity' not in receipt and 'account_id' not in receipt:
+            self.journal['extensions_receipt'] = receipt
+
     def agent(self):
         return approve_agent(self.policy, target_agent(self.context))
 
@@ -233,6 +242,7 @@ class Executor:
             self.stop()
         evidence = start(self.policy, agent, operation_id=self.context['operation_id'])
         self.journal['runtime'] = evidence['runtime_digest']
+        self.record_extension_receipt()
         self.save()
         return evidence
 
@@ -330,6 +340,7 @@ class Executor:
             # The console login stopped this runtime; the profile and verify probes need it running again.
             self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
             del self.journal['login_stopped']
+            self.record_extension_receipt()
             self.save()
         observed = invoke(self.policy, self.context, agent, 'profile')
         if observed.get('profile_verified') is not True:

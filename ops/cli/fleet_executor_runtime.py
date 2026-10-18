@@ -248,7 +248,7 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
     view = pathlib.Path(agent['state_directory']) / '.cauce-credentials' / ('bootstrap' if bootstrap else 'normal')
     install(view, payload_for(policy, agent, bootstrap), user.pw_uid, user.pw_gid)
     from fleet_executor_profiles import prepare_profile
-    prepare_profile(policy, agent)
+    prepare_profile(policy, {**agent, '_operation_id': operation_id} if operation_id is not None else agent)
     identity['control'].parent.mkdir(mode=0o700, exist_ok=True)
     identity['control'].mkdir(mode=0o700, exist_ok=True)
     environment = {'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'CAUCE_ALIAS': agent['alias'],

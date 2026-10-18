@@ -240,3 +240,10 @@ def authenticated(packet: dict) -> bool:
 
 
 authenticated_muse = authenticated
+
+
+def prepare_extensions(agent: dict, profile, state=None) -> dict:
+    from fleet_provider_identity import prepare_extensions as prepare_shared
+    if agent.get('harness_id') not in (None, 'muse'):
+        raise ValueError('muse extension prepare refuses another harness')
+    return prepare_shared({**agent, 'harness_id': 'muse'}, pathlib.Path(profile), None if state is None else pathlib.Path(state))
