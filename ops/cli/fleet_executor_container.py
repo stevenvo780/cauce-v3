@@ -37,7 +37,12 @@ def sidecar_effect(action: str, policy: dict, agent: dict) -> dict:
         return {}
     agent = {**agent, 'extensions': rows}
     if action == 'validate_sidecars' and agent.get('_teardown'):
-        policy = {**policy, 'extensions_allowed': {**policy.get('extensions_allowed', {}), 'types': [row['type'] for row in rows]}}
+        allowed = {**policy.get('extensions_allowed', {}), 'types': [row['type'] for row in rows]}
+        docker_row = next((row for row in rows if row.get('type') == 'docker'), None)
+        if isinstance(docker_row, dict):
+            allowed['docker_access'] = ['read', 'control'] if docker_row.get('access') == 'control' else ['read']
+            allowed['docker_daemon_dedicated'] = True
+        policy = {**policy, 'extensions_allowed': allowed}
     try:
         from importlib import import_module
         module = import_module('fleet_executor_sidecars')

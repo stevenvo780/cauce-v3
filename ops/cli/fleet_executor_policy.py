@@ -19,7 +19,22 @@ from fleet_runtime_materialization import external_directory
 from secure_path import open_absolute_directory, open_regular_at
 
 EXTENSION_TYPES = {'mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control'}
+EXTENSION_ALLOWED_FIELDS = {'types', 'mount_roots', 'networks', 'docker_access', 'docker_daemon_dedicated'}
 NETWORK_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}')
+
+
+def admitted_docker_access(value) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SafeFailure('computer does not admit docker access')
+    if value == ['read'] or len(value) == 2 and set(value) == {'read', 'control'}:
+        return tuple(value)
+    raise SafeFailure('computer does not admit docker access')
+
+
+def admitted_docker_daemon_dedicated(value) -> bool:
+    if not isinstance(value, bool):
+        raise SafeFailure('docker daemon dedication is outside the contract')
+    return value
 
 
 def extension_strings(value, pattern: str, *, minimum: int = 0) -> bool:
@@ -69,7 +84,7 @@ def validate_prepared_extension(row: dict) -> None:
 
 
 def validate_extensions_allowed(value) -> dict:
-    if not isinstance(value, dict) or set(value) != {'types', 'mount_roots', 'networks'}:
+    if not isinstance(value, dict) or not {'types', 'mount_roots', 'networks'} <= set(value) <= EXTENSION_ALLOWED_FIELDS:
         raise SafeFailure('invalid extensions_allowed policy')
     for field in ('types', 'mount_roots', 'networks'):
         rows = value[field]
@@ -83,6 +98,10 @@ def validate_extensions_allowed(value) -> dict:
             raise SafeFailure('invalid extensions_allowed mount root')
     if any(NETWORK_NAME.fullmatch(name) is None or name in {'host', 'none'} for name in value['networks']):
         raise SafeFailure('invalid network in extensions_allowed')
+    if 'docker_access' in value:
+        admitted_docker_access(value['docker_access'])
+    if 'docker_daemon_dedicated' in value:
+        admitted_docker_daemon_dedicated(value['docker_daemon_dedicated'])
     return value
 
 
@@ -170,6 +189,11 @@ def approve_extensions(policy: dict, agent: dict) -> list[dict]:
             raise SafeFailure('network extension is not in allowed host networks')
     if agent.get('runtime_mode') != 'container' or agent.get('_placement', {}).get('ownership') == 'shared':
         raise SafeFailure('extensions require a dedicated container')
+    docker_rows = [row for row in rows if row['type'] == 'docker']
+    if docker_rows:
+        from fleet_executor_sidecars import admit_docker_level, refuse_shared_daemon
+        admit_docker_level(policy, docker_rows[0]['access'])
+        refuse_shared_daemon(policy, agent)
     return rows
 
 
