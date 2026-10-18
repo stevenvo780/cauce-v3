@@ -16,6 +16,17 @@ function suggestionsFor(field: ConfigFormField, snapshot: ConfigurationSnapshot,
   return [...new Set(matching.map((row) => row[field.suggestionKey ?? field.key]).filter((value): value is string => typeof value === 'string'))];
 }
 
+function tenantOptions(snapshot: ConfigurationSnapshot, current: string): { value: string; label: string }[] {
+  const options = (snapshot.tenants ?? []).flatMap((row) => {
+    const value = typeof row.id === 'string' ? row.id : '';
+    if (!value) return [];
+    const label = typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim() : value;
+    return [{ value, label }];
+  });
+  if (current && !options.some((option) => option.value === current)) options.push({ value: current, label: current });
+  return options;
+}
+
 export function ConfigCollectionForm({ definition, target, snapshot, runner, busy, onCancel, onRelated, onDirtyChange, onApplied }: {
   definition: ConfigFormDefinition;
   target: ConfigFormTarget;
@@ -77,11 +88,17 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
       {definition.fields.filter((field) => !identityOnly || field.identity).map((field) => {
         const id = `${formId}-${field.key}`;
         const options = suggestionsFor(field, snapshot, values);
+        const tenants = field.suggestions === 'tenants' ? tenantOptions(snapshot, values[field.key] ?? '') : undefined;
         const fixed = field.identity && (target.action !== 'create' || Object.hasOwn(scopedIdentity, field.key));
         const fieldDisabled = disabled || fixed;
         return <label key={field.key} htmlFor={id}>
           <span id={`${id}-label`}>{field.label}</span>
-          {field.kind === 'boolean' || field.kind === 'select' ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
+          {tenants ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
+            onChange={(event) => { edit(field.key, event.target.value); }}>
+            <option value="">{target.action === 'create' ? 'Elegir…' : 'Sin dato publicado'}</option>
+            {tenants.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          : field.kind === 'boolean' || field.kind === 'select' ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
             onChange={(event) => { edit(field.key, event.target.value); }}>
             <option value="">{target.action === 'create' ? 'Elegir…' : 'Sin dato publicado'}</option>
             {field.kind === 'boolean' ? <><option value="true">Sí</option><option value="false">No</option></>

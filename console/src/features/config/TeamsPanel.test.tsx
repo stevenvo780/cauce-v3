@@ -50,7 +50,7 @@ it('«Nuevo equipo» opens the typed form in a dialog and sends the existing roo
   await user.click(create);
   const dialog = within(await screen.findByRole('dialog'));
   expect(dialog.getByRole('heading', { name: 'Nuevo equipo' })).toBeInTheDocument();
-  await user.type(dialog.getByRole('combobox', { name: 'Espacio' }), 'Miguel');
+  await user.selectOptions(dialog.getByRole('combobox', { name: 'Espacio' }), 'Miguel');
   await user.type(dialog.getByRole('textbox', { name: 'Id de la sala/grupo' }), 'grp.nuevo');
   await user.click(dialog.getByRole('button', { name: 'Previsualizar cambio' }));
   await waitFor(() => { expect(sink).toHaveLength(1); });
