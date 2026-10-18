@@ -1,6 +1,7 @@
 import type { ConsoleAuthorityRole, ConsoleAuthorityScope } from '../types/auth';
 import type { RequestFn } from './system-client';
 import { companyInventory, consolePreferences, officeLayout, registrationReceipt } from './v4-responses';
+import { companyPurgeError, companyPurgeReceipt, type CompanyPurgeReceipt } from './company-purge';
 
 export interface CompanyRecord { id: string; name: string; state: 'enabled' | 'disabled' | 'retired'; version: number }
 export interface CompanyInventory {
@@ -25,6 +26,7 @@ export interface CompanyClient {
   createCompany(input: RegistrationInput): Promise<RegistrationResult>;
   updateCompany(id: string, input: { expected_version: number; name?: string; state?: CompanyRecord['state'] }): Promise<CompanyRecord>;
   retireCompany(id: string, version: number): Promise<CompanyRecord>;
+  purgeCompany(id: string, confirmation: string): Promise<CompanyPurgeReceipt>;
   getCompanyAdmins(id: string): Promise<CompanyAdmins>;
   saveCompanyAdmin(id: string, input: { user_id: string; role: 'owner' | 'admin' | null; expected_version: number }): Promise<unknown>;
   getConsolePreferences(): Promise<ConsolePreferences>;
@@ -44,6 +46,9 @@ export function companyClient(request: RequestFn): CompanyClient {
     createCompany: async input => registrationReceipt(await write('companies', 'POST', input)),
     updateCompany: (id, input) => write<CompanyRecord>(`companies/${encodeURIComponent(id)}`, 'PATCH', input),
     retireCompany: (id, version) => request<CompanyRecord>(`${base}/companies/${encodeURIComponent(id)}?expected_version=${String(version)}`, { method: 'DELETE' }),
+    purgeCompany: async (id, confirmation) => companyPurgeReceipt(await request(`${base}/companies/${encodeURIComponent(id)}/purge`, {
+      method: 'POST', body: JSON.stringify({ confirmation }), cache: 'no-store',
+    }, { mapError: companyPurgeError }), id),
     getCompanyAdmins: id => read<CompanyAdmins>(`companies/${encodeURIComponent(id)}/admins`),
     saveCompanyAdmin: (id, input) => write(`companies/${encodeURIComponent(id)}/admins`, 'PUT', input),
     getConsolePreferences: async () => consolePreferences(await read('preferences')),
