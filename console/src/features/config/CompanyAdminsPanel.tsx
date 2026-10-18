@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { ApiError } from '../../api/client/core';
 import type { CompanyAdmin } from '../../api/client/company-client';
 import { useApi } from '../../api/context';
+import { UNREACHABLE_SERVER } from '../auth/RegistrationForm';
 import { useResource } from '../../api/use-resource';
 import { ActionButton } from '../../components/action-button';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
@@ -8,6 +10,18 @@ import { ConflictNotice } from '../../components/ConflictNotice';
 import { Button, Notice } from '../../components/kit';
 
 const ADMIN_ROLE_LABEL: Record<'owner' | 'admin', string> = { owner: 'Dueño', admin: 'Administrador' };
+
+/** Said by status: the server message is never shown, as in CompaniesPanel. */
+function adminErrorText(cause: unknown): string {
+  if (!(cause instanceof ApiError)) return cause instanceof Error && !(cause instanceof TypeError) ? cause.message : UNREACHABLE_SERVER;
+  if (cause.status === 401) return 'La sesión venció. Vuelve a iniciar sesión.';
+  if (cause.status === 403) return 'No se pudo guardar la autoridad: solo un dueño de esta empresa puede asignarla y la persona elegida debe ser operadora con permiso de control. Revisa ambos puntos y vuelve a intentarlo.';
+  if (cause.status === 404) return 'La persona o la empresa ya no están disponibles. Relee la autoridad y vuelve a intentarlo.';
+  if (cause.status === 409) return 'La autoridad cambió mientras guardabas. Relee la autoridad y vuelve a intentarlo.';
+  if (cause.status === 429) return 'Demasiadas solicitudes. Espera unos segundos y vuelve a intentarlo.';
+  if (cause.status === 504) return 'El servidor no contestó a tiempo. Relee la autoridad antes de reintentar.';
+  return 'No se confirmó la autoridad de empresa. Relee la autoridad y vuelve a intentarlo.';
+}
 
 export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: string; canAssignPeople: boolean }) {
   const api = useApi();
@@ -31,16 +45,18 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
       if (reread.error) throw reread.error;
       setNotice(nextRole === null ? 'Autoridad de empresa revocada.' : 'Autoridad de empresa guardada.');
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'No se confirmó la autoridad de empresa.';
-      const explanation = message === 'company must retain a qualified owner'
-        ? 'La empresa necesita al menos un dueño activo. Asigna otro dueño antes de revocar esta autoridad.'
-        : message;
+      const message = cause instanceof Error ? cause.message : '';
+      if (message === 'company must retain a qualified owner') {
+        setAdminConflict(undefined);
+        setError('La empresa necesita al menos un dueño activo. Asigna otro dueño antes de revocar esta autoridad.');
+        return;
+      }
       if (isCasConflict(cause)) {
         const reread = await admins.reload();
         const fresh = reread.data?.items.find(admin => admin.user_id === userId);
         if (reread.error || (fresh?.version ?? 0) === version) {
           setAdminConflict(undefined);
-          setError(explanation);
+          setError(adminErrorText(cause));
           return;
         }
         setAdminConflict({
@@ -51,7 +67,7 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
             { autoridad: 'Autoridad de empresa' },
           ),
         });
-      } else { setAdminConflict(undefined); setError(explanation); }
+      } else { setAdminConflict(undefined); setError(adminErrorText(cause)); }
     }
     finally { setBusy(false); }
   }
