@@ -14,6 +14,11 @@ from fleet_executor_policy import SafeFailure, approve_agent, open_absolute_dire
 from fleet_executor_runtime import native_identity, stop
 
 
+def assert_purge_supported(agent: dict) -> None:
+    if agent['runtime_mode'] == 'native' and agent['_placement'].get('manager') is not None:
+        raise SafeFailure('managed native unit must be decommissioned before residual removal')
+
+
 def scoped_agents(policy: dict, context: dict) -> list[dict]:
     target = context['request']['target']
     rows = context['previous_agents']
@@ -40,7 +45,10 @@ def scoped_agents(policy: dict, context: dict) -> list[dict]:
                        and member.get('room_id') == target['room_id'] for member in members):
                 raise SafeFailure('placement has no membership in the fenced room')
         identities.add(identity)
-        approved.append(approve_agent(policy, row))
+        agent = approve_agent(policy, row)
+        if context['request']['kind'] == 'purge':
+            assert_purge_supported(agent)
+        approved.append(agent)
     return approved
 
 
@@ -195,6 +203,7 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
 
 
 def purge_runtime(policy: dict, agent: dict) -> dict:
+    assert_purge_supported(agent)
     stop(policy, agent)
     removed: list[dict] = []
     if agent['runtime_mode'] == 'container':

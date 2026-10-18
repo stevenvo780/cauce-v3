@@ -230,11 +230,13 @@ def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, boo
 
 
 def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, operation_id: str | None = None) -> dict:
+    from fleet_executor_native_manager import manager_for, publish_environment, systemctl
     agent = approve_agent(policy, raw_agent)
     bundle = approved_bundle(policy, agent)
     if agent['systemd_user'] != policy['executor_user']:
         raise SafeFailure('missing verified systemd manager hook')
     identity = native_identity(policy, agent)
+    manager = manager_for(policy, agent, identity, bundle)
     existing = native_proof(policy, agent, identity, bundle, bootstrap=bootstrap, operation_id=operation_id)
     if existing is not None:
         return runtime_evidence(existing)
@@ -263,15 +265,20 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
         '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', str(user.pw_uid),
         '--runtime-gid', str(user.pw_gid), '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'],
         bundle['executable'], *bundle['argv']]
-    controller = subprocess.Popen(command, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                  start_new_session=True)
+    controller = None
     try:
+        if manager is not None:
+            publish_environment(identity, agent, environment)
+            systemctl('start', manager['unit'])
+        else:
+            controller = subprocess.Popen(command, env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                          start_new_session=True)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            if controller.poll() is not None:
+            if controller is not None and controller.poll() is not None:
                 raise SafeFailure('runtime exited before identity was observed')
             try:
-                observed = native_proof(policy, agent, identity, bundle)
+                observed = native_proof(policy, agent, identity, bundle, bootstrap=bootstrap, operation_id=operation_id)
             except SafeFailure:
                 observed = None
             if observed is not None:
@@ -280,9 +287,14 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
         raise SafeFailure('runtime identity observation timed out')
     except BaseException:
         try:
-            checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
+            if manager is not None:
+                publish_environment(identity, agent, None)
+                systemctl('stop', manager['unit'])
+            else:
+                checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
         finally:
-            controller.wait(timeout=10)
+            if controller is not None:
+                controller.wait(timeout=10)
         raise
 
 
@@ -291,10 +303,19 @@ def runtime_evidence(observed: dict) -> dict:
 
 
 def stop_native(policy: dict, raw_agent: dict) -> dict:
+    from fleet_executor_native_manager import manager_for, publish_environment, systemctl
     agent = approve_agent(policy, raw_agent)
     if agent['systemd_user'] != policy['executor_user']:
         raise SafeFailure('missing verified systemd manager hook')
     identity = native_identity(policy, agent)
+    manager = manager_for(policy, agent, identity)
+    if manager is not None:
+        identity['control'].parent.mkdir(mode=0o700, exist_ok=True)
+        identity['control'].mkdir(mode=0o700, exist_ok=True)
+        publish_environment(identity, agent, None)
+        systemctl('stop', manager['unit'])
+        if systemctl('show', manager['unit'], '--property=ActiveState', '--value') not in {'inactive', 'failed'}:
+            raise SafeFailure('native systemd unit has not remained stopped')
     if identity['control'].exists():
         checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
     checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stopped', *lifecycle_arguments(agent, identity)])
@@ -306,6 +327,11 @@ def stop_native(policy: dict, raw_agent: dict) -> dict:
                 raise SafeFailure('stopped state is not observed')
         finally:
             os.close(descriptor)
+    if manager is not None:
+        if systemctl('show', manager['unit'], '--property=ActiveState', '--value') == 'failed':
+            systemctl('reset-failed', manager['unit'])
+        if systemctl('show', manager['unit'], '--property=ActiveState', '--value') != 'inactive':
+            raise SafeFailure('native systemd unit has not remained stopped')
     return {'stopped_verified': True}
 
 

@@ -36,7 +36,10 @@ def render(row: dict, policy: str, python: str, lock_helper: str, probe: str, lo
             raise ProbeFailure('native_systemd_user_unapproved')
         lines.extend(['Environment=' + argument('HOME=' + placement['home_directory']),
             'Environment=' + argument('USER=' + user.pw_name),
-            'Environment=' + argument('LOGNAME=' + user.pw_name)])
+            'Environment=' + argument('LOGNAME=' + user.pw_name),
+            'Environment=' + argument('CAUCE_NATIVE_EXECUTOR_ENVIRONMENT=' +
+                str(pathlib.Path(row['observation']['control_directory']) / 'native-executor-environment.json')),
+            'RestartPreventExitStatus=78'])
     lines.extend(['ExecStart=', 'ExecStart=' + ' '.join(argument(value) for value in start),
         'ExecStop=', 'ExecStop=' + ' '.join(argument(value) for value in stop), ''])
     unit = f'cauce-v3-{"alias" if mode == "native" else "container"}-{alias}.service'

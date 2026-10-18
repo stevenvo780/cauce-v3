@@ -292,7 +292,10 @@ def approve_agent(policy: dict, agent: dict) -> dict:
     if agent['harness_id'] not in policy['bundles']:
         raise SafeFailure('harness bundle is not approved')
     if agent['runtime_mode'] == 'native':
-        candidates = policy['native']
+        scoped = [row for row in policy['native'] if row.get('runtime_key') == agent['runtime_key']]
+        if len(scoped) > 1:
+            raise SafeFailure('native runtime has ambiguous approved managers')
+        candidates = scoped or [row for row in policy['native'] if 'runtime_key' not in row]
     elif agent['runtime_mode'] == 'container':
         from fleet_executor_legacy import shared_placement
         shared = shared_placement(policy, agent)
@@ -308,6 +311,8 @@ def approve_agent(policy: dict, agent: dict) -> dict:
     else:
         raise SafeFailure('runtime mode is not approved')
     for candidate in candidates:
+        if candidate.get('runtime_key', agent['runtime_key']) != agent['runtime_key']:
+            continue
         if candidate.get('runtime_user') != agent['runtime_user'] or candidate.get('home_directory') != agent['home_directory']:
             continue
         manager = agent.get('systemd_user') or candidate.get('systemd_user')

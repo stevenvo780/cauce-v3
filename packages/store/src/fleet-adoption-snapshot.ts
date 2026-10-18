@@ -23,9 +23,12 @@ export async function lockLegacyAdoptionTargets(client: DatabaseClient, targets:
   }
   await client.query('LOCK TABLE memberships,role_policies,provider_accounts IN SHARE MODE');
 }
-export function legacyAdoptionDesired(facts: LegacyAdoptionFacts): LegacyAdoptionValues {
+export function legacyAdoptionDesired(facts: LegacyAdoptionFacts, containerName: string | null = null): LegacyAdoptionValues {
+  const hostReference = `host:${facts.placement.host_id}`;
+  const nativeReference = containerName === `vm:${facts.placement.host_id}` ? containerName : hostReference;
   return { host_id: facts.placement.host_id, runtime_mode: facts.placement.mode,
-    container_name: facts.placement.container_name ?? null, runtime_user: facts.placement.runtime_user,
+    container_name: facts.placement.mode === 'native' ? nativeReference : facts.placement.container_name ?? null,
+    runtime_user: facts.placement.runtime_user,
     home_directory: facts.placement.home_directory, state_directory: facts.placement.state_directory,
     systemd_user: facts.placement.systemd_user ?? null, primary_account_id: facts.primary_account_id };
 }
@@ -79,7 +82,7 @@ export async function legacyAdoptionSnapshot(client: DatabaseClient, targets: re
     if (facts.target.tenant_id !== target.tenant_id || facts.target.alias !== target.alias
       || facts.runtime_key !== agent.runtime_key || facts.harness_id !== agent.harness_id) block('runtime_identity_changed');
     const before = Object.fromEntries(LEGACY_ADOPTION_FIELDS.map(field => [field, agent[field]])) as LegacyAdoptionValues;
-    const desired = legacyAdoptionDesired(facts); const patch: Partial<LegacyAdoptionValues> = {};
+    const desired = legacyAdoptionDesired(facts, before.container_name); const patch: Partial<LegacyAdoptionValues> = {};
     for (const field of LEGACY_ADOPTION_FIELDS) {
       const observed = desired[field];
       if (field === 'primary_account_id' && observed === null) continue;

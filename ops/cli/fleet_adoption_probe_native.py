@@ -59,7 +59,16 @@ def main() -> int:
             raise ProbeFailure('native_stop_requires_control_lease')
         verify_control(int(descriptor), row['supervisor']['socket'], row['target'])
         return subprocess.run(base, check=False).returncode
-    environment = dict(os.environ, CAUCE_ALIAS=row['target']['alias'], CAUCE_RUNTIME_KEY=row['runtime_key'],
+    managed = os.environ.get('CAUCE_NATIVE_EXECUTOR_ENVIRONMENT')
+    if managed and os.path.lexists(managed):
+        from fleet_executor_native_manager import launch_environment
+        supplied = launch_environment(row, managed)
+        if supplied is None:
+            return 78
+        environment = supplied
+    else:
+        environment = dict(os.environ)
+    environment.update(CAUCE_ALIAS=row['target']['alias'], CAUCE_RUNTIME_KEY=row['runtime_key'],
         CAUCE_TENANT_ID=row['target']['tenant_id'], CAUCE_TENANT=row['target']['tenant_id'],
         CAUCE_STATE_DIR=placement['state_directory'], CAUCE_CONTROL_DIR=str(control),
         CAUCE_CONTAINER_ID=host, CAUCE_CONTAINER_GENERATION=generation, CAUCE_ADOPTION_LIFECYCLE_FENCE='1')
