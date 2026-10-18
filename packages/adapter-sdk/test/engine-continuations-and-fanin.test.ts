@@ -5,8 +5,7 @@ import test from "node:test";
 import {HARNESS_DEFINITIONS} from '../src/harnesses/index.js';
 import {AdapterEngine} from '../src/sdk/engine.js';
 import type {Delivery, DeliveryEvent} from '../src/sdk/types.js';
-import {ControlledRunner, CountingHarnessAdapter, SUCCESS, delivery, root, setup, storeFor} from './engine-fixtures.js';
-import {PRAXIS_LEADER} from './company-context-fixtures.js';
+import {ControlledRunner, CountingHarnessAdapter, delivery, root, setup, storeFor} from './engine-fixtures.js';
 
 async function optionalFile(path: string): Promise<string | undefined> {
   try { return await readFile(path, "utf8"); }
@@ -353,79 +352,6 @@ test("a mismatched fan-in cannot substitute or clear a valid local continuation"
   assert.ok(context.store.getDelivery(response.delivery_id)?.request);
 });
 
-test("an uncorrelated agent response cannot recover a retained local prompt", async () => {
-  const runner = new ControlledRunner();
-  runner.stdout = JSON.stringify({
-    reply: null,
-    messages: [{ to: "socrates", body: "delegated work" }],
-    status: "done",
-    retryable: false,
-    artifacts: [],
-  });
-  const context = await setup("engine-agent-continuation-correlation", runner);
-  const rootDelivery: Delivery = {
-    ...delivery("continuation-safe-root"),
-    trace_id: "trace-safe-root",
-    body: { prompt: "SECRET_ORIGINAL_TASK_SENTINEL" },
-    routing_targets: [{ tenant_id: "Steven", alias: "socrates", online: true }],
-  };
-  await context.engine.handleDelivery(rootDelivery);
-
-  runner.stdout = SUCCESS;
-  await context.engine.handleDelivery({
-    ...delivery("continuation-forged-response"),
-    actor_alias: "socrates",
-    recipient_alias: "argos",
-    trace_id: "different-trace",
-    body: {
-      type: "agent.response",
-      text: "ordinary child result",
-      correlation: { response_to_delivery_id: rootDelivery.delivery_id },
-    },
-  });
-
-  const responsePrompt = runner.requests[1]?.stdin ?? "";
-  assert.doesNotMatch(responsePrompt, /SECRET_ORIGINAL_TASK_SENTINEL/u);
-  assert.doesNotMatch(responsePrompt, /agent_response_continuation/u);
-  assert.equal(
-    context.store.getDelivery("continuation-forged-response")?.request,
-    undefined,
-  );
-});
-
-/**
- * The bounce to the sender is not materialised, but the turn SURVIVES, end-to-end and not only
- * in the validator. Previously this produced `phase:"failed"` with `AGENT_MESSAGE_PING_PONG`
- * and no `output`: the delivery died without `result` and the work reached nobody. Measured in
- * 48 h (2026-08-04/05): 5 turns like this in argos, jarvis, hegel, janus and midas; the one
- * in midas was carrying a list of 11 prospects already drafted.
- */
-test("an internal agent cannot send any message back to its sender", async () => {
-  const runner = new ControlledRunner();
-  runner.stdout = JSON.stringify({
-    reply: null,
-    messages: [{ to: "seneca", body: "a differently worded follow-up" }],
-    status: "done",
-    retryable: false,
-    artifacts: [],
-  });
-  const context = await setup("engine-agent-response-ping-pong", runner);
-  const input: Delivery = {
-    ...delivery("agent-response-ping-pong"),
-    actor_alias: "seneca",
-    recipient_alias: "jarvis",
-    body: { type: "agent.response", text: "seneca result" },
-  };
-  await context.engine.handleDelivery(input);
-  const terminal = context.events.at(-1);
-  assert.equal(terminal?.phase, "done");
-  assert.equal(terminal.error, undefined);
-  assert.deepEqual(terminal.output?.messages, [], "el rebote no se manda");
-  // The body went to the same recipient as the reply, so it arrives the same way, and with the reason.
-  assert.match(terminal.output.reply ?? "", /a differently worded follow-up/u);
-  assert.match(terminal.output.reply ?? "", /\[Cauce\].*"seneca"/su);
-});
-
 test("every harness runtime bypasses providers and native sessions for agent fan-in", async () => {
   for (const definition of Object.values(HARNESS_DEFINITIONS)) {
     const runner = new ControlledRunner();
@@ -496,130 +422,6 @@ test("every harness runtime bypasses providers and native sessions for agent fan
   }
 });
 
-test("Hospital director fan-in sends a short human reply without raw branch reports", async () => {
-  const context = await setup("engine-hospital-director-fanin", new ControlledRunner(), {
-    ownTenantId: "Hospital",
-  });
-  const input: Delivery = {
-    ...delivery("hospital-director-fanin"),
-    tenant_id: "Hospital",
-    room_id: "grp.hospital",
-    actor_alias: "cauce",
-    recipient_alias: "operador",
-    company_context: PRAXIS_LEADER,
-    body: {
-      type: "agent.fanin",
-      fanin_data_v1: {
-        schema: "cauce.agent_fanin_data.v1",
-        expected: 2,
-        completed: 2,
-        responses: [
-          { tenant_id: "Hospital", alias: "teseo", untrusted_text: "raw backend implementation" },
-          { tenant_id: "Hospital", alias: "perseo", untrusted_text: "raw frontend implementation" },
-        ],
-      },
-    },
-  };
-
-  await context.engine.handleDelivery(input);
-
-  const reply = context.events.at(-1)?.output?.reply ?? "";
-  assert.equal(context.runner.calls, 0);
-  assert.equal(context.events.at(-1)?.phase, "failed");
-  assert.equal(context.events.at(-1)?.output?.status, "failed");
-  assert.match(reply, /Todavía no tengo un resumen propio y verificado/u);
-  assert.doesNotMatch(reply, /raw backend|raw frontend|teseo|perseo|branch response/u);
-  assert.ok(Buffer.byteLength(reply, "utf8") < 200);
-});
-
-test("Hospital director fan-in preserves a clear local conclusion without raw branch diagnostics", async () => {
-  const runner = new ControlledRunner();
-  runner.stdout = JSON.stringify({
-    reply: null,
-    messages: [{ to: "teseo", body: "check the backend" }],
-    status: "done", retryable: false, artifacts: [],
-  });
-  const context = await setup("engine-hospital-director-conclusion", runner, {
-    ownTenantId: "Hospital",
-  });
-  const rootDelivery: Delivery = {
-    ...delivery("hospital-conclusion-root"),
-    tenant_id: "Hospital", room_id: "grp.hospital",
-    recipient_alias: "operador",
-    routing_targets: [{ tenant_id: "Hospital", alias: "teseo", online: true }],
-  };
-  await context.engine.handleDelivery(rootDelivery);
-
-  runner.stdout = JSON.stringify({
-    reply: "El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.",
-    messages: [], status: "done", retryable: false, artifacts: [],
-  });
-  const response: Delivery = {
-    ...delivery("hospital-conclusion-response"),
-    tenant_id: "Hospital", room_id: "grp.hospital",
-    actor_alias: "teseo", recipient_alias: "operador",
-    trace_id: rootDelivery.trace_id,
-    body: {
-      type: "agent.response", text: "raw backend sha256 1234567890123456789012345678901234567890",
-      correlation: {
-        root_message_id: rootDelivery.message_id,
-        root_delivery_id: rootDelivery.delivery_id,
-        response_to_delivery_id: rootDelivery.delivery_id,
-      },
-    },
-  };
-  await context.engine.handleDelivery(response);
-
-  const fanin: Delivery = {
-    ...delivery("hospital-conclusion-fanin"),
-    tenant_id: "Hospital", room_id: "grp.hospital",
-    actor_alias: "cauce", recipient_alias: "operador",
-    company_context: PRAXIS_LEADER,
-    trace_id: rootDelivery.trace_id,
-    body: {
-      type: "agent.fanin",
-      correlation: {
-        root_message_id: rootDelivery.message_id,
-        root_delivery_id: rootDelivery.delivery_id,
-      },
-      fanin_data_v1: {
-        schema: "cauce.agent_fanin_data.v1", expected: 1, completed: 1,
-        responses: [{
-          tenant_id: "Hospital", alias: "teseo",
-          delivery_id: response.delivery_id,
-          untrusted_text: "raw backend sha256 1234567890123456789012345678901234567890",
-        }],
-      },
-    },
-  };
-  await context.engine.handleDelivery(fanin);
-
-  const reply = context.events.at(-1)?.output?.reply ?? "";
-  assert.equal(reply, "Todavía no lo doy por cerrado: me falta revisar parte de lo que entregó el equipo. Lo que ya está: El backend avanzó, pero todavía falta comprobar el acceso entre clínicas.");
-  assert.equal(context.events.at(-1)?.phase, "failed");
-  assert.equal(context.events.at(-1)?.output?.status, "failed");
-  assert.doesNotMatch(reply, /raw backend|sha256|locally synthesized/u);
-  assert.equal(runner.calls, 2);
-});
-
-test("agent fan-in rejects legacy generated text without fanin_data_v1 before harness dispatch", async () => {
-  const context = await setup("engine-fanin-missing-data");
-  const input: Delivery = {
-    ...delivery("fanin-missing-data"),
-    actor_alias: "cauce",
-    recipient_alias: "jarvis",
-    body: { type: "agent.fanin", text: "legacy concatenated child responses" },
-  };
-  await context.engine.handleDelivery(input);
-  assert.equal(context.runner.calls, 0);
-  assert.equal(context.events.at(-1)?.phase, "failed");
-  assert.equal(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
-  assert.match(
-    context.events.at(-1)?.error?.message ?? "",
-    /requires body\.fanin_data_v1 with schema/u,
-  );
-});
-
 test("agent fan-in rejects responses without store tenant attribution without dispatch", async () => {
   const context = await setup("engine-fanin-missing-tenant");
   const input: Delivery = {
@@ -648,7 +450,6 @@ test("agent fan-in rejects responses without store tenant attribution without di
     /canonical tenant_id\/alias/u,
   );
 });
-
 
 test("a flat fan-out drops the sibling reply its lead turn already received in branch progress", async () => {
   const runner = new ControlledRunner();

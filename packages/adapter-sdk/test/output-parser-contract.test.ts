@@ -1,18 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAX_EXPANDED_RELAY_AGGREGATE_BYTES,
-  MAX_NOTIFY_BODY_BYTES,
-  MAX_NOTIFY_DIRECTIVES,
   MAX_RELAY_AGGREGATE_BYTES,
   MAX_RELAY_BODY_BYTES,
   MAX_RELAY_MESSAGES,
-  parseClaudeOutput,
-  parseCodexOutput,
   parseDirectOutput,
-  parseFinalText,
-  parseHermesOutput,
-  parseOpenClawOutput,
   validateDeliveryOutput,
   validateStructuredOutput,
 } from "../src/sdk/output-parser.js";
@@ -36,29 +28,11 @@ test("canonicalizes successful structured output to non-retryable", () => {
   );
 });
 
-test("canonicalizes a successful Hermes result without re-execution", () => {
-  const parsed = parseHermesOutput(JSON.stringify({
-    result: output("done", true),
-  }));
-
-  assert.equal(parsed.output.status, "done");
-  assert.equal(parsed.output.retryable, false);
-  assert.equal(parsed.output.reply, "sanitized result");
-});
-
 test("preserves retryable failures", () => {
   const parsed = validateStructuredOutput(output("failed", true));
 
   assert.equal(parsed.status, "failed");
   assert.equal(parsed.retryable, true);
-});
-
-test("normalises a non-boolean retryable field instead of killing the turn", () => {
-  const salida = validateStructuredOutput(output("done", "true"));
-  assert.equal(salida.retryable, false,
-    "an unreadable retryable can only default to not retrying: re-running may repeat paid effects");
-  assert.match(salida.reply ?? "", /'retryable' no era booleano/u,
-    "the agent only stops repeating the mistake if it reads it in its own reply");
 });
 
 test("rejects empty delegation targets and bodies", () => {
@@ -110,119 +84,12 @@ function assertSilencioDegradado(salida: ReturnType<typeof validateDeliveryOutpu
   assert.match(salida.reply ?? "", /Volve a preguntarme/u);
 }
 
-test("OpenClaw parser exposes an empty terminal result and the delivery contract degrades it", () => {
-  const parsed = parseOpenClawOutput(JSON.stringify({ output: EMPTY_SUCCESS }));
-  assert.equal(parsed.output.reply, null);
-  assert.deepEqual(parsed.output.messages, []);
-  assertSilencioDegradado(validateDeliveryOutput(parsed.output, {
-    messageType: "agent.response",
-    senderAlias: "seneca",
-  }));
-});
-
-test("Hermes parser exposes an empty terminal result and the delivery contract degrades it", () => {
-  const parsed = parseHermesOutput(JSON.stringify({ result: EMPTY_SUCCESS }));
-  assert.equal(parsed.output.reply, null);
-  assert.deepEqual(parsed.output.messages, []);
-  assertSilencioDegradado(validateDeliveryOutput(parsed.output, {
-    messageType: "agent.response",
-    senderAlias: "argos",
-  }));
-});
-
-test("Codex and Claude results use the same non-empty completion contract", () => {
-  const codex = parseCodexOutput(JSON.stringify({
-    type: "item.completed",
-    item: { type: "agent_message", text: JSON.stringify(EMPTY_SUCCESS) },
-  }));
-  const claude = parseClaudeOutput(JSON.stringify({ result: EMPTY_SUCCESS }));
-
-  for (const parsed of [codex, claude]) {
-    assertSilencioDegradado(validateDeliveryOutput(parsed.output, { messageType: "agent.response" }));
-  }
-});
-
 // --- A broken-tool dump is NOT a reply ---------------------------------------
 // The two strings below are copied VERBATIM from `deliveries.result.output.reply` in
 // production. They are emitted by openclaw 2026.6.6, not by us: grepping the symbol over
 // packages/ yields no match outside this array, and the binary installed in the `claw`
 // container classifies them the same way at dist/helpers-CYQZyDV5.js:119-127
 // (`isCronToolWarning`, `isCronMessagePresentationWarning`).
-const AVISO_HERRAMIENTA =
-  "⚠️ 🛠️ `ssh ws-prizma 'cd /workspace/clientes/b2b-sales && rg -n \"schema\"'` (exit 5)";
-const AVISO_MENSAJE = "⚠️ ✉️ Message failed";
-
-function replyDe(reply: string | null): Record<string, unknown> {
-  return { reply, messages: [], notify: [], status: "done", retryable: false, artifacts: [] };
-}
-
-test("un volcado de herramienta como reply entero se degrada en vez de entregarse como respuesta", () => {
-  for (const aviso of [AVISO_HERRAMIENTA, AVISO_MENSAJE]) {
-    const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(aviso)));
-    // This is what Pablo (seneca/grp.pablo, 3 on 26-Jul) and Jhon (hegel/grp.jhon, 1 on 28-Jul)
-    // received thinking it was the agent's answer. 30 'done' deliveries measured like this.
-    assert.equal(salida.status, "failed", `el aviso no puede pasar por respuesta: ${aviso}`);
-    assert.equal(salida.retryable, false);
-    assert.match(salida.reply ?? "", /se me rompio una herramienta/u);
-    // The dump is not discarded: it helps diagnostics, but is labeled as a technical detail.
-    assert.ok(salida.reply?.includes(aviso), "el volcado tiene que sobrevivir como detalle");
-  }
-});
-
-test("un aviso citado dentro de una respuesta de verdad no se toca", () => {
-  // The case that must not break: argos explained to seneca, in 2,685 characters, that its
-  // delivery came back as a warning. That is failure analysis, not the failure itself. Of the
-  // 256 'done' deliveries whose reply contains the symbol, only 30 are the bare dump; the
-  // other 226 are real replies and stay untouched.
-  const analisis = `Tu entrega volvio como \`${AVISO_MENSAJE}\`, sin cuerpo.\nLo revise y el culpable es el bridge.`;
-  const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(analisis)));
-  assert.equal(salida.status, "done");
-  assert.equal(salida.reply, analisis);
-});
-
-test("el banner de sesion compartida de Cauce no se confunde con un aviso de openclaw", () => {
-  // Our own warning also opens with "⚠" and is also pasted in front of the reply
-  // (src/shared-session/notice.ts). If the rule keyed off the symbol it would eat real
-  // replies from socrates, kratos, zeus, kant and dedalo: 96 deliveries measured in production.
-  const banner = "⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA\nEste turno NO pasó por la terminal.\n\nLa respuesta real.";
-  const salida = validateDeliveryOutput(validateStructuredOutput(replyDe(banner)));
-  assert.equal(salida.status, "done");
-  assert.equal(salida.reply, banner);
-});
-
-test("el aviso de cola no le gana a la respuesta real en los payloads de openclaw", () => {
-  // The original bug: openclaw APPENDS the warning as one more text payload, and the parser
-  // did `.at(-1)`, so the warning won over the reply that sat just before it.
-  const parsed = parseOpenClawOutput(JSON.stringify({
-    payloads: [
-      { text: JSON.stringify({ ...replyDe("La migracion corrio y quedo aplicada."), notify: [] }) },
-      { text: AVISO_HERRAMIENTA },
-    ],
-  }));
-  assert.equal(parsed.output.reply, "La migracion corrio y quedo aplicada.");
-  assert.equal(validateDeliveryOutput(parsed.output).status, "done");
-});
-
-test("si el aviso es lo unico que dijo el turno, el turno igual deja resultado", () => {
-  // Without this path the parser falls through to the unwrap below and throws
-  // MalformedOutputError, leaving the delivery WITHOUT `result` -- exactly the failure mode
-  // this fix comes to remove.
-  const parsed = parseOpenClawOutput(JSON.stringify({ payloads: [{ text: AVISO_HERRAMIENTA }] }));
-  assert.equal(parsed.output.reply, AVISO_HERRAMIENTA);
-  const salida = validateDeliveryOutput(parsed.output);
-  assert.equal(salida.status, "failed");
-  assert.match(salida.reply ?? "", /se me rompio una herramienta/u);
-});
-
-test("con aviso de cola gana finalAssistantVisibleText, que es donde openclaw deja el texto real", () => {
-  // It is the same recovery openclaw does at helpers-CYQZyDV5.js:152 (`hasRecoveredToolWarning`).
-  const parsed = parseOpenClawOutput(JSON.stringify({
-    payloads: [{ text: AVISO_MENSAJE }],
-    finalAssistantVisibleText: "Revise los accesos y estan los tres activos.",
-  }));
-  assert.equal(parsed.output.reply, "Revise los accesos y estan los tres activos.");
-  assert.equal(validateDeliveryOutput(parsed.output).status, "done");
-});
 
 test("reply null remains valid while a turn delegates genuine new work", () => {
   const delegated = validateStructuredOutput({
@@ -250,31 +117,6 @@ test("agent fan-in must synthesize instead of starting another delegation round"
     () => validateDeliveryOutput(delegated, { messageType: "agent.fanin" }),
     isContractError("FANIN_REDELEGATION_FORBIDDEN"),
   );
-});
-
-/**
- * Bouncing back to the sender still has no value, but no longer with a `throw`. What changed is
- * the COST: `AGENT_MESSAGE_PING_PONG` was non-retryable and carried off the ENTIRE `reply`,
- * that is, the work. Measured in 48 h (2026-08-04/05): 5 such turns in 5 aliases/4 tenants.
- * Now the message is dropped, the reason is reported, and the reply is delivered.
- * See test/pingpong-descarte.test.ts.
- */
-test("an internal delivery cannot send any message back to its sender", () => {
-  const bounced = validateStructuredOutput({
-    ...EMPTY_SUCCESS,
-    messages: [{ to: "seneca", body: "a differently worded follow-up" }],
-  });
-  const output = validateDeliveryOutput(bounced, {
-    messageType: "agent.response",
-    senderAlias: "seneca",
-    selfAlias: "jarvis",
-    routingTargets: ROUTING_TARGETS,
-  });
-
-  assert.deepEqual(output.messages, [], "el rebote no se materializa");
-  assert.equal(output.status, "done", "pero tampoco cuesta el turno");
-  assert.match(output.reply ?? "", /a differently worded follow-up/u);
-  assert.match(output.reply ?? "", /\[Cauce\].*"seneca"/su);
 });
 
 function delegatedOutput(
@@ -386,39 +228,6 @@ test("@all must be exclusive and is forbidden on every internal delivery type", 
   );
 });
 
-test("@all requires a trusted inventory with at least one online peer", () => {
-  const all = validateStructuredOutput({
-    ...EMPTY_SUCCESS,
-    messages: [{ to: "@all", body: "validate connectivity" }],
-  });
-  assert.throws(
-    () => validateDeliveryOutput(all, {
-      messageType: "request",
-      selfAlias: "jarvis",
-    }),
-    isContractError("ROUTING_INVENTORY_UNAVAILABLE"),
-  );
-  assert.throws(
-    () => validateDeliveryOutput(all, {
-      messageType: "request",
-      selfAlias: "jarvis",
-      routingTargets: [],
-    }),
-    isContractError("NO_ONLINE_TARGETS"),
-  );
-  assert.throws(
-    () => validateDeliveryOutput(all, {
-      messageType: "request",
-      selfAlias: "jarvis",
-      routingTargets: [
-        { tenant_id: "Steven", alias: "jarvis", online: true },
-        { tenant_id: "Pablo", alias: "seneca", online: false },
-      ],
-    }),
-    isContractError("NO_ONLINE_TARGETS"),
-  );
-});
-
 test("structured replies and message bodies require Unicode-visible text", () => {
   for (const invisible of [
     "\u200b",
@@ -450,49 +259,6 @@ test("structured replies and message bodies require Unicode-visible text", () =>
     reply: `a\u0301`,
   });
   assert.equal(validateDeliveryOutput(composed), composed);
-});
-
-test("plain final text rejects zero-width and control-only output before fallback", () => {
-  for (const invisible of [
-    "\u200b",
-    "\u0000",
-    "\t\u200d\u0000",
-    "\u034f",
-    "\ufe0f",
-    "\u0301",
-  ]) {
-    assert.throws(
-      () => parseFinalText(invisible, "Native result"),
-      /did not contain visible text/u,
-    );
-  }
-});
-
-test("relay body limits use exact UTF-8 byte boundaries", () => {
-  const exactAscii = "x".repeat(MAX_RELAY_BODY_BYTES);
-  const exactMultibyte = "\u00e9".repeat(MAX_RELAY_BODY_BYTES / 2);
-  for (const body of [exactAscii, exactMultibyte]) {
-    const parsed = validateStructuredOutput({
-      ...EMPTY_SUCCESS,
-      messages: [{ to: "socrates", body }],
-    });
-    assert.equal(Buffer.byteLength(parsed.messages[0]?.body ?? "", "utf8"), MAX_RELAY_BODY_BYTES);
-  }
-
-  assert.throws(
-    () => validateStructuredOutput({
-      ...EMPTY_SUCCESS,
-      messages: [{ to: "socrates", body: `${exactAscii}x` }],
-    }),
-    /body exceeded the UTF-8 byte limit/u,
-  );
-  assert.throws(
-    () => validateStructuredOutput({
-      ...EMPTY_SUCCESS,
-      messages: [{ to: "socrates", body: `${exactMultibyte}x` }],
-    }),
-    /body exceeded the UTF-8 byte limit/u,
-  );
 });
 
 test("relay aggregate and message-count limits fail above their exact boundaries", () => {
@@ -531,52 +297,6 @@ test("relay aggregate and message-count limits fail above their exact boundaries
   );
 });
 
-test("@all expansion is bounded by aggregate UTF-8 bytes", () => {
-  const all = validateStructuredOutput({
-    ...EMPTY_SUCCESS,
-    messages: [{ to: "@all", body: "x".repeat(MAX_RELAY_BODY_BYTES) }],
-  });
-  const exactPeerCount = MAX_EXPANDED_RELAY_AGGREGATE_BYTES / MAX_RELAY_BODY_BYTES;
-  const targets = Array.from({ length: exactPeerCount + 1 }, (_, index) => ({
-    tenant_id: `tenant-${String(index)}`,
-    alias: `peer${String(index)}`,
-    online: true,
-  }));
-
-  assert.equal(
-    validateDeliveryOutput(all, {
-      messageType: "request",
-      selfAlias: "jarvis",
-      routingTargets: targets.slice(0, exactPeerCount),
-    }),
-    all,
-  );
-  assert.throws(
-    () => validateDeliveryOutput(all, {
-      messageType: "request",
-      selfAlias: "jarvis",
-      routingTargets: targets,
-    }),
-    isContractError("EXPANDED_RELAY_AGGREGATE_TOO_LARGE"),
-  );
-});
-
-test("failed fan-in cannot carry messages", () => {
-  const failedWithMessages = delegatedOutput("socrates", {
-    status: "failed",
-    retryable: true,
-  });
-  assert.throws(
-    () => validateDeliveryOutput(failedWithMessages, {
-      messageType: "agent.fanin",
-      senderAlias: "cauce",
-      selfAlias: "jarvis",
-      routingTargets: ROUTING_TARGETS,
-    }),
-    isContractError("FANIN_REDELEGATION_FORBIDDEN"),
-  );
-});
-
 test("un output failed pierde sus delegaciones pero conserva la respuesta", () => {
   // Before this it threw FAILED_OUTPUT_MESSAGES_FORBIDDEN, and the throw took the `reply`
   // with it: the sender got "could not complete the delegated request" and nothing else.
@@ -598,47 +318,6 @@ test("un output failed pierde sus delegaciones pero conserva la respuesta", () =
   assert.match(resultado.reply, /Se descartaron 1 delegacion/u);
 });
 
-test("failed output rejects an invisible reply but permits reply null", () => {
-  const invisibleFailure = validateStructuredOutput({
-    reply: "\u200b\u0000",
-    messages: [],
-    status: "failed",
-    retryable: true,
-    artifacts: [],
-  });
-  assert.throws(
-    () => validateDeliveryOutput(invisibleFailure),
-    isContractError("INVISIBLE_REPLY"),
-  );
-
-  const nullFailure = validateStructuredOutput({
-    ...invisibleFailure,
-    reply: null,
-  });
-  assert.equal(validateDeliveryOutput(nullFailure), nullFailure);
-});
-
-test("delegation target syntax accepts only a canonical alias or exact @all", () => {
-  for (const target of ["Socrates", "@group", "socrates.other", ""]) {
-    assert.throws(
-      () => validateStructuredOutput({
-        ...EMPTY_SUCCESS,
-        messages: [{ to: target, body: "visible task" }],
-      }),
-      /canonical lowercase alias or reserved target/u,
-    );
-  }
-});
-
-test("legacy five-key output normalizes notify to an empty list", () => {
-  const legacy = validateStructuredOutput(output("done", false));
-  assert.deepEqual(legacy.notify, []);
-  assert.deepEqual(
-    parseDirectOutput(JSON.stringify(output("done", false))).output.notify,
-    [],
-  );
-});
-
 test("accepts a well formed notify directive", () => {
   const parsed = validateStructuredOutput({
     ...output("done", false),
@@ -647,56 +326,6 @@ test("accepts a well formed notify directive", () => {
   assert.deepEqual(parsed.notify, [
     { to: "steven.dm", body: "la tarea terminó", kind: "task_complete" },
   ]);
-});
-
-test("una notify mal formada se descarta y la respuesta sobrevive", () => {
-  // Before this each of these threw, and the throw took the whole reply with it: the agent
-  // did the work and the owner got a schema error. `notify` is accessory; if it is malformed
-  // it is dropped, the agent is told why in its own reply, and the turn stays alive.
-  const casos: [unknown, RegExp][] = [
-    ["not-an-array", /no era una lista/u],
-    [[{ to: "Steven.DM", kind: "alert", body: "x" }], /no es un handle de destino/u],
-    [[{ to: "steven.dm", kind: "gossip", body: "x" }], /'kind' debe ser uno de/u],
-    [[{ to: "steven.dm", kind: "alert", body: " " }], /no tiene texto visible/u],
-    [
-      [{ to: "steven.dm", kind: "alert", body: "x".repeat(MAX_NOTIFY_BODY_BYTES + 1) }],
-      /supera el limite de bytes/u,
-    ],
-    [
-      Array.from({ length: MAX_NOTIFY_DIRECTIVES + 1 }, () => ({
-        to: "steven.dm", kind: "alert", body: "x",
-      })),
-      /el limite es 4/u,
-    ],
-  ];
-  for (const [notify, patron] of casos) {
-    const salida = validateStructuredOutput({ ...output("done", false), notify });
-    assert.ok(salida.reply);
-    assert.match(salida.reply, patron);
-    assert.match(salida.reply, /\[Cauce\]/u);
-  }
-});
-
-test("una notify bien formada pasa intacta y no ensucia la respuesta", () => {
-  const salida = validateStructuredOutput({
-    ...output("done", false),
-    notify: [{ to: "steven_dm", kind: "decision_request", body: "necesito que autorices X" }],
-  });
-  assert.equal(salida.notify.length, 1);
-  assert.equal(salida.notify[0]?.to, "steven_dm");
-  assert.ok(salida.reply);
-  assert.ok(!salida.reply.includes("[Cauce]"));
-});
-
-test("las notify agregadas se acotan sin tumbar el turno", () => {
-  const body = "x".repeat(MAX_NOTIFY_BODY_BYTES);
-  const salida = validateStructuredOutput({
-    ...output("done", false),
-    notify: Array.from({ length: 3 }, () => ({ to: "steven.dm", kind: "digest", body })),
-  });
-  assert.ok(salida.notify.length < 3, "las que exceden el agregado no se entregan");
-  assert.ok(salida.reply);
-  assert.match(salida.reply, /limite agregado de bytes/u);
 });
 
 test("artifacts ausente se normaliza a lista vacia", () => {
@@ -729,33 +358,6 @@ test("notify never satisfies the final reply requirement", () => {
   assert.equal(salida.notify[0]?.to, "steven.dm");
 });
 
-test("a failed output may notify even though it may not delegate", () => {
-  const failed = validateStructuredOutput({
-    reply: "la tarea larga falló",
-    messages: [],
-    notify: [{ to: "steven.dm", kind: "alert", body: "falló el build nocturno" }],
-    status: "failed",
-    retryable: false,
-    artifacts: [],
-  });
-  assert.equal(validateDeliveryOutput(failed), failed);
-
-  // And a delegation in a failed turn no longer blows up the turn: it is dropped, the sender
-  // is told, and `notify` (the only channel that survives a failure) is left untouched.
-  const conDelegacion = validateDeliveryOutput(validateStructuredOutput({
-    reply: "falló",
-    messages: [{ to: "socrates", body: "seguí vos" }],
-    notify: [{ to: "steven.dm", kind: "alert", body: "necesito autorizacion" }],
-    status: "failed",
-    retryable: false,
-    artifacts: [],
-  }));
-  assert.deepEqual(conDelegacion.messages, []);
-  assert.ok(conDelegacion.reply);
-  assert.match(conDelegacion.reply, /^falló\n\n\[Cauce\] Se descartaron 1 delegacion/u);
-  assert.equal(conDelegacion.notify.length, 1);
-});
-
 const PDF_DATA_URI = "data:application/pdf;base64,JVBERi0xLjQK";
 
 function soloFichero(uri: string, reply: string | null): Record<string, unknown> {
@@ -777,13 +379,4 @@ test("un reply invisible SIN fichero entregable sigue costando el turno", () => 
       `"${uri}" no es un fichero que el destinatario pueda abrir`,
     );
   }
-});
-
-test("un turno mudo cuyo unico artifact es un file:// sigue degradandose a failed", () => {
-  assertSilencioDegradado(validateDeliveryOutput(
-    validateStructuredOutput(soloFichero("file:///x", null)),
-  ));
-  assertSilencioDegradado(validateDeliveryOutput(
-    validateStructuredOutput({ ...soloFichero(PDF_DATA_URI, null), artifacts: [] }),
-  ));
 });

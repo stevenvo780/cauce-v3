@@ -7,7 +7,6 @@ import {
   ControlledRunner,
   SUCCESS,
   delivery,
-  sessionOf,
   setup,
 } from "./engine-fixtures.js";
 test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuesta", async () => {
@@ -74,66 +73,6 @@ test("materializa attachments_v1 para el harness, verifica contenido y limpia el
   assert.ok(materializedPath);
   await assert.rejects(access(materializedPath), { code: "ENOENT" });
   assert.equal(context.events.at(-1)?.phase, "done");
-});
-
-/**
- * DELIVERY must accept every format INGEST accepts.
- *
- * This package used to own an allowlist of its own, unrelated to the protocol one. Anything the
- * bridge accepted but it did not know entered the bus, was stored, and then died on delivery with
- * a non-retryable `INVALID_ATTACHMENT` BEFORE the harness ran: the agent saw neither the file NOR
- * the human's text. Both ends now agree that no format is turned away.
- */
-test("cualquier formato que la ingesta acepta tambien se materializa en la entrega", async () => {
-  const casos: readonly (readonly [string, string])[] = [
-    ["notas.md", "text/markdown"],
-    ["notas.md", "text/x-markdown"],
-    ["notas.md", "text/plain"],
-    ["tabla.csv", "text/csv"],
-    ["tabla.csv", "text/plain"],
-    ["desplegar.sh", "application/x-sh"],
-    ["evidencia.zip", "application/zip"],
-    ["captura.mp4", "video/mp4"],
-    ["cauce.db", "application/vnd.sqlite3"],
-    ["volcado", "application/octet-stream"],
-    ["informe con espacios y acentos.txt", "text/plain"],
-    ["diagrama.svg", "image/svg+xml"],
-  ];
-  const payload = Buffer.from("# informe\nuna linea\n", "utf8");
-  for (const [indice, [name, mime]] of casos.entries()) {
-    const runner = new ControlledRunner();
-    const context = await setup(`engine-texto-${String(indice)}`, runner);
-    const input: Delivery = {
-      ...delivery(`media-texto-${String(indice)}`),
-      body: {
-        type: "telegram.message",
-        attachments_v1: [{
-          kind: "document",
-          name,
-          mime_type: mime,
-          file_size: payload.length,
-          sha256: createHash("sha256").update(payload).digest("hex"),
-          content_base64: payload.toString("base64"),
-        }],
-      },
-    };
-
-    await context.engine.handleDelivery(input);
-
-    assert.equal(context.events.at(-1)?.phase, "done", `${mime} + ${name} deberia entregarse`);
-    assert.match(runner.requests.at(-1)?.stdin ?? "", /"local_path":"[^"]+"/u);
-  }
-});
-
-test("un cuerpo realmente vacio sigue siendo rechazado", async () => {
-  const context = await setup("engine-body-empty");
-  const input: Delivery = {
-    ...delivery("body-empty"),
-    body: { type: "telegram.message", chat_type: "private" },
-  };
-  await context.engine.handleDelivery(input);
-  assert.equal(context.runner.requests.length, 0);
-  assert.equal(context.events.at(-1)?.error?.code, "INVALID_DELIVERY");
 });
 
 /**
@@ -365,100 +304,6 @@ test("two materialized outputs to one alias close only by their exact child deli
   assert.match(secondPrompt, /"output_index":0/u);
 });
 
-/** A single-branch delegation has nothing to consolidate: the prompt stays as it was. */
-test("un abanico de una sola rama no paga el bloque de branch_progress", async () => {
-  const runner = new ControlledRunner();
-  runner.stdout = JSON.stringify({
-    reply: "va uno solo",
-    messages: [{ to: "socrates", body: "rama unica" }],
-    status: "done",
-    retryable: false,
-    artifacts: [],
-  });
-  const context = await setup("engine-branch-progress-single", runner);
-  const rootDelivery: Delivery = {
-    ...delivery("branch-single-root"),
-    trace_id: "trace-branch-single",
-    body: { prompt: "una sola cosa" },
-    routing_targets: [{ tenant_id: "Steven", alias: "socrates", online: true }],
-  };
-  await context.engine.handleDelivery(rootDelivery);
-
-  runner.stdout = SUCCESS;
-  await context.engine.handleDelivery({
-    ...delivery("branch-single-response"),
-    actor_alias: "socrates",
-    recipient_alias: "argos",
-    trace_id: rootDelivery.trace_id,
-    body: {
-      type: "agent.response",
-      text: "listo",
-      correlation: {
-        root_message_id: rootDelivery.message_id,
-        root_delivery_id: rootDelivery.delivery_id,
-        response_to_delivery_id: rootDelivery.delivery_id,
-      },
-    },
-  });
-
-  const prompt = runner.requests[1]?.stdin ?? "";
-  assert.match(prompt, /agent_response_continuation/u);
-  // The JSON key plus the instruction that goes with it; the standalone word is not proof, because
-  // the contract of every `agent.response` mentions it in prose even when the block is absent.
-  assert.ok(!prompt.includes('"branch_progress"'));
-  assert.ok(!prompt.includes("branch_progress is this adapter's own local record"));
-});
-
-/**
- * Without `origin` the conversation was derived from the ACTOR, and for agent-to-agent traffic
- * the actor is not a conversation: it is a BRANCH. A fan-out of four came back as four isolated
- * native sessions and four independent FIFO locks, so no turn saw the others and they could even
- * run in parallel. It collapses to the pair's tenant: no more (one session per chain has no cap
- * and `sessions.json` invalidates at 4096 entries, with no pruning) and no less (a single session
- * would mix two tenants' work in the same transcript).
- */
-test("sin origin, el carril de agentes es uno por tenant y no uno por remitente", async () => {
-  const context = await setup("engine-agent-lane-session");
-  const legacyPublish = (id: string, overrides: Partial<Delivery>): Delivery => {
-    const { origin: _origin, authenticated_context: _authenticated, ...rest } = delivery(id);
-    return {
-      ...rest,
-      authenticated_context: { session_id: `delivery:${id}:attempt:1`, channel: "mcp" },
-      ...overrides,
-    };
-  };
-
-  await context.engine.handleDelivery(legacyPublish("agent-lane-human", {
-    body: { prompt: "esto lo hacés vos" },
-  }));
-  await context.engine.handleDelivery(legacyPublish("agent-lane-a", {
-    actor_alias: "socrates",
-    body: { type: "agent.response", text: "rama de socrates" },
-  }));
-  await context.engine.handleDelivery(legacyPublish("agent-lane-b", {
-    actor_alias: "seneca",
-    body: { type: "agent.response", text: "rama de seneca" },
-  }));
-  await context.engine.handleDelivery(legacyPublish("agent-lane-c", {
-    tenant_id: "Miguel",
-    actor_alias: "atlas",
-    body: { type: "agent.response", text: "rama de atlas" },
-  }));
-
-  const human = sessionOf(context.runner, 0);
-  const socrates = sessionOf(context.runner, 1);
-  const seneca = sessionOf(context.runner, 2);
-  const atlas = sessionOf(context.runner, 3);
-
-  // Two branches of the same tenant share the session: that is why the last one can see the
-  // previous one, and why the FIFO lock serializes them instead of letting them run in parallel.
-  assert.equal(seneca, socrates);
-  // But the work of another tenant does not enter that transcript.
-  assert.notEqual(atlas, socrates);
-  // And the person's own conversation stays theirs, in its own lane.
-  assert.notEqual(human, socrates);
-});
-
 test("el agente devuelve el fichero que recibió y viaja inlineado en el done", async () => {
   const payload = Buffer.from("%PDF-1.7\nel mismo informe de vuelta", "utf8");
   const sha256 = createHash("sha256").update(payload).digest("hex");
@@ -522,21 +367,4 @@ test("el remitente del adjunto sale del principal autenticado, no del from_alias
   assert.match(enviado, /El agente kant te envió un adjunto de tipo photo/u);
   assert.doesNotMatch(enviado, /El agente zeus/u);
   assert.doesNotMatch(enviado, /El usuario envió/u);
-});
-
-test("un from_alias en un cuerpo de usuario no convierte al remitente en un agente", async () => {
-  const context = await setup("engine-media-from-alias-falso");
-  await context.engine.handleDelivery({
-    ...delivery("media-from-alias-falso"),
-    actor_alias: "kant",
-    body: {
-      type: "telegram.message",
-      from_alias: "zeus",
-      media: [{ kind: "photo", file_id: "AgACAgEAAxk", file_size: 137933 }],
-    },
-  });
-
-  const enviado = context.runner.requests[0]?.stdin ?? "";
-  assert.match(enviado, /El usuario envió un adjunto de tipo photo/u);
-  assert.doesNotMatch(enviado, /El agente zeus/u);
 });

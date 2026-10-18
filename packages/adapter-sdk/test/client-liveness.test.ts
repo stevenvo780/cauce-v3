@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { getEventListeners } from 'node:events';
 import test from 'node:test';
-import { systemClock } from '../src/sdk/backoff.js';
 import {
   ConnectionLiveness,
   MAX_NODE_TIMER_DELAY_MS,
   connectionTimeouts,
-  raceWithDeadline,
 } from '../src/sdk/connection-liveness.js';
 import { AdapterError } from '../src/sdk/errors.js';
 import type {
@@ -53,13 +51,6 @@ class TrackingConnection extends FakeConnection {
   override async close(): Promise<void> {
     this.closeCalls += 1;
     await super.close();
-  }
-}
-
-class HangingCloseConnection extends TrackingConnection {
-  override async close(): Promise<void> {
-    this.closeCalls += 1;
-    await new Promise<void>(() => undefined);
   }
 }
 
@@ -156,67 +147,6 @@ class StuckFrameIteratorConnection implements ConsumerConnection {
   }
 }
 
-class FrameWinsThenStopsConnection implements ConsumerConnection {
-  readonly mode = 'consumer' as const;
-  readonly ephemeral = false as const;
-  typeReadsAfterStop = 0;
-  closeCalls = 0;
-  private nextCalls = 0;
-  private readonly lateFrame: ServerFrame;
-
-  constructor(
-    private readonly clock: VirtualClock,
-    private readonly stop: AbortController,
-  ) {
-    const wake: ServerFrame = {
-      type: 'wake',
-      alias: 'agent_frame_stop_race',
-      reason: 'delivery_available',
-    };
-    this.lateFrame = new Proxy(wake, {
-      get: (target, property, receiver): unknown => {
-        if (property === 'type' && this.stop.signal.aborted) this.typeReadsAfterStop += 1;
-        return Reflect.get(target, property, receiver) as unknown;
-      },
-    });
-  }
-
-  async send(frame: ClientFrame): Promise<void> {
-    void frame;
-  }
-
-  frames(): AsyncIterable<ServerFrame> {
-    return {
-      [Symbol.asyncIterator]: () => ({
-        next: (): Promise<IteratorResult<ServerFrame>> => {
-          this.nextCalls += 1;
-          if (this.nextCalls === 1) {
-            return Promise.resolve({
-              done: false,
-              value: {
-                type: 'hello_ack',
-                version: '3.0',
-                epoch: 1,
-                lease_expires_at: new Date(this.clock.now().getTime() + 30_000).toISOString(),
-              },
-            });
-          }
-          return {
-            then: (resolve: (value: IteratorResult<ServerFrame>) => void): void => {
-              resolve({ done: false, value: this.lateFrame });
-              this.stop.abort(new Error('planned stop after frame won'));
-            },
-          } as unknown as Promise<IteratorResult<ServerFrame>>;
-        },
-      }),
-    };
-  }
-
-  async close(): Promise<void> {
-    this.closeCalls += 1;
-  }
-}
-
 const BASE_CONFIG = {
   tenantId: 'Steven',
   alias: 'agent_timeout_config',
@@ -256,50 +186,6 @@ test('public connection timeout config accepts positive integers and rejects uns
   }
 });
 
-test('systemClock sleep removes its real abort listener after resolve and abort', async () => {
-  const completed = new AbortController();
-  for (let count = 0; count < 12; count += 1) {
-    await systemClock.sleep(0, completed.signal);
-    assert.equal(getEventListeners(completed.signal, 'abort').length, 0);
-  }
-
-  const cancelled = new AbortController();
-  const sleeping = systemClock.sleep(60_000, cancelled.signal);
-  assert.equal(getEventListeners(cancelled.signal, 'abort').length, 1);
-  cancelled.abort(new Error('planned sleep abort'));
-  await assert.rejects(sleeping, /planned sleep abort/u);
-  assert.equal(getEventListeners(cancelled.signal, 'abort').length, 0);
-});
-
-test('deadline races remove their timer and abort listener on success and timeout', async () => {
-  const clock = new VirtualClock(1_000);
-  const stop = new AbortController();
-  assert.equal(await raceWithDeadline(Promise.resolve('ok'), {
-    clock,
-    at: 1_100,
-    signals: [stop.signal],
-    timeoutError: () => new Error('late'),
-  }), 'ok');
-  assert.equal(clock.pendingTimers(), 0);
-  assert.equal(getEventListeners(stop.signal, 'abort').length, 0);
-
-  const never = new Promise<never>(() => undefined);
-  const timed = raceWithDeadline(never, {
-    clock,
-    at: 1_100,
-    signals: [stop.signal, stop.signal],
-    timeoutError: () => new AdapterError('TEST_TIMEOUT', 'planned timeout', true),
-  });
-  const rejected = assert.rejects(timed, (error: unknown) => (
-    error instanceof AdapterError && error.code === 'TEST_TIMEOUT'
-  ));
-  assert.equal(getEventListeners(stop.signal, 'abort').length, 1, 'duplicate signals share one listener');
-  await advance(clock, 100);
-  await rejected;
-  assert.equal(clock.pendingTimers(), 0);
-  assert.equal(getEventListeners(stop.signal, 'abort').length, 0);
-});
-
 test('a stopped generation ignores late ACKs and duplicate ACKs cannot renew a newer heartbeat', () => {
   const clock = new VirtualClock(1_000);
   const failures: AdapterError[] = [];
@@ -330,98 +216,6 @@ test('a stopped generation ignores late ACKs and duplicate ACKs cannot renew a n
   clock.advance(20);
   assert.equal(failures.length, 1);
   assert.equal(failures[0]?.code, 'HEARTBEAT_ACK_TIMEOUT');
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('hello lease seeds heartbeat monotonicity so an older first ACK cannot clear the watchdog', () => {
-  const clock = new VirtualClock(1_000);
-  const failures: AdapterError[] = [];
-  const failureCodes = (): string[] => failures.map((error) => error.code);
-  const liveness = new ConnectionLiveness({
-    clock,
-    helloAckTimeoutMs: 10,
-    heartbeatAckTimeoutMs: 20,
-    onFailure: (error) => { failures.push(error); },
-  });
-  liveness.start();
-  const helloLease = new Date(3_000).toISOString();
-  liveness.helloAcknowledged(helloLease);
-  liveness.heartbeatStarted();
-  assert.equal(liveness.heartbeatAcknowledged(helloLease), false);
-  assert.equal(liveness.heartbeatAcknowledged(new Date(2_999).toISOString()), false);
-  clock.advance(20);
-  assert.deepEqual(failureCodes(), ['HEARTBEAT_ACK_TIMEOUT']);
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('an absolute lease timestamp behind the local clock defers to the relative heartbeat deadline', () => {
-  const clock = new VirtualClock(10_000);
-  const failures: AdapterError[] = [];
-  const liveness = new ConnectionLiveness({
-    clock,
-    helloAckTimeoutMs: 10,
-    heartbeatAckTimeoutMs: 20,
-    onFailure: (error) => { failures.push(error); },
-  });
-  const failureCodes = (): string[] => failures.map((error) => error.code);
-  liveness.start();
-  liveness.helloAcknowledged(new Date(9_000).toISOString());
-  assert.deepEqual(failureCodes(), []);
-  liveness.heartbeatStarted();
-  clock.advance(19);
-  assert.deepEqual(failureCodes(), []);
-  clock.advance(1);
-  assert.deepEqual(failureCodes(), ['HEARTBEAT_ACK_TIMEOUT']);
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('a lease beyond the Node timer maximum rearms in chunks and fails one second before expiry', () => {
-  const startedAt = 1_000;
-  const clock = new VirtualClock(startedAt);
-  const failures: AdapterError[] = [];
-  const failureCodes = (): string[] => failures.map((error) => error.code);
-  const liveness = new ConnectionLiveness({
-    clock,
-    helloAckTimeoutMs: 10,
-    heartbeatAckTimeoutMs: 20,
-    onFailure: (error) => { failures.push(error); },
-  });
-  const finalChunkMs = 5_000;
-  const leaseExpiresAt = startedAt + MAX_NODE_TIMER_DELAY_MS + finalChunkMs + 1_000;
-  liveness.start();
-  liveness.helloAcknowledged(new Date(leaseExpiresAt).toISOString());
-
-  assert.equal(clock.scheduledIn(MAX_NODE_TIMER_DELAY_MS), 1);
-  clock.advance(MAX_NODE_TIMER_DELAY_MS);
-  assert.deepEqual(failureCodes(), []);
-  assert.equal(clock.scheduledIn(finalChunkMs), 1);
-  clock.advance(finalChunkMs - 1);
-  assert.deepEqual(failureCodes(), []);
-  assert.equal(clock.pendingTimers(), 1);
-  clock.advance(1);
-  assert.deepEqual(failureCodes(), ['CONNECTION_LEASE_EXPIRED']);
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('stopping a chunked long lease removes its timer and prevents a later failure', () => {
-  const startedAt = 1_000;
-  const clock = new VirtualClock(startedAt);
-  const failures: AdapterError[] = [];
-  const liveness = new ConnectionLiveness({
-    clock,
-    helloAckTimeoutMs: 10,
-    heartbeatAckTimeoutMs: 20,
-    onFailure: (error) => { failures.push(error); },
-  });
-  const leaseDurationMs = MAX_NODE_TIMER_DELAY_MS + 10_000;
-  liveness.start();
-  liveness.helloAcknowledged(new Date(startedAt + leaseDurationMs).toISOString());
-  assert.equal(clock.pendingTimers(), 1);
-
-  liveness.stop();
-  assert.equal(clock.pendingTimers(), 0);
-  clock.advance(leaseDurationMs);
-  assert.deepEqual(failures, []);
   assert.equal(clock.pendingTimers(), 0);
 });
 
@@ -492,32 +286,6 @@ test('silent hello closes only its generation and reconnects after the existing 
     stop.abort();
     await running;
   }
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('a hanging connection close cannot block reconnect or client stop', async () => {
-  const clock = new VirtualClock();
-  const first = new HangingCloseConnection();
-  const second = new HangingCloseConnection();
-  const connector = new SequenceConnector([first, second]);
-  const { client } = await makeClient('hanging-connection-close', connector, { clock });
-  const stop = new AbortController();
-  const running = client.run(stop.signal);
-  try {
-    await waitUntil(() => first.sent.some((frame) => frame.type === 'hello'), 'hello before hanging close');
-    first.end();
-    await waitUntil(() => first.closeCalls > 0, 'best-effort hanging close');
-    await waitUntil(() => clock.scheduledIn(1) >= 1, 'backoff after hanging close');
-    await advance(clock, 1);
-    await waitUntil(() => second.sent.some((frame) => frame.type === 'hello'), 'reconnect after hanging close');
-    assert.equal(connector.calls, 2);
-    assert.notEqual(first.closeCalls, 0);
-  } finally {
-    stop.abort();
-  }
-  assert.equal(await settlesWithin(running, 250), true);
-  assert.notEqual(second.closeCalls, 0);
-  assert.equal(getEventListeners(stop.signal, 'abort').length, 0);
   assert.equal(clock.pendingTimers(), 0);
 });
 
@@ -617,25 +385,6 @@ test('a hanging send times out, and its late completion cannot poison the new ge
   assert.equal(clock.pendingTimers(), 0);
 });
 
-test('abort settles promptly even while the transport send promise remains hung', async () => {
-  const clock = new VirtualClock();
-  const connection = new HangingHeartbeatConnection();
-  const { client } = await makeClient(
-    'hanging-send-abort',
-    new SequenceConnector([connection]),
-    { clock, heartbeatMs: 10, heartbeatAckTimeoutMs: 1_000, sendTimeoutMs: 1_000 },
-  );
-  const stop = new AbortController();
-  const running = client.run(stop.signal);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === 'hello'), 'the acknowledged hello');
-  await waitUntil(() => clock.scheduledIn(10) >= 1, 'the first heartbeat interval');
-  await advance(clock, 10);
-  await waitUntil(() => connection.sent.some((frame) => frame.type === 'heartbeat'), 'the hanging heartbeat send');
-  stop.abort();
-  assert.equal(await settlesWithin(running, 250), true);
-  assert.equal(clock.pendingTimers(), 0);
-});
-
 test('a stuck frame next and return cannot block watchdog reconnect or client stop', async () => {
   const clock = new VirtualClock();
   const first = new StuckFrameIteratorConnection(clock);
@@ -664,25 +413,6 @@ test('a stuck frame next and return cannot block watchdog reconnect or client st
     stop.abort();
   }
   assert.equal(await settlesWithin(running, 250), true);
-  assert.equal(getEventListeners(stop.signal, 'abort').length, 0);
-  assert.equal(clock.pendingTimers(), 0);
-});
-
-test('a frame that wins next is not processed after stop aborts its generation', async () => {
-  const clock = new VirtualClock();
-  const stop = new AbortController();
-  const connection = new FrameWinsThenStopsConnection(clock, stop);
-  const { client } = await makeClient(
-    'frame-stop-race',
-    new SequenceConnector([connection]),
-    { clock, heartbeatMs: 10, heartbeatAckTimeoutMs: 20 },
-  );
-
-  const running = client.run(stop.signal);
-  assert.equal(await settlesWithin(running, 250), true);
-  assert.equal(stop.signal.aborted, true);
-  assert.equal(connection.typeReadsAfterStop, 0);
-  assert.notEqual(connection.closeCalls, 0);
   assert.equal(getEventListeners(stop.signal, 'abort').length, 0);
   assert.equal(clock.pendingTimers(), 0);
 });

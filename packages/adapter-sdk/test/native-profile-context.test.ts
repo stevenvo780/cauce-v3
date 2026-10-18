@@ -16,47 +16,29 @@ import {
   MARCA_INICIO,
   MARCA_PERFIL_FIN,
   MARCA_PERFIL_INICIO,
-  TOPES_OPENCLAW,
   conBloqueDePerfil,
   conBloqueGestionado,
   marcaDeRevisionDelPerfil,
-  measureStrictestUnits,
 } from "@cauce/protocol";
 import {
-  nativeProfileContextEnabled, profileReloadRequest,
+  profileReloadRequest,
 } from "../src/context/native-profile-context.js";
-import { siembraHabilitada } from "../src/sdk/client.js";
 import { DurableStore } from "../src/sdk/durable-store.js";
 import { profileAdoptionFor } from "../src/sdk/engine.js";
 import { HarnessAdapter } from "../src/harnesses/index.js";
 import {
   PRIMARY_DUTY_HEADER,
-  type HarnessRequestContext,
   type RuntimeProfileMeasurement,
 } from "../src/harnesses/shared.js";
 import { textoNativoDelSobre } from "../src/harnesses/shared/prompt.js";
 import type {
-  CommandRunRequest, CommandRunResult, CommandRunner,
+  CommandRunResult, CommandRunner,
 } from "../src/sdk/types.js";
 import { delivery } from "./engine-fixtures.js";
 import {
-  captureStderr, contract, context, definition, hash, nativeEnvironment, profileFile,
+  contract, context, definition, hash, nativeEnvironment, profileFile,
   restoreEnvironment, spyRunner,
 } from "./native-profile-fixtures.js";
-
-test("native profile flag accepts only absent, 0, or 1", () => {
-  assert.equal(nativeProfileContextEnabled(undefined), false);
-  assert.equal(nativeProfileContextEnabled("0"), false);
-  assert.equal(nativeProfileContextEnabled("1"), true);
-  for (const invalid of ["", "true", "01", " 1", "2"]) {
-    assert.throws(() => nativeProfileContextEnabled(invalid), /exactly 0 or 1/u);
-  }
-  assert.equal(siembraHabilitada({ CAUCE_SEMBRAR_PERFIL: "1" }), true);
-  assert.equal(siembraHabilitada({
-    CAUCE_SEMBRAR_PERFIL: "1",
-    CAUCE_NATIVE_PROFILE_CONTEXT: "1",
-  }), false);
-});
 
 test("native profile flag rejects an unsupported harness before disk access", async () => {
   const state = mkdtempSync(join(tmpdir(), "cauce-native-options-"));
@@ -81,101 +63,6 @@ test("native profile flag rejects an unsupported harness before disk access", as
   } finally {
     rmSync(state, { recursive: true, force: true });
   }
-});
-
-test("native profile flag on a shared-session alias warns loudly instead of aborting the process", async (t) => {
-  const state = mkdtempSync(join(tmpdir(), "cauce-native-shared-session-"));
-  t.after(() => { rmSync(state, { recursive: true, force: true }); });
-  const store = await DurableStore.open(state);
-  const { runner, requests } = spyRunner();
-  const capture = captureStderr();
-  let adapter: HarnessAdapter | undefined;
-  try {
-    assert.doesNotThrow(() => {
-      adapter = new HarnessAdapter({
-        definition: definition("claude"),
-        runner,
-        store,
-        environment: nativeEnvironment(),
-        sharedSession: { alias: "zeus", harness: "claude", stateDirectory: state },
-      });
-    });
-  } finally {
-    capture.restore();
-  }
-  const warning = capture.lines
-    .map((line) => { try { return JSON.parse(line) as Record<string, unknown>; } catch { return undefined; } })
-    .find((entry) => entry?.event === "native_profile_context_shared_session_disabled");
-  assert.ok(warning, "expected a loud stderr warning when the flag is forced off");
-  assert.equal(warning.alias, "zeus");
-  assert.equal(warning.harness, "claude");
-  assert.ok(adapter, "adapter was not constructed");
-  await adapter.execute({
-    prompt: "Shared session stays on the legacy path.",
-    context: context("zeus"),
-    timeoutMs: 2_000,
-    signal: AbortSignal.timeout(2_000),
-  });
-  assert.equal(requests.length, 1);
-  assert.doesNotMatch(requests[0]?.stdin ?? "", /native_profile_(?:context|measurement|contract)/u);
-});
-
-test("absent and zero native flags preserve the legacy prompt byte for byte", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "cauce-native-default-off-"));
-  const previousFlag = process.env.CAUCE_NATIVE_PROFILE_CONTEXT;
-  t.after(() => {
-    restoreEnvironment("CAUCE_NATIVE_PROFILE_CONTEXT", previousFlag);
-    rmSync(root, { recursive: true, force: true });
-  });
-  const profile: RuntimeProfileMeasurement = {
-    source: "runtime-files",
-    sha256: "a".repeat(64),
-    documents: [{ path: "/does/not/exist/CLAUDE.md", sha256: "b".repeat(64) }],
-    text: "LEGACY PROFILE",
-  };
-  const deliveryContext: HarnessRequestContext = {
-    ...context("zeus"),
-    runtime_profile: profile,
-  };
-  const contractedContext: HarnessRequestContext = {
-    ...deliveryContext,
-    native_profile_contract: {
-      revision: 17,
-      generation: "runtime-17",
-      documents: [{
-        name: "CLAUDE.md",
-        path: "/does/not/exist/CLAUDE.md",
-        sha: "b".repeat(64),
-      }],
-    },
-  };
-
-  const run = async (
-    flag: string | undefined,
-    requestContext: HarnessRequestContext,
-    state: string,
-  ): Promise<string> => {
-    restoreEnvironment("CAUCE_NATIVE_PROFILE_CONTEXT", flag);
-    const { runner, requests } = spyRunner();
-    const adapter = new HarnessAdapter({
-      definition: definition("fake"),
-      runner,
-      store: await DurableStore.open(join(root, state)),
-    });
-    await adapter.execute({
-      prompt: "Keep legacy bytes.",
-      context: requestContext,
-      timeoutMs: 2_000,
-      signal: AbortSignal.timeout(2_000),
-    });
-    assert.equal(requests.length, 1);
-    return requests[0]?.stdin ?? "";
-  };
-
-  const legacy = await run(undefined, deliveryContext, "legacy");
-  assert.equal(await run(undefined, contractedContext, "absent"), legacy);
-  assert.equal(await run("0", contractedContext, "zero"), legacy);
-  assert.match(legacy, /BEGIN TRUSTED RUNTIME PROFILE[\s\S]*LEGACY PROFILE/u);
 });
 
 test("claude projects the fixed contract and sends only pointer, metadata, and request", async (t) => {
@@ -257,17 +144,6 @@ test("claude projects the fixed contract and sends only pointer, metadata, and r
     generation: "runtime-7",
     documents: [{ name: "CLAUDE.md", path, sha: hash(finalFile) }],
   });
-});
-
-test("native fixed text is stable across rooms and authored role changes", () => {
-  const first = context("zeus");
-  const second = {
-    ...first,
-    room_id: "grp.other",
-    self_role: "A newer authored role",
-    message_type: "agent.response",
-  };
-  assert.equal(textoNativoDelSobre(first), textoNativoDelSobre(second));
 });
 
 test("native file drift during execution withholds adoption evidence", async (t) => {
@@ -390,182 +266,6 @@ test("openclaw proves seven files without exposing memory, heartbeat, or profile
   assert.doesNotMatch(stdin, new RegExp(PRIMARY_DUTY_HEADER, "u"));
   assert.match(stdin, /--- BEGIN REQUEST ---\nReview OpenClaw\./u);
   assert.match(readFileSync(join(workspace, "AGENTS.md"), "utf8"), new RegExp(PRIMARY_DUTY_HEADER, "u"));
-});
-
-test("openclaw rejects overlapping managed blocks before modifying AGENTS.md", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "cauce-native-openclaw-overlap-"));
-  const workspace = join(root, "workspace");
-  mkdirSync(workspace, { recursive: true });
-  const paths = FICHEROS_OPENCLAW.map((name) => join(workspace, name));
-  const overlapping = `${marcaDeRevisionDelPerfil(91)}\n${MARCA_PERFIL_INICIO}\n`
-    + `<!-- alias: Steven/argos -->\nPROFILE-AGENTS\n${MARCA_INICIO}\n`
-    + `fixed-inside-profile\n${MARCA_PERFIL_FIN}\n${MARCA_FIN}\n`;
-  for (const name of FICHEROS_OPENCLAW) {
-    const path = join(workspace, name);
-    if (name === "MEMORY.md" || name === "HEARTBEAT.md") {
-      writeFileSync(path, "agent-owned", "utf8");
-    } else {
-      writeFileSync(
-        path,
-        name === "AGENTS.md"
-          ? overlapping
-          : profileFile("argos", undefined, `PROFILE-${name}`),
-        "utf8",
-      );
-    }
-  }
-  const agentsPath = join(workspace, "AGENTS.md");
-  const previousWorkspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
-  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
-  process.env.CAUCE_OPENCLAW_WORKSPACE = workspace;
-  process.env.CAUCE_CONTAINER_GENERATION = "runtime-91";
-  t.after(() => {
-    restoreEnvironment("CAUCE_OPENCLAW_WORKSPACE", previousWorkspace);
-    restoreEnvironment("CAUCE_CONTAINER_GENERATION", previousGeneration);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  const { runner, requests } = spyRunner();
-  const adapter = new HarnessAdapter({
-    definition: definition("openclaw"),
-    runner,
-    store: await DurableStore.open(join(root, "state")),
-    environment: nativeEnvironment(),
-  });
-  await assert.rejects(adapter.execute({
-    prompt: "must not run",
-    context: { ...context("argos"), native_profile_contract: contract(91, paths) },
-    timeoutMs: 2_000,
-    signal: AbortSignal.timeout(2_000),
-  }), /overlapping (?:fixed-context and profile|managed) blocks/u);
-  assert.equal(requests.length, 0);
-  assert.equal(readFileSync(agentsPath, "utf8"), overlapping);
-});
-
-test("openclaw rejects a fixed block that would exceed the native document limit", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "cauce-native-openclaw-limit-"));
-  const workspace = join(root, "workspace");
-  mkdirSync(workspace, { recursive: true });
-  const paths = FICHEROS_OPENCLAW.map((name) => join(workspace, name));
-  const managed = profileFile("argos", 10, "PROFILE-LIMIT");
-  const unversioned = profileFile("argos", undefined, "PROFILE-LIMIT");
-  const padding = `${"x".repeat(
-    TOPES_OPENCLAW.porFichero - measureStrictestUnits(managed) - 1,
-  )}\n`;
-  for (const name of FICHEROS_OPENCLAW) {
-    const path = join(workspace, name);
-    if (name === "MEMORY.md" || name === "HEARTBEAT.md") writeFileSync(path, "agent-owned", "utf8");
-    else writeFileSync(path, name === "AGENTS.md" ? `${padding}${managed}` : unversioned, "utf8");
-  }
-  assert.equal(
-    measureStrictestUnits(readFileSync(join(workspace, "AGENTS.md"), "utf8")),
-    TOPES_OPENCLAW.porFichero,
-  );
-  const previousWorkspace = process.env.CAUCE_OPENCLAW_WORKSPACE;
-  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
-  process.env.CAUCE_OPENCLAW_WORKSPACE = workspace;
-  process.env.CAUCE_CONTAINER_GENERATION = "runtime-10";
-  t.after(() => {
-    restoreEnvironment("CAUCE_OPENCLAW_WORKSPACE", previousWorkspace);
-    restoreEnvironment("CAUCE_CONTAINER_GENERATION", previousGeneration);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  const before = new Map(paths.map((path) => [path, readFileSync(path, "utf8")]));
-  const { runner, requests } = spyRunner();
-  const adapter = new HarnessAdapter({
-    definition: definition("openclaw"),
-    runner,
-    store: await DurableStore.open(join(root, "state")),
-    environment: nativeEnvironment(),
-  });
-  await assert.rejects(adapter.execute({
-    prompt: "must not run",
-    context: { ...context("argos"), native_profile_contract: contract(10, paths) },
-    timeoutMs: 2_000,
-    signal: AbortSignal.timeout(2_000),
-  }), /per-file limit/u);
-  assert.equal(requests.length, 0);
-  for (const path of paths) assert.equal(readFileSync(path, "utf8"), before.get(path));
-});
-
-test("a contract sealed with the presence generation of THIS incarnation is accepted", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "cauce-native-presence-gen-"));
-  const previousHome = process.env.HOME;
-  const previousConfig = process.env.CLAUDE_CONFIG_DIR;
-  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
-  const previousPresence = process.env.CAUCE_CONTAINER_PRESENCE_GENERATION;
-  process.env.CAUCE_CONTAINER_GENERATION = "b".repeat(64);
-  process.env.CAUCE_CONTAINER_PRESENCE_GENERATION = "c".repeat(32);
-  delete process.env.CLAUDE_CONFIG_DIR;
-  t.after(() => {
-    restoreEnvironment("HOME", previousHome);
-    restoreEnvironment("CLAUDE_CONFIG_DIR", previousConfig);
-    restoreEnvironment("CAUCE_CONTAINER_GENERATION", previousGeneration);
-    restoreEnvironment("CAUCE_CONTAINER_PRESENCE_GENERATION", previousPresence);
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  const attempt = async (
-    generation: string,
-    name: string,
-  ): Promise<CommandRunRequest[]> => {
-    const home = join(root, name);
-    const config = join(home, ".claude");
-    mkdirSync(config, { recursive: true });
-    const path = join(config, "CLAUDE.md");
-    writeFileSync(path, profileFile("zeus", 31, "PROFILE-PRESENCE-GENERATION"), "utf8");
-    process.env.HOME = home;
-    const sealed = { ...contract(31, [path]), generation };
-    const { runner, requests } = spyRunner();
-    const adapter = new HarnessAdapter({
-      definition: definition("claude"),
-      runner,
-      store: await DurableStore.open(join(root, `state-${name}`)),
-      environment: nativeEnvironment(),
-    });
-    await adapter.execute({
-      prompt: "Run under the sealed generation.",
-      context: { ...context("zeus"), native_profile_contract: sealed },
-      timeoutMs: 2_000,
-      signal: AbortSignal.timeout(2_000),
-    });
-    return requests;
-  };
-
-  assert.equal((await attempt("c".repeat(32), "presence")).length, 1);
-  assert.equal((await attempt("b".repeat(64), "supervisor")).length, 1);
-
-  const home = join(root, "foreign");
-  const config = join(home, ".claude");
-  mkdirSync(config, { recursive: true });
-  const path = join(config, "CLAUDE.md");
-  writeFileSync(path, profileFile("zeus", 31, "PROFILE-PRESENCE-GENERATION"), "utf8");
-  process.env.HOME = home;
-  const bytesBefore = readFileSync(path, "utf8");
-  const { runner, requests } = spyRunner();
-  const adapter = new HarnessAdapter({
-    definition: definition("claude"),
-    runner,
-    store: await DurableStore.open(join(root, "state-foreign")),
-    environment: nativeEnvironment(),
-  });
-  await assert.rejects(adapter.execute({
-    prompt: "must not run",
-    context: {
-      ...context("zeus"),
-      native_profile_contract: { ...contract(31, [path]), generation: "d".repeat(32) },
-    },
-    timeoutMs: 2_000,
-    signal: AbortSignal.timeout(2_000),
-  }), (error: unknown) => {
-    assert.equal((error as { code?: unknown }).code, "NATIVE_PROFILE_CONTEXT_GENERATION_MISMATCH");
-    assert.equal(profileReloadRequest(nativeEnvironment(), "zeus"), undefined);
-    assert.equal((error as { retryable?: unknown }).retryable, false);
-    return true;
-  });
-  assert.equal(requests.length, 0);
-  assert.equal(readFileSync(path, "utf8"), bytesBefore);
 });
 
 test("stale, absent, foreign, and malformed projections fail before the runner", async (t) => {

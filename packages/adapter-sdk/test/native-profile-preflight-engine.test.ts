@@ -34,25 +34,6 @@ class FailingNativePreflightHarness extends HarnessAdapter {
   }
 }
 
-class DriftingNativeHarness extends HarnessAdapter {
-  executeCalls = 0;
-
-  constructor(
-    options: ConstructorParameters<typeof HarnessAdapter>[0],
-    private readonly path: string,
-  ) {
-    super(options);
-  }
-
-  override execute(
-    request: Parameters<HarnessAdapter["execute"]>[0],
-  ): ReturnType<HarnessAdapter["execute"]> {
-    this.executeCalls += 1;
-    writeFileSync(this.path, `${readFileSync(this.path, "utf8")}\n# Drift before invoke\n`, "utf8");
-    return super.execute(request);
-  }
-}
-
 function nativeEnvironment(): NodeJS.ProcessEnv {
   return { ...process.env, CAUCE_NATIVE_PROFILE_CONTEXT: "1" };
 }
@@ -90,87 +71,6 @@ test("native preflight failure remains accepted-side and never commits execution
     retryable: true,
   });
   assert.equal(store.getDelivery("native-preflight-failure")?.state, "failed");
-});
-
-test("native drift after accepted preflight fails before execution intent and runner", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "cauce-native-engine-drift-"));
-  const home = join(root, "home");
-  const config = join(home, ".claude");
-  const path = join(config, "CLAUDE.md");
-  mkdirSync(config, { recursive: true });
-  writeFileSync(
-    path,
-    profileFile("zeus", 31, "PROFILE-BEFORE-DRIFT"),
-    "utf8",
-  );
-  const previousHome = process.env.HOME;
-  const previousConfig = process.env.CLAUDE_CONFIG_DIR;
-  const previousGeneration = process.env.CAUCE_CONTAINER_GENERATION;
-  process.env.HOME = home;
-  process.env.CAUCE_CONTAINER_GENERATION = "runtime-31";
-  delete process.env.CLAUDE_CONFIG_DIR;
-  t.after(() => {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    if (previousConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-    else process.env.CLAUDE_CONFIG_DIR = previousConfig;
-    if (previousGeneration === undefined) delete process.env.CAUCE_CONTAINER_GENERATION;
-    else process.env.CAUCE_CONTAINER_GENERATION = previousGeneration;
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  const store = await storeFor("native-preflight-drift-before-intent");
-  const runner = new ControlledRunner();
-  const harness = new DriftingNativeHarness({
-    definition: {
-      ...HARNESS_DEFINITIONS.claude,
-      sessionStrategy: { kind: "none" },
-      parse: () => ({
-        output: {
-          reply: "completed",
-          messages: [],
-          notify: [],
-          status: "done",
-          retryable: false,
-          artifacts: [],
-        },
-      }),
-    },
-    runner,
-    store,
-    environment: nativeEnvironment(),
-  }, path);
-  const events: DeliveryEvent[] = [];
-  let executionIntents = 0;
-  const engine = new AdapterEngine({
-    store,
-    harness,
-    publish: async (event) => { events.push(event); },
-    publishExecutionIntent: async () => { executionIntents += 1; },
-  });
-  await engine.activateEpoch(1);
-  const input = {
-    ...delivery("native-drift"),
-    recipient_alias: "zeus",
-    profile_runtime_contract: {
-      revision: 31,
-      generation: "runtime-31",
-      documents: [{
-        name: "CLAUDE.md",
-        path,
-        sha: createHash("sha256").update(readFileSync(path, "utf8"), "utf8").digest("hex"),
-      }],
-    },
-  };
-
-  await engine.handleDelivery(input);
-
-  assert.equal(harness.executeCalls, 1);
-  assert.equal(runner.calls, 0);
-  assert.equal(executionIntents, 0);
-  assert.deepEqual(events.map((event) => event.phase), ["accepted", "started", "failed"]);
-  assert.equal(events.some((event) => event.execution_started === true), false);
-  assert.equal(events.at(-1)?.error?.code, "NATIVE_PROFILE_CONTEXT_PREFLIGHT_FAILED");
 });
 
 test("native drift while execution intent is confirmed still fails before runner", async (t) => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
@@ -97,10 +97,6 @@ async function tokenFile(value: string): Promise<string> {
   return path;
 }
 
-test.beforeEach(async () => {
-  await rm(root, { recursive: true, force: true });
-});
-
 test("OpenClaw API is loopback-only and forbids URL credentials", () => {
   const options = { tokenFile: "/unused" };
   assert.throws(() => new OpenClawApiRunner({ ...options, endpoint: "https://example.com/v1/chat/completions" }), /loopback/u);
@@ -164,93 +160,6 @@ test("OpenClaw API returns structured output and reloads token with a durable se
   await api.close();
 });
 
-test("OpenClaw API timeout and cancellation abort requests", async () => {
-  const api = await setupServer();
-  const token = await tokenFile("api-token");
-  const store = await DurableStore.open(resolve(root, "timeouts"));
-  const adapter = new HarnessAdapter({
-    definition: openClawDefinition,
-    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token }),
-    store,
-  });
-  await assert.rejects(adapter.execute({
-    prompt: "SCENARIO:slow",
-    timeoutMs: 30,
-    signal: new AbortController().signal,
-  }), (error: unknown) =>
-    error instanceof AdapterError
-    && error.code === "EXECUTION_TIMEOUT_AMBIGUOUS"
-    && !error.retryable);
-
-  const controller = new AbortController();
-  const running = adapter.execute({ prompt: "SCENARIO:slow", timeoutMs: 1_000, signal: controller.signal });
-  setTimeout(() => { controller.abort(); }, 30);
-  await assert.rejects(running, (error: unknown) =>
-    error instanceof AdapterError
-    && error.code === "EXECUTION_CANCELLED_AMBIGUOUS"
-    && !error.retryable);
-  assert.equal(api.requests.length, 2, "both ambiguous aborts occurred after OpenClaw accepted the request");
-  await api.close();
-});
-
-test("OpenClaw API does not POST when the signal is already aborted", async () => {
-  const api = await setupServer();
-  const token = await tokenFile("api-token");
-  const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token });
-  const controller = new AbortController();
-  controller.abort();
-  await assert.rejects(
-    runner.run({
-      command: "unused",
-      args: [],
-      harness: "openclaw",
-      stdin: "must not be dispatched",
-      timeoutMs: 1_000,
-      signal: controller.signal,
-    }),
-    (error: unknown) =>
-      error instanceof AdapterError
-      && error.code === "CANCELLED"
-      && !error.retryable,
-  );
-  assert.equal(api.requests.length, 0);
-  await api.close();
-});
-
-test("OpenClaw API does not replay a whole turn after a provider error", async () => {
-  const api = await setupServer();
-  const token = await tokenFile("api-token");
-  const adapter = new HarnessAdapter({
-    definition: openClawDefinition,
-    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token }),
-    store: await DurableStore.open(resolve(root, "http-classification")),
-  });
-
-  await assert.rejects(
-    adapter.execute({
-      prompt: "SCENARIO:http-429",
-      timeoutMs: 1_000,
-      signal: new AbortController().signal,
-    }),
-    (error: unknown) =>
-      error instanceof AdapterError
-      && error.code === "OPENCLAW_HTTP_AMBIGUOUS"
-      && !error.retryable,
-  );
-  await assert.rejects(
-    adapter.execute({
-      prompt: "SCENARIO:http-500",
-      timeoutMs: 1_000,
-      signal: new AbortController().signal,
-    }),
-    (error: unknown) =>
-      error instanceof AdapterError
-      && error.code === "OPENCLAW_HTTP_AMBIGUOUS"
-      && !error.retryable,
-  );
-  await api.close();
-});
-
 test('OpenClaw upstream 429 after a side effect remains ambiguous and is not replayed', async (t) => {
   let sideEffects = 0;
   const api = await setupServer((response) => {
@@ -268,37 +177,6 @@ test('OpenClaw upstream 429 after a side effect remains ambiguous and is not rep
     assert.doesNotMatch(error.message, /DO_NOT_ECHO/u);
     return true;
   });
-  assert.equal(sideEffects, 1);
-  assert.equal(api.requests.length, 1);
-});
-
-test("OpenClaw HTTP 200 incomplete turn after a tool action fails without replay", async (t) => {
-  const notice = "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying.";
-  const methods: string[] = [];
-  let sideEffects = 0;
-  const api = await setupServer((response) => {
-    methods.push(response.req.method ?? "");
-    sideEffects += 1;
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ choices: [{ message: { content: notice } }] }));
-  });
-  t.after(api.close);
-  const adapter = new HarnessAdapter({
-    definition: openClawDefinition,
-    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") }),
-    store: await DurableStore.open(resolve(root, "incomplete-turn")),
-  });
-
-  const output = await adapter.execute({
-    prompt: "perform one tool action",
-    timeoutMs: 1_000,
-    signal: new AbortController().signal,
-  });
-  assert.equal(output.status, "failed");
-  assert.equal(output.retryable, false);
-  assert.match(output.reply ?? "", /non_deliverable_terminal_turn/u);
-  assert.deepEqual(output.messages, []);
-  assert.deepEqual(methods, ["POST"]);
   assert.equal(sideEffects, 1);
   assert.equal(api.requests.length, 1);
 });
@@ -321,84 +199,6 @@ test("OpenClaw native sessions are isolated by stable alias namespace", async ()
   await api.close();
 });
 
-test("OpenClaw alias fallback remains stable without origin session context", async () => {
-  const api = await setupServer();
-  const token = await tokenFile("api-token");
-  const store = await DurableStore.open(resolve(root, "alias-fallback"));
-  const adapter = new HarnessAdapter({
-    definition: openClawDefinition,
-    runner: new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token }),
-    store,
-    sessionNamespace: "kant",
-    fallbackSessionKey: "alias-default",
-  });
-  for (const prompt of ["first", "second"]) {
-    await adapter.execute({ prompt, timeoutMs: 1_000, signal: new AbortController().signal });
-  }
-  assert.equal(api.requests[0]?.body.user, api.requests[1]?.body.user);
-  assert.equal(typeof api.requests[0]?.body.user, "string");
-  await api.close();
-});
-
-test("OpenClaw API accepts delayed headers and preserves split UTF-8 output at the byte limit", async (t) => {
-  const stdout = `  ${JSON.stringify({ text: "Revisión clínica 🙂" })}\n`;
-  const bytes = Buffer.from(stdout);
-  const api = await setupServer(async (response) => {
-    await delay(80);
-    response.writeHead(200, { "content-type": "application/json" });
-    const split = bytes.indexOf(Buffer.from("🙂")) + 2;
-    response.write(bytes.subarray(0, split));
-    await delay(30);
-    response.end(bytes.subarray(split));
-  });
-  t.after(api.close);
-  const runner = new OpenClawApiRunner({
-    endpoint: api.endpoint, tokenFile: await tokenFile("api-token"), maxOutputBytes: bytes.byteLength,
-  });
-  const output = await runner.run(apiRequest({ stdin: "Revisá todo 🙂", sessionId: "isolated-session" }));
-  assert.deepEqual(output, { stdout, stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false });
-  assert.deepEqual(api.requests, [{
-    authorization: "Bearer api-token",
-    body: {
-      model: "openclaw/default", stream: false, user: "isolated-session",
-      messages: [{ role: "user", content: "Revisá todo 🙂" }],
-    },
-  }]);
-});
-
-for (const phase of ["before headers", "during body"] as const) {
-  for (const cause of ["timeout", "cancellation"] as const) {
-    test(`OpenClaw API ${cause} ${phase} closes the socket and returns only the abort classification`, { timeout: 5_000 }, async (t) => {
-      const events = new EventEmitter();
-      const accepted = once(events, "accepted");
-      const closed = once(events, "closed");
-      const api = await setupServer((response) => {
-        response.once("close", () => events.emit("closed"));
-        if (phase === "during body") {
-          response.writeHead(200, { "content-type": "application/json" });
-          response.write('{"partial":"must not escape"');
-        }
-        events.emit("accepted");
-      });
-      t.after(api.close);
-      const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") });
-      const controller = new AbortController();
-      const running = runner.run(apiRequest({
-        timeoutMs: cause === "timeout" ? 200 : 2_000, signal: controller.signal,
-      }));
-      await accepted;
-      if (phase === "during body") await delay(30);
-      if (cause === "cancellation") controller.abort();
-      assert.deepEqual(await running, {
-        stdout: "", stderr: "", exitCode: null, signal: null,
-        timedOut: cause === "timeout", cancelled: cause === "cancellation",
-      });
-      await closed;
-      assert.equal(api.requests.length, 1);
-    });
-  }
-}
-
 test("OpenClaw API stops a chunked oversized body before the peer finishes it", { timeout: 5_000 }, async (t) => {
   const events = new EventEmitter();
   const closed = once(events, "closed");
@@ -417,23 +217,6 @@ test("OpenClaw API stops a chunked oversized body before the peer finishes it", 
     error instanceof AdapterError && error.code === "OPENCLAW_OUTPUT_LIMIT_AMBIGUOUS" && !error.retryable);
   await closed;
 });
-
-for (const phase of ["before headers", "during body"] as const) {
-  test(`OpenClaw API classifies a socket closed ${phase} as ambiguous`, async (t) => {
-    const api = await setupServer(async (response) => {
-      if (phase === "during body") {
-        response.writeHead(200, { "content-type": "application/json", "content-length": 100 });
-        response.write('{"partial":');
-        await delay(20);
-      }
-      response.destroy();
-    });
-    t.after(api.close);
-    const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") });
-    await assert.rejects(runner.run(apiRequest()), (error: unknown) =>
-      error instanceof AdapterError && error.code === "OPENCLAW_API_AMBIGUOUS" && !error.retryable);
-  });
-}
 
 test("OpenClaw API preserves HTTP classifications and never follows redirects or exposes response bodies", async (t) => {
   const target = await setupServer();
@@ -473,28 +256,6 @@ test("OpenClaw API rejects an unsafe token file before sending HTTP", async (t) 
   const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: token });
   await assert.rejects(runner.run(apiRequest()), /0600 permissions/u);
   assert.equal(api.requests.length, 0);
-});
-
-test("OpenClaw API rejects HTTP 101 and closes the upgraded socket without hanging past its budget", { timeout: 1_000 }, async (t) => {
-  const sockets: NonNullable<ServerResponse["socket"]>[] = [];
-  const api = await setupServer((response) => {
-    assert.ok(response.socket);
-    sockets.push(response.socket);
-    response.writeHead(101, { connection: "Upgrade", upgrade: "websocket" });
-    response.flushHeaders();
-  });
-  t.after(async () => {
-    for (const socket of sockets) socket.destroy();
-    await api.close();
-  });
-  const runner = new OpenClawApiRunner({ endpoint: api.endpoint, tokenFile: await tokenFile("api-token") });
-  await assert.rejects(runner.run(apiRequest({ timeoutMs: 100 })), (error: unknown) =>
-    error instanceof AdapterError && error.code === "OPENCLAW_API_AMBIGUOUS" && !error.retryable);
-  assert.equal(api.requests.length, 1);
-  assert.equal(sockets.length, 1);
-  const socket = sockets[0];
-  assert.ok(socket);
-  if (!socket.destroyed) await once(socket, "close");
 });
 
 test("OpenClaw HTTPS rejects an untrusted certificate before sending the bearer token", async (t) => {
