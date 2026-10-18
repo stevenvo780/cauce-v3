@@ -320,9 +320,7 @@ class Executor:
 
     def authenticate(self):
         agent = self.agent()
-        from fleet_executor_templates import account_awaiting_auth, resolve_profile
-        if 'authenticate' in self.policy['hooks'] and account_awaiting_auth(agent):
-            return {'evidence': {}, 'awaiting_auth': True}
+        from fleet_executor_templates import resolve_profile
         if 'authenticate' not in self.policy['hooks'] or resolve_profile(self.policy, agent) is None:
             return {'evidence': {}, 'awaiting_auth': True}
         observed = invoke(self.policy, self.context, agent, 'authenticate')
