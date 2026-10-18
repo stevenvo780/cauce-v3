@@ -103,7 +103,7 @@ Fuente única: el compose del propio repo, sin overrides externos — `deploy/de
 
 ## 6. Gates de calidad
 
-`pnpm typecheck` (core+adapter+mcp+console, `package.json:45`) y `pnpm lint` (`package.json:24`: ESLint por zona, gate AST con baseline cero de ciclos runtime, `lint:estricto:zonas` con reglas más duras, `ruff check` sobre Python, `scripts/calidad.mjs` con trinquete de líneas por fichero y de fechas en comentarios) son gate de todo commit (`AGENTS.md`). `pnpm test:unit` (`package.json:47`) corre los paquetes con test propio más `tests/unit` y `packages/protocol/test`; `pnpm test` (`scripts/test-all.mjs`) recorre las doce suites de `SUITES`, incluidas las pruebas directas de `ops/tests` que descubre `ops/tests/run-all.mjs`. `ops/scripts/validate.sh` valida sintaxis de todos los `.sh`/`.mjs` de `ops`+`deploy`, exige ShellCheck, valida YAML/JSON Schema y comprueba la identidad byte a byte de generados (§4). La especificación visual se valida con `pnpm arch:validate` y se inspecciona en varios tamaños con `pnpm arch:visual-check`.
+El gate de publicación vigente está en [Desplegar V4](operacion.md#desplegar-v4). `pnpm typecheck` y `pnpm lint` validan tipos y estilo; las pruebas focales se eligen por el comportamiento afectado. Las antiguas matrices completas y los trinquetes documentados para V3 no son el procedimiento de publicación V4. Para cambios de flota, `ops/scripts/validate.sh` comprueba sintaxis y coherencia de generados; para el diagrama, `pnpm arch:validate` valida su especificación y `pnpm arch:visual-check` permite inspeccionarlo en varios tamaños.
 
 ## 7. Topología física
 
@@ -113,11 +113,11 @@ Topología de la flota central hoy:
 
 | Máquina | Papel | Qué corre |
 |---|---|---|
-| VPS `server` (.11) | centro de mando | nueve servicios permanentes de producción, migrador al desplegar y once alias locales |
-| server2 (.13) | runtimes permanentes | Kant nativo, Salva en `ws-isa` y acceso público a sus archivos |
-| server1 (.14) | virtualización y audio | VM de Astra en `.15` y transcripción de Telegram en CPU |
-| ILS (.5) | navegadores dedicados | sesiones de cuenta para medir cuotas; el colector vive en el VPS |
-| Workstation `kratos` (.1) | desarrollo personal y respaldo | sin runtimes de la flota ni dependencia para audio, cuotas o archivos de Salva |
+| VPS `server` | centro de mando | nueve servicios permanentes de producción, migrador al desplegar y once alias locales |
+| server2 | runtimes permanentes | Kant nativo, Salva en `ws-isa` y acceso público a sus archivos |
+| server1 | virtualización y audio | VM de Astra en su host registrado y transcripción de Telegram en CPU |
+| Host de navegadores | navegadores dedicados | sesiones de cuenta para medir cuotas; el colector vive en el VPS |
+| Estación de desarrollo | desarrollo personal y respaldo | sin runtimes de la flota ni dependencia para audio, cuotas o archivos de Salva |
 
 Doce alias Docker ocupan diez contenedores: Atlas, Hegel y Kratos comparten `ws-humanizar`.
 Astra y Kant tienen runtimes nativos. Las plantillas generadas no sustituyen sus unidades

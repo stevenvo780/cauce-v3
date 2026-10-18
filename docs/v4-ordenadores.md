@@ -49,7 +49,7 @@ Cada host tiene su propia unidad (nombre con empresa y host), así que un usuari
 
 ### Linger
 
-Para que el servicio sobreviva al cierre de sesión (como el usuario `server` de Salva en server2), `setup` intenta `loginctl enable-linger`. Si no tiene permiso, avisa: `sudo loginctl enable-linger <usuario>`.
+Para que el servicio sobreviva al cierre de sesión de su usuario de ejecución, `setup` intenta `loginctl enable-linger`. Si no tiene permiso, avisa: `sudo loginctl enable-linger <usuario>`.
 
 ## Contrato del gateway
 

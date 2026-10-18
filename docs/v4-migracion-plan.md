@@ -1,5 +1,7 @@
 # Plan de migración de agentes a servidores locales (medición del 12-oct-2026)
 
+> Histórico: inventario y plan de migración previos al cierre V4; verifica ubicaciones, cuentas y versiones actuales antes de intervenir. Usa la [guía V4](v4-guia.md) y [Operación](operacion.md).
+
 Plan de la §5 del goal (`GOAL.md` y `ordenes/v4-cierre-objetivo.md` §4 «§5»): mover **Gaia, Hades, Argos y Hegel** fuera de la VPS principal y **retirar Cauce del hospital** moviendo los agentes de **Praxis**. Todo lo de este documento se obtuvo en **solo lectura** entre las 21:38 y las 21:56 UTC del 12-oct-2026: no se detuvo, reinició, copió ni borró nada, no se cambió ninguna cuenta y no se abrió ninguna credencial, `auth.json`, `.env` ni fichero de sesión. Las cuentas se identifican por los comandos de estado de cada CLI, por `cauce <alias> login --ver` (comando del repo que imprime tipo, huella corta e id de cuenta) y por las huellas que ya publica `cauce-cred-guard`; aquí se recortan a 8 caracteres.
 
 Sustituye al censo del 11-oct (GPT), que medía tamaños pero no fijaba ubicación, bindings ni dependencias.
@@ -39,9 +41,9 @@ Liberar los cuatro devuelve a la VPS unos **2,1 GiB de RSS**. `ws-humanizar` sig
 
 | Host | Medido (UTC) | CPU | RAM total / disponible | Swap | Disco `/` libre | Docker | Carga actual |
 |---|---|---|---|---|---|---|---|
-| server1 (IP de Tailscale del host) | 21:45:52 | 6 × i5-8400T | 22,8 GiB / **11,3 GiB** | 62 MiB de 8 GiB | **278,5 GB** (54 % usado) | **no** (LXD) | LXD `escritorio-steven` (contenedor, 6,3 GiB) y `pc-agente` (VM, 5,3 GiB); `cauce-audio-cpu.service` |
+| server1 (IP de Tailscale del host) | 21:45:52 | 6 × i5-8400T | 22,8 GiB / **11,3 GiB** | 62 MiB de 8 GiB | **278,5 GB** (54 % usado) | **no** (LXD) | LXD `<contenedor-escritorio>` (contenedor, 6,3 GiB) y `pc-agente` (VM, 5,3 GiB); `cauce-audio-cpu.service` |
 | server2 (IP de Tailscale del host) | 21:45:53 | 6 × i5-8400T | 22,8 GiB / **11,6 GiB** | 53 KiB de 8 GiB | **149,8 GB** (69 % usado) | 29.1.3; `server` en el grupo `docker` | ver tabla siguiente |
-| server3 (IP de Tailscale del host) (`ils-server`) | 21:46:26 | 4 × i5-7400 | **7,1 GiB / 3,5 GiB** | 0 de 4 GiB | 85,9 GB (22 % usado) | sí, solo con `sudo`; `server3` sin linger | 8 contenedores `nav-*` (linuxserver/chromium, ~400 MiB cada uno, 3,2 GiB) y servicios `nav-*-puente`, `nav-dns-usa`, `nav-exit-usa` |
+| server3 (IP de Tailscale del host) (`<host-navegador>`) | 21:46:26 | 4 × i5-7400 | **7,1 GiB / 3,5 GiB** | 0 de 4 GiB | 85,9 GB (22 % usado) | sí, solo con `sudo`; `server3` sin linger | 8 contenedores `nav-*` (linuxserver/chromium, ~400 MiB cada uno, 3,2 GiB) y servicios `nav-*-puente`, `nav-dns-usa`, `nav-exit-usa` |
 
 server2 por contenedor:
 
@@ -56,7 +58,7 @@ Kant corre nativo en server2 (`cauce-v3-host-kant.service`, `cauce-v3-tmux-kant.
 
 ### Huella de server3
 
-`server3` de `~/.ssh/config` apunta a `IP de la LAN anterior del host`, que hoy **no responde** (sin ruta). En `IP de la LAN actual del host` SSH avisa **«REMOTE HOST IDENTIFICATION HAS CHANGED»**: la entrada guardada para `.125` es otra máquina (ED25519 `SHA256:iT9KEMrNXJD5wm1MeQY7Yc98AihQvViFAkdXoKukmgg`) y la que responde presenta **ED25519 `SHA256:W0y5Q3Ex/Gz2ok4RVa7tEAwoxUAohCKPnMR7629ONWQ`**. No se aceptó ni se tocó `known_hosts`. Esa misma clave es la que ya estaba registrada y confiada para `IP de la LAN anterior del host` (server3) y para su IP de malla (IP de Tailscale del host). Tailscale la lista como `ils-server` con conexión directa a `IP de la LAN actual del host`. La medición se hizo por (IP de Tailscale del host) con verificación estricta, sin avisos. Conclusión: server3 cambió de IP de LAN (.126 → .125) y la clave coincide con la confiada; el dueño debe apuntar `server3` a (IP de Tailscale del host) y retirar la entrada caducada de `.125`.
+El inventario histórico detectó un cambio de dirección LAN y una entrada caducada en `known_hosts`. No se aceptó ninguna clave nueva: la medición usó una ruta de malla cuya huella ya era confiable. Antes de intervenir, el operador debe cotejar la huella por su canal privado y actualizar únicamente la entrada confirmada; no se publican direcciones ni huellas del host.
 
 ## 2. Los cuatro agentes
 
