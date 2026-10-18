@@ -1,3 +1,5 @@
+import { recoverModuleLoad, reloadAfterModuleFailure } from './module-recovery';
+
 /* Only labels reach console.error: a message body can carry server text. */
 let active: (() => void) | undefined;
 
@@ -16,13 +18,24 @@ function report(name: string): void {
 
 export function installGlobalErrorReporting(): () => void {
   active?.();
-  const onError = (event: ErrorEvent) => { report(labelOf(event.error)); };
-  const onRejection = (event: PromiseRejectionEvent) => { report(labelOf(event.reason)); };
+  const onError = (event: ErrorEvent) => {
+    if (recoverModuleLoad(event.error)) event.preventDefault();
+    else report(labelOf(event.error));
+  };
+  const onRejection = (event: PromiseRejectionEvent) => {
+    if (recoverModuleLoad(event.reason)) event.preventDefault();
+    else report(labelOf(event.reason));
+  };
+  const onPreloadError = (event: Event) => {
+    if (reloadAfterModuleFailure()) event.preventDefault();
+  };
   window.addEventListener('error', onError);
   window.addEventListener('unhandledrejection', onRejection);
+  window.addEventListener('vite:preloadError', onPreloadError);
   const remove = (): void => {
     window.removeEventListener('error', onError);
     window.removeEventListener('unhandledrejection', onRejection);
+    window.removeEventListener('vite:preloadError', onPreloadError);
     if (active === remove) active = undefined;
   };
   active = remove;

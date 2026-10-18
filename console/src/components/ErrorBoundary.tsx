@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
 import { Button, StateCard } from './kit';
+import { recoverModuleLoad } from '../module-recovery';
 
 interface ErrorBoundaryProps {
   /** What is inside, said as the operator would name it: it becomes the panel's heading. */
@@ -33,6 +34,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    if (recoverModuleLoad(error)) return;
     console.error(`[consola] ${this.props.label} falló con ${error.name}`, info.componentStack);
   }
 
