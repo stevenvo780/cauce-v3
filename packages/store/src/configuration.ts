@@ -443,6 +443,8 @@ export class ConfigurationRepository extends ConfigurationMutations {
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
     const company = current.actingCompany;
     if (isPlatformMutation(mutation)) return this.execute(client, mutation, company);
+    // Profile revision triggers attribute the rows a cascading delete removes.
+    await client.query("SELECT set_config('cauce.actor_tenant',$1,true),set_config('cauce.actor_alias',$2,true)", [actor.tenant, actor.alias]);
     await assertCompanyMutation(client, mutation, company);
     await assertEditablePrincipalMutation(client, mutation);
     const controlBefore = await this.controlState(client, company);

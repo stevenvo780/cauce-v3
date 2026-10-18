@@ -2,7 +2,9 @@ import type { ConfigMutation, Tenant } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { egressDestinationColumns, type EgressDestinationRow } from '../repository/egress-destinations.js';
 import { ConfigurationError, type ConfigurationLeafMutation } from './contracts.js';
-import { assertConfigurationDeleteAllowed, has, valueRequired } from './shared.js';
+import { purgeDependencies } from '../repository/fleet-operation-purge-plan.js';
+import { purgeTargetRecords } from '../repository/fleet-operation-purge.js';
+import { assertConfigurationDeleteAllowed, configurationDependencies, has, valueRequired } from './shared.js';
 import { assertPublishedHarnessDefinition } from './harness-catalog.js';
 import {
   activeDeliveryStates, aclEdgeMutation, assertUnpurgedConfigurationScope, membershipMutation, roomMutation, tenantMutation
@@ -314,6 +316,23 @@ export abstract class ConfigurationMutations {
     };
   }
 
+  private async purgeNeverPreparedAgent(
+    client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'agent' }>, ownState: boolean,
+  ): Promise<string | undefined> {
+    const target = { resource: 'agent' as const, tenant_id: mutation.tenant_id, alias: mutation.alias };
+    const references = await configurationDependencies(client, mutation);
+    const profile = await client.query('SELECT 1 FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 LIMIT 1', [mutation.tenant_id, mutation.alias]);
+    if (!ownState && !profile.rowCount && !references.some((dependency) => dependency.blocking)) return undefined;
+    const scope = (await purgeDependencies(client, target)).filter((dependency) => dependency.type !== 'purge.preserve.agents');
+    const blocking = scope.filter((dependency) => dependency.blocking);
+    if (blocking.length) throw new ConfigurationError('conflict', 'agent has active work, a live lease, or an open terminal session', blocking);
+    await purgeTargetRecords(client, target);
+    const tombstone = scope.some((dependency) => dependency.type.startsWith('purge.preserve.'));
+    if (!tombstone) await client.query('DELETE FROM agents WHERE tenant_id=$1 AND alias=$2', [mutation.tenant_id, mutation.alias]);
+    const listed = scope.map((dependency) => `${dependency.type.replace(/^purge\./u, '').replace('.', ' ')} ${(dependency.identity.kind ?? '').replace(/ rows$/u, '')}`.trim());
+    return ` with its own configuration${listed.length ? ` (${listed.join('; ')})` : ''}${tombstone ? '; history keeps the identity as a purged tombstone' : ''}`;
+  }
+
   private async agent(
     client: DatabaseClient, mutation: Extract<ConfigurationLeafMutation, { resource: 'agent' }>
   ): Promise<{ inverse: ConfigMutation; summary: string }> {
@@ -385,6 +404,14 @@ export abstract class ConfigurationMutations {
       ...(old.has_lifecycle === true ? { primary_room_id: old.primary_room_id ?? null, host_id: old.host_id ?? null } : {}),
     };
     if (mutation.action === 'delete') {
+      if (old.runtime_key == null && !old.enabled && !old.retired_at) {
+        const purged = await this.purgeNeverPreparedAgent(client, mutation, old.role_brief !== null || old.primary_room_id != null);
+        if (purged) {
+          const { primary_room_id: _primary, ...createValue } = oldValue;
+          return { inverse: { resource: 'agent', action: 'create', tenant_id: mutation.tenant_id, alias: mutation.alias, value: createValue },
+            summary: `delete agent ${key}${purged}` };
+        }
+      }
       await assertConfigurationDeleteAllowed(client, mutation);
       const active = await client.query(
         `SELECT 1 FROM deliveries d JOIN messages m ON m.id=d.message_id

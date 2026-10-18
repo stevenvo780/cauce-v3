@@ -8,20 +8,20 @@ function targetTable(target: FleetTarget): string { return target.resource === '
 function targetWhere(target: FleetTarget): string {
   return target.resource === 'agent' ? 'tenant_id=$1 AND alias=$2' : target.resource === 'room' ? 'tenant_id=$1 AND id=$2' : 'id=$1 AND $2::text IS NULL';
 }
-async function removeConfiguration(client: DatabaseClient, row: FleetOperationRow): Promise<Record<string, unknown>> {
-  const archive: Record<string, unknown> = {};
+async function removeConfiguration(client: DatabaseClient, target: FleetTarget): Promise<Record<string, unknown[]>> {
+  const archive: Record<string, unknown[]> = {};
   const tables = await purgeTables(client);
   for (const name of PURGE_CONFIGURATION) {
     const table = tables.find(candidate => candidate.table_name === name);
     if (!table) continue;
-    const owned = purgePredicate(table, row.target, true);
+    const owned = purgePredicate(table, target, true);
     if (!owned) continue;
     const predicate = `(${owned}) AND ${runtimePrincipalScopeSql('entry.tenant_id', name === 'agent_account_bindings' ? 'entry.agent_alias' : 'entry.alias')}`;
     const records = (await client.query<Record<string, unknown>>(`SELECT to_jsonb(entry) AS record FROM ${sqlIdentifier(name)} entry
-      WHERE (${predicate}) FOR UPDATE`, purgeParams(row.target))).rows.map(value => value.record);
+      WHERE (${predicate}) FOR UPDATE`, purgeParams(target))).rows.map(value => value.record);
     if (!records.length) continue;
     archive[name] = records;
-    await client.query(`DELETE FROM ${sqlIdentifier(name)} entry WHERE (${predicate})`, purgeParams(row.target));
+    await client.query(`DELETE FROM ${sqlIdentifier(name)} entry WHERE (${predicate})`, purgeParams(target));
   }
   return archive;
 }
@@ -44,6 +44,13 @@ async function retireAnchors(client: DatabaseClient, target: FleetTarget): Promi
     retired_enabled=COALESCE(retired_enabled,false) WHERE (${predicate}) AND ${runtimePrincipalScopeSql('entry.tenant_id', 'entry.alias')}`, purgeParams(target));
   await client.query(`DELETE FROM memberships entry WHERE (${predicate}) AND NOT ${PRESERVED_MEMBERSHIP}`, purgeParams(target));
 }
+/** Deletes the target's own configuration, tombstones its agents and retires or deletes its anchors; returns what it deleted. */
+export async function purgeTargetRecords(client: DatabaseClient, target: FleetTarget): Promise<Record<string, unknown[]>> {
+  const archive = await removeConfiguration(client, target);
+  await purgeAgents(client, target);
+  await retireAnchors(client, target);
+  return archive;
+}
 export async function purgeRetiredTarget(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   for (const [name, evidence] of [['stop', 'stopped_verified'], ['revoke', 'revocation_verified']] as const) {
     const step = row.steps.find(value => value.name === name);
@@ -58,9 +65,7 @@ export async function purgeRetiredTarget(client: DatabaseClient, row: FleetOpera
   const dependencies = await purgeDependencies(client, row.target);
   if (dependencies.some(value => value.blocking)) throw new FleetOperationError('conflict', 'purge target has active work or control');
   await client.query("SELECT set_config('cauce.actor_tenant',$1,true),set_config('cauce.actor_alias',$2,true)", [row.actor_tenant, row.actor_alias]);
-  const archive = await removeConfiguration(client, row);
-  await purgeAgents(client, row.target);
-  await retireAnchors(client, row.target);
+  const archive = await purgeTargetRecords(client, row.target);
   if (row.target.resource !== 'agent') {
     const historical = dependencies.some(value => value.type !== `purge.preserve.${table}` && value.type.startsWith('purge.preserve.'));
     if (!historical) await client.query(`DELETE FROM ${sqlIdentifier(table)} WHERE ${targetWhere(row.target)}`, params);
