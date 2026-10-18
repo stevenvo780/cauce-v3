@@ -313,8 +313,14 @@ it('si el fichero cambió mientras se editaba, lo dice y no finge que guardó', 
   await motivar(user, cajon);
   await user.click(within(cajon).getByRole('button', { name: /^Guardar$/i }));
 
-  expect(await within(cajon).findByText(/cambió mientras lo editabas/i)).toBeInTheDocument();
+  expect(await within(cajon).findByText(/Alguien cambió este dato mientras lo editabas/i)).toBeInTheDocument();
   expect(within(cajon).queryByText(/Aplicado en/)).not.toBeInTheDocument();
+  expect(caja).toHaveValue('lo mio');
+  const conflicto = within(cajon).getByRole('group', { name: 'Conflicto de versión' });
+  expect(conflicto).toHaveTextContent('original');
+  await user.click(within(conflicto).getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
+  expect(await within(cajon).findByText(/Tu borrador quedó sobre la versión actual/i)).toBeInTheDocument();
+  expect(caja).toHaveValue('lo mio');
 });
 
 it('un conflicto con el bloque canónico conserva el borrador y dirige a sus campos', async () => {

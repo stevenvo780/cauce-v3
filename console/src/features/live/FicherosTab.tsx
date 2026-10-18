@@ -12,6 +12,8 @@ import {
   avisoAntesDeGuardar, avisoDeFuente, esAckAplicado, explicarFallo, hayCambios, mensajeDeGuardado,
   preserveSourceLineEndings,
 } from './ficheros';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { ReasonField } from './context-ui';
 import { explicarFalloDeMotivo, problemaDeMotivo } from './ficheros-motivo';
 import { MENSAJES_DE_APLICACION } from './perfil';
@@ -313,6 +315,7 @@ function Editor({
   } = useDocumentContent(api, tenantId, alias, item.kind);
   const [guardando, setGuardando] = useDocumentWrite(api, JSON.stringify([tenantId, alias, item.kind]));
   const [guardado, setGuardado] = useState<string | undefined>(undefined);
+  const [conflicto, setConflicto] = useState<{ diffs: ConflictFieldDiff[] }>();
   const [motivo, setMotivo] = useState('');
   const problemaMotivo = problemaDeMotivo(motivo);
 
@@ -389,6 +392,7 @@ function Editor({
         exists: true, truncated: false, editable: true,
       });
       onBorrador(undefined);
+      setConflicto(undefined);
       setMotivo('');
       const mensaje = resultado.state === 'written_pending_session'
         ? `${mensajeDeGuardado(resultado)} Sesión sin adoptar todavía: `
@@ -400,6 +404,21 @@ function Editor({
       const status = error instanceof ApiError ? error.status : undefined;
       const codigo = error instanceof ApiError ? error.code : undefined;
       const mensaje = error instanceof Error ? error.message : undefined;
+      if (isCasConflict(error) && codigo !== 'managed_context_conflict') {
+        setFallo(undefined);
+        try {
+          const fresh = await api.getAgentDocumentContent(tenantId, alias, item.kind);
+          setServido(fresh);
+          setConflicto({
+            diffs: diffConflictFields(
+              { contenido: texto },
+              { contenido: fresh.content },
+              { contenido: `Contenido de ${item.label}` },
+            ),
+          });
+        } catch { setConflicto({ diffs: [] }); }
+        return;
+      }
       const explicado = error instanceof ApiError && status === 409
         && error.code === 'managed_context_conflict'
         ? {
@@ -417,9 +436,25 @@ function Editor({
       setGuardando(false);
     }
   }, [
-    api, tenantId, alias, item.kind, texto, borrador, servido, canWrite, mutationBlocked,
+    api, tenantId, alias, item.kind, item.label, texto, borrador, servido, canWrite, mutationBlocked,
     motivo, problemaMotivo, onBorrador, onApplied, setFallo, setServido, guardando, setGuardando, changedTarget,
   ]);
+
+  async function reintentarConMisCambios() {
+    try {
+      const fresh = await api.getAgentDocumentContent(tenantId, alias, item.kind);
+      setServido(fresh);
+      setConflicto(undefined);
+      setFallo(undefined);
+      if (texto === fresh.content) {
+        onBorrador(undefined);
+        setGuardado('La versión actual ya contiene tu texto. No queda nada por guardar.');
+      } else {
+        onBorrador({ texto, shaBase: fresh.sha, pathBase: fresh.path });
+        setGuardado('Tu borrador quedó sobre la versión actual. Revisa el texto y pulsa «Guardar» para reintentarlo.');
+      }
+    } catch { /* the conflict panel stays until a fresh read arrives */ }
+  }
 
   if (cargando) return <p className="m-0 text-muted">Leyendo el fichero dentro del contenedor…</p>;
   if (fallo && !servido) return <FalloDeLectura fallo={fallo} />;
@@ -477,6 +512,9 @@ function Editor({
 
       {fallo ? <Notice tone="danger" role="alert"><strong>{fallo.titulo}</strong>: {fallo.detalle}</Notice> : null}
       {guardado ? <Notice tone="ok" role="status">{guardado}</Notice> : null}
+      {conflicto ? <ConflictNotice diffs={conflicto.diffs} busy={guardando}
+        onRetry={() => { void reintentarConMisCambios(); }}
+        onDiscard={() => { onBorrador(undefined); setConflicto(undefined); setFallo(undefined); setGuardado(undefined); void releer(); }} /> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted">
@@ -487,6 +525,7 @@ function Editor({
             onClick={() => {
               if (mutationBlocked) return;
               onBorrador(undefined);
+              setConflicto(undefined);
               void releer();
             }}>
             Descartar y releer
