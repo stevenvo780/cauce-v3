@@ -80,8 +80,8 @@ def extension_packet(agent: dict, binding: dict) -> bytes:
 
 
 def accept_extension_receipt(agent: dict, raw: bytes) -> dict:
-    from fleet_provider_identity import RECEIPT_KEYS, extensions_sha256, public_receipt
-    if len(raw) > 8192:
+    from fleet_provider_identity import EXTENSION_LIMIT, RECEIPT_KEYS, extensions_sha256, public_receipt
+    if len(raw) > EXTENSION_LIMIT:
         raise ValueError('extension receipt exceeds its bound')
     receipt = json.loads(raw)
     rows = agent.get('extensions') or []

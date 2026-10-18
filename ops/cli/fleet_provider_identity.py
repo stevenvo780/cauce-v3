@@ -880,7 +880,7 @@ if __name__ == '__main__':
             raise ValueError('extension prepare packet exceeds its bound')
         receipt = prepare_extension_packet(json.loads(raw))
         body = json.dumps(receipt, sort_keys=True).encode()
-        if len(body) > 8192 or set(receipt) - RECEIPT_KEYS:
+        if len(body) > EXTENSION_LIMIT or set(receipt) - RECEIPT_KEYS:
             raise ValueError('extension receipt exceeds its public bound')
         sys.stdout.buffer.write(body)
     except Exception:
