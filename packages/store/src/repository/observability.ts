@@ -1,7 +1,7 @@
 import { AliasSchema, hasUnsafeTextCodePoint, isRfcUuid, isStrictUtcIso8601, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
-  FLEET_WORK_STATES, fleetReadableSql, type FleetActivityFlag, type FleetWorkState
+  FLEET_WORK_STATES, fleetReadableTenantsSql, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
 import { COMPANY_ID_PATTERN, lockCompanyAuthority } from '../company-authority.js';
@@ -368,11 +368,10 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
                 d.attempt AS attempts,d.max_attempts,d.available_at,d.last_error,d.created_at,
                 EXISTS (SELECT 1 FROM dead_letters dl WHERE dl.delivery_id=d.id AND dl.resolved_at IS NOT NULL) AS dlq_resolved
          FROM deliveries d JOIN messages m ON m.id=d.message_id
-         WHERE EXISTS (SELECT 1 FROM memberships source_member
-                       WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
-                         AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
+         WHERE (m.tenant_id=$1 AND m.room_id IN (SELECT room_id FROM memberships
+                       WHERE tenant_id=$1 AND alias=$2 AND enabled))
             OR (d.recipient_tenant=$1 AND d.recipient_alias=$2
-                AND ${fleetReadableSql('$1::text', 'm.tenant_id')})
+                AND (m.tenant_id=$1 OR m.tenant_id IN ${fleetReadableTenantsSql('$1::text')}))
        ), sample AS MATERIALIZED (
          SELECT * FROM visible_deliveries ORDER BY created_at DESC LIMIT $3
        ), totals AS (

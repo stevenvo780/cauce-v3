@@ -605,7 +605,21 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
   async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
     const result = await this.pool.query<MessageListRow & { attachments: unknown }>(
-      `SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
+      `WITH page AS MATERIALIZED (
+         SELECT visible.id FROM messages visible
+         WHERE EXISTS (SELECT 1 FROM memberships source_member
+                       WHERE source_member.tenant_id=$1 AND source_member.room_id=visible.room_id
+                         AND source_member.alias=$2 AND source_member.enabled AND visible.tenant_id=$1)
+            OR (EXISTS (SELECT 1 FROM deliveries participant
+                        WHERE participant.message_id=visible.id AND participant.recipient_tenant=$1
+                          AND participant.recipient_alias=$2)
+                AND (visible.tenant_id=$1 OR EXISTS (
+                  SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=visible.tenant_id
+                    AND edge.enabled AND edge.allow_read
+                )))
+         ORDER BY visible.created_at DESC LIMIT $3
+       )
+       SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
               ${MESSAGE_BODY_PREVIEW_SQL},${MESSAGE_ATTACHMENTS_SQL},
               m.lane,m.created_at,${MESSAGE_AUTHOR_SQL},${messageClientOriginSql('$1')},
               COALESCE(jsonb_agg(jsonb_build_object(
@@ -628,22 +642,12 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
                   FROM delivery_acks a WHERE a.delivery_id=d.id
                 ) timeline_events)
               ) ORDER BY d.created_at) FILTER (WHERE d.id IS NOT NULL),'[]'::jsonb) AS deliveries
-       FROM messages m LEFT JOIN deliveries d ON d.message_id=m.id AND (
+       FROM page JOIN messages m ON m.id=page.id LEFT JOIN deliveries d ON d.message_id=m.id AND (
          EXISTS (SELECT 1 FROM memberships source_member
                  WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
                    AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
          OR (d.recipient_tenant=$1 AND d.recipient_alias=$2)
        )
-       WHERE EXISTS (SELECT 1 FROM memberships source_member
-                     WHERE source_member.tenant_id=$1 AND source_member.room_id=m.room_id
-                       AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
-          OR (EXISTS (SELECT 1 FROM deliveries participant
-                      WHERE participant.message_id=m.id AND participant.recipient_tenant=$1
-                        AND participant.recipient_alias=$2)
-              AND (m.tenant_id=$1 OR EXISTS (
-                SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=m.tenant_id
-                  AND edge.enabled AND edge.allow_read
-              )))
        GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
     );
     return { items: result.rows.map((row) => withMessageAuthor({

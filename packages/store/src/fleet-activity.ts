@@ -12,6 +12,15 @@ export function fleetReadableSql(reader: string, owner: string): string {
       AND read_edge.enabled AND read_edge.allow_read AND ${hubStarRouteSql('read_source', 'read_target')}))`;
 }
 
+/** Tenants readable by `reader` through an edge; same set `fleetReadableSql` admits, as one uncorrelated lookup. */
+export function fleetReadableTenantsSql(reader: string): string {
+  return `(SELECT read_edge.to_tenant FROM acl_edges read_edge
+    JOIN tenants read_source ON read_source.id=read_edge.from_tenant
+    JOIN tenants read_target ON read_target.id=read_edge.to_tenant
+    WHERE read_edge.from_tenant=${reader}
+      AND read_edge.enabled AND read_edge.allow_read AND ${hubStarRouteSql('read_source', 'read_target')})`;
+}
+
 export interface FleetActivityThresholds {
   /** How many in-flight deliveries make an agent be considered saturated. */
   saturation_in_flight: number;
