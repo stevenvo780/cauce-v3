@@ -33,7 +33,7 @@ describe('AuditPanel keyset pagination', () => {
     );
 
     expect(await screen.findByText('audit.event.1')).toBeInTheDocument();
-    expect(screen.getByText('1 visibles de 1')).toBeInTheDocument();
+    expect(screen.getByText('1 visible de 1')).toBeInTheDocument();
     expect(committedFrames.some((frame) => frame.includes('0 visibles de 0'))).toBe(false);
   });
 
@@ -53,7 +53,7 @@ describe('AuditPanel keyset pagination', () => {
     const info = (await screen.findByText('fleet.reconcile')).closest('li');
     expect(info).not.toBeNull();
     if (info) {
-      expect(within(info).getByText('info')).toBeInTheDocument();
+      expect(within(info).getByText('Aviso')).toBeInTheDocument();
       expect(info.querySelector('[data-decision="info"]')).not.toBeNull();
     }
     expect(screen.getByText('2 visibles de 2')).toBeInTheDocument();

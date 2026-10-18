@@ -62,6 +62,84 @@ function collect(
   }
 }
 
+const AUDIT_VERBS: Record<string, string> = {
+  create: 'Alta',
+  update: 'Cambio',
+  delete: 'Baja',
+  retire: 'Retiro',
+  reconcile: 'Conciliación',
+  grant: 'Concesión',
+  revoke: 'Revocación',
+  ack: 'Confirmación',
+  denied: 'Denegación',
+  write: 'Escritura',
+  read: 'Lectura',
+  consume: 'Consumo',
+  request: 'Solicitud',
+  resume: 'Reanudación',
+  close: 'Cierre',
+  sync: 'Sincronización',
+  publish: 'Publicación',
+  archive: 'Archivo',
+};
+
+const AUDIT_NOUNS: Record<string, string> = {
+  platform: 'plataforma',
+  company: 'empresa',
+  fleet: 'flota',
+  event: 'evento',
+  audit: 'auditoría',
+  tenant: 'espacio',
+  room: 'sala',
+  agent: 'agente',
+  membership: 'membresía',
+  account: 'cuenta',
+  session: 'sesión',
+  terminal: 'terminal',
+  delivery: 'entrega',
+  context: 'contexto',
+  document: 'documento',
+  appearance: 'aspecto',
+  admin: 'administración',
+  state: 'estado',
+  quota: 'cuota',
+  config: 'configuración',
+  configuration: 'configuración',
+  acl: 'permiso',
+  user: 'persona',
+  host: 'máquina',
+  profile: 'perfil',
+};
+
+function auditWord(token: string): string {
+  const noun = AUDIT_NOUNS[token];
+  if (noun) return noun;
+  const verb = AUDIT_VERBS[token];
+  if (verb) return verb.toLocaleLowerCase('es');
+  const pieces = token.split(/[_-]+/u).filter(Boolean);
+  if (pieces.length > 1) return pieces.map(auditWord).join(' ');
+  return token.replace(/([a-z])([A-Z])/gu, '$1 $2').toLocaleLowerCase('es');
+}
+
+/** Operator sentence for an action id. The last segment is a verb only when it is in the dictionary. */
+export function readableAuditAction(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const parts = value.trim().split('.').filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const last = parts[parts.length - 1] ?? '';
+  const verb = AUDIT_VERBS[last];
+  if (verb && parts.length > 1) {
+    const rest = parts.slice(0, -1).map(auditWord);
+    const object = rest[rest.length - 1] ?? 'registro';
+    const scope = rest.slice(0, -1);
+    return scope.length > 0 ? `${verb} de ${object}, en ${scope.join(', ')}` : `${verb} de ${object}`;
+  }
+  const sentence = parts.map(auditWord).join(' · ');
+  return sentence.charAt(0).toLocaleUpperCase('es') + sentence.slice(1);
+}
+
+export const AUDIT_DECISION_LABEL = { allow: 'Permitido', deny: 'Denegado', info: 'Aviso' } as const;
+
 /**
  * Turns the allowlisted JSON summary of the audit log into a sentence for the operator.
  * React preserves the HTML escape; this function only decides text and never returns markup.

@@ -8,8 +8,8 @@ import { ActionButton } from '../../components/action-button';
 import { Button, Notice, SearchField, Toolbar } from '../../components/kit';
 import { Badge, EmptyState, ErrorState, LoadingState, Time, Unknown } from '../../components/ui';
 import { TONE_CLASS, type Tone } from '../../status-tone';
-import { compactId, safeAuditDecision } from '../../lib';
-import { readableAuditSummary } from './audit-summary';
+import { compactId, display, plural, safeAuditDecision, UNKNOWN } from '../../lib';
+import { AUDIT_DECISION_LABEL, readableAuditAction, readableAuditSummary } from './audit-summary';
 
 const DECISION_TONE: Record<NonNullable<ReturnType<typeof safeAuditDecision>>, Tone> = { allow: 'ok', deny: 'danger', info: 'info' };
 
@@ -120,14 +120,14 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
      left to walk "no events match" is a claim about the whole log that cannot be made here. */
   const busquedaParcial = needle.length > 0 && nextCursor !== null;
 
-  if (resource.loading && !resource.data) return <LoadingState label="Leyendo audit log…" />;
+  if (resource.loading && !resource.data) return <LoadingState label="Leyendo la auditoría…" />;
   if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
 
   return (
     <>
       <Toolbar className="mb-3">
-        <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, action, trace…" />
-        <span className="text-xs text-muted">{String(filtered.length)} visibles de {String(events.length)}</span>
+        <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, acción o traza…" />
+        <span className="text-xs text-muted">{plural(filtered.length, 'visible', 'visibles')} de {String(events.length)}</span>
         <ActionButton size="sm" label="Releer auditoría" busy={resource.loading} announceError={false} action={() => resource.reload()} />
       </Toolbar>
       {resource.error ? (
@@ -161,20 +161,29 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
           {filtered.map((event, index) => {
             const decision = safeAuditDecision(event.decision);
             const tone = TONE_CLASS[decision ? DECISION_TONE[decision] : 'neutral'];
+            const actionLabel = readableAuditAction(event.action);
+            const actor = [display(event.actor_alias), display(event.tenant_id)].filter((part) => part !== UNKNOWN).join(' · ');
+            const request = display(event.request_id);
+            const trace = display(event.trace_id);
             return <li className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-2.5" key={event.event_id ?? index}>
               <span data-decision={decision ?? 'unknown'} className={cn('grid size-7 place-items-center rounded-md [&>svg]:size-4', tone.pill)}>
                 {decision === 'allow' ? <ShieldCheck aria-hidden="true" /> : decision === 'info' ? <Info aria-hidden="true" /> : <ShieldAlert aria-hidden="true" />}
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <strong className="text-[13px]"><Unknown value={event.action} /></strong>
-                  <Badge tone={decision === 'allow' ? 'online' : decision === 'deny' ? 'danger' : decision === 'info' ? 'info' : 'unknown'}><Unknown value={decision} /></Badge>
+                  <strong className="text-[13px]">{actionLabel ?? <Unknown value={event.action} />}</strong>
+                  {actionLabel && typeof event.action === 'string' && event.action.trim() !== ''
+                    ? <span className="mono text-[11px] text-muted">{event.action}</span>
+                    : null}
+                  <Badge tone={decision === 'allow' ? 'online' : decision === 'deny' ? 'danger' : decision === 'info' ? 'info' : 'unknown'}>
+                    {decision ? AUDIT_DECISION_LABEL[decision] : <Unknown value={decision} />}
+                  </Badge>
                 </div>
                 <p className="m-0 mt-0.5 text-[13px] break-words text-fg-2"><Unknown value={readableAuditSummary(event.summary)} /></p>
                 <dl className="m-0 mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">
-                  <div className="flex gap-1"><dt>Actor</dt><dd className="m-0 text-fg-2"><Unknown value={event.actor_alias} /> · <Unknown value={event.tenant_id} /></dd></div>
-                  <div className="flex gap-1"><dt>Request</dt><dd className="mono m-0 text-fg-2">{compactId(event.request_id)}</dd></div>
-                  <div className="flex gap-1"><dt>Trace</dt><dd className="mono m-0 text-fg-2">{compactId(event.trace_id)}</dd></div>
+                  {actor ? <div className="flex gap-1"><dt>Actor</dt><dd className="m-0 text-fg-2">{actor}</dd></div> : null}
+                  {request !== UNKNOWN ? <div className="flex gap-1"><dt>Petición</dt><dd className="mono m-0 text-fg-2">{compactId(event.request_id)}</dd></div> : null}
+                  {trace !== UNKNOWN ? <div className="flex gap-1"><dt>Traza</dt><dd className="mono m-0 text-fg-2">{compactId(event.trace_id)}</dd></div> : null}
                   <div className="flex gap-1"><dt>Fecha</dt><dd className="m-0 text-fg-2"><Time value={event.at} /></dd></div>
                 </dl>
               </div>
