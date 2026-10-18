@@ -59,7 +59,7 @@ export function blockingText(operation: FleetOperation | undefined, intended: Op
 }
 
 const CAPABILITY_REASON: Record<string, string> = {
-  executor_unconfigured: 'el ejecutor de flota no está configurado en el servidor. Pide a un administrador que lo configure y vuelve a leer las capacidades',
+  executor_unconfigured: 'ninguna computadora de esta empresa está conectada y lista para ejecutar agentes, o el ejecutor de flota no está configurado. Conecta una en «Computadoras» o pide a un administrador que configure el ejecutor, y vuelve a leer las capacidades',
   unsupported_schema: 'el ejecutor de flota publicado usa un esquema que esta consola no admite. Actualiza la consola o el ejecutor y vuelve a leer las capacidades',
 };
 
@@ -72,11 +72,20 @@ export function fleetCapabilityReasonText(reason: string | undefined): string {
 export const STALE_RESUME_TEXT = 'La configuración cambió desde que se lanzó; cancélala y vuelve a lanzarla.';
 export const isStaleResume = (message: string) => /revision changed;?\s*preview the operation again/iu.test(message);
 
+const REFUSALS: readonly (readonly [RegExp, string])[] = [
+  [/requires exact complete durable placement/iu, 'El registro de un agente de este alcance no tiene la ubicación completa que el ejecutor de flota necesita: se instaló antes de la flota y hay que adoptarlo antes de operarlo desde la consola.'],
+  [/no registered host transport|approved source and destination coordinator|controller host is unavailable/iu, 'La computadora elegida no está conectada al coordinador de flota. Elige una computadora conectada o conéctala en «Computadoras».'],
+  [/outside the configured host authority|outside the approved host templates|outside the approved runtime capability/iu, 'La ubicación no coincide con una plantilla aprobada de esa computadora. Elige la plantilla de ejecución y una cuenta principal que la computadora admita.'],
+  [/requires an explicit provider account/iu, 'Elige la cuenta principal de ejecución.'],
+  [/fleet action is unavailable/iu, 'El ejecutor de flota no admite esta acción ahora. Vuelve a leer las capacidades.'],
+  [/delivery source principal has no physical runtime/iu, 'Este agente es un principal del sistema sin ejecución propia: no se opera con la flota.'],
+];
+
 /** Server refusals of preview/enqueue/control, in Spanish; anything else passes through. */
 export function fleetErrorText(message: string, operation: FleetOperation | undefined, intended: OperationKind): string {
   if (/already has an unresolved fleet operation/iu.test(message)) return blockingText(operation, intended);
   if (isStaleResume(message)) return STALE_RESUME_TEXT;
-  return message;
+  return REFUSALS.find(([pattern]) => pattern.test(message))?.[1] ?? message;
 }
 
 export function cancellable(operation: FleetOperation): boolean {

@@ -5,6 +5,7 @@ import { AgentOrb } from '../../components/AgentOrb';
 import { Button, MENU_ITEM, MENU_POPUP, Pill } from '../../components/kit';
 import { onNavClick } from '../../router';
 import type { ConfigurationSnapshot } from '../../api/types';
+import { fleetScopeGap } from './agent-lifecycle-model';
 import { agentWriteBlock } from './agent-registry-create';
 import { agentView, type SheetTab } from './agent-view';
 import { GroupChips } from './AgentSheetTabs';
@@ -32,6 +33,7 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
   const retiringBlock = writeBlock ?? retireBlock;
   const removalBlock = view.hasRuntime ? writeBlock : removeBlock;
   const prepareBlock = writeBlock ?? agentWriteBlock(snapshot, 'update');
+  const legacy = view.hasRuntime && fleetScopeGap(snapshot, { resource: 'agent', tenant_id: agent.tenantId, alias: agent.alias }) !== undefined;
   return <li className={`relative min-w-0 rounded-xl border border-line bg-surface shadow-card transition-colors hover:border-line-strong hover:bg-subtle ${memberOnly ? 'opacity-70' : ''}`}>
     <button type="button" data-agent-tile={view.ref} onClick={() => { onOpen(); }} aria-label={`Abrir agente ${view.ref}`}
       className="grid w-full min-w-0 cursor-pointer gap-3 rounded-xl border-0 bg-transparent p-3.5 pr-11 pb-3 text-left text-fg outline-none focus-visible:outline-2 focus-visible:outline-brand">
@@ -60,7 +62,8 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
           aria-label={`Preparar agente ${view.ref}`} onClick={() => { onOpen('operacion'); }}>
           <Rocket size={12} aria-hidden="true" />Preparar</Button>
         <Button size="sm" variant="danger" disabled={Boolean(removalBlock)}
-          title={removalBlock ?? (view.hasRuntime ? 'Guía de dos pasos: retirar y después eliminar definitivamente'
+          title={removalBlock ?? (legacy ? 'Instalado antes del ejecutor de flota: abre la guía para ver cómo darlo de baja'
+            : view.hasRuntime ? 'Guía de dos pasos: retirar y después eliminar definitivamente'
             : 'Sin ejecución que retirar: se elimina el registro desde su pestaña Registro')}
           aria-label={`Eliminar agente ${view.ref}`} onClick={() => { if (view.hasRuntime) onOpen('resumen', 'remove'); else onOpen('registro'); }}>
           <Trash2 size={12} aria-hidden="true" />Eliminar</Button>

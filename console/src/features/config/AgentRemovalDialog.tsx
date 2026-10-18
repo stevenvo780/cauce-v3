@@ -1,6 +1,7 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 import { FormDialog } from '../../components/dialogs';
-import { Pill } from '../../components/kit';
+import { Notice, Pill } from '../../components/kit';
+import { fleetScopeGap } from './agent-lifecycle-model';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
 const STEP = 'grid gap-1 rounded-lg border border-line px-3 py-2.5 data-[current]:border-brand data-[current]:bg-subtle';
@@ -15,6 +16,16 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
   onReloaded: (snapshot: ConfigurationSnapshot) => void; onClose: () => void;
 }) {
   const kind = retired ? 'purge' : 'retire';
+  const gap = fleetScopeGap(snapshot, { resource: 'agent', tenant_id: tenantId, alias });
+  if (gap) {
+    return <FormDialog open wide anchorTop title={`Eliminar agente ${tenantId}/${alias}`}
+      description="La consola no puede retirar ni eliminar este agente todavía." onClose={onClose}>
+      <div className="config-modal-cuerpo grid gap-3"><Notice tone="warn" role="note">{gap}</Notice></div>
+      <div className="config-modal-pie config-actions">
+        <button type="button" className="button secondary" onClick={onClose}>Cerrar</button>
+      </div>
+    </FormDialog>;
+  }
   return <FormDialog open wide anchorTop title={`Eliminar agente ${tenantId}/${alias}`}
     description="Eliminar un agente con ejecución lleva dos pasos: retirarlo y después borrarlo definitivamente." onClose={onClose}>
     <div className="config-modal-cuerpo grid gap-3">

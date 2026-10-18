@@ -6,7 +6,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview } from './AgentFleetOperation';
 import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationSummary } from './fleet-operation-text';
-import { agentLifecycleDraft, agentLifecycleRequest, FLEET_ACTION_LABELS, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
@@ -23,7 +23,10 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const api = useApi();
   const access = useConsoleAccess();
   const [open, setOpen] = useState(initialOpen);
-  const [kind, setKind] = useState<Kind>(initialKind ?? (target ? 'update' : 'create'));
+  const agent = target?.resource === 'agent' ? [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])]
+    .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
+  const draftAgent = isRegistryDraftRow(agent);
+  const [kind, setKind] = useState<Kind>(initialKind ?? (target && !draftAgent ? 'update' : 'create'));
   const [draft, setDraft] = useState(() => initialDraft ?? agentLifecycleDraft(snapshot, target));
   const [key, setKey] = useState(newKey);
   const [validated, setValidated] = useState<{ input: FleetOperationRequest; receipt: FleetOperationPreview }>();
@@ -42,6 +45,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const currentFingerprint = useRef('');
   const canWrite = !sessionInvalid && !access.loading && !access.error && access.data?.permissions?.includes('config.write') === true;
   const available = flow.capability?.available === true && flow.capability.actions.includes(kind);
+  const scopeGap = kind === 'create' ? undefined : fleetScopeGap(snapshot, target);
   const draftKind = kind === 'create' || kind === 'update';
   const prepared = draftKind ? agentLifecycleRequest(draft, snapshot, flow.capability, kind, key, target)
     : simpleRequest();
@@ -80,7 +84,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     setKey(newKey()); setValidated(undefined); setError(undefined);
   }
   async function preview() {
-    if (!canWrite || !available || busy || inProgress || blocked) return;
+    if (!canWrite || !available || busy || inProgress || blocked || scopeGap) return;
     if (!input) { setError(prepared.error); return; }
     const expected = JSON.stringify(input);
     const sequence = ++generation.current;
@@ -113,16 +117,14 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     catch { setError('No se pudo releer el inventario. El recibo operativo se conserva.'); }
   }
   const purgeAlias = target?.resource === 'agent' ? target.alias : '';
-  const previewBlock = !canWrite ? 'No se acreditó permiso para operar agentes desde esta cuenta.'
-    : !available ? `Esta acción no está disponible: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
+  const previewBlock = !canWrite ? 'No se acreditó permiso para operar agentes desde esta cuenta.' : scopeGap ?? (
+    !available ? `Esta acción no está disponible: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
       : blocked ? blockingText(flow.operation, kind)
         : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
           : busy ? 'Espera a que termine la operación en curso.'
-            : !aliasConfirmed ? `Escribe el alias ${purgeAlias} para confirmar.` : undefined;
+            : !aliasConfirmed ? `Escribe el alias ${purgeAlias} para confirmar.` : undefined);
   const enqueueBlock = previewBlock ?? (!samePreview ? 'Previsualiza la operación para poder encolarla.'
     : !validated.receipt.can_apply ? 'La previsualización no permite aplicar esta operación. Revisa los motivos de la previsualización.' : undefined);
-  const agent = target?.resource === 'agent' ? [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])]
-    .find((row) => row.tenant_id === target.tenant_id && row.alias === target.alias) : undefined;
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
     {hideTrigger ? null : <button ref={trigger} type="button" className="button secondary"
       onClick={() => { setOpen((value) => !value); }} aria-expanded={open}
@@ -141,10 +143,11 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {inventoryNotice ? <p className="notice" role="note">{inventoryNotice}</p> : null}
       {draftKind && flow.capability?.available && !flow.capability.placements.length ? <p className="notice">El ejecutor no publicó hosts permitidos para preparar agentes.</p> : null}
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : null}
+      {scopeGap ? <p className="notice" role="note">{scopeGap}</p> : null}
       {flow.capability && !available ? <p className="notice">Esta acción no está disponible en el ejecutor publicado: {fleetCapabilityReasonText(flow.capability.reason)}.</p> : null}
       {target && !fixedKind ? <label>Acción operativa<select value={kind} disabled={busy || inProgress} onChange={(event) => {
         setKind(event.target.value as Kind); setKey(newKey()); setValidated(undefined); setError(undefined); generation.current += 1;
-      }}>{Object.entries(ACTION_LABELS).filter(([action]) => action !== 'create').map(([action, label]) =>
+      }}>{Object.entries(ACTION_LABELS).filter(([action]) => (action === 'create') === draftAgent).map(([action, label]) =>
         <option key={action} value={action}>{label}</option>)}</select></label> : null}
       {draftKind ? <AgentLifecycleFields draft={draft} snapshot={snapshot} capability={flow.capability} target={target}
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
@@ -158,9 +161,9 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
             generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias(event.target.value);
           }} /></label>
       </section> : null}
-      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed} title={previewBlock}
+      <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
         aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
-        <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed} title={enqueueBlock}
+        <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
           onClick={() => { void enqueue(); }}>Encolar operación</button></div>
       {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       {error ? <p className="notice" role="alert">{error}</p> : null}

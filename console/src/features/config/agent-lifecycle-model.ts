@@ -114,5 +114,38 @@ export function defaultMembershipRole(snapshot: ConfigurationSnapshot): string {
   const roles = membershipRoleOptions(snapshot);
   return roles.includes(DEFAULT_MEMBERSHIP_ROLE) ? DEFAULT_MEMBERSHIP_ROLE : roles[0] ?? DEFAULT_MEMBERSHIP_ROLE;
 }
+/** A registry draft never ran: preparing it is a fleet `create` that adopts the draft. */
+export function isRegistryDraftRow(row: Record<string, unknown> | undefined): boolean {
+  return !!row && (row.runtime_key === null || row.runtime_key === undefined) && !row.retired_at
+    && row.enabled === false && row.lifecycle_state === 'draft';
+}
+const PLACEMENT_FIELDS: readonly (readonly [string, string])[] = [['host_id', 'computadora'], ['harness_id', 'arnés'],
+  ['runtime_mode', 'modo de ejecución'], ['container_name', 'contenedor'], ['runtime_user', 'usuario de ejecución'],
+  ['systemd_user', 'usuario systemd'], ['home_directory', 'directorio personal'], ['state_directory', 'directorio de estado']];
+function placementGaps(row: Record<string, unknown>): string[] {
+  return PLACEMENT_FIELDS.filter(([field]) => typeof row[field] !== 'string' || row[field] === ''
+    || (field === 'runtime_mode' && !['container', 'native'].includes(row[field]))).map(([, label]) => label);
+}
+/**
+ * Why the fleet executor cannot operate the agents in scope: an agent installed before the fleet has a runtime
+ * but not the exact placement the host needs to stop, revoke or update it, and the server refuses every operation.
+ */
+export function fleetScopeGap(snapshot: ConfigurationSnapshot, target: FleetTarget | undefined): string | undefined {
+  if (!target) return undefined;
+  const room = target.resource === 'room' ? target.room_id : undefined;
+  const agents = (snapshot.agents ?? []).filter((row) => row.tenant_id === target.tenant_id && typeof row.runtime_key === 'string'
+    && (target.resource === 'agent' ? row.alias === target.alias : room !== undefined && (row.primary_room_id === room
+      || (snapshot.memberships ?? []).some((member) => member.tenant_id === row.tenant_id && member.alias === row.alias && member.room_id === room))));
+  const legacy = agents.flatMap((row) => { const gaps = placementGaps(row); return gaps.length ? [{ alias: String(row.alias), gaps }] : []; });
+  const first = legacy.at(0);
+  if (!first) return undefined;
+  const pause = 'Mientras tanto puedes pausar su admisión de entregas en la pestaña Registro; para darlo de baja hay que retirarlo en su computadora';
+  if (target.resource === 'agent') {
+    return `Este agente se instaló antes del ejecutor de flota y su registro no tiene ${first.gaps.length > 1 ? `${first.gaps.slice(0, -1).join(', ')} ni ${String(first.gaps.at(-1))}` : first.gaps.join('')}. `
+      + `La consola no puede detenerlo, retirarlo, actualizarlo ni eliminarlo hasta adoptarlo en la flota. ${pause} con «cauce ${first.alias} retirar».`;
+  }
+  return `El grupo incluye agentes instalados antes del ejecutor de flota (${legacy.map((entry) => entry.alias).join(', ')}): `
+    + 'la consola no puede retirarlos ni purgarlos hasta adoptarlos en la flota, ni eliminar el grupo mientras los tenga.';
+}
 export const FLEET_ACTION_LABELS = { create: 'Preparar agente', update: 'Actualizar ejecución', start: 'Iniciar', stop: 'Detener',
   retire: 'Retirar', restore: 'Restaurar', purge: 'Purgar' };
