@@ -71,7 +71,9 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
     }
     finally { setBusy(false); }
   }
-  const eligiblePeople = people.data?.items.filter(person => person.active) ?? [];
+  // Only an active operator can hold company authority; the console cannot see the control
+  // permission itself, so operators stay selectable and the server still decides on control.
+  const eligiblePeople = people.data?.items.filter(person => person.active && person.role === 'operator') ?? [];
   return <section aria-label="Autoridad de empresa" className="grid gap-3 rounded-xl border border-line bg-subtle p-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><ActionButton size="sm" label="Releer autoridad" disabled={busy} busy={admins.loading || people.loading} announceError={false} action={async () => {
       const [adminResult, peopleResult] = await Promise.all([admins.reload(), canAssignPeople ? people.reload() : Promise.resolve(undefined)]);
@@ -103,11 +105,16 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
       if (!canAssignPeople || people.loading || people.error) return;
       const current = admins.data?.items.find(admin => admin.user_id === personId); void write(personId, role, current?.version ?? 0); }}>
       <label>Persona<select required value={personId} disabled={!ready || !canAssignPeople || !admins.data?.capabilities.grant_admin || people.loading || !!people.error} onChange={event => { setPersonId(event.target.value); }}>
-        <option value="">Elige persona</option>{people.data?.items.filter(person => person.active).map(person => <option key={person.id} value={person.id}>{person.display_name} · {person.email}</option>)}</select></label>
+        <option value="">Elige persona</option>{people.data?.items.map(person => {
+          const blocked = !person.active ? 'cuenta retirada: no puede recibir autoridad'
+            : person.role !== 'operator' ? 'lectora: no puede recibir autoridad' : undefined;
+          return <option key={person.id} value={person.id} disabled={blocked !== undefined}>{person.display_name} · {person.email}{blocked ? ` — ${blocked}` : ''}</option>;
+        })}</select></label>
       <label>Autoridad<select value={role} disabled={!ready || !admins.data?.capabilities.grant_admin} onChange={event => { setRole(event.target.value as 'owner' | 'admin'); }}>
         <option value="admin">Administrador de empresa</option>{admins.data?.capabilities.grant_owner ? <option value="owner">Dueño de empresa</option> : null}</select></label>
       <Button type="submit" disabled={!ready || !canAssignPeople || !personId || !admins.data?.capabilities.grant_admin || people.loading || !!people.error}>Guardar autoridad</Button>
     </form>
+    {canAssignPeople && people.data ? <p className="m-0 text-xs text-muted">Solo una operadora activa puede recibir autoridad, y además necesita permiso de control en su empresa. Las lectoras y las cuentas retiradas no se pueden elegir y el selector dice por qué; si eliges una operadora sin control, el servidor lo rechaza al guardar y el aviso lo explica.</p> : null}
     {!canAssignPeople ? <Notice tone="info">Selecciona esta empresa en el menú de cuenta para asignar autoridad a sus personas.</Notice> : null}
     {confirmation ? <section aria-label="Confirmar revocación de autoridad" className="grid gap-2"><p>Revocar a {confirmation.display_name} retira su autoridad de empresa y sus sesiones. Se conserva su cuenta y autoría histórica.</p>
       <div className="flex gap-2"><Button variant="danger" disabled={!ready} onClick={() => { void write(confirmation.user_id, null, confirmation.version); }}>Confirmar revocación</Button><Button disabled={busy} onClick={() => { setConfirmation(undefined); }}>Cancelar</Button></div></section> : null}
