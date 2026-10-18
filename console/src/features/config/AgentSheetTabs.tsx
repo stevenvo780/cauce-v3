@@ -32,12 +32,17 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
   const href = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}?view=context`;
   const lifecycle = typeof view.row?.lifecycle_state === 'string' ? view.row.lifecycle_state : undefined;
   const host = view.host ? estadoDeComputadora(view.host) : undefined;
+  const primaryAccount = snapshot.provider_accounts?.find(row => row.id === view.row?.primary_account_id);
   return <div className="grid gap-4">
     {agent.registered ? null : <Notice role="note">
       Este agente solo aparece como miembro de un grupo: no tiene registro editable, por eso no ofrece edición ni operaciones.
     </Notice>}
     <dl className="m-0 grid-cols-1 gap-0 rounded-lg border border-line bg-surface px-3" aria-label={`Datos de ${view.ref}`}>
       <Fact label="Arnés declarado">{agent.harness ?? 'desconocido'}</Fact>
+      <Fact label="Cuenta de ejecución">{typeof view.row?.primary_account_id === 'string'
+        ? view.row.primary_account_id : 'Sin cuenta declarada'}</Fact>
+      <Fact label="Modelo">{typeof view.row?.model_id === 'string' ? view.row.model_id : 'Sin modelo declarado'}</Fact>
+      <Fact label="Pagador">{typeof primaryAccount?.payer_tenant_id === 'string' ? primaryAccount.payer_tenant_id : 'Sin informar'}</Fact>
       <Fact label="Computadora">
         {agent.registered ? <span className="flex flex-wrap items-center gap-2">
           {view.hostName}

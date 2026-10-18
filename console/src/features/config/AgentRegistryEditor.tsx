@@ -10,6 +10,7 @@ import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { agentHostIdOf, agentWriteBlock } from './agent-registry-create';
 import { hostUnavailableReason } from './use-fleet-hosts';
+import { AgentQuotaBinding } from './AgentQuotaBinding';
 
 type AgentRow = Record<string, unknown> & { tenant_id: string; alias: string };
 
@@ -89,6 +90,9 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
   const api = useApi();
   const access = useConsoleAccess();
   const [open, setOpen] = useState(initialOpen);
+  const [registryDirty, setRegistryDirty] = useState(false);
+  const [quotaDirty, setQuotaDirty] = useState(false);
+  useEffect(() => { onDirtyChange?.(registryDirty || quotaDirty); }, [onDirtyChange, registryDirty, quotaDirty]);
   const [freshSnapshot, setFreshSnapshot] = useState<ConfigurationSnapshot>();
   const chained = useRevisionEncadenada();
   useEffect(() => { setFreshSnapshot(undefined); }, [snapshot]);
@@ -120,8 +124,12 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
       aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
       onClick={() => { setOpen((value) => !value); runner.clear(); }}
     >{open ? 'Cerrar registro' : 'Editar registro'}</Button>}
-    {open ? <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts} embedded={embedded} onDirtyChange={onDirtyChange}
-      deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); onClose?.(); }} /> : null}
+    {open ? <>
+      <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts} embedded={embedded} onDirtyChange={setRegistryDirty}
+        deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); onClose?.(); }} />
+      <AgentQuotaBinding key={`${tenantId}/${alias}`} tenantId={tenantId} alias={alias} snapshot={current}
+        onReloaded={onReloaded} onDirtyChange={setQuotaDirty} />
+    </> : null}
   </div>;
 }
 
