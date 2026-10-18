@@ -26,7 +26,7 @@ import {
 import { ModeSwitch, type ModeOption } from './ModeSwitch';
 import { NegativaPty } from './NegativaPty';
 import type { MotivoReconciliacionPlaza } from './PlazasColgadas';
-import { LoginCommandBanner } from './AgentAuthenticate';
+import { LoginCommandBanner } from './LoginCommandBanner';
 import { argvFor, harnessLoginRecipe, loginMark, shellCommand, type LoginAction } from './login-recipe';
 import { liveTuiGate, terminalChannelGate } from './plugin';
 import { ptySessionType, readPtySession, subscribePtySession } from './pty-session';
