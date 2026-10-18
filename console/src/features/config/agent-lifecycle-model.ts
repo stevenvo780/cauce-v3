@@ -9,12 +9,16 @@ export interface AgentLifecycleDraft {
   reasoningEffort?: string;
 }
 const text = (row: Record<string, unknown> | undefined, key: string) => typeof row?.[key] === 'string' ? row[key] : '';
+/** Enabled, or a quota registration still awaiting its first authenticated session. */
+function accountUsableForFleet(row: Record<string, unknown>): boolean {
+  return row.enabled !== false || row.quota_pending === true;
+}
 export function lifecycleAccountProvider(snapshot: ConfigurationSnapshot, accountId: string): string | undefined {
-  const account = snapshot.provider_accounts?.find(row => row.id === accountId && row.enabled !== false);
+  const account = snapshot.provider_accounts?.find(row => row.id === accountId && accountUsableForFleet(row));
   return text(account, 'provider') || undefined;
 }
 export function lifecycleAccountForProvider(snapshot: ConfigurationSnapshot, provider: string, currentId: string, tenantId: string): string {
-  const accounts = snapshot.provider_accounts?.filter(row => row.provider === provider && row.enabled !== false
+  const accounts = snapshot.provider_accounts?.filter(row => row.provider === provider && accountUsableForFleet(row)
     && (typeof row.payer_tenant_id !== 'string' || row.payer_tenant_id === tenantId || row.shared_with_pool === true)) ?? [];
   return text(accounts.find(row => row.id === currentId) ?? accounts.find(row => text(row, 'id')), 'id');
 }

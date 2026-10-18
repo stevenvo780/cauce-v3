@@ -519,6 +519,13 @@ export function describeRegistryError(
   mutation: ConfigMutation,
   context: RegistryContext,
 ): { message: string; conflict: boolean } {
+  if (error instanceof ApiError && error.status === 409
+    && error.message === 'quota account must be authenticated before it can be enabled') {
+    return {
+      conflict: false,
+      message: 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» (o «Conectar cuenta» desde el agente que la usa): la cuenta se habilita sola cuando el proveedor confirma la sesión.',
+    };
+  }
   const base = describeConfigError(error, 'El servidor rechazó el cambio y no dijo por qué');
   if (base.conflict) return base;
   if (!(error instanceof ApiError)) return base;

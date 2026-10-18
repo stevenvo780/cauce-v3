@@ -91,6 +91,7 @@ export const STALE_RESUME_TEXT = 'La configuración cambió desde que se lanzó;
 export const isStaleResume = (message: string) => /revision changed;?\s*preview the operation again/iu.test(message);
 
 const REFUSALS: readonly (readonly [RegExp, string])[] = [
+  [/provider account has no current payer consent/iu, 'La cuenta principal no está habilitada o su pagador no consiente este uso. Habilítala tras «Iniciar sesión» en «Mis cuotas» (o «Conectar cuenta» desde el agente) y vuelve a previsualizar.'],
   [/requires exact complete durable placement/iu, 'El registro de un agente de este alcance no tiene la ubicación completa que el ejecutor de flota necesita: se instaló antes de la flota y hay que adoptarlo antes de operarlo desde la consola.'],
   [/no registered host transport|approved source and destination coordinator|controller host is unavailable/iu, 'La computadora elegida no está conectada al coordinador de flota. Elige una computadora conectada o conéctala en «Computadoras».'],
   [/outside the configured host authority|outside the approved host templates|outside the approved runtime capability/iu, 'La ubicación no coincide con una plantilla aprobada de esa computadora. Elige la plantilla de ejecución y una cuenta principal que la computadora admita.'],

@@ -57,9 +57,15 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const ready = canEnroll && !busy && !enrollments.loading && !enrollments.error;
+  const hostIdError = !hostId ? undefined : prefix
+    ? (/^[a-z0-9_]+$/u.test(hostId) ? undefined
+      : `Sin guiones ni mayúsculas: usa solo minúsculas, números o guiones bajos (p. ej. equipo_1). El identificador completo será «${prefix}${hostId.replace(/[^a-z0-9_]/gu, '') || 'nombre'}».`)
+    : (/^[a-z][a-z0-9_-]*$/u.test(hostId) ? undefined
+      : 'Empieza con una letra minúscula y sigue con minúsculas, números, guiones o guiones bajos (p. ej. equipo-1).');
   async function create() {
     if (!ready) return;
     if (!hostId.trim() || !name.trim()) { setError('Escribe el identificador y el nombre del ordenador.'); return; }
+    if (hostIdError) { setError(hostIdError); return; }
     setBusy(true); setError(''); setNotice('');
     try {
       const receipt = await api.inviteHost({ host_id: `${prefix}${hostId.trim()}`, display_name: name.trim() });
@@ -104,8 +110,9 @@ export function HostEnrollmentPanel({ canEnroll }: { canEnroll: boolean }) {
         {error || enrollments.error ? <Notice tone="danger" role="alert">{error || enrollmentFailure(enrollments.error, 'No se pudieron leer las invitaciones. Relee el estado.')}</Notice> : null}
         <label>Identificador del ordenador
           {prefix ? <span aria-hidden="true" className="font-mono text-sm break-all">{prefix}</span> : null}
-          <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} placeholder={prefix ? 'equipo_1' : 'equipo-1'} disabled={!ready} onChange={event => { setHostId(event.target.value); }} />
+          <input required pattern={prefix ? HOST_NAME_PATTERN : HOST_ID_PATTERN} title={prefix ? `Solo letras minúsculas, números o guiones bajos; el identificador completo será ${prefix}nombre.` : undefined} maxLength={64 - prefix.length} value={hostId} placeholder={prefix ? 'equipo_1' : 'equipo-1'} disabled={!ready} aria-invalid={hostIdError ? true : undefined} aria-describedby={hostIdError ? 'invitar-host-id-error' : undefined} onChange={event => { setHostId(event.target.value); }} />
         </label>
+        {hostIdError ? <p id="invitar-host-id-error" role="alert" className="m-0 text-xs text-danger">{hostIdError}</p> : null}
         {prefix ? <p className="m-0 text-xs text-muted">Completa el identificador con minúsculas, números o guiones bajos (sin guiones): ya empieza con «{prefix}».</p> : null}
         <label>Nombre del ordenador
           <input required maxLength={120} value={name} placeholder="Ordenador del equipo" disabled={!ready} onChange={event => { setName(event.target.value); }} />

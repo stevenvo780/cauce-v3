@@ -141,6 +141,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
                 editBlock={ctx ? (row) => teamBlock(ctx, 'update', row) : undefined} />
                 : id === 'ampliaciones' ? <ErrorBoundary label={`Ampliaciones de ${view.ref}`} onReset={() => { select('resumen'); }}>
                   <ConsoleAccessBoundary><AmpliacionesTab tenantId={agent.tenantId} alias={agent.alias} snapshot={snapshot} hostId={view.hostId}
+                    hostRaw={hosts?.find((host) => host.host_id === view.hostId)}
                     onReloaded={onReloaded} onDirtyChange={markers.ampliaciones} /></ConsoleAccessBoundary>
                 </ErrorBoundary>
                 : id === 'registro' ? <ErrorBoundary label={`Registro de ${view.ref}`} onReset={() => { select('resumen'); }}>

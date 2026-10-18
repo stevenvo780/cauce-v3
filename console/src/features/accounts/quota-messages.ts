@@ -34,6 +34,11 @@ const STATUS_MESSAGE: Record<number, string> = {
 
 export const QUOTA_HOST_UNAVAILABLE_MESSAGE = 'El ordenador no responde; reintenta cuando vuelva a estar en línea.';
 
+/** Enabling a fresh quota registration is refused until its provider session exists; that is not a CAS clash. */
+export function isQuotaAuthEnableBlock(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.message === 'quota account must be authenticated before it can be enabled';
+}
+
 const FIELD_LABEL: Record<string, string> = {
   provider: 'proveedor', label: 'nombre', host_id: 'ordenador', account_id: 'cuenta', expected_version: 'versión',
   idempotency_key: 'clave de la operación', paused_until: 'pausa hasta', paused_reason: 'motivo de pausa', enabled: 'habilitada',
@@ -49,9 +54,12 @@ function rejectedFields(message: string): string | undefined {
 export function describeQuotaError(cause: unknown, fallback: string): string {
   if (!(cause instanceof ApiError)) return fallback;
   if (cause.status === 409 && cause.code === 'quota_host_unavailable') return QUOTA_HOST_UNAVAILABLE_MESSAGE;
+  if (isQuotaAuthEnableBlock(cause)) {
+    return 'Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» (o «Conectar cuenta» desde el agente que la usa): la cuenta se habilita sola cuando el proveedor confirma la sesión.';
+  }
   if (cause.status === 409 && cause.code === 'conflict'
     && cause.message === 'quota account version changed or the change is not allowed') {
-    return 'No se guardó la cuenta: su versión cambió o el cambio no está permitido. Pulsa «Actualizar cuotas y entornos» y revisa los datos antes de reintentar. Si estás habilitando una cuenta nueva, primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas».';
+    return 'No se guardó la cuenta: su versión cambió o el cambio no está permitido. Pulsa «Actualizar cuotas y entornos» y revisa los datos antes de reintentar.';
   }
   if (cause.status === 400) return rejectedFields(cause.message) ?? STATUS_MESSAGE[400];
   if (cause.status === 504) return cause.message;

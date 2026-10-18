@@ -57,12 +57,12 @@ function DraftFields({ type, fields, disabled, onChange }: {
   return null;
 }
 
-export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, onReloaded, onDirtyChange }: {
-  tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hostId?: string | undefined;
+export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, onReloaded, onDirtyChange }: {
+  tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hostId?: string | undefined; hostRaw?: unknown;
   onReloaded: (snapshot: ConfigurationSnapshot) => void; onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { known, published } = readAgentExtensions(snapshot, tenantId, alias);
-  const allowed = readHostAllowed(snapshot, hostId);
+  const allowed = readHostAllowed(snapshot, hostId, hostRaw);
   const target = useMemo(() => ({ resource: 'agent' as const, tenant_id: tenantId, alias }), [tenantId, alias]);
   const [draft, setDraft] = useState<AgentExtension[] | undefined>();
   const [adding, setAdding] = useState<ExtensionType | undefined>();

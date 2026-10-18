@@ -14,7 +14,7 @@ import { PROVIDER_LABEL } from './quotas';
 import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
 import { EXECUTABLE_QUOTA_PROVIDERS } from './quota-environment-capabilities';
 import { failedQuotaRead } from './quota-availability';
-import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaEnvironmentError, describeQuotaError, pauseReasonText } from './quota-messages';
+import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaEnvironmentError, describeQuotaError, isQuotaAuthEnableBlock, pauseReasonText } from './quota-messages';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
 import { ConflictNotice } from '../../components/ConflictNotice';
 
@@ -70,7 +70,9 @@ export function MyQuotasPage() {
       await api.updateQuotaAccount(account.id, { expected_version: account.version, label: input.label, enabled: input.enabled, ...input.pause });
       setEditing(undefined); setAccountConflict(undefined); await reload(); setNotice('Cuenta actualizada.');
     } catch (cause) {
-      if (isCasConflict(cause)) {
+      if (isQuotaAuthEnableBlock(cause)) {
+        setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.'));
+      } else if (isCasConflict(cause)) {
         setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.'));
         const fresh = (await accounts.reload()).data?.accounts.find((candidate) => candidate.id === account.id);
         if (fresh) {
