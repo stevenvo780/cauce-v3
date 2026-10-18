@@ -387,7 +387,11 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
     dropped: list[str] = []
     for index, raw_window in enumerate(windows_raw):
         if not isinstance(raw_window, dict):
-            dropped.append(f'ventana #{index} no es un objeto')
+            if bindings.publish_unbound:
+                dropped.append(f'ventana #{index} no es un objeto')
+            continue
+        group_key = sanitize_key(pick(raw_window, 'limitId', 'limit_id', default='default'), 'default')
+        if not bindings.publish_unbound and (name, group_key) not in bindings.map:
             continue
         try:
             window = normalize_window(raw_window)
@@ -397,7 +401,6 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
         # Mandatory normalization (contract): group_key = limitId or 'default'. It is the
         # only thing that separates 'codex' (exhausted) from 'codex_bengalfox' (free) within
         # the same provider -- flattening it would show balance in the very account with none.
-        group_key = sanitize_key(pick(raw_window, 'limitId', 'limit_id', default='default'), 'default')
         groups.setdefault(group_key, []).append(window)
 
     # One row per window: the schema carries group_key/account_id/binding_note per window.
@@ -415,6 +418,8 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
             })
 
     note = bindings.bound_note(name, trim(pick(raw, 'note', 'nota', 'error'), 512))
+    if note is None and not windows_raw and not pick(raw, 'ok', default=False):
+        note = 'No se pudo consultar la cuota del proveedor desde el recolector.'
     if dropped:
         extra = f'{len(dropped)} ventana(s) descartada(s): {"; ".join(dropped[:3])}'
         note = f'{note} | {extra}' if note else trim(extra, 512)
@@ -430,8 +435,10 @@ def normalize_provider(name: str, raw: dict, bindings: AccountBindings, captured
         'effective_remaining_percent': to_number(pick(raw, 'effectiveRemainingPercent', 'effective_remaining_percent')),
         'observed_at': pick(raw, 'observedAt', 'observed_at', default=captured_at),
         'account_id': bindings.resolve(name, sanitize_key(pick(raw, 'limitId', 'limit_id', default='default'), 'default'))[0],
-        'available_groups': to_str_list(pick(raw, 'availableGroups', 'available_groups', default=[])),
-        'limiting_groups': to_str_list(pick(raw, 'limitingGroups', 'limiting_groups', default=[])),
+        'available_groups': [group for group in to_str_list(pick(raw, 'availableGroups', 'available_groups', default=[]))
+                             if bindings.publish_unbound or (name, sanitize_key(group, 'default')) in bindings.map],
+        'limiting_groups': [group for group in to_str_list(pick(raw, 'limitingGroups', 'limiting_groups', default=[]))
+                            if bindings.publish_unbound or (name, sanitize_key(group, 'default')) in bindings.map],
         'windows': flat_windows,
     }
 
