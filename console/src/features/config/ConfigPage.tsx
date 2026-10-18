@@ -93,7 +93,7 @@ function ConfigPageContent() {
     espacios: <EspaciosSection ctx={ctx} />,
     agentes: config.data ? <AgentesSection snapshot={config.data} ctx={ctx} onReload={() => { void config.reload(); }}
       tablaCompleta={<TablasDeSeccion ctx={ctx} seccion="agentes" />} /> : null,
-    computadoras: <ComputadorasSection snapshot={config.data} soloLectura={ctx.soloLectura} />,
+    computadoras: <ComputadorasSection snapshot={config.data} soloLectura={ctx.soloLectura} onReloaded={() => { void config.reload(); }} />,
     arneses: <ArnesesSection ctx={ctx} />,
     acceso: <AccesoSection ctx={ctx} />,
     avanzado: <AvanzadoSection ctx={ctx} />,

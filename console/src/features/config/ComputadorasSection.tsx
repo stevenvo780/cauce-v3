@@ -16,6 +16,8 @@ import { useFleetHosts } from './use-fleet-hosts';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
 import { ConflictNotice } from '../../components/ConflictNotice';
 import { HostEnrollmentPanel } from './HostEnrollmentPanel';
+import { HostExtensionsPanel } from './HostExtensionsPanel';
+import { ConsoleAccessBoundary } from '../../api/console-access';
 import { canManageCompany } from '../auth/company-authority';
 
 const GRID_TARJETAS = 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3 p-0';
@@ -27,7 +29,7 @@ function hostPermission(snapshot: ConfigurationSnapshot | undefined, action: 'cr
   return !!grant && Array.isArray(grant.actions) && grant.actions.includes(action) && ['platform', 'company'].includes(grant.scope);
 }
 
-export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: ConfigurationSnapshot; soloLectura: boolean }) {
+export function ComputadorasSection({ snapshot, soloLectura, onReloaded }: { snapshot?: ConfigurationSnapshot; soloLectura: boolean; onReloaded?: (snapshot: ConfigurationSnapshot) => void }) {
   const api = useApi();
   const flota = useFleetHosts(true, snapshot?.revision);
   const escribe = !soloLectura && hostPermission(snapshot, 'update');
@@ -132,6 +134,7 @@ export function ComputadorasSection({ snapshot, soloLectura }: { snapshot?: Conf
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="computadoras" />
     <HostEnrollmentPanel canEnroll={!soloLectura && canManageCompany(snapshot?.capabilities?.actor.role)} />
+    <ConsoleAccessBoundary><HostExtensionsPanel snapshot={snapshot} hosts={hosts} onReloaded={onReloaded} /></ConsoleAccessBoundary>
     <p className="m-0 text-xs leading-relaxed text-muted">
       Si una computadora está apagada o deshabilitada, solo sus agentes dejan de estar disponibles; el resto del sistema sigue funcionando.
       Registrarla aquí no instala el ejecutor. Para conectarla y prepararlo, sigue las instrucciones de «Conectar un ordenador» en esa computadora.
