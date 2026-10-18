@@ -29,7 +29,7 @@ const hash = (value: string | Buffer) => createHash('sha256').update(value).dige
 const COMPUTER_IMAGE = `FROM node:22-bookworm AS node
 FROM docker:29-cli AS docker
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session openssl ca-certificates \\
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv dbus dbus-user-session openssl openssh-client ca-certificates \\
   && rm -rf /var/lib/apt/lists/* && pip install --no-cache-dir pyyaml==6.0.3
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=docker /usr/local/bin/docker /usr/bin/docker
@@ -182,7 +182,7 @@ setInterval(()=>{},60000);
   return { directory, revision, manifest };
 }
 
-async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
+async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, gatewayAddress?: string) {
   const directory = join(work, 'authority'); const state = join(directory, 'state');
   await mkdir(state, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
   const registryFile = (name: string): string => join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
@@ -203,7 +203,7 @@ async function signedAuthority(work: string, pool: DatabasePool, owned: Owned) {
   const socket = join(directory, 'signed.sock'); const uid = process.geteuid?.() ?? 0;
   owned.bridge = await startSignedFleetAuthorityBridge(socket, pool, { ownerUid: uid, peerUid: uid, command: { python: '/usr/bin/python3', executable,
     sha256: hash(await readFile(executable)), policy_file: policyFile, policy_sha256: hash(await readFile(policyFile)) } });
-  await writeFile(join(directory, 'extensions'), 'subjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n');
+  await writeFile(join(directory, 'extensions'), `subjectAltName=IP:127.0.0.1${gatewayAddress ? `,IP:${gatewayAddress}` : ''}\nextendedKeyUsage=serverAuth\n`);
   await execute('openssl', ['req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=host-setup-gateway',
     '-keyout', join(directory, 'server.key'), '-out', join(directory, 'server.csr')]);
   await execute('openssl', ['x509', '-req', '-in', join(directory, 'server.csr'), '-CA', certificate, '-CAkey', key,
@@ -270,7 +270,9 @@ async function buildComputerImage(work: string, image: string, providerLogin: bo
   return hash(await readFile(join(context, 'cauce-fixture-codex')));
 }
 
-export async function startComputerHarness(options: { prefix: string; consoleOrigins: string[]; providerLogin?: boolean }): Promise<ComputerHarness> {
+export async function startComputerHarness(options: {
+  prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string; gatewayAddress: string };
+}): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
     const work = await mkdtemp(`/var/tmp/${prefix}-`); owned.work = work;
@@ -295,7 +297,7 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
       owned.agentImage = agent.stdout.trim();
       return { computer: owned.image, agent: `${prefix}:agent` };
     };
-    const [built, authority] = await Promise.all([images(), signedAuthority(work, pool, owned)]);
+    const [built, authority] = await Promise.all([images(), signedAuthority(work, pool, owned, options.agentNetwork?.gatewayAddress)]);
     // With the login fixture the pack measures the provider CLI inside the agent image, as the real build does.
     const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`]);
     const imageReference = `cauce-host-image:${release.manifest.image.id.replace(/^sha256:/u, '')}`;
@@ -312,7 +314,7 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
       : { command: '@pin:codex_command@', command_sha256: '@pin:codex_command_sha256@',
         login: { method: 'device', command: ['@pin:codex_command@', 'login', '--device-auth'], sha256: '@pin:codex_command_sha256@' } };
     if (!owned.bootstrapApp) throw new Error('bootstrap gateway absent');
-    const bootstrapOrigin = await owned.bootstrapApp.listen({ host: '127.0.0.1', port: 0 });
+    const bootstrapOrigin = await owned.bootstrapApp.listen({ host: options.agentNetwork?.gatewayAddress ?? '127.0.0.1', port: 0 });
     console.info('HOST_SETUP_RELEASE', JSON.stringify({ revision: release.revision, source: 'working-tree-tracked',
       archive_sha256: release.manifest.release.sha256, image_id: release.manifest.image.id, image_archive_bytes: release.manifest.image.size,
       pins: release.manifest.pins }));
@@ -330,7 +332,8 @@ export async function startComputerHarness(options: { prefix: string; consoleOri
         profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           ...provider, runtime_mode: 'container', container_prefix: `${prefix}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
-        transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
+        transport: { bootstrap_url: bootstrapOrigin, gateway_url: bootstrapOrigin, ca_certificate: '@install@/files/fleet-ca',
+          network: options.agentNetwork?.name ?? 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
       } }), generateKeyPairSync('ed25519').privateKey);
     const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false,
