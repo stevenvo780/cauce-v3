@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ConfigCollectionForm } from './ConfigCollectionForm';
 import { GroupEditor } from './GroupEditor';
 import { groupHasRuntime, groupOperationTarget } from './GroupMembershipModel';
@@ -15,6 +16,10 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
   omitir?: readonly string[];
 }) {
   const { canalAccion, snapshotRevision, pendiente } = ctx;
+  // Collection whose form just applied and closed: its success notice moves to the table,
+  // because the form that painted it is gone. Opening another form retires it.
+  const [aplicada, setAplicada] = useState<string>();
+  useEffect(() => { if (ctx.formTarget) setAplicada(undefined); }, [ctx.formTarget]);
   return <>
     {coleccionesDe(seccion, ctx.groups).filter((coleccion) => !omitir.includes(coleccion.key)).map((coleccion) => {
       const pedido = pendiente?.coleccion === coleccion.key ? pendiente : undefined;
@@ -27,6 +32,9 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
       const propio = canalAccion.notice?.alcance === alcanceDeAccion(coleccion.key, snapshotRevision)
         ? { text: canalAccion.notice.text, tone: canalAccion.notice.tone }
         : undefined;
+      const deFormulario = aplicada === coleccion.key && !ctx.formTarget && ctx.canalFormulario.notice
+        ? { text: ctx.canalFormulario.notice.text, tone: ctx.canalFormulario.notice.tone }
+        : undefined;
       const aviso: AvisoDeColeccion | undefined = vencida
         ? {
           tone: 'error',
@@ -35,13 +43,14 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
             + 'que lo que ibas a firmar ya no describe la fila que hay. Volvé a pedir el cambio '
             + 'sobre el dato de ahora.',
         }
-        : propio;
+        : propio ?? deFormulario;
       const definition = configFormDefinition(coleccion.key);
       const Form = coleccion.key === 'rooms' ? GroupEditor : ConfigCollectionForm;
       const form = ctx.formTarget?.collection === coleccion.key && !ctx.formModal && definition && ctx.config.data
         ? <Form key={`${coleccion.key}:${ctx.formTarget.action}:${JSON.stringify(ctx.formTarget.row ?? {})}`}
           definition={definition} target={ctx.formTarget} snapshot={ctx.config.data} runner={ctx.canalFormulario} busy={ctx.busy}
-          onCancel={() => { ctx.setFormTarget(undefined); ctx.canalFormulario.clear(); }} onRelated={ctx.openForm} />
+          onCancel={() => { ctx.setFormTarget(undefined); ctx.canalFormulario.clear(); }} onRelated={ctx.openForm}
+          onApplied={() => { setAplicada(coleccion.key); ctx.setFormTarget(undefined); }} />
         : undefined;
       const bloqueoDeCatalogo = definition && ctx.config.data
         ? platformCatalogReason(ctx.config.data, definition.resource)

@@ -16,7 +16,7 @@ function suggestionsFor(field: ConfigFormField, snapshot: ConfigurationSnapshot,
   return [...new Set(matching.map((row) => row[field.suggestionKey ?? field.key]).filter((value): value is string => typeof value === 'string'))];
 }
 
-export function ConfigCollectionForm({ definition, target, snapshot, runner, busy, onCancel, onRelated, onDirtyChange }: {
+export function ConfigCollectionForm({ definition, target, snapshot, runner, busy, onCancel, onRelated, onDirtyChange, onApplied }: {
   definition: ConfigFormDefinition;
   target: ConfigFormTarget;
   snapshot: ConfigurationSnapshot;
@@ -26,6 +26,8 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
   onRelated: (target: ConfigFormTarget) => void;
   /** Reports whether the fields differ from what the form opened with. */
   onDirtyChange?: ((dirty: boolean) => void) | undefined;
+  /** Called after a successful apply (never after a dry-run), so the host can close the form. */
+  onApplied?: (() => void) | undefined;
 }) {
   const formId = useId();
   const scopedIdentity = scopedFormIdentity(snapshot, definition);
@@ -51,7 +53,8 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
     try {
       const next = buildFormMutation(definition, target.action, values, initial);
       setValidationError(undefined);
-      await runner.run(next, dryRun);
+      const applied = await runner.run(next, dryRun);
+      if (applied && !dryRun) onApplied?.();
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : 'Revisá los campos de configuración.');
     }

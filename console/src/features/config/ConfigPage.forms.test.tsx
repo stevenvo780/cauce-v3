@@ -53,7 +53,8 @@ it('crea un tenant con campos visibles y exige otro dry-run al editar el nombre'
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
   await form.findByText(/dry-run aceptado/i);
   await user.click(form.getByRole('button', { name: 'Confirmar creación' }));
-  await form.findByText(/inventario releído en revisión 2/i);
+  await screen.findByText(/inventario releído en revisión 2/i);
+  expect(screen.queryByRole('form', { name: 'Crear espacio' })).not.toBeInTheDocument();
   expect(changes[2]).toMatchObject({ dry_run: false, expected_revision: 1, mutation: { value: { display_name: 'Equipo nuevo editado' } } });
 });
 
@@ -71,7 +72,8 @@ it('edita el nombre visible del grupo sin cambiar su identidad ni otros campos',
   await form.findByText(/dry-run aceptado/i);
   expect(changes[0]?.mutation).toEqual({ resource: 'room', action: 'update', tenant_id: 'Miguel', id: 'grp.miguel', value: { display_name: 'Mesa técnica' } });
   await user.click(form.getByRole('button', { name: 'Confirmar edición' }));
-  await form.findByText(/inventario releído/i);
+  await screen.findByText(/inventario releído/i);
+  expect(screen.queryByRole('form', { name: 'Editar sala/grupo' })).not.toBeInTheDocument();
 });
 
 const editableRows = [
@@ -137,8 +139,9 @@ it('señala relectura incierta tras eliminar y no afirma retirada física', asyn
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
   await form.findByText(/dry-run aceptado/i);
   await user.click(form.getByRole('button', { name: 'Confirmar eliminación' }));
-  expect(await form.findByRole('alert')).toHaveTextContent(/relectura.*no llegó/i);
-  expect(form.queryByText(/eliminado|retirada física/i)).not.toBeInTheDocument();
+  expect(await screen.findByText(/relectura.*no llegó/i)).toBeInTheDocument();
+  expect(screen.queryByRole('form', { name: 'Eliminar sala/grupo' })).not.toBeInTheDocument();
+  expect(screen.queryByText(/retirada física/i)).not.toBeInTheDocument();
 });
 
 it('mantiene controles visibles y bloqueados si console-access no acredita config.write', async () => {
