@@ -60,8 +60,8 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
         </option>)}
       </select>
     </label>
-    {available && !eligible.length ? <Notice tone="info">No hay cuentas habilitadas disponibles para este agente. Registra y autentica una cuenta propia, o habilita una existente, desde{' '}
-      <a href="/my-quotas" onClick={event => { onNavClick(event, '/my-quotas'); }}>Mis cuotas</a>.</Notice> : null}
+    {available && !eligible.length ? <Notice tone="info">Solo aparecen cuentas habilitadas de este espacio o compartidas con él. Las cuentas nuevas quedan deshabilitadas hasta iniciar sesión. Ve a{' '}
+      <a href="/my-quotas" onClick={event => { onNavClick(event, '/my-quotas'); }}>Mis cuotas</a>, registra una cuenta si hace falta y pulsa «Iniciar sesión» en su tarjeta. Si ya tiene sesión, comprueba que esté habilitada.</Notice> : null}
     {selected && binding?.enabled ? <p className="m-0 text-xs text-muted">Esta cuenta ya está vinculada.</p> : null}
     {dirty && priority > 32767 ? <Notice role="note">No queda un orden de respaldo disponible para esta cuenta.</Notice> : null}
     {!runner.canWrite || !canAssign ? <Notice role="note">No tienes permiso para cambiar las cuentas de cuota.</Notice> : null}
