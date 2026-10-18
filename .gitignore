@@ -87,3 +87,10 @@ ordenes-locales/
 # Doc interna de flota/instancia: local, nunca versionada.
 interno/
 accesos.md
+
+# Binario de Antigravity preparado solo para construir la imagen de cuotas.
+ops/cuotas/bin/*
+!ops/cuotas/bin/.gitkeep
+
+# Third-party CLI binaries for the quota image are fetched at build time, never versioned.
+ops/cuotas/bin/
