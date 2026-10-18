@@ -12,7 +12,7 @@ La restauración del CLI valida la identidad completa (`company_id`, `tenant_id`
 
 1. Abre **Perfil y contexto** del agente correcto y localiza **Backup del espacio**. Comprueba que la empresa, el tenant y el alias visibles son los esperados y que tienes autoridad vigente.
 2. Pulsa **Crear backup del espacio**. Espera a que el estado sea `ready`; `pending` y `running` no son descargables. Si el estado es `failed`, corrige la causa indicada y solicita una copia nueva.
-3. Descarga el ZIP mientras siga vigente. Las copias retenidas vencen a las 24 horas. Conserva juntos el recibo durable y el archivo descargado. La vista muestra el estado, tamaño y SHA-256 del ZIP; el recibo durable incluye también el SHA-256 del manifiesto. En navegadores con selector de archivo (Chromium), **Descargar backup ZIP** pide dónde guardarlo, lee la descarga por stream, calcula el SHA-256 y sólo conserva el archivo si tamaño y hash coinciden con el recibo; entonces muestra el SHA-256 calculado y la orden `cauce spaces restore` exacta. En el resto de navegadores la descarga es un enlace directo y la comparación del paso 4 es manual.
+3. Descarga el ZIP mientras siga vigente. Las copias retenidas vencen a las 24 horas. Conserva juntos el recibo durable y el archivo descargado. La vista muestra el estado, tamaño y SHA-256 del ZIP; el recibo durable incluye también el SHA-256 del manifiesto. En navegadores con selector de archivo (Chromium), **Descargar backup ZIP** pide dónde guardarlo, lee la descarga por stream, calcula el SHA-256 y sólo conserva el archivo si tamaño y hash coinciden con el recibo; entonces muestra el SHA-256 calculado y un comando `cauce spaces restore` en el que debes completar el destino y `identity.runtime_key` de `space-manifest.json`. En el resto de navegadores la descarga es un enlace directo y la comparación del paso 4 es manual.
 4. Asigna la ruta local del ZIP a `ARCHIVE` y compara el resultado con el SHA-256 mostrado por la consola:
 
    ```sh
@@ -22,6 +22,8 @@ La restauración del CLI valida la identidad completa (`company_id`, `tenant_id`
    El valor debe coincidir exactamente. Si no coincide, no restaures el archivo: vuelve a descargarlo y repite la comparación.
 
 5. Abre `space-manifest.json` con un visor ZIP local. Confirma que cada omisión (`sensitive_path`, `sensitive_content`, `vcs_metadata`, `external_mount` o `special_file`) es conocida y aceptable para el corte. Si el espacio depende de un mount o de archivos omitidos, prepara y verifica su recuperación por separado.
+
+El manifiesto conserva los nombres de las rutas omitidas: una búsqueda `grep -a` de `.env` en el ZIP puede encontrarlos aunque esos archivos no estén incluidos. Comprueba las entradas reales con `unzip -Z1 "$ARCHIVE"` y busca los valores de credenciales sintéticas del ensayo, tanto en el ZIP como en los archivos restaurados. No copies credenciales reales a comandos ni a informes. Compara cada archivo restaurado con su SHA-256 en `files` del manifiesto y con el origen; el SHA-256 del ZIP por sí solo no acredita esa igualdad.
 
 Una restauración de prueba verifica de nuevo la identidad, el esquema, los hashes de contenido, los límites y las rutas del ZIP antes de escribir. El resultado debe ser `state: restored`; no uses solo el SHA del archivo como prueba de que el contenido se puede restaurar.
 
