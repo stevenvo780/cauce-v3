@@ -34,6 +34,7 @@ function descriptorDirectory(): URL {
     new URL('../../adapter-sdk/dist/descriptors/', here),
     new URL('../../../../packages/adapter-sdk/descriptors/', here),
     new URL('../../../../packages/adapter-sdk/dist/descriptors/', here),
+    new URL('../../../../adapter/packages/adapter-sdk/dist/descriptors/', here),
   ];
   for (const candidate of candidates) {
     try {
