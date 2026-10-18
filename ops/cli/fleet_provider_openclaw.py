@@ -205,7 +205,7 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
             return False
         driver = binding['openclaw']
         bridge = provider_command({'profile_binding': {'command': driver['bridge'], 'command_sha256': driver['bridge_sha256']}})
-        if ',' in bridge or ',' in str(pathlib.Path(__file__).resolve().parent):
+        if ':' in bridge or ':' in str(pathlib.Path(__file__).resolve().parent):
             return False
         program = ('import json,sys;sys.path.insert(0,"/cauce/executor");'
                    'from fleet_provider_openclaw import measured_definition;'
@@ -213,8 +213,8 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
         result = subprocess.run(['/usr/bin/docker', 'run', '--rm', '--pull=never', '--name', name, '-i',
             '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--tmpfs', '/tmp:rw,nosuid,nodev,size=32m', '--user', placement['runtime_user'],
-            '--mount', f'type=bind,src={pathlib.Path(__file__).resolve().parent},dst=/cauce/executor,readonly',
-            '--mount', f'type=bind,src={bridge},dst={bridge},readonly',
+            '--volume', f'{pathlib.Path(__file__).resolve().parent}:/cauce/executor:ro,z',
+            '--volume', f'{bridge}:{bridge}:ro,z',
             '--entrypoint', placement['python'], placement['image'], '-I', '-B', '-c', program],
             input=json.dumps(binding).encode(), capture_output=True, timeout=15, check=False)
         return result.returncode == 0

@@ -142,8 +142,12 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None, opera
     label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels}.items() for value in ('--label', f'{key}={value}')]
     profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
         if placement.get('profile_root') else []
-    bind_arguments = [value for destination, source in (runtime_mounts(policy, agent) if binds is None else binds).items()
-                      for value in ('--mount', f'type=bind,source={source},destination={destination},readonly')]
+    mounts = runtime_mounts(policy, agent) if binds is None else binds
+    if any(not pathlib.Path(source).exists() for source in mounts.values()):
+        raise SafeFailure('runtime bind source is unavailable')
+    # Volume syntax with the shared relabel (never Z): several containers share one release tree.
+    bind_arguments = [value for destination, source in mounts.items()
+                      for value in ('--volume', f'{source}:{destination}:ro,z')]
     docker('create', '--name', agent['container_name'], *label_arguments, '--network', policy.get('transport', {}).get('network', 'none'), '--read-only',
            '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN', '--cap-add', 'SYS_PTRACE', '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'FOWNER',
            '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',

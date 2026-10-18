@@ -43,7 +43,8 @@ class FakeDocker:
         self.calls.append(arguments)
         command = arguments[0]
         if command == 'ps':
-            filters = [arguments[index + 1][len('label='):].split('=', 1) for index, value in enumerate(arguments) if value == '--filter']
+            filters = [arguments[index + 1][len('label='):].split('=', 1) for index, value in enumerate(arguments)
+                       if value == '--filter' and arguments[index + 1].startswith('label=')]
             return '\n'.join(name for name, row in self.containers.items()
                              if all(row['Config']['Labels'].get(key) == value for key, value in filters)).encode()
         if command == 'inspect':
@@ -89,6 +90,12 @@ class FakeDocker:
             if fields['type'] == 'volume':
                 row['Name'] = fields['source']
             mounts.append(row)
+        for value in options.get('--volume', []):
+            parts = value.split(':')
+            if len(parts) < 3:
+                continue
+            mounts.append({'Type': 'bind', 'Source': parts[0], 'Destination': parts[1],
+                           'RW': 'rw' in parts[-1].split(',')})
         labels = dict(value.split('=', 1) for value in options['--label'])
         self.add(options['--name'][0], labels, mounts, running=False)
         return b''
