@@ -26,8 +26,10 @@ import {
 import { ModeSwitch, type ModeOption } from './ModeSwitch';
 import { NegativaPty } from './NegativaPty';
 import type { MotivoReconciliacionPlaza } from './PlazasColgadas';
+import { LoginCommandBanner } from './AgentAuthenticate';
+import { argvFor, harnessLoginRecipe, loginMark, shellCommand, type LoginAction } from './login-recipe';
 import { liveTuiGate, terminalChannelGate } from './plugin';
-import { readPtySession, subscribePtySession } from './pty-session';
+import { ptySessionType, readPtySession, subscribePtySession } from './pty-session';
 import { PtySessionBar } from './PtySessionBar';
 import { ptySecondsLeft } from './session';
 import { StageMenu } from './StageMenu';
@@ -100,11 +102,14 @@ interface StageProps {
   onReconciliarPlazas: (motivo: MotivoReconciliacionPlaza) => void;
   onRefresh: () => void;
   requestedView?: 'tui' | 'terminal';
+  loginAction?: LoginAction;
+  harnessId?: string | null;
 }
 
 export function SessionStage({
   agent, sessionId, sessionToken, state, memory, access, capability, targets, summary,
   grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh, requestedView,
+  loginAction, harnessId,
 }: StageProps) {
   const api = useApi();
   const grant = grants[sessionId] as TerminalSessionGrant | undefined;
@@ -117,6 +122,9 @@ export function SessionStage({
   const [controlSostenido, setControlSostenido] = useState(false);
   const [prorrogando, setProrrogando] = useState(false);
   const [ventanaHasta, setVentanaHasta] = useState<string>();
+  const [typedMark, setTypedMark] = useState<string>();
+  /** One login line per shell attachment: a re-render must not type it again. */
+  const typedRef = useRef<string | undefined>(undefined);
   /** Opening that already tried its TUI on its own. It is not retried. */
   const autoOpenedRef = useRef<string>(undefined);
   /** Synchronous POST fence: auto-open and a click both enter before `setRequesting` renders. */
@@ -199,6 +207,24 @@ export function SessionStage({
     setView('tui');
     void requestChannelRef.current(escrituraDisponible ? WRITABLE_TUI_MODE : LIVE_TUI_MODE).catch(mostrarError);
   }, [closedChannels, grants, sessionId, memory.liveTuiAttempted, tuiEnabled, escrituraDisponible, requestedView]);
+
+  const attached = channelView?.state === 'open' && channelView.ticketConsumido === true;
+  useEffect(() => {
+    if (!loginAction || !channelSessionId || targetMode !== SHELL_MODE || soloLectura || !attached) return;
+    const argv = argvFor(harnessLoginRecipe(harnessId), loginAction);
+    if (!argv) return;
+    const mark = loginMark(channelSessionId, loginAction, argv);
+    if (typedRef.current === mark) return;
+    const timer = window.setTimeout(() => {
+      if (!mountedRef.current || typedRef.current === mark) return;
+      const current = readPtySession(channelSessionId);
+      if (current.state !== 'open' || current.ticketConsumido !== true) return;
+      typedRef.current = mark;
+      setTypedMark(mark);
+      ptySessionType(channelSessionId, `${shellCommand(argv)}\r`);
+    }, 300);
+    return () => { window.clearTimeout(timer); };
+  }, [loginAction, harnessId, channelSessionId, targetMode, soloLectura, attached]);
 
   function mostrarError(error: unknown) {
     if (mountedRef.current) setRequestError(explicar(error));
@@ -300,6 +326,10 @@ export function SessionStage({
     choose(next);
   }
 
+  const loginArgv = loginAction ? argvFor(harnessLoginRecipe(harnessId), loginAction) : null;
+  const loginSent = loginAction !== undefined && channelSessionId !== undefined && loginArgv !== null
+    && typedMark === loginMark(channelSessionId, loginAction, loginArgv);
+
   const options: ModeOption<StageView>[] = [
     {
       id: 'tui', label: 'TUI', icon: MonitorPlay, disabled: !tuiEnabled || requesting,
@@ -359,6 +389,13 @@ export function SessionStage({
           />
         </div>
       </header>
+
+      {loginAction ? (
+        <div className="shrink-0 border-b border-line bg-subtle px-3 py-2 text-[13px] text-fg-2">
+          <LoginCommandBanner action={loginAction} harnessId={harnessId ?? null} tenantId={agent.tenantId} alias={agent.alias}
+            sent={loginSent} />
+        </div>
+      ) : null}
 
       {requestError ? (
         <div className="shrink-0 border-b border-line p-2">

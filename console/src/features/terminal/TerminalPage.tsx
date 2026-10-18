@@ -11,6 +11,7 @@ import { rememberChat } from '../../shell/last-chat';
 import { FleetContext, useFleet } from '../../shell/fleet-context';
 import { listTerminalTargets } from './api';
 import { fleetAgentId } from './fleet';
+import { harnessIdForTerminal, loginActionOf } from './login-recipe';
 import { OperatorWorkspace } from './OperatorWorkspace';
 import { deriveTerminalRelayState, TERMINAL_RELAY_SIN_COMPROBAR_TITULO, TerminalRelayBoundary, useTerminalCapability } from './relay-status';
 import { resumenDeFlota } from './resumen';
@@ -39,8 +40,10 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const access = useConsoleAccess();
   const capability = useTerminalCapability();
   const targets = useResource('ultimate-terminal-targets', () => listTerminalTargets());
-  const modo = new URLSearchParams(useRouteSearch()).get('modo');
+  const search = useRouteSearch();
+  const modo = new URLSearchParams(search).get('modo');
   const requestedView = modo === 'tui' || modo === 'terminal' ? modo : undefined;
+  const loginAction = loginActionOf(search);
 
   usePolling(targets.reload, 15_000, { pausedWhile: targets.loading });
   usePolling(access.reload, 30_000, { pausedWhile: access.loading });
@@ -112,6 +115,8 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           fleetError={error}
           onRefresh={refreshAll}
           requestedView={requestedView}
+          loginAction={loginAction}
+          harnessId={harnessIdForTerminal(live, agentId, fleet.topology.data, tenantId, alias)}
         />
       )}
     </div>

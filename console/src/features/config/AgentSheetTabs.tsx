@@ -3,6 +3,7 @@ import { ExternalLink, Pencil } from 'lucide-react';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { Button, LinkButton, Notice, Pill } from '../../components/kit';
 import { onNavClick } from '../../router';
+import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
 import type { AgentView } from './agent-view';
 import { GroupMembershipMove } from './GroupMembershipMove';
 import { insigniaDeComputadora, estadoDeComputadora } from './fleet-host-model';
@@ -55,6 +56,7 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
       <Fact label="Responsabilidad">{agent.responsibility ?? <span className="text-muted italic">Sin publicar en esta lectura</span>}</Fact>
       <Fact label="Última revisión leída">{typeof snapshot.revision === 'number' ? snapshot.revision : 'desconocida'}</Fact>
     </dl>
+    {agent.registered ? <AgentAuthenticate tenantId={agent.tenantId} alias={agent.alias} harnessId={agent.harness} /> : null}
     {agent.registered ? <div>
       <LinkButton href={href} aria-label={`Perfil y contexto de ${view.ref}`} onClick={(event) => { onNavClick(event, href); }}>
         <ExternalLink size={14} aria-hidden="true" />Perfil y contexto

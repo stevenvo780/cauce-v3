@@ -10,6 +10,7 @@ import type { OfficeAgent } from './office-agent';
 import { BubbleIcon } from './PixelGlyph';
 import type { IconName } from './sprites';
 import { AgentQuotaDetail } from '../accounts/AgentQuotaDetail';
+import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
 
 interface EmoteChoice { icon: IconName; label: string }
 
@@ -35,8 +36,10 @@ export function AgentCard({ agent, place, following, onClose, onTalk, onSheet, o
 }) {
   const titleId = useId();
   const cut = agent.id.indexOf('/');
-  const tenant = encodeURIComponent(agent.id.slice(0, cut));
-  const alias = encodeURIComponent(agent.id.slice(cut + 1));
+  const tenantId = agent.id.slice(0, cut);
+  const aliasId = agent.id.slice(cut + 1);
+  const tenant = encodeURIComponent(tenantId);
+  const alias = encodeURIComponent(aliasId);
   const links = agent.visitor ? [] : [
     { href: `/messages/${tenant}/${alias}`, label: 'Abrir chat', icon: MessageSquare },
     { href: `/terminal/${tenant}/${alias}`, label: 'Abrir terminal', icon: SquareTerminal },
@@ -87,7 +90,8 @@ export function AgentCard({ agent, place, following, onClose, onTalk, onSheet, o
         </button>
       </header>
       <p className="m-0 mt-2 line-clamp-3 text-[12px] leading-snug text-[#c5d3dc]">{agent.reason}</p>
-      {!agent.visitor ? <AgentQuotaDetail tenant={agent.id.slice(0, cut)} alias={agent.id.slice(cut + 1)} compact /> : null}
+      {!agent.visitor ? <AgentQuotaDetail tenant={tenantId} alias={aliasId} compact /> : null}
+      {!agent.visitor ? <AgentAuthenticate tenantId={tenantId} alias={aliasId} harnessId={agent.harnessId} tone="hud" className="mt-2" /> : null}
       <div className="mt-2.5 flex flex-wrap gap-1">
         {onTalk ? (
           <button type="button" onClick={onTalk} className={cn(HUD_BUTTON, HUD_TEXT, HUD_ON, 'h-8 px-2.5')}>

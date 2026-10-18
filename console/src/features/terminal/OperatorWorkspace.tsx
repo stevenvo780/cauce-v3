@@ -25,6 +25,7 @@ import { plazasColgadas, plazasOcupadas } from './plazas';
 import { closePtySession } from './pty-session';
 import { SessionStage } from './SessionStage';
 import { TerminalHome } from './TerminalHome';
+import type { LoginAction } from './login-recipe';
 import type { StageMemory, TerminalGrantRequestOutcome } from './types';
 
 interface OperatorWorkspaceProps {
@@ -42,6 +43,10 @@ interface OperatorWorkspaceProps {
   onRefresh: () => void;
   /** `?modo=` from the address: open the agent straight into its TUI or a shell. */
   requestedView?: 'tui' | 'terminal';
+  /** `?accion=` asks the shell to run the descriptor login or its session check. */
+  loginAction?: LoginAction;
+  /** Registry harness id used to pick that descriptor. */
+  harnessId?: string | null;
 }
 
 function sessionIdOf(agentId: string): string {
@@ -85,7 +90,7 @@ function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T
   return result;
 }
 
-export function OperatorWorkspace({ agents, agentId, live, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView }: OperatorWorkspaceProps) {
+export function OperatorWorkspace({ agents, agentId, live, summary, access, terminalCapability, terminalTargets, fleetLoading, fleetError, onRefresh, requestedView, loginAction, harnessId }: OperatorWorkspaceProps) {
   // The session that holds the CSRF token in memory: without it every PTY plane write returns 403.
   const api = useApi();
   const phone = useMediaQuery(BOTTOM_BAR_VIEWPORT);
@@ -381,6 +386,8 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
               }}
               onRefresh={onRefresh}
               requestedView={requestedView}
+              loginAction={loginAction}
+              harnessId={harnessId ?? null}
             />
           </ErrorBoundary>
         ) : phone && !agentId && agents.length > 0 ? (

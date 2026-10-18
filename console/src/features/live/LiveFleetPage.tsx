@@ -137,6 +137,7 @@ export function LiveFleetPage() {
   }, [edges]);
   const officeAgents = useMemo<OfficeAgent[]>(() => views.map((view): OfficeAgent => ({
     id: view.key, name: view.alias, state: view.state, reason: view.reason, delegatesTo: view.delegatesTo, sends: sendsOf.get(view.key) ?? [],
+    harnessId: view.harnessId,
     glyph: appearances?.get(view.key)?.glyph, hue: appearances?.get(view.key)?.hue, style: appearances?.get(view.key)?.style,
     awake: view.state === 'idle' && typeof view.secondsSinceLastAck === 'number' && view.secondsSinceLastAck < AWAKE_SECONDS,
     team: memberships.get(view.key)?.team, groups: memberships.get(view.key)?.groups, groupLabels: memberships.get(view.key)?.groupLabels,

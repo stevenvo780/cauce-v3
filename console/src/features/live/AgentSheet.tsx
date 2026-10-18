@@ -15,6 +15,7 @@ import { queueDeliveryPath } from '../deliveries/delivery-links';
 import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { FLAG_LABEL } from './activity';
 import { AgentQuotaDetail } from '../accounts/AgentQuotaDetail';
+import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
 import { LIVE_STATE_META, aliasDe, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
 /**
@@ -108,6 +109,7 @@ function SheetBody({ view, status, onTalk }: { view: LiveAgentView; status: Reso
               <Icon size={15} aria-hidden="true" /> {label}
             </a>
           ))}
+          <AgentAuthenticate tenantId={view.tenantId} alias={view.alias} harnessId={view.harnessId} layout="stack" />
         </div>
 
         <Tabs.Root defaultValue="ahora" className="mt-5">

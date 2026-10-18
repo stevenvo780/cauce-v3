@@ -17,6 +17,8 @@ export interface OfficeAgent {
   /** The chosen style decides the accessory: scarf, headphones or cap; the orb wears none. */
   style?: AgentAppearanceStyle | null;
   awake?: boolean;
+  /** Registry harness id. Selects the published login descriptor; absent means there is no recipe. */
+  harnessId?: string | null;
   /** A declared MCP client: no desk work, no agent actions, talking leaves a mailbox note. */
   visitor?: boolean;
   team?: OfficeTeam;
