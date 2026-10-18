@@ -14,6 +14,8 @@ import { QuotaEnvironmentPanel } from './QuotaEnvironmentPanel';
 import { EXECUTABLE_QUOTA_PROVIDERS } from './quota-environment-capabilities';
 import { failedQuotaRead } from './quota-availability';
 import { automaticPauseWindow, canManageQuotaAccounts, describeQuotaEnvironmentError, describeQuotaError, pauseReasonText } from './quota-messages';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 
 export function MyQuotasPage() {
   const api = useApi();
@@ -30,6 +32,8 @@ export function MyQuotasPage() {
   const [notice, setNotice] = useState('');
   const mutating = useRef(false);
   const [pinFailed, setPinFailed] = useState(false);
+  const [accountConflict, setAccountConflict] = useState<{ diffs: ConflictFieldDiff[]; fresh: QuotaAccount; input: AccountFormValues }>();
+  const [accountFormEpoch, setAccountFormEpoch] = useState(0);
   const ready = !!accounts.data && !accounts.error && !accounts.loading && !busy;
   const canWrite = canManageCompany(authority?.role) && ready;
   const canWriteAccounts = canManageQuotaAccounts(authority?.role) && ready;
@@ -48,6 +52,30 @@ export function MyQuotasPage() {
     try { await action(); setCreating(false); setEditing(undefined); setRemoving(undefined); await reload(); setNotice(message); }
     catch (cause) { setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.')); }
     finally { mutating.current = false; setBusy(false); }
+  }
+  async function saveAccountEdit(input: AccountFormValues, account: QuotaAccount) {
+    if (mutating.current) return;
+    mutating.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      await api.updateQuotaAccount(account.id, { expected_version: account.version, label: input.label, enabled: input.enabled, ...input.pause });
+      setEditing(undefined); setAccountConflict(undefined); await reload(); setNotice('Cuenta actualizada.');
+    } catch (cause) {
+      if (isCasConflict(cause)) {
+        setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.'));
+        const fresh = (await accounts.reload()).data?.accounts.find((candidate) => candidate.id === account.id);
+        if (fresh) {
+          setEditing(fresh);
+          setAccountConflict({
+            fresh, input,
+            diffs: diffConflictFields(
+              { label: input.label, enabled: input.enabled },
+              { label: fresh.label, enabled: fresh.enabled },
+              { label: 'Nombre de la cuenta', enabled: 'Cuenta habilitada' },
+            ),
+          });
+        } else setAccountConflict({ fresh: account, input, diffs: [] });
+      } else setError(describeQuotaError(cause, 'No se confirmó el cambio de cuenta.'));
+    } finally { mutating.current = false; setBusy(false); }
   }
   async function pin(account: QuotaAccount) {
     const settings = preferences.data;
@@ -87,15 +115,23 @@ export function MyQuotasPage() {
       <Button variant="primary" disabled={!canWriteAccounts} title={registerBlock} onClick={() => { setCreating(true); }}>Registrar cuenta</Button></div>
     {creating ? <QuotaAccountForm executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
       save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
-    {editing ? <QuotaAccountForm key={editing.id} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); }}
-      save={input => canWriteAccounts ? write(() => api.updateQuotaAccount(editing.id, { expected_version: editing.version, label: input.label, enabled: input.enabled,
-        ...input.pause }), 'Cuenta actualizada.') : Promise.resolve()} /> : null}
+    {editing ? <QuotaAccountForm key={`${editing.id}:${String(accountFormEpoch)}`} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); setAccountConflict(undefined); }}
+      save={input => canWriteAccounts ? saveAccountEdit(input, editing) : Promise.resolve()} /> : null}
+    {editing && accountConflict ? <ConflictNotice diffs={accountConflict.diffs} busy={busy}
+      onRetry={() => {
+        void (async () => {
+          const fresh = (await accounts.reload()).data?.accounts.find((candidate) => candidate.id === editing.id) ?? accountConflict.fresh;
+          setEditing(fresh);
+          await saveAccountEdit(accountConflict.input, fresh);
+        })();
+      }}
+      onDiscard={() => { setEditing(accountConflict.fresh); setAccountFormEpoch((epoch) => epoch + 1); setAccountConflict(undefined); }} /> : null}
     {removing ? <section aria-label="Confirmar eliminación de cuenta" className="grid gap-2 rounded-xl border border-line p-4"><p>Eliminar {removing.label} exige retirar antes sus entornos y asignaciones. El servidor comprobará esas dependencias.</p>
       <div className="flex gap-2"><Button variant="danger" disabled={!canWriteAccounts} onClick={() => { void write(() => api.deleteQuotaAccount(removing.id, removing.version), 'Cuenta eliminada.'); }}>Confirmar eliminación de cuenta</Button>
         <Button disabled={busy} onClick={() => { setRemoving(undefined); }}>Cancelar</Button></div></section> : null}
     <section aria-label="Tarjetas de Mis cuotas" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(account => <QuotaAccountCard key={account.id} account={accounts.error ? failedQuotaRead(account) : account}
       pinned={pinned.includes(account.id)} canPin={!!preferences.data && !preferences.error && !preferences.loading && !busy} onPin={() => { void pin(account); }}
-      canEdit={canWriteAccounts} onEdit={() => { setEditing(account); }} onRemove={() => { setRemoving(account); }}
+      canEdit={canWriteAccounts} onEdit={() => { setEditing(account); setAccountConflict(undefined); }} onRemove={() => { setRemoving(account); }}
       login={<AccountLogin account={account} snapshot={environments.error ? undefined : environments.data} allowed={canManageCompany(authority?.role)} reload={reload} />} />)}</section>
     {accounts.data && !visible.length ? <Notice tone="info">{filterPinned ? 'No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.' : 'Aún no hay cuentas. Registra una suscripción para empezar.'}</Notice> : null}
     <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite} canLogin={canManageCompany(authority?.role)}

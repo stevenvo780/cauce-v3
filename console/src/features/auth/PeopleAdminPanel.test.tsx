@@ -41,7 +41,7 @@ it('creates a person with a current catalog identity and writes the password wit
   expect(submitted).toEqual({ email: 'new@example.test', display_name: 'Nueva persona', role: 'reader', tenant_id: 'A', alias: 'worker', active: true, password: 'private-password' });
   expect(screen.queryByLabelText('Contraseña inicial')).not.toBeInTheDocument();
 });
-it('updates with exact CAS, omits an empty password and requires a reread after a conflict', async () => {
+it('updates with exact CAS, omits an empty password and keeps the draft after a conflict for an explicit retry', async () => {
   let row = { ...person };
   serve(() => [row]);
   const submitted: Record<string, unknown>[] = [];
@@ -55,17 +55,13 @@ it('updates with exact CAS, omits an empty password and requires a reread after 
   await user.clear(screen.getByRole('textbox', { name: 'Nombre de persona' }));
   await user.type(screen.getByRole('textbox', { name: 'Nombre de persona' }), 'Otro nombre');
   await user.click(screen.getByRole('button', { name: 'Guardar persona' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/revisión cambió/);
-  expect(screen.getByRole('alert')).not.toHaveTextContent('private-error-secret');
-  expect(screen.getByRole('button', { name: 'Editar persona one@example.test' })).toBeDisabled();
+  const conflicto = await screen.findByRole('group', { name: 'Conflicto de versión' });
+  expect(conflicto).toHaveTextContent('Alguien cambió este dato mientras lo editabas');
+  expect(conflicto).not.toHaveTextContent('private-error-secret');
+  expect(screen.getByRole('textbox', { name: 'Nombre de persona' })).toHaveValue('Otro nombre');
   expect(submitted[0]).toEqual({ expected_revision: person.revision, email: person.email, display_name: 'Otro nombre', role: 'reader', tenant_id: 'A', alias: 'worker' });
   row = { ...row, revision: '1791321600123457' };
-  await user.click(screen.getByRole('button', { name: 'Releer personas y permisos' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Editar persona one@example.test' })).toBeEnabled(); });
-  await user.click(screen.getByRole('button', { name: 'Editar persona one@example.test' }));
-  await user.clear(screen.getByRole('textbox', { name: 'Nombre de persona' }));
-  await user.type(screen.getByRole('textbox', { name: 'Nombre de persona' }), 'Otro nombre');
-  await user.click(screen.getByRole('button', { name: 'Guardar persona' }));
+  await user.click(screen.getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
   await screen.findByText('Persona actualizada. Inventario releído.');
   expect(submitted[1]?.expected_revision).toBe('1791321600123457');
 });

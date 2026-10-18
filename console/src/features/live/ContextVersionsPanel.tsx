@@ -4,6 +4,8 @@ import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
+import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 import { applicationNotice, contextRequestMessage, synchronizationMessage } from './context-version-messages';
 
 const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
@@ -22,6 +24,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [conflictDiffs, setConflictDiffs] = useState<ConflictFieldDiff[]>();
   useEffect(() => {
     if (!draft) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
@@ -48,6 +51,28 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     finally { setBusy(false); }
   }
   function updateFiles(next: VersionedContextFile[]) { if (snapshot) setDraft({ version: draft?.version ?? snapshot.version, files: next }); }
+  async function saveDraft(base: { version: number; files: VersionedContextFile[] }) {
+    if (busy) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await api.saveVersionedContext(tenantId, alias, { expected_version: base.version, files: base.files, source: 'ui' });
+      setDraft(undefined); setConflictDiffs(undefined); setRestoring(undefined); setOlder(undefined); setDiff(undefined);
+      const reread = await context.reload();
+      const versions = await history.reload();
+      if (reread.error || versions.error) setError('La operación respondió, pero su estado no se pudo releer. Reintenta la consulta.');
+      else setNotice('Versión guardada. La aplicación y sincronización se acreditan por separado.');
+    } catch (cause) {
+      if (isCasConflict(cause)) {
+        setError(contextRequestMessage(cause, 'No se confirmó la operación del contexto.'));
+        const fresh = await context.reload();
+        if (fresh.data) {
+          const mine = Object.fromEntries(base.files.map((file) => [file.path, file.content]));
+          const theirs = Object.fromEntries(fresh.data.files.map((file) => [file.path, file.content]));
+          setConflictDiffs(diffConflictFields(mine, theirs));
+        } else setConflictDiffs([]);
+      } else setError(contextRequestMessage(cause, 'No se confirmó la operación del contexto.'));
+    } finally { setBusy(false); }
+  }
   async function compare(version: number) {
     if (!snapshot || busy) return;
     setBusy(true); setError('');
@@ -94,8 +119,16 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
         <label className="flex-1">Nuevo archivo<input value={newPath} placeholder="context/directivas.md" disabled={!writable} onChange={event => { setNewPath(event.target.value); }} /></label>
         <Button type="submit" disabled={!writable || !newPath.trim()}>Añadir archivo</Button></form>
       {draft ? <Notice tone="warn">Borrador sin guardar, basado en la versión {draft.version}.</Notice> : null}
-      <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={!writable || !draft} onClick={() => { if (draft) void operation(() => api.saveVersionedContext(tenantId, alias, { expected_version: draft.version, files: draft.files, source: 'ui' }), 'Versión guardada. La aplicación y sincronización se acreditan por separado.', true); }}>Guardar nueva versión</Button>
-        <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setError(''); }}>Descartar borrador</Button></div>
+      {draft && conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={busy}
+        onRetry={() => {
+          const rebased = { version: snapshot.version, files: draft.files };
+          setDraft(rebased);
+          setConflictDiffs(undefined);
+          void saveDraft(rebased);
+        }}
+        onDiscard={() => { setDraft(undefined); setConflictDiffs(undefined); setError(''); }} /> : null}
+      <div className="flex flex-wrap gap-2"><Button variant="primary" disabled={!writable || !draft} onClick={() => { if (draft) void saveDraft(draft); }}>Guardar nueva versión</Button>
+        <Button disabled={busy || !draft} onClick={() => { setDraft(undefined); setConflictDiffs(undefined); setError(''); }}>Descartar borrador</Button></div>
     </> : null}
     <section aria-label="Historial de versiones"><h3>Historial</h3>
       {history.loading ? <p role="status">Leyendo historial…</p> : null}

@@ -8,6 +8,8 @@ import { AccountLogin } from './AccountLogin';
 import { quotaEnvironmentActionBlock, quotaEnvironmentExecutable, quotaHostSupports } from './quota-environment-capabilities';
 import { QuotaRefreshNotice } from './QuotaAccountCard';
 import { describeOperationError, describeQuotaEnvironmentError } from './quota-messages';
+import { diffConflictFields, isCasConflict } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 
 const ACTION_LABEL: Record<QuotaEnvironmentAction, string> = { create: 'Crear entorno', authenticate: 'Iniciar sesión', query: 'Consultar cuotas', update_cli: 'Actualizar CLI', delete: 'Eliminar entorno' };
 const STATUS_LABEL: Record<QuotaEnvironment['status'], string> = { pending: 'Pendiente', running: 'En ejecución', ready: 'Preparado', awaiting_auth: 'Esperando autenticación', failed: 'Fallido', deleting: 'Eliminación pendiente', deleted: 'Eliminado' };
@@ -24,6 +26,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [envConflict, setEnvConflict] = useState(false);
   const keys = useRef(new Map<string, string>());
   const keyFor = (signature: string) => { const existing = keys.current.get(signature) ?? randomUuid(); keys.current.set(signature, existing); return existing; };
   const available = canWrite && snapshot?.capabilities.available === true && !busy;
@@ -52,6 +55,17 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
     try { await action(); await reload(); if (signature) keys.current.delete(signature); setConfirm(undefined); setEditing(undefined); setNotice(message); }
     catch (cause) { setError(describeQuotaEnvironmentError(cause, 'No se confirmó la operación del entorno.')); }
     finally { setBusy(false); }
+  }
+  async function saveEnvironmentLabel(environment: QuotaEnvironment) {
+    if (busy || !label.trim()) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await api.updateQuotaEnvironment(environment.id, { expected_version: environment.version, label: label.trim() });
+      await reload(); setEditing(undefined); setEnvConflict(false); setNotice('Configuración del entorno guardada.');
+    } catch (cause) {
+      if (isCasConflict(cause)) { setEnvConflict(true); void reload(); }
+      else setError(describeQuotaEnvironmentError(cause, 'No se confirmó la operación del entorno.'));
+    } finally { setBusy(false); }
   }
   function act(environment: QuotaEnvironment, action: QuotaEnvironmentAction) {
     if (!supports(environment, action)) return;
@@ -96,7 +110,7 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
         <div className="flex flex-wrap gap-2" aria-label={`Comandos permitidos de ${environment.label}`}>
           {(['query', 'update_cli'] as const).map(action => <Button key={action} size="sm" disabled={!supports(environment, action)} title={actionBlock(environment, action)}
             onClick={() => { act(environment, action); }}>{ACTION_LABEL[action]}</Button>)}
-          <Button size="sm" disabled={!canEdit(environment)} title={editBlock(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); }}>Editar entorno</Button>
+          <Button size="sm" disabled={!canEdit(environment)} title={editBlock(environment)} onClick={() => { setEditing(environment); setLabel(environment.label); setEnvConflict(false); }}>Editar entorno</Button>
           <Button size="sm" variant="danger" disabled={!supports(environment, 'delete')} title={actionBlock(environment, 'delete')} onClick={() => { setConfirm(environment); }}>Eliminar entorno</Button>
         </div>
         {operation ? <section aria-label={`Resultado de ${environment.label}`} className="grid gap-2"><p className="m-0 text-xs">{ACTION_LABEL[operation.action]} · {cancelled ? 'Cancelada' : OPERATION_LABEL[operation.status]} · <Time value={operation.updated_at} /></p>
@@ -104,9 +118,21 @@ export function QuotaEnvironmentPanel({ snapshot, loading, accounts, canWrite, c
       </article>;
     })}</div>
     {snapshot && !snapshot.environments.length ? <p>No hay entornos de consulta. Registra una cuenta y crea su entorno.</p> : null}
-    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing) || !label.trim()) return; void perform(() => api.updateQuotaEnvironment(editing.id, { expected_version: editing.version, label: label.trim() }), 'Configuración del entorno guardada.'); }}>
+    {editing ? <form aria-label="Editar entorno de cuotas" className="grid gap-2" onSubmit={event => { event.preventDefault(); if (!canEdit(editing) || !label.trim()) return; void saveEnvironmentLabel(editing); }}>
       <label>Nombre del entorno<input required maxLength={80} value={label} disabled={!canEdit(editing)} onChange={event => { setLabel(event.target.value); }} /></label>
-      <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing) || !label.trim()} title={!canEdit(editing) ? editBlock(editing) : !label.trim() ? 'Escribe el nombre del entorno.' : undefined}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button></div></form> : null}
+      <div className="flex gap-2"><Button type="submit" disabled={!canEdit(editing) || !label.trim()} title={!canEdit(editing) ? editBlock(editing) : !label.trim() ? 'Escribe el nombre del entorno.' : undefined}>Guardar entorno</Button><Button disabled={busy} onClick={() => { setEditing(undefined); setEnvConflict(false); }}>Cancelar</Button></div></form> : null}
+    {editing && envConflict ? <ConflictNotice busy={busy}
+      diffs={diffConflictFields({ label: label.trim() }, { label: snapshot?.environments.find((environment) => environment.id === editing.id)?.label ?? '' }, { label: 'Nombre del entorno' })}
+      onRetry={() => {
+        const fresh = snapshot?.environments.find((environment) => environment.id === editing.id) ?? editing;
+        setEditing(fresh);
+        void saveEnvironmentLabel(fresh);
+      }}
+      onDiscard={() => {
+        const fresh = snapshot?.environments.find((environment) => environment.id === editing.id);
+        if (fresh) { setEditing(fresh); setLabel(fresh.label); }
+        setEnvConflict(false);
+      }} /> : null}
     {confirm ? <section aria-label="Confirmar operación del entorno" className="grid gap-2 rounded-xl border border-line bg-surface p-4">
       <p>Eliminar {confirm.label} retira su entorno y su sesión. La cuenta y sus agentes vinculados se conservan.</p>
       <div className="flex gap-2"><Button disabled={!supports(confirm, 'delete')} title={actionBlock(confirm, 'delete')} onClick={() => { act(confirm, 'delete'); }}>Confirmar eliminación</Button>

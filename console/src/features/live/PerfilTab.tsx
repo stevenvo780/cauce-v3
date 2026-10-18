@@ -20,13 +20,15 @@ import { ProfileStatus } from './ProfileStatus';
 import { pendingProfileReceipt, preparedProfileReceipt, profileIsAdopted } from './profile-save-receipt';
 import { draftFields, draftRevisionConflict, editProfileDraft, profileMatchesDraft, type ProfileDraft, type ProfileOutcome, type ProfileSettlement } from './profile-draft';
 import {
-  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, MENSAJES_DE_APLICACION,
-  camposQueNoEntran, contaminacionDe,
+  CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
+  camposQueNoEntran, camposVigentes, contaminacionDe,
   destinosDelArnes, esPerfilAplicado, hayCambios, lineasCrudas,
   motivoSinDestino,
   perfilParaGuardar, unidadesDelPerfil, veredictoVigente,
   type ContaminacionDeContexto,
 } from './perfil';
+import { diffConflictFields } from '../../components/conflict';
+import { ConflictNotice } from '../../components/ConflictNotice';
 
 const OUTCOME_TONE: Record<ProfileOutcome['tone'], NoticeTone> = { error: 'danger', parcial: 'warn', success: 'ok' };
 
@@ -421,13 +423,24 @@ export function PerfilTab({
       <div className="grid gap-2">
         {aviso ? <Notice tone={OUTCOME_TONE[aviso.tone]} role="status">{aviso.text}</Notice> : null}
         {revisionConflict ? (
-          <Notice tone="danger" role="alert">
-            <strong>El perfil cambió mientras editabas.</strong>
-            <p>Tu borrador conserva la revisión {String(borrador?.base?.revision ?? 'ausente')}. La lectura actual es {String(perfil.data?.revision ?? 'ausente')}. No se usa una revisión nueva para sobrescribirlo.</p>
-            <details className="mt-1"><summary className="cursor-pointer">Comparar con el perfil guardado</summary>
-              <pre className="mt-1 max-h-60 overflow-auto font-mono text-xs">{JSON.stringify(perfil.data?.perfil, null, 2)}</pre>
-            </details>
-          </Notice>
+          <ConflictNotice title="El perfil cambió mientras editabas."
+            diffs={diffConflictFields(
+              campos as unknown as Record<string, unknown>,
+              camposVigentes(perfil.data, undefined) as unknown as Record<string, unknown>,
+              Object.fromEntries(Object.entries(ETIQUETAS).map(([key, value]) => [key, value.titulo])),
+            )}
+            busy={busy}
+            onRetry={() => {
+              if (!perfil.data) return;
+              onBorrador({ ...campos, base: { revision: perfil.data.revision ?? null, fields: camposVigentes(perfil.data, undefined) } });
+              setAviso({ tone: 'parcial', text: 'Tu borrador se reaplicó sobre la revisión actual. Revisa los campos y pulsa «Guardar y aplicar perfil» para reintentarlo.' });
+            }}
+            onDiscard={() => {
+              onBorrador(undefined);
+              setMotivo('');
+              setAviso(undefined);
+              void perfil.reload();
+            }} />
         ) : null}
         {soloLectura ? (
           <p className="m-0 text-xs text-muted">
