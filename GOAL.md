@@ -278,7 +278,7 @@ Al finalizar, entrega un informe verificable (`docs/v4-informe-final.md`) con la
 
 Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cierre-objetivo.md`.
 
-- [ ] 1. Higiene de secretos en GitHub antes del merge y sacar del código los identificadores de cuentas del dueño.
+- [x] 1. Higiene de secretos en GitHub antes del merge y sacar del código los identificadores de cuentas del dueño. **18-oct:** Gitleaks da 0 hallazgos sobre `git archive HEAD` (b743118b, allowlist por ruta exacta de fixtures); historia sin secretos de producción que rotar; las claves de cuenta del dueño ya no están en el código (solo `zz-canary-*` en ejemplos; quedan dominios públicos de sus webs, que no son secretos).
 - [x] 2. Recibo de gates en el repo ligado al SHA, exigido por `deploy.sh`.
 - [x] 3. `deploy.sh` más seguro: comprobar los bind mounts antes del build, escribir los pins solo tras un migrator correcto y exigir un backup de ≤ 2 h si hay migraciones pendientes.
 - [x] 4. Ensayo de migración genérico para todo el bundle.
