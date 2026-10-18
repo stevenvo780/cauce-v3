@@ -33,24 +33,41 @@ async function availableRooms(client: DatabaseClient, authority: CompanyAuthorit
     [authority.actingCompany, wide(authority) ? null : authority.homeTenant]);
   return new Set(rows.rows.map(room => JSON.stringify([room.tenant_id, room.id])));
 }
-async function readLayout(client: DatabaseClient, authority: CompanyAuthority): Promise<CompanyOfficeLayout> {
-  const row = (await client.query<{ rooms: unknown; version: string }>(
-    'SELECT rooms,version::text FROM company_office_layouts WHERE company_id=$1', [authority.actingCompany])).rows[0];
-  const available = await availableRooms(client, authority);
+function availableList(available: Set<string>): { tenant_id: string; room_id: string }[] {
+  return [...available].map(key => {
+    const [tenant_id, room_id] = JSON.parse(key) as [string, string]; return { tenant_id, room_id };
+  });
+}
+function layoutWithAvailable(row: { rooms: unknown; version: string } | undefined, authority: CompanyAuthority,
+  available: Set<string>): CompanyOfficeLayout & { available: { tenant_id: string; room_id: string }[] } {
   return { company_id: authority.actingCompany, version: Number(row?.version ?? 0),
-    rooms: Rooms.parse(row?.rooms ?? []).filter(room => available.has(JSON.stringify([room.tenant_id, room.room_id]))) };
+    rooms: Rooms.parse(row?.rooms ?? []).filter(room => available.has(JSON.stringify([room.tenant_id, room.room_id]))),
+    available: availableList(available) };
+}
+async function readLayoutRow(client: DatabaseClient, authority: CompanyAuthority): Promise<{ rooms: unknown; version: string } | undefined> {
+  return (await client.query<{ rooms: unknown; version: string }>(
+    'SELECT rooms,version::text FROM company_office_layouts WHERE company_id=$1', [authority.actingCompany])).rows[0];
+}
+async function readLayout(client: DatabaseClient, authority: CompanyAuthority): Promise<CompanyOfficeLayout> {
+  const layout = layoutWithAvailable(await readLayoutRow(client, authority), authority, await availableRooms(client, authority));
+  return { company_id: layout.company_id, version: layout.version, rooms: layout.rooms };
 }
 export async function readSavableOfficeRooms(pool: DatabasePool, source: CompanyAuthoritySource): Promise<{ tenant_id: string; room_id: string }[]> {
   return withTransaction(pool, async client => {
     const authority = await source(client); authorize(authority, false);
-    return [...await availableRooms(client, authority)].map(key => {
-      const [tenant_id, room_id] = JSON.parse(key) as [string, string]; return { tenant_id, room_id };
-    });
+    return availableList(await availableRooms(client, authority));
   });
 }
 export async function readCompanyOffice(pool: DatabasePool, source: CompanyAuthoritySource): Promise<CompanyOfficeLayout> {
   return withTransaction(pool, async client => {
     const authority = await source(client); authorize(authority, false); return readLayout(client, authority);
+  });
+}
+export async function readCompanyOfficeWithAvailable(pool: DatabasePool, source: CompanyAuthoritySource,
+): Promise<CompanyOfficeLayout & { available: { tenant_id: string; room_id: string }[] }> {
+  return withTransaction(pool, async client => {
+    const authority = await source(client); authorize(authority, false);
+    return layoutWithAvailable(await readLayoutRow(client, authority), authority, await availableRooms(client, authority));
   });
 }
 export async function writeCompanyOffice(pool: DatabasePool, source: CompanyAuthoritySource, value: unknown): Promise<CompanyOfficeLayout> {

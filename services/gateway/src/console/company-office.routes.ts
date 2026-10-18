@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { StoreError, readCompanyOffice, readSavableOfficeRooms, writeCompanyOffice, readCompanyPreferences, writeCompanyPreferences, type DatabasePool } from '@cauce/store';
+import { StoreError, readCompanyOfficeWithAvailable, writeCompanyOffice, readCompanyPreferences, writeCompanyPreferences, type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { replyError } from '../routes/shared.js';
@@ -19,7 +19,7 @@ export function registerCompanyOfficeRoutes(app: FastifyInstance, provider: Auth
           if (resource === 'preferences') return method === 'GET' ? await readCompanyPreferences(pool, source)
             : await writeCompanyPreferences(pool, source, request.body);
           if (method === 'PUT') return await writeCompanyOffice(pool, source, request.body);
-          return { ...await readCompanyOffice(pool, source), available: await readSavableOfficeRooms(pool, source) };
+          return await readCompanyOfficeWithAvailable(pool, source);
         }
         finally { access.close(); }
       } catch (error) {
