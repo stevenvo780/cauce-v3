@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import stat
 import subprocess
 import time
 from collections.abc import Callable
@@ -231,13 +232,17 @@ def run_adapter(args: argparse.Namespace) -> int:
 
         # The adapter's own stderr is the only trace of a startup failure (docker exec -d discards ours): keep it,
         # bounded, in the agent state directory where the operator and the executor can read it.
-        log_fd = os.open(".cauce-adapter.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC,
-                         0o600, dir_fd=state_fd)
+        # The runtime user can write this directory, so never follow a link nor touch a file root does not own or
+        # that has another name (a hard link to a foreign file): such a log is simply not kept.
+        log_fd = os.open(".cauce-adapter.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+                         | os.O_NONBLOCK, 0o600, dir_fd=state_fd)
         try:
-            if os.fstat(log_fd).st_size > 1_048_576:
+            details = os.fstat(log_fd)
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_uid != os.geteuid():
+                os.close(log_fd)
+                log_fd = os.open(os.devnull, os.O_WRONLY | os.O_CLOEXEC)
+            elif details.st_size > 1_048_576:
                 os.ftruncate(log_fd, 0)
-            if os.geteuid() == 0:
-                os.fchown(log_fd, args.runtime_uid, args.runtime_gid)
             process = subprocess.Popen(args.command, start_new_session=True, close_fds=True, stdout=log_fd, stderr=log_fd,
                                        **launch_credentials)
         finally:
