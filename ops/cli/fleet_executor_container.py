@@ -466,12 +466,14 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
                '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'], bundle['executable'], *bundle['argv'],
                cwd=workspace if managed else observed.get('Config', {}).get('WorkingDir') or '/'))
         deadline = time.monotonic() + 10
+        last: SafeFailure | None = None
         while time.monotonic() < deadline:
             try:
                 return process_proof(policy, agent, identity, bundle, bootstrap=bootstrap, operation_id=operation_id)
-            except SafeFailure:
+            except SafeFailure as error:
+                last = error
                 time.sleep(0.1)
-        raise SafeFailure('container adapter identity was not observed')
+        raise SafeFailure(f'container adapter identity was not observed ({last}); see {agent["state_directory"]}/.cauce-adapter.log')
     except BaseException:
         helper(agent, identity, 'stop', *lifecycle_arguments(agent, identity))
         raise

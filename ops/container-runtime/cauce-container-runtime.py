@@ -229,7 +229,19 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
             raise PermanentError("adapter launch was cancelled before process creation")
 
-        process = subprocess.Popen(args.command, start_new_session=True, close_fds=True, **launch_credentials)
+        # The adapter's own stderr is the only trace of a startup failure (docker exec -d discards ours): keep it,
+        # bounded, in the agent state directory where the operator and the executor can read it.
+        log_fd = os.open(".cauce-adapter.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         0o600, dir_fd=state_fd)
+        try:
+            if os.fstat(log_fd).st_size > 1_048_576:
+                os.ftruncate(log_fd, 0)
+            if os.geteuid() == 0:
+                os.fchown(log_fd, args.runtime_uid, args.runtime_gid)
+            process = subprocess.Popen(args.command, start_new_session=True, close_fds=True, stdout=log_fd, stderr=log_fd,
+                                       **launch_credentials)
+        finally:
+            os.close(log_fd)
         try:
             # Pin before any phase wait, exec inspection or process.wait()/poll()
             # can observe and reap the leader.
