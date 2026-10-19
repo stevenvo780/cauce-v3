@@ -15,7 +15,7 @@ export function ProviderSignInDialog({ open, providerId, description, onClose, c
 }
 
 type Phase = { kind: 'reading' } | { kind: 'profile'; request: ProviderAuthRequest } | { kind: 'pty'; latest?: string } | { kind: 'error'; message: string };
-type Resume = { status: 'resuming' | 'resumed' | 'failed' };
+interface Resume { status: 'resuming' | 'resumed' | 'failed' }
 
 const LATEST_STATUS: Record<string, string> = { cancelled: 'cancelada', failed: 'fallida', succeeded: 'terminada', cancelling: 'cancelándose' };
 
