@@ -162,6 +162,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
             const decision = safeAuditDecision(event.decision);
             const tone = TONE_CLASS[decision ? DECISION_TONE[decision] : 'neutral'];
             const actionLabel = readableAuditAction(event.action);
+            const resumen = readableAuditSummary(event.summary);
             const actor = [display(event.actor_alias), display(event.tenant_id)].filter((part) => part !== UNKNOWN).join(' · ');
             const request = display(event.request_id);
             const trace = display(event.trace_id);
@@ -179,7 +180,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
                     {decision ? AUDIT_DECISION_LABEL[decision] : <Unknown value={decision} />}
                   </Badge>
                 </div>
-                <p className="m-0 mt-0.5 text-[13px] break-words text-fg-2"><Unknown value={readableAuditSummary(event.summary)} /></p>
+                {resumen ? <p className="m-0 mt-0.5 text-[13px] break-words text-fg-2">{resumen}</p> : null}
                 <dl className="m-0 mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted">
                   {actor ? <div className="flex gap-1"><dt>Actor</dt><dd className="m-0 text-fg-2">{actor}</dd></div> : null}
                   {request !== UNKNOWN ? <div className="flex gap-1"><dt>Petición</dt><dd className="mono m-0 text-fg-2">{compactId(event.request_id)}</dd></div> : null}
