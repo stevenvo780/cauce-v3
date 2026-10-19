@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -134,6 +135,7 @@ class ConsoleLoginTests(unittest.TestCase):
         result = self.command('--renew', '--password-stdin', password='incorrect-synthetic-password\n')
         self.assertEqual(result.returncode, 1)
         self.assertIn('HTTP 401', result.stderr)
+        self.assertIn('cauce login', result.stderr)
         self.assertNotIn('Private denial', result.stderr)
         self.assertEqual(self.session.read_bytes(), original)
 
@@ -154,6 +156,7 @@ class ConsoleLoginTests(unittest.TestCase):
         self.assertEqual(len(self.server.observed), before)
         result = self.command('--renew', '--gateway', 'https://other.example', '--password-stdin', password=PASSWORD + '\n')
         self.assertEqual(result.returncode, 1)
+        self.assertIn('ejecuta cauce login sin --renew', result.stderr)
         self.assertEqual(len(self.server.observed), before)
 
     def test_incomplete_saved_session_requires_a_new_login_for_status_and_renewal(self):
@@ -220,7 +223,7 @@ class ConsoleLoginTests(unittest.TestCase):
         self.session.chmod(0o644)
         with self.assertRaises(login_cli.ContextFailure):
             login_cli.ConsoleSessionClient(str(self.session))
-        with self.assertRaises(login_cli.ContextFailure):
+        with self.assertRaisesRegex(login_cli.ContextFailure, 'usa --session-file'):
             self.authenticate()
         self.session.chmod(0o600)
         with patch.object(login_cli.os, 'geteuid', return_value=os.geteuid() + 1):
@@ -285,7 +288,7 @@ class ConsoleLoginTests(unittest.TestCase):
         self.authenticate()
         original = self.session.read_bytes()
         self.server.missing_csrf = True
-        with self.assertRaises(login_cli.ContextFailure):
+        with self.assertRaisesRegex(login_cli.ContextFailure, 'vuelve a ejecutar cauce login'):
             self.authenticate()
         self.assertEqual(self.session.read_bytes(), original)
 
@@ -306,8 +309,68 @@ class ConsoleLoginTests(unittest.TestCase):
     def test_noninteractive_password_requires_explicit_stdin_flag(self):
         result = self.command('--gateway', self.url, '--email', 'owner@example.test', password=PASSWORD + '\n')
         self.assertEqual(result.returncode, 1)
+        self.assertIn('Inicia cauce login en una terminal privada o usa --password-stdin', result.stderr)
+        self.assertIn('la contraseña no se pasa como argumento', result.stderr)
         self.assertNotIn(PASSWORD, result.stdout + result.stderr)
         self.assertEqual(self.server.observed, [])
+
+    def test_missing_gateway_explains_how_to_select_it_before_network(self):
+        result = self.command('--email', 'owner@example.test', '--password-stdin', password=PASSWORD + '\n')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('Falta el gateway; usa cauce login --gateway <URL> o configura CAUCE_GATEWAY_URL.', result.stderr)
+        self.assertNotIn(PASSWORD, result.stdout + result.stderr)
+        self.assertFalse(self.session.exists())
+        self.assertEqual(self.server.observed, [])
+
+    def test_status_and_renew_require_login_when_saved_session_is_missing(self):
+        for mode in ('--status', '--renew'):
+            with self.subTest(mode=mode):
+                result = self.command(mode, '--gateway', self.url)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('No hay una sesión de consola guardada', result.stderr)
+                self.assertIn('cauce login --gateway', result.stderr)
+                self.assertFalse(self.session.exists())
+        self.assertEqual(self.server.observed, [])
+
+    def test_status_rejects_login_inputs_with_next_step_before_network(self):
+        for arguments in (('--email', 'owner@example.test'), ('--password-stdin',)):
+            with self.subTest(arguments=arguments):
+                result = self.command('--status', *arguments, password=PASSWORD + '\n')
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('--status usa solo la sesión guardada; quita --email y --password-stdin', result.stderr)
+                self.assertNotIn(PASSWORD, result.stdout + result.stderr)
+        self.assertEqual(self.server.observed, [])
+
+    def test_login_validation_gives_spanish_next_steps_before_network(self):
+        cases = ((None, PASSWORD, self.session, 'usa --email <CORREO>'),
+                 ('owner@example.test', '', self.session, 'usa --password-stdin'),
+                 ('owner@example.test', PASSWORD, self.root / '..' / 'session.json', 'elige otra ruta con --session-file'))
+        for email, password, session, expected in cases:
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(login_cli.ContextFailure, expected):
+                    login_cli.login(self.url, self.url, email, password, str(session))
+        self.assertFalse(self.session.exists())
+        self.assertEqual(self.server.observed, [])
+
+    def test_rejected_login_response_gives_next_step_without_saving_session(self):
+        with patch.object(login_cli, 'request_json', return_value=({'authenticated': False}, [])):
+            with self.assertRaisesRegex(login_cli.ContextFailure, 'revisa el acceso en la consola y vuelve a ejecutar cauce login'):
+                self.authenticate()
+        self.assertFalse(self.session.exists())
+
+    def test_invalid_cookie_gives_next_step_without_saving_session(self):
+        with patch.object(login_cli.SimpleCookie, 'load', side_effect=login_cli.CookieError):
+            with self.assertRaisesRegex(login_cli.ContextFailure, 'cookie de sesión inválida; vuelve a ejecutar cauce login'):
+                self.authenticate()
+        self.assertFalse(self.session.exists())
+
+    def test_invalid_session_response_gives_login_next_step(self):
+        self.authenticate()
+        stderr = io.StringIO()
+        with patch.object(login_cli.sys, 'argv', [str(SCRIPT), '--status', '--session-file', str(self.session)]), \
+                patch.object(login_cli.ConsoleSessionClient, 'request', return_value=[]), patch('sys.stderr', stderr):
+            self.assertEqual(login_cli.main(), 1)
+        self.assertIn('La respuesta de la sesión es inválida; vuelve a ejecutar cauce login', stderr.getvalue())
 
     def test_default_session_location_respects_state_and_explicit_environment(self):
         with patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root)}, clear=True):

@@ -28,6 +28,32 @@ class ContextFailure(ValueError):
     pass
 
 
+def console_failure_message(error: ContextFailure) -> str:
+    message = str(error)
+    status = re.fullmatch(r'console request rejected with HTTP (\d{3}); redirects are disabled', message)
+    if status:
+        code = int(status[1])
+        if code == 401:
+            return 'La sesión o las credenciales fueron rechazadas (HTTP 401); vuelve a iniciar sesión con cauce login.'
+        if code == 403:
+            return 'La consola rechazó el acceso (HTTP 403); revisa los permisos y la empresa activa en la consola.'
+        if 300 <= code < 400:
+            return f'El gateway respondió con una redirección (HTTP {code}); comprueba --gateway. No se envió la sesión a otro destino.'
+        return f'La consola rechazó la solicitud (HTTP {code}); revisa el estado en la consola antes de reintentar.'
+    return {
+        'console gateway is unavailable': 'No se pudo conectar con la consola; comprueba --gateway, la red y los certificados.',
+        'gateway and origin must use HTTPS or loopback HTTP without credentials or paths':
+            'Indica --gateway y --origin con HTTPS, sin credenciales ni rutas; HTTP solo se admite en localhost.',
+        'console session file must be private and owned by this user':
+            'La sesión debe ser un archivo privado de tu usuario; revisa sus permisos o inicia sesión con cauce login.',
+        'console session file is unavailable': 'La sesión guardada no es válida; vuelve a iniciar sesión con cauce login.',
+        'console session is bound to a different gateway or origin; log in again':
+            'La sesión pertenece a otro gateway u origen; inicia sesión con cauce login para el destino elegido.',
+        'console session requires a valid csrf_token for mutations':
+            'La sesión no permite cambios; vuelve a iniciar sesión con cauce login.',
+    }.get(message, message)
+
+
 def valid_path(value: str) -> str:
     if not PATH.fullmatch(value) or any(SENSITIVE.search(part) for part in value.split('/')):
         raise ContextFailure('context path is unavailable')
@@ -64,7 +90,10 @@ def read_scoped(root: pathlib.Path, relative: str, limit: int = 262144) -> bytes
 
 def private_session(location: str) -> dict:
     path = pathlib.Path(location).absolute()
-    info = path.lstat()
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        raise ContextFailure('No hay una sesión de consola guardada; ejecuta cauce login --gateway <URL> en una terminal privada.') from None
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
         raise ContextFailure('console session file must be private and owned by this user')
     raw = json.loads(read_scoped(path.parent, path.name, 16384))
@@ -409,8 +438,10 @@ def terminal_target(snapshot: object, alias: str, tenant: str | None, mode: str 
     if len(matches) != 1:
         raise ContextFailure('Destino inexistente, no autorizado o ambiguo; comprueba --tenant y los permisos.')
     target = matches[0]
-    if target.get('authorized') is not True or target.get('pty_state') != 'online':
-        raise ContextFailure('Terminal no autorizado o sin agente PTY conectado; revisa la consola.')
+    if target.get('authorized') is not True:
+        raise ContextFailure('El servidor no autoriza esta terminal; revisa tus permisos y la empresa activa en la consola.')
+    if target.get('pty_state') != 'online':
+        raise ContextFailure('La terminal del agente no está conectada; revisa su estado y la autenticación del proveedor en la consola.')
     if not isinstance(target.get('tenant_id'), str) or not IDENTITY.fullmatch(target['tenant_id']):
         raise ContextFailure('La identidad del destino es inválida.')
     modes = target.get('modes')
@@ -526,7 +557,7 @@ def terminal_main() -> int:
         finally:
             client.request('DELETE', '/v3/console/terminal/sessions/' + grant['session_id'], owner)
     except ContextFailure as error:
-        print(str(error), file=sys.stderr)
+        print(console_failure_message(error), file=sys.stderr)
     except (OSError, ValueError, TypeError, KeyError):
         print('No se pudo abrir el terminal; inicia sesión con cauce login y revisa destino y permisos.', file=sys.stderr)
     return 1

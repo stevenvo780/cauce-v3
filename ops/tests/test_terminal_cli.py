@@ -62,6 +62,12 @@ class TerminalTargetTests(unittest.TestCase):
         with self.assertRaises(context_client.ContextFailure):
             self.resolve(target(pty_state='offline'))
 
+    def test_denied_and_disconnected_terminals_offer_distinct_actions(self):
+        with self.assertRaisesRegex(context_client.ContextFailure, 'revisa tus permisos'):
+            self.resolve(target(authorized=False, pty_state='offline'))
+        with self.assertRaisesRegex(context_client.ContextFailure, 'no está conectada.*autenticación del proveedor'):
+            self.resolve(target(pty_state='offline'))
+
     def test_writable_modes_are_required_for_shell_and_tui_input(self):
         for mode in ('shell', 'harness_rw'):
             with self.subTest(mode=mode), self.assertRaises(context_client.ContextFailure):
@@ -101,6 +107,21 @@ class TerminalTargetTests(unittest.TestCase):
 
 
 class TerminalMainTests(unittest.TestCase):
+    def test_http_failures_offer_actions_without_forwarding_server_details(self):
+        for code, action in ((401, 'cauce login'), (403, 'permisos'), (302, '--gateway'), (409, 'antes de reintentar')):
+            with self.subTest(code=code), \
+                    patch.object(sys, 'argv', ['context_client', '--terminal', 'zz-canary-terminal']), \
+                    patch.object(sys, 'stderr', io.StringIO()) as stderr, \
+                    patch.object(context_client, 'ConsoleSessionClient') as session, \
+                    patch.object(context_client, 'terminal_transport') as transport:
+                session.return_value.request.side_effect = context_client.ContextFailure(
+                    f'console request rejected with HTTP {code}; redirects are disabled')
+                self.assertEqual(context_client.terminal_main(), 1)
+                self.assertIn(f'HTTP {code}', stderr.getvalue())
+                self.assertIn(action, stderr.getvalue())
+                self.assertNotIn('redirects are disabled', stderr.getvalue())
+                transport.assert_not_called()
+
     def test_missing_session_fails_before_network_or_transport(self):
         with tempfile.TemporaryDirectory(prefix='cauce-terminal-session-') as temporary:
             arguments = ['context_client', '--terminal', 'zz-canary-terminal',

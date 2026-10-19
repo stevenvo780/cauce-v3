@@ -298,7 +298,7 @@ def main(argv=None) -> int:
         print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
         return 1 if result['state'] == 'failed' else 0
     except ContextFailure as error:
-        print('cauce spaces: ' + str(error), file=sys.stderr)
+        print('cauce spaces: ' + context_client.console_failure_message(error), file=sys.stderr)
         return 1
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
         print('cauce spaces: No se pudo verificar la sesión, la entrada o el recibo del gateway.', file=sys.stderr)

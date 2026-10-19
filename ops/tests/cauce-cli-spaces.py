@@ -130,6 +130,16 @@ class SpacesCliTests(unittest.TestCase):
     def posts(self):
         return [entry for entry in Handler.observed if entry[0] == 'POST']
 
+    def test_missing_session_requires_login_before_listing_or_mutating(self):
+        self.session.unlink()
+        for command in ('list', 'create', 'edit', 'retire'):
+            with self.subTest(command=command):
+                code, result, error = self.run_cli(command, '--apply') if command != 'list' else self.run_cli(command)
+                self.assertEqual((code, result), (1, None))
+                self.assertIn('No hay una sesión de consola guardada', error)
+                self.assertIn('cauce login --gateway', error)
+        self.assertEqual(Handler.observed, [])
+
     def test_create_defaults_to_preview_and_sends_cookie_csrf_scope(self):
         code, result, _ = self.run_cli('create', '--idempotency-key', 'create-canary')
         self.assertEqual((code, result['state']), (0, 'preview'))
