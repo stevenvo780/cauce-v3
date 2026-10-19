@@ -34,6 +34,12 @@ function preview(canApply = true) {
       dependencies: [{ type: 'runtime', identity: { tenant_id: 'A', alias: 'worker', runtime_key: 'worker' }, blocking: !canApply }] });
   });
 }
+it('keeps a single primary: encolar in brand, previsualizar secondary', async () => {
+  renderDialog();
+  expect(await screen.findByRole('button', { name: 'Encolar retiro' })).toHaveClass('bg-brand');
+  expect(screen.getByRole('button', { name: 'Previsualizar retiro' })).not.toHaveClass('bg-brand');
+});
+
 it('shows dependencies and preserves the exact room target without adding alias', async () => {
   renderDialog();
   server.use(preview());

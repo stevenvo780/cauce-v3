@@ -1,6 +1,6 @@
 import type { ConfigurationSnapshot } from '../../api/types';
 import { FormDialog } from '../../components/dialogs';
-import { Notice, Pill } from '../../components/kit';
+import { Button, Notice, Pill } from '../../components/kit';
 import { fleetScopeGap } from './agent-lifecycle-model';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 
@@ -22,7 +22,7 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
       description="La consola no puede retirar ni eliminar este agente todavía." onClose={onClose}>
       <div className="config-modal-cuerpo grid gap-3"><Notice tone="warn" role="note">{gap}</Notice></div>
       <div className="config-modal-pie config-actions">
-        <button type="button" className="button secondary" onClick={onClose}>Cerrar</button>
+        <Button onClick={onClose}>Cerrar</Button>
       </div>
     </FormDialog>;
   }
@@ -50,7 +50,7 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
         target={{ resource: 'agent', tenant_id: tenantId, alias }} initialKind={kind} />
     </div>
     <div className="config-modal-pie config-actions">
-      <button type="button" className="button secondary" onClick={onClose}>Cerrar</button>
+      <Button onClick={onClose}>Cerrar</Button>
     </div>
   </FormDialog>;
 }

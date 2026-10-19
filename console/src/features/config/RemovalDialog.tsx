@@ -3,6 +3,7 @@ import { FleetOperationRequestSchema, type FleetOperationPreview, type FleetOper
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import { ActionButton } from '../../components/action-button';
+import { Button } from '../../components/kit';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine } from './AgentFleetOperation';
 import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationTitle, partitionOperations } from './fleet-operation-text';
@@ -100,10 +101,10 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : !flow.capability ? <p role="status">Leyendo capacidades operativas…</p>
         : !available ? <p className="notice">El servidor no acredita esta acción: {fleetCapabilityReasonText(flow.capability.reason)}.</p> : null}
       {!request ? <p className="notice">Falta una revisión o identidad válida para esta operación.</p> : null}
-      <div className="config-actions"><button type="button" className="button secondary" disabled={!canWrite || !available || !request || busy || inProgress || blocked} title={previewBlock}
-        aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : `Previsualizar ${LABELS[kind]}`}</button>
-        <button type="button" className="button primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply || !nameConfirmed} title={enqueueBlock}
-          onClick={() => { void enqueue(); }}>Encolar {LABELS[kind]}</button></div>
+      <div className="flex flex-wrap items-center gap-2"><Button disabled={!canWrite || !available || !request || busy || inProgress || blocked} title={previewBlock}
+        aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : `Previsualizar ${LABELS[kind]}`}</Button>
+        <Button variant="primary" disabled={!canWrite || !available || busy || inProgress || blocked || !valid || !validated.preview.can_apply || !nameConfirmed} title={enqueueBlock}
+          onClick={() => { void enqueue(); }}>Encolar {LABELS[kind]}</Button></div>
       {!valid && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       {valid && kind !== 'restore' ? <label>Escribe <code>{confirmName}</code> para confirmar
         <input value={typed} autoComplete="off" disabled={busy || inProgress} onChange={(event) => { setTyped(event.target.value); }} /></label> : null}
@@ -114,10 +115,10 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
         intended={kind} stale={flow.stale}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
-        <ActionButton label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} /></> : null}
-      {retireDone && kind === 'retire' ? <section className="notice" aria-label="Retiro terminado">
-        <p>El retiro terminó. Ya puedes purgar el {noun}: se borrará su configuración y el historial quedará conservado.</p>
-        <button type="button" className="button primary" disabled={busy} onClick={goPurge}>Continuar a purgar</button>
+        <ActionButton size="sm" variant="ghost" className="underline underline-offset-2" label="Releer operación" disabled={busy} announceError={false} action={() => flow.refresh()} /></> : null}
+      {retireDone && kind === 'retire' ? <section className="notice grid gap-2" aria-label="Retiro terminado">
+        <p className="m-0">El retiro terminó. Ya puedes purgar el {noun}: se borrará su configuración y el historial quedará conservado.</p>
+        <div><Button variant="primary" disabled={busy} onClick={goPurge}>Continuar a purgar</Button></div>
       </section> : null}
       <details open><summary>Historial de operaciones</summary>
         {flow.historyError ? <p className="notice">{flow.historyError}</p> : null}
@@ -125,8 +126,8 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
           const { attention, finished } = partitionOperations(flow.history);
           const row = (operation: (typeof flow.history)[number]) => <li key={operation.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-line p-3">
             <OperationLine operation={operation} />
-            <button type="button" className="button small" disabled={busy} aria-label={`Ver detalle de ${operationTitle(operation)}`}
-              onClick={() => { flow.accept(operation); }}>Ver</button>
+            <Button size="sm" disabled={busy} aria-label={`Ver detalle de ${operationTitle(operation)}`}
+              onClick={() => { flow.accept(operation); }}>Ver</Button>
           </li>;
           return <div className="grid gap-2">
             {attention.length ? <ul className="m-0 grid list-none gap-2 p-0">{attention.map(row)}</ul> : null}
@@ -135,9 +136,9 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
           </div>;
         })() : <p>Todavía no hay operaciones en esta lectura.</p>}
       </details>
-    </div><div className="config-modal-pie config-actions">
-      {reload ? <ActionButton label="Releer inventario" announceError={false} action={() => reload()} /> : null}
-      <button type="button" className="button secondary" disabled={sending} onClick={onClose}>Cerrar</button>
+    </div><div className="config-modal-pie flex flex-wrap items-center gap-2">
+      {reload ? <ActionButton size="sm" variant="ghost" className="underline underline-offset-2" label="Releer inventario" announceError={false} action={() => reload()} /> : null}
+      <Button disabled={sending} onClick={onClose} className="ml-auto">Cerrar</Button>
     </div>
   </FormDialog>;
 }
