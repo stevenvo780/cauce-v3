@@ -2,7 +2,7 @@ import { normalize } from 'node:path';
 import { z } from 'zod';
 import { loadFleetHostScope, withTransaction, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { assertProviderAuthSealedScope, loadProviderAuthRoutingScope } from '../console/provider-auth-binding.js';
-import { ProviderAuthError, ProviderAuthRequestSchema, ProviderAuthSessionIdSchema } from '../console/provider-auth.contracts.js';
+import { ProviderAuthError, ProviderAuthReasonSchema, ProviderAuthRequestSchema, ProviderAuthSessionIdSchema } from '../console/provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthService, ProviderAuthSnapshot } from '../console/provider-auth.types.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
 import { HostActorSchema } from './auth-bridge-contracts.js';
@@ -22,9 +22,12 @@ const Options = z.object({ hosts: z.array(z.object({ host_id: Identifier,
   new Set(value.hosts.map(host => host.host_id)).size === value.hosts.length
     && new Set(value.hosts.map(host => host.socket_path)).size === value.hosts.length);
 const Reservation = z.object({ session_id: z.uuid(), actor_subject: HostActorSchema.shape.subject, cohort: z.string().max(512),
-  expires_at: z.iso.datetime(), state: z.enum(['reserved', 'released']) }).strict();
+  expires_at: z.iso.datetime(), state: z.enum(['reserved', 'releasing', 'released']),
+  release_id: z.uuid().exactOptional(), release_until: z.iso.datetime().exactOptional(),
+}).strict().refine(value => value.state !== 'releasing' || value.release_id !== undefined && value.release_until !== undefined);
 const Audit = z.object({ session_id: z.uuid(), actor_subject: HostActorSchema.shape.subject, operation_id: z.uuid(),
-  status: z.enum(['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed']), error: z.string().nullable() }).strict();
+  status: z.enum(['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed']),
+  error: z.string().nullable(), reason: ProviderAuthReasonSchema.exactOptional() }).strict();
 const Metadata = z.object({ provider_auth: Reservation.optional(), provider_auth_status: Audit.optional() }).loose();
 const Cohort = z.tuple([Identifier, User, Identifier]);
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');

@@ -2,22 +2,27 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { FleetOperationRequestSchema, FleetOperationSchema } from '@cauce/protocol';
 import type { ProviderAuthLogin } from '../console/provider-auth.types.js';
-import { AgentAuthExchangeSchema, AgentAuthPhysicalSchema, type AgentAuthCommand, type AgentAuthEvent, type AgentAuthResult } from './agent-provider-auth-contracts.js';
+import { ProviderAuthError } from '../console/provider-auth.contracts.js';
+import { AgentAuthExchangeSchema, AgentAuthPhysicalSchema, RuntimeDriftFenceSchema, type AgentAuthCommand, type AgentAuthEvent, type AgentAuthResult } from './agent-provider-auth-contracts.js';
 import { FleetProviderAccountsSchema } from './accounts.js';
 import type { FleetExecution } from './executor.js';
 import { performHostCommand, performHostLoginStop } from './host-command.js';
 import { hostProviderLoginConfiguration, readHostProviderAuthPolicy, type HostProviderAuthOptions } from './host-provider-auth.js';
-import { cleanupProviderLogin, createProviderLogin, type ProviderLoginConfig } from './provider-login.js';
+import { cleanupProviderLogin, createProviderLogin, providerAuthFailureReason, queryProviderLoginBinding, type ProviderLoginConfig } from './provider-login.js';
 import type { QuotaHostChannel } from './quota-executor.js';
+import type { RuntimeDriftReceipt } from './agent-runtime-reconcile.js';
 
 const Records = z.array(z.record(z.string(), z.unknown())).max(1000);
 const Target = z.object({ resource: z.literal('agent'), tenant_id: z.string(), alias: z.string() }).strict();
+const Membership = z.object({ tenant_id: z.string(), alias: z.string(), room_id: z.string(), role: z.string(), enabled: z.boolean() }).strict();
 const Execution = z.object({ operation: FleetOperationSchema, request: FleetOperationRequestSchema,
-  fenced_targets: z.array(Target).max(1000), previous_agents: Records.optional(),
-  desired_memberships: Records.optional(), global_desired_memberships: Records.optional(),
+  fenced_targets: z.array(Target).max(1000), previous_agents: Records.exactOptional(),
+  desired_memberships: z.array(Membership).max(1000).exactOptional(), global_desired_memberships: z.array(Membership).max(1000).exactOptional(),
   snapshot: z.object({ agents: Records, memberships: Records, rolePolicies: Records }).strict(), trusted_accounts: FleetProviderAccountsSchema,
 }).strict();
 const Context = z.object({ physical: AgentAuthPhysicalSchema, execution: Execution.optional() }).strict();
+const Reconciliation = z.object({ cursor: z.uuid().nullable(),
+  inspections: z.array(z.object({ fence: RuntimeDriftFenceSchema, execution: Execution }).strict()).max(8) }).strict();
 const ACTIVE_POLL_MS = 100;
 const IDLE_POLL_MIN_MS = 1000;
 const IDLE_POLL_MAX_MS = 5000;
@@ -32,6 +37,10 @@ export class AgentProviderAuthHost {
   private readonly sequences = new Map<string, number>();
   private readonly abort = new AbortController();
   private loop: Promise<void> | undefined;
+  private reconciliation: Promise<void> | undefined;
+  private reconcileAt = 0;
+  private reconcileAfter: string | undefined;
+  private readonly driftReceipts: RuntimeDriftReceipt[] = [];
   constructor(private readonly channel: QuotaHostChannel, private readonly options: AgentProviderAuthHostOptions) {}
   start(): void { this.loop ??= this.poll(); }
   private async context(packet: AgentAuthCommand) {
@@ -108,10 +117,38 @@ export class AgentProviderAuthHost {
         await this.context(packet);
       }
       result.ok = true;
-    } catch { result.ok = false; }
+    } catch (error) {
+      result.ok = false;
+      if (error instanceof ProviderAuthError) {
+        if (error.code === 'RUNTIME_DRIFT' || error.code === 'STOP_UNCONFIRMED' || error.code === 'HOST_UNAVAILABLE') result.error = error.code;
+        if (error.reason !== undefined) result.reason = error.reason;
+      }
+      process.stderr.write(`Agent provider authentication command=${packet.command.type} failed: ${providerAuthFailureReason(error)}\n`);
+    }
     this.completed.set(packet.command.id, result);
     if (this.completed.size > 4096) this.abort.abort();
     return result;
+  }
+  private async reconcile(): Promise<void> {
+    const response = Reconciliation.parse(await this.channel.request('POST', `/v3/fleet/hosts/${this.options.hostConfig.host}/agent-auth`,
+      { action: 'reconcile', receipts: this.driftReceipts, ...(this.reconcileAfter === undefined ? {} : { after: this.reconcileAfter }) }));
+    this.reconcileAfter = response.cursor ?? undefined;
+    this.driftReceipts.length = 0;
+    for (const inspection of response.inspections) {
+      if (this.abort.signal.aborted) return;
+      const { execution, fence } = inspection;
+      if (execution.operation.id !== fence.operation_id || execution.operation.desired_revision !== fence.prepared_revision
+          || execution.operation.status !== 'awaiting_auth') continue;
+      try {
+        await queryProviderLoginBinding({ ...this.options.hostConfig.command, timeoutMs: 5000 }, execution, this.abort.signal);
+      } catch (error) {
+        if (error instanceof ProviderAuthError && error.code === 'RUNTIME_DRIFT') this.driftReceipts.push({ ...fence, error: error.code });
+      }
+    }
+    if (this.driftReceipts.length && !this.abort.signal.aborted) {
+      await this.channel.request('POST', `/v3/fleet/hosts/${this.options.hostConfig.host}/agent-auth`, { action: 'reconcile', receipts: this.driftReceipts });
+      this.driftReceipts.length = 0;
+    }
   }
   /** Every exchange is a signed write on the gateway: an idle host backs off from 1 s to 5 s and polls fast only during a login. */
   private async poll(): Promise<void> {
@@ -127,6 +164,12 @@ export class AgentProviderAuthHost {
             session.unsubscribe(); await session.login.close(); this.logins.delete(id); this.sequences.delete(id);
           }
           for (const packet of response.commands) this.events.push(await this.dispatch(packet));
+          if (!this.reconciliation && Date.now() >= this.reconcileAt) {
+            this.reconcileAt = Date.now() + 30_000;
+            this.reconciliation = this.reconcile().catch(() => {
+              if (!this.abort.signal.aborted) process.stderr.write('Agent runtime reconciliation could not be verified\n');
+            }).finally(() => { this.reconciliation = undefined; });
+          }
           busy = response.commands.length > 0 || response.active_sessions.length > 0 || this.logins.size > 0 || this.events.length > 0;
         } catch {
           await this.stopLocal(); this.events.length = 0; this.completed.clear();
@@ -145,5 +188,5 @@ export class AgentProviderAuthHost {
     for (const session of this.logins.values()) { session.unsubscribe(); await session.login.close().catch(() => ({ stopped: false })); }
     this.logins.clear(); this.sequences.clear();
   }
-  async shutdown(): Promise<void> { this.abort.abort(); await this.loop; }
+  async shutdown(): Promise<void> { this.abort.abort(); await this.loop; await this.reconciliation; }
 }

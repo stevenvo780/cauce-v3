@@ -9,11 +9,13 @@ import { createFleetProviderAuthRouter } from './auth-router.js';
 import { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
 import { registerAgentProviderAuthHostRoute } from './agent-provider-auth-route.js';
 import { enrolledAgentAuthFixture } from './agent-provider-auth.fixtures.js';
-import { access, readFile, rm } from 'node:fs/promises';
+import { access, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { configuredFleetGateway } from './gateway-config.js';
 import { HostCapabilityRegistry } from './host-channel.capabilities.js';
 import * as providerAuthBinding from '../console/provider-auth-binding.js';
+import * as hostProviderAuth from './host-provider-auth.js';
+import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 
 let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let app: FastifyInstance;
 let router: ReturnType<typeof createFleetProviderAuthRouter> | undefined;
@@ -31,6 +33,47 @@ afterEach(async () => { await router?.shutdown(); await app.close(); await local
 afterAll(async () => { await database.pool.end(); await database.container.stop(); });
 
 describe('enrolled agent provider authentication', () => {
+  it('retains the sanitized resource-limit cause when the actual login-stop helper fails', async () => {
+    const broker = new AgentProviderAuthBroker(pool); registerAgentProviderAuthHostRoute(app, pool, broker);
+    local = await enrolledAgentAuthFixture(pool, app);
+    const executable = join(local.directory, 'synthetic-executor.py');
+    const source = await readFile(executable, 'utf8');
+    await writeFile(executable, source.replace("step=sys.argv[sys.argv.index('--step')+1]",
+      "step=sys.argv[sys.argv.index('--step')+1]\n if step=='login-stop':\n  print('fleet effect failed: container resource limits differ from the approved shape',file=sys.stderr)\n  sys.exit(2)"));
+    router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: broker.service });
+    const request = await router.resolve(local.actor, local.operation.id);
+    const session = await router.start(local.actor, request);
+    expect(session).toMatchObject({ status: 'failed', error: 'STOP_UNCONFIRMED', reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT' });
+    await expect(router.attach(local.actor, session.session_id, () => undefined)).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+    const audit = (await pool.query<{ status: unknown }>("SELECT metadata->'provider_auth_status' AS status FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'provider_auth_status' ORDER BY id DESC LIMIT 1", [local.operation.id])).rows[0];
+    expect(audit?.status).toMatchObject({ error: 'STOP_UNCONFIRMED', reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT' });
+    const recovered = new AgentProviderAuthBroker(pool);
+    try { expect(await recovered.service.get(local.actor, session.session_id)).toEqual(session); }
+    finally { await recovered.shutdown(); }
+  }, 30_000);
+  it.each(['open', 'start', 'verify'])('preserves runtime drift from %s through signed commands, audit and recovery', async phase => {
+    const broker = new AgentProviderAuthBroker(pool); registerAgentProviderAuthHostRoute(app, pool, broker);
+    local = await enrolledAgentAuthFixture(pool, app);
+    router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: broker.service });
+    const request = await router.resolve(local.actor, local.operation.id);
+    const rejectBinding = () => vi.spyOn(hostProviderAuth, 'hostProviderLoginConfiguration').mockRejectedValueOnce(new ProviderAuthError('RUNTIME_DRIFT'));
+    if (phase === 'open') rejectBinding();
+    const session = await router.start(local.actor, request);
+    if (phase === 'start') {
+      rejectBinding();
+      await expect(router.attach(local.actor, session.session_id, () => undefined)).rejects.toMatchObject({ code: 'RUNTIME_DRIFT' });
+    } else if (phase === 'verify') {
+      await router.attach(local.actor, session.session_id, () => undefined); rejectBinding();
+      expect(await router.verify(local.actor, session.session_id)).toMatchObject({ error: 'RUNTIME_DRIFT' });
+    }
+    const failed = await router.get(local.actor, session.session_id);
+    expect(failed).toMatchObject({ status: 'failed', error: 'RUNTIME_DRIFT', cleanup_pending: false });
+    const audit = (await pool.query<{ status: unknown }>("SELECT metadata->'provider_auth_status' AS status FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'provider_auth_status' ORDER BY id DESC LIMIT 1", [local.operation.id])).rows[0];
+    expect(audit?.status).toMatchObject({ error: 'RUNTIME_DRIFT' });
+    const recovered = new AgentProviderAuthBroker(pool);
+    try { expect(await recovered.service.get(local.actor, session.session_id)).toEqual(failed); }
+    finally { await recovered.shutdown(); }
+  }, 30_000);
   async function ready(options: { ttlMs?: number } = {}) {
     const broker = new AgentProviderAuthBroker(pool, options); registerAgentProviderAuthHostRoute(app, pool, broker);
     local = await enrolledAgentAuthFixture(pool, app); router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: broker.service });
@@ -39,6 +82,24 @@ describe('enrolled agent provider authentication', () => {
     expect(session.status).toBe('awaiting_login');
     return { broker, local, router, request, session };
   }
+  it('recovers an unavailable cleanup as a durable unconfirmed stop without releasing its reservation', async () => {
+    const f = await ready(); const recovered = new AgentProviderAuthBroker(pool);
+    const exchange = vi.spyOn(f.broker, 'exchange').mockImplementation((...args) => recovered.exchange(...args));
+    const context = vi.spyOn(f.broker, 'context').mockImplementation((...args) => recovered.context(...args));
+    const policy = vi.spyOn(hostProviderAuth, 'readHostProviderAuthPolicy');
+    policy.mockRejectedValueOnce(new ProviderAuthError('HOST_UNAVAILABLE', 'CONTAINER_RESOURCE_LIMITS_DRIFT'));
+    try {
+      const failed = await recovered.service.get(f.local.actor, f.session.session_id);
+      expect(failed).toMatchObject({ status: 'failed', error: 'STOP_UNCONFIRMED', cleanup_pending: true,
+        reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT' });
+      policy.mockRejectedValueOnce(new ProviderAuthError('HOST_UNAVAILABLE'));
+      expect(await recovered.service.get(f.local.actor, f.session.session_id)).toMatchObject({
+        error: 'STOP_UNCONFIRMED', cleanup_pending: true, reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT' });
+      const reservation = (await pool.query<{ reservation: unknown }>("SELECT metadata->'provider_auth' AS reservation FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1", [f.local.operation.id])).rows[0];
+      expect(reservation?.reservation).toMatchObject({ state: 'reserved' });
+      expect(await recovered.service.cancel(f.local.actor, f.session.session_id)).toMatchObject({ status: 'cancelled', cleanup_pending: false });
+    } finally { policy.mockRestore(); exchange.mockRestore(); context.mockRestore(); await recovered.shutdown(); }
+  }, 30_000);
   it('recovers a durably cancelled session after replacing the gateway broker', async () => {
     const f = await ready(); await f.router.attach(f.local.actor, f.session.session_id, () => undefined);
     expect(await f.router.cancel(f.local.actor, f.session.session_id)).toMatchObject({ status: 'cancelled', cleanup_pending: false });

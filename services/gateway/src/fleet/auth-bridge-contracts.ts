@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProviderAuthRequestSchema } from '../console/provider-auth.contracts.js';
+import { ProviderAuthReasonSchema, ProviderAuthRequestSchema } from '../console/provider-auth.contracts.js';
 
 /** `requestedCompany` is the signed company switch; the host resolves it again against its own database. */
 export const HostActorSchema = z.object({
@@ -27,7 +27,8 @@ export const HostAuthSnapshotSchema = z.object({
   profile_id: ProviderAuthRequestSchema.shape.profile_id, method: z.enum(['device', 'terminal']),
   status: z.enum(['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed']),
   expires_at: z.iso.datetime(), cleanup_pending: z.boolean(),
-  error: z.enum(['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'STOP_UNCONFIRMED',
+  reason: ProviderAuthReasonSchema.exactOptional(),
+  error: z.enum(['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'RUNTIME_DRIFT', 'STOP_UNCONFIRMED',
     'IDENTITY_MISMATCH', 'FUNCTIONAL_CHECK_FAILED', 'LOGIN_FAILED', 'SESSION_EXPIRED']).nullable(),
 }).strict();
 export const HostAuthTicketSchema = z.object({ ticket: z.uuid(), expires_at: z.iso.datetime() }).strict();

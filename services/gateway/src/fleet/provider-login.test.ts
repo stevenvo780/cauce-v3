@@ -6,12 +6,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertLoginPins, createProviderLogin, cleanupProviderLogin, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
+import { ProviderAuthError } from '../console/provider-auth.contracts.js';
+import { assertLoginPins, boundedProviderReceipt, createProviderLogin, cleanupProviderLogin, providerAuthFailureReason, providerRuntimeFailureReason, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof files>(); return { ...actual, open: vi.fn(actual.open) };
 });
 const operationId = '74000000-0000-4000-8000-000000000001';
+const runtimeDriftLine = 'fleet effect failed: container image or ownership labels differ';
 const temporary: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const path of temporary) await rm(path, { recursive: true, force: true }); temporary.length = 0; });
 function zeroHash(size: number): string {
@@ -30,6 +32,47 @@ async function fixture(mode = 'verified'): Promise<ProviderLoginConfig> {
       env: { HOME: '/home/dev' }, backend: 'native', state_root: root, account_scope: 'test-account' } };
 }
 describe('private provider login transport', () => {
+  it.each([
+    { name: 'exact runtime drift', stderr: 'SYNTHETIC_PRIVATE_FIXTURE https://example.invalid/login?code=private\u001b[31m\n'
+      + 'fleet effect failed: container image or ownership labels differ\n', code: 'RUNTIME_DRIFT', quotaReason: undefined,
+      reason: 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', log: 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' },
+    { name: 'resource limits drift', stderr: 'fleet effect failed: container resource limits differ from the approved shape\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT', log: 'CONTAINER_RESOURCE_LIMITS_DRIFT' },
+    { name: 'isolation drift', stderr: 'fleet effect failed: container isolation differs from the approved shape\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: 'CONTAINER_ISOLATION_DRIFT', log: 'CONTAINER_ISOLATION_DRIFT' },
+    { name: 'unknown helper failure', stderr: 'fleet effect failed: SYNTHETIC_PRIVATE_FIXTURE https://example.invalid/login?code=private\u001b[31m\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: undefined, log: 'helper_failed' },
+    { name: 'runtime drift with trailing content', stderr: 'fleet effect failed: container image or ownership labels differ\rSYNTHETIC_PRIVATE_FIXTURE\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: undefined, log: 'helper_failed' },
+    { name: 'runtime drift with leading control bytes', stderr: '\u001b[31mfleet effect failed: container image or ownership labels differ\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: undefined, log: 'helper_failed' },
+    { name: 'runtime drift prefix at the truncation limit', stderr: 'x'.repeat(4096 - runtimeDriftLine.length - 1) + '\n' + runtimeDriftLine + 'SYNTHETIC_PRIVATE_FIXTURE\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: undefined, reason: undefined, log: 'helper_failed' },
+    { name: 'quota reason', stderr: 'fleet effect failed: runtime_image_stale: SYNTHETIC_PRIVATE_FIXTURE https://example.invalid/login?code=private\u001b[31m\n',
+      code: 'HOST_UNAVAILABLE', quotaReason: 'runtime_image_stale', reason: undefined, log: 'runtime_image_stale' },
+  ])('classifies $name and logs only an allowed single-line reason', async ({ stderr, code, quotaReason, reason, log }) => {
+    const diagnostic = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const program = `import sys\nsys.stdin.read()\nsys.stderr.write(${JSON.stringify(stderr)})\nsys.exit(1)\n`;
+    const receipt = boundedProviderReceipt('/usr/bin/python3', ['-c', program], 'SYNTHETIC_PRIVATE_PACKET', new AbortController().signal, 1000);
+    await expect(receipt).rejects.toMatchObject({ code, reason, ...(quotaReason === undefined ? {} : { quotaStepReason: quotaReason }) });
+    expect(diagnostic.mock.calls).toEqual([[`provider auth helper failed: ${log}\n`]]);
+  });
+  it('formats typed failures through a fixed allowlist without reflecting error messages or untrusted codes', () => {
+    expect(providerAuthFailureReason(new ProviderAuthError('RUNTIME_DRIFT'))).toBe('RUNTIME_DRIFT');
+    expect(providerAuthFailureReason(new ProviderAuthError('STOP_UNCONFIRMED', 'CONTAINER_RESOURCE_LIMITS_DRIFT'))).toBe('CONTAINER_RESOURCE_LIMITS_DRIFT');
+    expect(providerAuthFailureReason(Object.assign(new ProviderAuthError('HOST_UNAVAILABLE'), { quotaStepReason: 'runtime_image_stale' }))).toBe('runtime_image_stale');
+    expect(providerAuthFailureReason(Object.assign(new ProviderAuthError('HOST_UNAVAILABLE'), { code: 'SYNTHETIC_PRIVATE_FIXTURE\n' }))).toBe('helper_failed');
+    expect(providerAuthFailureReason(new Error('SYNTHETIC_PRIVATE_FIXTURE https://example.invalid/login'))).toBe('helper_failed');
+    expect(providerAuthFailureReason({ code: 'RUNTIME_DRIFT', quotaStepReason: 'SYNTHETIC_PRIVATE_FIXTURE\n' })).toBe('helper_failed');
+    expect(providerAuthFailureReason(Object.assign(new ProviderAuthError('HOST_UNAVAILABLE'), { reason: 'SYNTHETIC_PRIVATE_FIXTURE\n' }))).toBe('HOST_UNAVAILABLE');
+  });
+  it.each(['container isolation differs from the approved shape', 'container GPU or device access differs from the approved shape',
+    'container networks differ from the approved shape', 'container sidecar environment differs from the approved shape',
+    'container declared extensions differ', 'container runtime mounts differ', 'container execution user or home differs',
+    'container process identity differs', 'container runtime executable hash differs'])('classifies an exact isolation failure: %s', text => {
+    expect(providerRuntimeFailureReason(`fleet effect failed: ${text}\n`)).toBe('CONTAINER_ISOLATION_DRIFT');
+    expect(providerRuntimeFailureReason(`fleet effect failed: ${text} SYNTHETIC_PRIVATE_FIXTURE\n`)).toBeUndefined();
+  });
   it.each(['normal', 'crash'])('runs actual native PTY and %s cleanup with exact runtime user', async mode => {
     const user = userInfo(); const root = await mkdtemp(join(user.homedir, 'provider-login-native-')); temporary.push(root);
     const helper = fileURLToPath(new URL('../../../../ops/cli/provider-login.py', import.meta.url)); const python = await realpath('/usr/bin/python3');

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ProviderAuthCode } from './provider-auth.types.js';
+import type { ProviderAuthCode, ProviderAuthReason } from './provider-auth.types.js';
 
 const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 export const ProviderAuthRequestSchema = z.object({
@@ -10,7 +10,8 @@ export const ProviderAuthRequestSchema = z.object({
   runtime_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/), profile_id: Identifier,
 }).strict();
 export const ProviderAuthSessionIdSchema = z.uuid();
+export const ProviderAuthReasonSchema = z.enum(['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT']);
 
 export class ProviderAuthError extends Error {
-  constructor(readonly code: ProviderAuthCode) { super('provider authentication could not be verified'); }
+  constructor(readonly code: ProviderAuthCode, readonly reason?: ProviderAuthReason) { super('provider authentication could not be verified'); }
 }

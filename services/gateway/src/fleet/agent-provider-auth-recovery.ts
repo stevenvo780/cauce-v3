@@ -23,7 +23,7 @@ export async function recoverAgentAuthSession(pool: DatabasePool, actor: Provide
     const current = (await client.query<{ reservation: { session_id: string; state: string } }>(`SELECT metadata->'provider_auth' AS reservation
       FROM fleet_operation_events WHERE operation_id=$1 AND metadata->'provider_auth'->>'session_id'=$2 ORDER BY id DESC LIMIT 1`, [value.operation.id, id])).rows[0];
     if (current?.reservation.session_id !== id) throw new ProviderAuthError('AUTHORITY_REVOKED');
-    let audit = (await client.query<{ status: { status: ProviderAuthSnapshot['status']; error: ProviderAuthSnapshot['error'] } }>(`SELECT metadata->'provider_auth_status' AS status
+    let audit = (await client.query<{ status: Pick<ProviderAuthSnapshot, 'status' | 'error' | 'reason'> }>(`SELECT metadata->'provider_auth_status' AS status
       FROM fleet_operation_events WHERE operation_id=$1 AND metadata->'provider_auth_status'->>'session_id'=$2 ORDER BY id DESC LIMIT 1`, [value.operation.id, id])).rows[0]?.status;
     const expired = Date.parse(binding.fence.expires_at) <= Date.now();
     let cleanupPending = current.reservation.state !== 'released';
@@ -31,9 +31,15 @@ export async function recoverAgentAuthSession(pool: DatabasePool, actor: Provide
       const latest = (await client.query<{ id: string }>(`SELECT metadata->'provider_auth'->>'session_id' AS id FROM fleet_operation_events
         WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY fleet_operation_events.id DESC LIMIT 1`, [value.operation.id])).rows[0];
       if (latest?.id !== id) throw new ProviderAuthError('AUTHORITY_REVOKED');
-      const stopped = await cleanup(binding, client); cleanupPending = !stopped;
+      let stopped = false; let reason = audit?.reason;
+      try { stopped = await cleanup(binding, client); } catch (error) {
+        if (!(error instanceof ProviderAuthError) || !['HOST_UNAVAILABLE', 'STOP_UNCONFIRMED', 'RUNTIME_DRIFT'].includes(error.code)) throw error;
+        reason = error.reason ?? reason;
+      }
+      cleanupPending = !stopped;
       audit = { status: !stopped ? 'failed' : expired ? 'expired' : cancel ? 'cancelled' : 'failed',
-        error: !stopped ? 'STOP_UNCONFIRMED' : expired ? 'SESSION_EXPIRED' : cancel ? null : 'HOST_UNAVAILABLE' };
+        error: !stopped ? 'STOP_UNCONFIRMED' : expired ? 'SESSION_EXPIRED' : cancel ? null : 'HOST_UNAVAILABLE',
+        ...(!stopped && reason !== undefined ? { reason } : {}) };
       const next = (await client.query<{ version: string }>('UPDATE fleet_operations SET version=version+1,updated_at=clock_timestamp() WHERE id=$1 RETURNING version', [value.operation.id])).rows[0];
       await client.query(`INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,$2,'step_completed',$3::jsonb)`,
       [value.operation.id, next?.version, JSON.stringify({ step: 'authenticate',
@@ -45,6 +51,7 @@ export async function recoverAgentAuthSession(pool: DatabasePool, actor: Provide
     return HostAuthSnapshotSchema.parse({ session_id: id, operation_id: value.operation.id, provider_id: binding.physical.provider_id, account_id: binding.physical.account_id,
       profile_id: binding.physical.profile_id, harness_id: binding.physical.harness_id, host_id: binding.physical.host_id,
       runtime_user: binding.physical.runtime_user, expires_at: binding.fence.expires_at, method, status: audit?.status ?? 'failed',
-      error: audit ? audit.error : 'HOST_UNAVAILABLE', cleanup_pending: cleanupPending });
+      error: audit ? audit.error : 'HOST_UNAVAILABLE', cleanup_pending: cleanupPending,
+      ...(audit?.reason === undefined ? {} : { reason: audit.reason }) });
   });
 }

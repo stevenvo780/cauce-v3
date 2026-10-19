@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, type FleetStepName } from '@cauce/protocol';
+import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
 import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
+import { providerRuntimeFailureReason } from './provider-login.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
@@ -25,9 +27,14 @@ export async function performHostCompensation(config: HostCommandConfig, executi
 }
 
 export async function performHostLoginStop(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal) {
-  const result = await runHostCommand(config, 'login-stop', execution, signal);
-  if (result.awaiting_auth || result.evidence.stopped_verified !== true) throw unverified();
-  return { stopped: true };
+  try {
+    const result = await runHostCommand(config, 'login-stop', execution, signal);
+    if (result.awaiting_auth || result.evidence.stopped_verified !== true) throw unverified();
+    return { stopped: true };
+  } catch (error) {
+    if (error instanceof ProviderAuthError && error.reason) throw new ProviderAuthError('STOP_UNCONFIRMED', error.reason);
+    throw error;
+  }
 }
 
 async function runHostCommand(
@@ -52,10 +59,12 @@ async function runHostCommand(
       detached: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp' },
     });
-    let failed = false; let done = false; let bytes = 0;
+    let failed = false; let done = false; let bytes = 0; let runtimeStderr = '';
     let force: NodeJS.Timeout | undefined;
     const chunks: Buffer[] = [];
     const stderr = new BoundedTail();
+    const failure = () => { const reason = providerRuntimeFailureReason(runtimeStderr);
+      return reason ? new ProviderAuthError('HOST_UNAVAILABLE', reason) : unverified(); };
     const kill = (termination: NodeJS.Signals) => {
       if (child.pid === undefined) return;
       try { process.kill(-child.pid, termination); } catch { /* The process group may already be gone. */ }
@@ -73,23 +82,24 @@ async function runHostCommand(
       bytes += chunk.byteLength;
       if (bytes > MAX_RECEIPT_BYTES) stop(); else chunks.push(chunk);
     });
-    child.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk); });
+    child.stderr.on('data', (chunk: Buffer) => { stderr.push(chunk); runtimeStderr += chunk.toString('utf8').slice(0, 4097 - runtimeStderr.length); });
     child.stderr.on('error', () => undefined);
-    child.once('error', () => { cleanup(); reject(unverified()); });
+    child.once('error', () => { cleanup(); reject(failure()); });
     child.stdin.on('error', stop);
     child.once('close', (code) => {
       cleanup();
       const hosts = new Set(execution.previous_agents?.map(agent => agent.host_id).filter((host): host is string => typeof host === 'string'));
-      if (code !== 0) logHostCommandFailure(step, code, stderr.text(), execution.operation.id,
+      const diagnostic = step === 'login-stop' ? providerRuntimeFailureReason(runtimeStderr) ?? 'helper_failed' : stderr.text();
+      if (code !== 0) logHostCommandFailure(step, code, diagnostic, execution.operation.id,
         execution.fleet_scope?.host_id ?? (hosts.size === 1 ? [...hosts][0] ?? null : null));
-      if (code !== 0 || failed) { reject(unverified()); return; }
+      if (code !== 0 || failed) { reject(failure()); return; }
       try {
         const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         resolve({ evidence: receipt.evidence,
           ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }),
           ...(receipt.account_identity === undefined ? {} : { account_identity: receipt.account_identity }) });
       }
-      catch { reject(unverified()); }
+      catch { reject(failure()); }
     });
     child.stdin.end(encoded);
   });

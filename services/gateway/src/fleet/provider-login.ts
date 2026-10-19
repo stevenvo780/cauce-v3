@@ -5,8 +5,8 @@ import { open } from 'node:fs/promises';
 import { isAbsolute, normalize } from 'node:path';
 import { z } from 'zod';
 import { FleetOperationRequestSchema, isSignalAborted, readMutableBoolean } from '@cauce/protocol';
-import { ProviderAuthError } from '../console/provider-auth.contracts.js';
-import type { ProviderAuthLogin } from '../console/provider-auth.types.js';
+import { ProviderAuthError, ProviderAuthReasonSchema } from '../console/provider-auth.contracts.js';
+import type { ProviderAuthLogin, ProviderAuthReason } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
 import type { HostCommandConfig } from './host-command.js';
 
@@ -72,6 +72,31 @@ function quotaStepReason(stderr: string): QuotaStepReason | undefined {
   const text = line.slice('fleet effect failed: '.length).trim();
   return QUOTA_STEP_REASON.get(text) ?? QUOTA_STEP_REASONS.find(item => text.startsWith(`${item}: `));
 }
+const PROVIDER_AUTH_FAILURE_REASONS = ['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE',
+  'RUNTIME_DRIFT', 'STOP_UNCONFIRMED', 'IDENTITY_MISMATCH', 'FUNCTIONAL_CHECK_FAILED', 'LOGIN_FAILED', 'SESSION_EXPIRED'] as const;
+const PROVIDER_RUNTIME_FAILURES = new Map<string, ProviderAuthReason>([
+  ['fleet effect failed: container image or ownership labels differ', 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT'],
+  ['fleet effect failed: container resource limits differ from the approved shape', 'CONTAINER_RESOURCE_LIMITS_DRIFT'],
+  ...['container isolation differs from the approved shape', 'container GPU or device access differs from the approved shape',
+    'container networks differ from the approved shape', 'container sidecar environment differs from the approved shape',
+    'container declared extensions differ', 'container runtime mounts differ', 'container execution user or home differs',
+    'container process identity differs', 'container runtime executable hash differs']
+    .map(message => [`fleet effect failed: ${message}`, 'CONTAINER_ISOLATION_DRIFT'] as const),
+]);
+export function providerRuntimeFailureReason(stderr: string): ProviderAuthReason | undefined {
+  const lines = stderr.slice(0, 4096).split('\n'); if (stderr.length > 4096) lines.pop();
+  for (const line of lines) { const reason = PROVIDER_RUNTIME_FAILURES.get(line); if (reason) return reason; }
+  return undefined;
+}
+export function providerAuthFailureReason(error: unknown): string {
+  if (error instanceof ProviderAuthError) {
+    const runtimeReason = ProviderAuthReasonSchema.safeParse(error.reason);
+    if (runtimeReason.success) return runtimeReason.data;
+  }
+  const reason = readQuotaStepReason(error);
+  if (reason) return reason;
+  return error instanceof ProviderAuthError ? PROVIDER_AUTH_FAILURE_REASONS.find(code => code === error.code) ?? 'helper_failed' : 'helper_failed';
+}
 const maximumPinBytes = 536_870_912;
 
 export async function readPrivateJson(filename: string): Promise<unknown> {
@@ -122,18 +147,22 @@ function kill(child: ChildProcessWithoutNullStreams): void {
 export async function boundedProviderReceipt(python: string, argv: string[], body: string, signal: AbortSignal, timeoutMs = 60_000): Promise<unknown> {
   if (signal.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw unavailable();
   return new Promise((resolve, reject) => {
-    const child = spawnPrivate(python, argv); const chunks: Buffer[] = []; let length = 0; let invalid = false; let stderrText = '';
+    const child = spawnPrivate(python, argv); const chunks: Buffer[] = []; let length = 0; let invalid = false;
+    let stderrText = ''; let rejected = false;
     const stop = () => { invalid = true; kill(child); };
     const timer = setTimeout(stop, timeoutMs); signal.addEventListener('abort', stop, { once: true });
     const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', stop); };
     const rejectStep = () => {
-      const error = unavailable();
+      if (rejected) return; rejected = true;
+      const runtimeReason = providerRuntimeFailureReason(stderrText);
+      const error = new ProviderAuthError(runtimeReason === 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' ? 'RUNTIME_DRIFT' : 'HOST_UNAVAILABLE', runtimeReason);
       const reason = quotaStepReason(stderrText);
       if (reason) Object.assign(error, { quotaStepReason: reason });
+      process.stderr.write(`provider auth helper failed: ${runtimeReason ?? reason ?? 'helper_failed'}\n`);
       reject(error);
     };
     child.stdout.on('data', (bytes: Buffer) => { length += bytes.length; if (length > 32_768) stop(); else chunks.push(bytes); });
-    child.stderr.on('data', (bytes: Buffer) => { if (stderrText.length < 4096) stderrText += bytes.toString('utf8').slice(0, 4096 - stderrText.length); });
+    child.stderr.on('data', (bytes: Buffer) => { stderrText += bytes.toString('utf8').slice(0, 4097 - stderrText.length); });
     child.once('error', () => { finish(); rejectStep(); }); child.stdin.once('error', stop);
     child.once('close', code => { finish(); if (invalid || code !== 0) { rejectStep(); return; }
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); } catch { rejectStep(); } });
@@ -238,5 +267,5 @@ export async function createProviderLogin(config: ProviderLoginConfig, signal: A
     PacketSchema.parse(config.packet); await validateTransport(config);
     await validatePacketPins(config.packet);
     return new HostProviderLogin(config, signal);
-  } catch { throw unavailable(); }
+  } catch (error) { throw error instanceof ProviderAuthError ? error : unavailable(); }
 }

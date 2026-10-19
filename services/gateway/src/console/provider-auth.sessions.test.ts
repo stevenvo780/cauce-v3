@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderAuthManager } from './provider-auth.sessions.js';
 import type { ProviderAuthDependencies, ProviderAuthRequest } from './provider-auth.types.js';
+import { ProviderAuthError } from './provider-auth.contracts.js';
 
 const actor = { tenant_id: 'Steven', alias: 'kant', subject: 'console:human-1' };
 const input: ProviderAuthRequest = { operation_id: '00000000-0000-4000-8000-000000000050', expected_operation_version: 2, request_id: 'auth-request-one',
@@ -31,6 +32,20 @@ function fixture(options: { stopped?: boolean; loginStopped?: boolean; identity?
 afterEach(() => { vi.useRealTimers(); });
 
 describe('sensitive provider bootstrap', () => {
+  it('preserves a bounded stop reason while cleanup remains unconfirmed and the cohort stays reserved', async () => {
+    const f = fixture(); const reserve = f.deps.reserve.bind(f.deps);
+    const reason = 'CONTAINER_RESOURCE_LIMITS_DRIFT';
+    f.deps.reserve = async (...args) => ({ ...await reserve(...args),
+      stopAdapter: async () => { throw new ProviderAuthError('STOP_UNCONFIRMED', reason); },
+      release: async () => { throw new ProviderAuthError('STOP_UNCONFIRMED', reason); },
+    });
+    const session = await f.manager.start(actor, input);
+    expect(session).toMatchObject({ status: 'failed', error: 'STOP_UNCONFIRMED', reason, cleanup_pending: true });
+    expect(f.state()).toMatchObject({ started: false, released: false });
+    expect(f.audits.at(-1)).toMatchObject({ error: 'STOP_UNCONFIRMED', reason });
+    await expect(f.manager.start(actor, { ...input, request_id: 'second-request' })).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+    await f.manager.shutdown();
+  });
   it('rejects metadata, input and tickets when the same human changes the selected company', async () => {
     const f = fixture(); const first = { ...actor, requestedCompany: 'company-one' };
     const changed = { ...actor, requestedCompany: 'company-two' };

@@ -12,7 +12,8 @@ export interface ProviderAuthRequest {
 }
 export type ProviderAuthStatus = 'opening' | 'awaiting_login' | 'verifying' | 'authenticated' | 'cancelled' | 'expired' | 'failed';
 export type ProviderAuthCode = 'AUTHORITY_REVOKED' | 'SESSION_CONFLICT' | 'INVALID_REQUEST' | 'HOST_UNAVAILABLE'
-  | 'STOP_UNCONFIRMED' | 'IDENTITY_MISMATCH' | 'FUNCTIONAL_CHECK_FAILED' | 'LOGIN_FAILED' | 'SESSION_EXPIRED';
+  | 'RUNTIME_DRIFT' | 'STOP_UNCONFIRMED' | 'IDENTITY_MISMATCH' | 'FUNCTIONAL_CHECK_FAILED' | 'LOGIN_FAILED' | 'SESSION_EXPIRED';
+export type ProviderAuthReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
 export interface ProviderAuthSnapshot {
   session_id: string;
   operation_id: string;
@@ -27,6 +28,7 @@ export interface ProviderAuthSnapshot {
   expires_at: string;
   cleanup_pending: boolean;
   error: ProviderAuthCode | null;
+  reason?: ProviderAuthReason;
 }
 export interface ProviderAuthLogin {
   readonly method: 'device' | 'terminal';
@@ -46,7 +48,7 @@ export interface ProviderAuthDependencies {
   authorize(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<void>;
   expiration?(actor: ProviderAuthActor, request: ProviderAuthRequest, maximum: string): Promise<string>;
   reserve(actor: ProviderAuthActor, request: ProviderAuthRequest, sessionId: string, expiresAt: string): Promise<ProviderAuthReservation>;
-  audit(metadata: { actor_subject: string; session_id: string; operation_id: string; status: ProviderAuthStatus; error: ProviderAuthCode | null }): Promise<void>;
+  audit(metadata: { actor_subject: string; session_id: string; operation_id: string; status: ProviderAuthStatus; error: ProviderAuthCode | null; reason?: ProviderAuthReason }): Promise<void>;
 }
 export interface ProviderAuthChannel {
   input(bytes: Uint8Array): Promise<void>;

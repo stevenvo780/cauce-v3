@@ -4,6 +4,7 @@ import { HostEnrollmentRepository, HostId, StoreError, type DatabasePool } from 
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { AgentAuthPacketSchema } from './agent-provider-auth-contracts.js';
 import type { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
+import { reconcileAgentRuntimes } from './agent-runtime-reconcile.js';
 
 export function registerAgentProviderAuthHostRoute(app: FastifyInstance, pool: DatabasePool, broker: AgentProviderAuthBroker): void {
   const enrollment = new HostEnrollmentRepository(pool);
@@ -14,6 +15,7 @@ export function registerAgentProviderAuthHostRoute(app: FastifyInstance, pool: D
       const { host_id } = z.object({ host_id: HostId }).strict().parse(request.params);
       const outcome = await enrollment.request(host_id, 'POST', `/v3/fleet/hosts/${host_id}/agent-auth`, request.body, async (client, host) => {
         const packet = AgentAuthPacketSchema.parse((request.body as { payload: unknown }).payload);
+        if (packet.action === 'reconcile') return { response: await reconcileAgentRuntimes(client, host, packet.receipts, packet.after), accept: (): void => undefined };
         return packet.action === 'exchange' ? broker.exchange(client, host, packet.events)
           : { response: await broker.context(client, host, packet.id, packet.fence), accept: (): void => undefined };
       });

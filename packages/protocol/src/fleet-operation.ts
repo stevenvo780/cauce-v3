@@ -99,7 +99,7 @@ export const FleetStepSchema = z.object({
 }).strict();
 export const FleetErrorSchema = z.object({
   code: z.enum(['AUTHORITY_REVOKED', 'REVISION_CONFLICT', 'HOST_UNAVAILABLE', 'DEPENDENCIES_PRESENT',
-    'STEP_FAILED', 'PROVIDER_AUTH_REQUIRED', 'UNSUPPORTED_RUNTIME', 'VERIFICATION_FAILED', 'CANCELLED']),
+    'STEP_FAILED', 'PROVIDER_AUTH_REQUIRED', 'RUNTIME_DRIFT', 'UNSUPPORTED_RUNTIME', 'VERIFICATION_FAILED', 'CANCELLED']),
   step: FleetStepNameSchema.optional(), retryable: z.boolean(),
 }).strict();
 /**

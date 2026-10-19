@@ -134,10 +134,13 @@ export class AgentProviderAuthBroker {
   }
   private command(binding: AgentAuthBinding, command: AgentAuthCommand['command']): Promise<AgentAuthResult> {
     if (this.pending.size >= 1000) throw new ProviderAuthError('SESSION_CONFLICT');
-    return new Promise(resolve => {
+    return new Promise<AgentAuthResult>(resolve => {
       const timer = setTimeout(() => { this.pending.delete(command.id); resolve({ type: 'result', id: command.id, fence: binding.fence, ok: false }); },
         ['input','resize'].includes(command.type) ? 15_000 : 330_000);
       timer.unref(); this.pending.set(command.id, { binding, packet: { fence: binding.fence, command }, timer, resolve });
+    }).then(result => {
+      if (!result.ok && result.error !== undefined) throw new ProviderAuthError(result.error, result.reason);
+      return result;
     });
   }
   private login(binding: AgentAuthBinding, method: ProviderAuthLogin['method']): ProviderAuthLogin {

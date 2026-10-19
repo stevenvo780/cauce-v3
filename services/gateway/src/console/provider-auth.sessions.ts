@@ -3,6 +3,7 @@ import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.co
 import type {
   ProviderAuthActor, ProviderAuthChannel, ProviderAuthCode, ProviderAuthDependencies,
   ProviderAuthLogin, ProviderAuthRequest, ProviderAuthReservation, ProviderAuthSnapshot, ProviderAuthStatus,
+  ProviderAuthReason,
 } from './provider-auth.types.js';
 
 interface Session {
@@ -89,7 +90,8 @@ export class ProviderAuthManager {
       session.snapshot.status = 'awaiting_login';
       await this.audit(session);
     } catch (error) {
-      if (ACTIVE.has(session.snapshot.status)) await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'HOST_UNAVAILABLE');
+      if (ACTIVE.has(session.snapshot.status)) await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'HOST_UNAVAILABLE',
+        error instanceof ProviderAuthError ? error.reason : undefined);
     } finally {
       session.initializing = false;
       if (aborted(session)) await this.finish(session, session.snapshot.status, session.snapshot.error);
@@ -120,7 +122,11 @@ export class ProviderAuthManager {
       void this.access(actor, session).catch(() => undefined).finally(() => { checking = false; });
     }, 1000);
     session.revalidation.unref();
-    try { await session.login.start(); } catch { await this.finish(session, 'failed', 'LOGIN_FAILED'); throw new ProviderAuthError('LOGIN_FAILED'); }
+    try { await session.login.start(); } catch (error) {
+      const failure = error instanceof ProviderAuthError && (error.code === 'RUNTIME_DRIFT' || error.code === 'STOP_UNCONFIRMED' || error.reason !== undefined)
+        ? error : new ProviderAuthError('LOGIN_FAILED');
+      await this.finish(session, 'failed', failure.code, failure.reason); throw failure;
+    }
     return {
       input: async (bytes) => {
         await this.access(actor, session);
@@ -152,7 +158,8 @@ export class ProviderAuthManager {
       if (!verifying(session)) return this.snapshot(session);
       await this.finish(session, 'authenticated', null);
     } catch (error) {
-      await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'LOGIN_FAILED');
+      await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'LOGIN_FAILED',
+        error instanceof ProviderAuthError ? error.reason : undefined);
     }
     return this.snapshot(session);
   }
@@ -225,10 +232,13 @@ export class ProviderAuthManager {
   private snapshot(session: Session): ProviderAuthSnapshot { return { ...session.snapshot }; }
   private async audit(session: Session): Promise<void> {
     await this.dependencies.audit({ actor_subject: session.actor.subject, session_id: session.snapshot.session_id,
-      operation_id: session.request.operation_id, status: session.snapshot.status, error: session.snapshot.error });
+      operation_id: session.request.operation_id, status: session.snapshot.status, error: session.snapshot.error,
+      ...(session.snapshot.reason === undefined ? {} : { reason: session.snapshot.reason }) });
   }
-  private async finish(session: Session, status: ProviderAuthStatus, error: ProviderAuthCode | null): Promise<void> {
+  private async finish(session: Session, status: ProviderAuthStatus, error: ProviderAuthCode | null, reason?: ProviderAuthReason): Promise<void> {
     if (session.closing) return session.closing;
+    if (reason !== undefined) session.snapshot.reason = reason;
+    else if (error === null) delete session.snapshot.reason;
     session.closing = this.cleanup(session, status, error);
     try { await session.closing; } finally { session.closing = undefined; }
   }
@@ -260,8 +270,9 @@ export class ProviderAuthManager {
           session.actor.requestedCompany, session.request.request_id]));
       }, 900_000);
       session.timer.unref();
-    } catch {
+    } catch (caught) {
       session.snapshot.status = 'failed'; session.snapshot.error = 'STOP_UNCONFIRMED'; session.snapshot.cleanup_pending = true;
+      if (caught instanceof ProviderAuthError && caught.reason !== undefined) session.snapshot.reason = caught.reason;
     }
     try { await this.audit(session); } catch { session.snapshot.status = 'failed'; session.snapshot.error = 'LOGIN_FAILED'; }
   }
