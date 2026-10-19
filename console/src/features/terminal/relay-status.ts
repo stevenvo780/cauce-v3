@@ -64,6 +64,16 @@ function terminalRelaySinComprobarReason(status?: number, detalle?: string): str
     + 'del gateway, no de tu permiso.';
 }
 
+const LECTURA_CONOCIDA: readonly (readonly [RegExp, string])[] = [
+  [/operator role is required/i, 'esta identidad no tiene el rol de operador que la terminal pide'],
+];
+
+/** Spanish text for one failed read in the terminal header; unknown reasons pass through unchanged. */
+export function mensajeDeFalloDeLectura(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  return LECTURA_CONOCIDA.find(([pattern]) => pattern.test(message))?.[1] ?? message;
+}
+
 export const CHECKING_RELAY_STATE: TerminalRelayState = {
   status: 'checking',
   reason: 'Verificando el relay de terminales…',

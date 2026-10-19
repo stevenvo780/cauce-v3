@@ -13,7 +13,7 @@ import { listTerminalTargets } from './api';
 import { fleetAgentId } from './fleet';
 import { harnessIdForTerminal, loginActionOf } from './login-recipe';
 import { OperatorWorkspace } from './OperatorWorkspace';
-import { deriveTerminalRelayState, TERMINAL_RELAY_SIN_COMPROBAR_TITULO, TerminalRelayBoundary, useTerminalCapability } from './relay-status';
+import { deriveTerminalRelayState, mensajeDeFalloDeLectura, TERMINAL_RELAY_SIN_COMPROBAR_TITULO, TerminalRelayBoundary, useTerminalCapability } from './relay-status';
 import { resumenDeFlota } from './resumen';
 
 interface TerminalPageProps {
@@ -90,7 +90,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         <Notice tone="danger" className={BANNER} role="alert">
           <span className="min-w-0 flex-1">
             <strong>El plano de control contestó a medias.</strong>{' '}
-            {failures.map(({ endpoint, error: failure }) => `${endpoint}: ${failure?.message ?? ''}`).join(' · ')}
+            {failures.map(({ endpoint, error: failure }) => `${endpoint}: ${mensajeDeFalloDeLectura(failure)}`).join(' · ')}
           </span>
           <Button size="sm" onClick={refreshAll}>
             <RefreshCw size={13} aria-hidden="true" />Reintentar
