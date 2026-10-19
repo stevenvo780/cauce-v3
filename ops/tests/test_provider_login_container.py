@@ -19,7 +19,86 @@ import test_fleet_executor_container as container_fixtures
 import test_provider_login as pty_fixtures
 
 sys.path.insert(0, str(container_fixtures.fixtures.OPS / 'cli'))
+import host_setup
 import provider_login_container as login
+
+
+class IsolatedHelperTest(unittest.TestCase):
+    def test_previous_release_rejects_writable_entries_and_symlinks(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-login-trust-', dir='/var/tmp') as temporary:
+            base = pathlib.Path(temporary)
+            old, current = (base / (character * 64) for character in ('a', 'b'))
+            for tree in ('ops/cli', 'ops/container-runtime'):
+                (old / tree).mkdir(parents=True)
+            observed = {'Mounts': [{'Destination': destination, 'Type': 'bind', 'RW': False,
+                                    'Source': str(old / tree)} for destination, tree in
+                                   (('/cauce/executor', 'ops/cli'), ('/cauce/lifecycle', 'ops/container-runtime'))]}
+            with mock.patch.object(login, '__file__', str(current / 'ops/cli/provider_login_container.py')):
+                self.assertTrue(login.helper_mount(observed, cleanup=True))
+                entry = old / 'ops/cli/untrusted.py'
+                entry.write_text('')
+                entry.chmod(0o666)
+                self.assertFalse(login.helper_mount(observed, cleanup=True))
+                entry.unlink()
+                entry.symlink_to(base / 'outside.py')
+                self.assertFalse(login.helper_mount(observed, cleanup=True))
+                entry.unlink()
+                directory = old / 'ops/container-runtime/nested'
+                directory.mkdir(mode=0o777)
+                directory.chmod(0o777)
+                self.assertFalse(login.helper_mount(observed, cleanup=True))
+
+    def test_cleanup_and_fallback_use_isolated_python_in_root_directory(self):
+        binding = {'container_id': 'a' * 64, 'python': '/usr/bin/python3',
+                   'helper': '/cauce/executor/provider-login.py'}
+        results = [subprocess.CompletedProcess([], 2, b''),
+                   subprocess.CompletedProcess([], 0, b'{"stopped_verified":true}')]
+        with mock.patch.object(login, 'observe', return_value=True), \
+                mock.patch.object(login.subprocess, 'run', side_effect=results) as run:
+            self.assertEqual(login.remote_cleanup(binding, str(uuid.uuid4())), {'stopped_verified': True})
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertEqual(command[:9], [login.DOCKER, 'exec', '-i', '--user', '0', '-w', '/',
+                                         binding['container_id'], binding['python']])
+            self.assertEqual(command[9:11], ['-I', '-B'])
+        self.assertEqual(run.call_args_list[0].args[0][11], '-c')
+        self.assertEqual(run.call_args_list[0].args[0][13], binding['helper'])
+        self.assertEqual(run.call_args_list[1].args[0][11], '-c')
+        self.assertNotIn(binding['helper'], run.call_args_list[1].args[0])
+
+    def test_helper_imports_stay_within_generated_pins_including_previous_release_cleanup(self):
+        ops = container_fixtures.fixtures.OPS
+        with tempfile.TemporaryDirectory(prefix='cauce-login-pins-', dir='/var/tmp') as temporary:
+            base = pathlib.Path(temporary)
+            old, current = (base / (character * 64) for character in ('a', 'b'))
+            for tree in ('ops/cli', 'ops/container-runtime'):
+                (old / tree).mkdir(parents=True)
+            observed = {'Mounts': [{'Destination': destination, 'Type': 'bind', 'RW': False,
+                                    'Source': str(old / tree)} for destination, tree in
+                                   (('/cauce/executor', 'ops/cli'), ('/cauce/lifecycle', 'ops/container-runtime'))]}
+            program = ('import json,pathlib,runpy,sys\n'
+                'ops=pathlib.Path(sys.argv[1])\n'
+                'sys.path.insert(0,str(ops/"cli"))\n'
+                'runpy.run_path(str(ops/"cli/provider-login.py"))\n'
+                'import provider_login_container as helper\n'
+                'original=helper.__file__\n'
+                'helper.__file__=sys.argv[2]\n'
+                'assert helper.helper_mount(json.loads(sys.argv[3]),cleanup=True)\n'
+                'helper.__file__=original\n'
+                'print(json.dumps(sorted({str(pathlib.Path(module.__file__).resolve()) '
+                'for module in sys.modules.copy().values() if getattr(module,"__file__",None) '
+                'and pathlib.Path(module.__file__).resolve().is_relative_to(ops)})))\n')
+            result = subprocess.run([sys.executable, '-I', '-B', '-c', program, str(ops),
+                str(current / 'ops/cli/provider_login_container.py'), json.dumps(observed)],
+                capture_output=True, text=True, check=True, timeout=10)
+            auth = host_setup.provider_auth_policy({'profiles': {}, 'host_id': 'fixture-host',
+                'profile_templates': [{'login': {}}]}, ops.parent, base / 'state')
+            self.assertLessEqual(set(json.loads(result.stdout)), set(auth['helper']['files']))
+            for invalid in (None, '', '/', '/ops/container-runtime', str(old / 'ops/../ops/container-runtime')):
+                observed['Mounts'][1]['Source'] = invalid
+                with self.subTest(source=invalid), mock.patch.object(login, '__file__',
+                        str(current / 'ops/cli/provider_login_container.py')):
+                    self.assertFalse(login.helper_mount(observed, cleanup=True))
 
 
 class PreviousReleaseCleanupTest(unittest.TestCase):
@@ -49,10 +128,17 @@ class PreviousReleaseCleanupTest(unittest.TestCase):
             '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN',
             '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'SYS_PTRACE', '--cap-add', 'FOWNER',
             '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
+            '--tmpfs', '/tmp:rw,nosuid,noexec,size=1m,mode=1777', '--workdir', '/tmp',
+            '--env', 'PYTHONPATH=/tmp', '--env', 'PYTHONUSERBASE=/tmp',
             '--mount', 'type=bind,src=' + str(self.old / 'ops/cli') + ',dst=/cauce/executor,readonly',
             '--mount', 'type=bind,src=' + str(self.old / 'ops/container-runtime') + ',dst=/cauce/lifecycle,readonly',
             '--entrypoint', '/bin/sleep', self.image, 'infinity'], check=True, capture_output=True, timeout=30)
         self.addCleanup(subprocess.run, [login.DOCKER, 'rm', '-f', self.container], capture_output=True, timeout=30)
+        planted = subprocess.run([login.DOCKER, 'exec', '-i', '--user', '65534:65534', self.container, '/bin/sh', '-c',
+            'cat > /tmp/json.py; cp /tmp/json.py /tmp/sitecustomize.py'],
+            input=b'open("/tmp/untrusted-import", "w").write("executed")\nraise RuntimeError("untrusted module")\n',
+            capture_output=True, check=True, timeout=10)
+        self.assertEqual(planted.returncode, 0)
         subprocess.run([login.DOCKER, 'exec', self.container, 'mkdir', '-m', '700', login.REMOTE_STATE],
                        check=True, capture_output=True, timeout=10)
         self.observed = json.loads(subprocess.run([login.DOCKER, 'inspect', self.container],
@@ -84,7 +170,10 @@ class PreviousReleaseCleanupTest(unittest.TestCase):
 
     def cleanup(self):
         with mock.patch.object(login, '__file__', str(self.current / 'ops/cli/provider_login_container.py')):
-            return login.cleanup_container(self.operation, str(self.state))
+            receipt = login.cleanup_container(self.operation, str(self.state))
+        self.assertNotEqual(subprocess.run([login.DOCKER, 'exec', self.container, 'test', '-e', '/tmp/untrusted-import'],
+                                         capture_output=True, timeout=10).returncode, 0)
+        return receipt
 
     def assert_receipt_preserved(self):
         self.assertTrue((self.state / (self.operation + '.json')).is_file())
@@ -113,8 +202,8 @@ class PreviousReleaseCleanupTest(unittest.TestCase):
     def test_missing_remote_state_with_foreign_live_process_preserves_receipt_without_signaling(self):
         subprocess.run([login.DOCKER, 'exec', self.container, 'rmdir', login.REMOTE_STATE],
                        check=True, capture_output=True, timeout=10)
-        foreign = subprocess.Popen([login.DOCKER, 'exec', '--user', '65534:65534', self.container,
-            self.binding['python'], '-c', 'import time;print("ready",flush=True);time.sleep(60)'],
+        foreign = subprocess.Popen([login.DOCKER, 'exec', '--user', '65534:65534', '-w', '/', self.container,
+            self.binding['python'], '-I', '-B', '-c', 'import time;print("ready",flush=True);time.sleep(60)'],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             self.assertTrue(select.select([foreign.stdout], [], [], 5)[0])

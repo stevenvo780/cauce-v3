@@ -52,10 +52,11 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
         local['offset'] = request['offset']
     binding = None
     if agent['runtime_mode'] == 'container':
+        from fleet_executor_container import isolated_python
         from fleet_executor_hooks import container_binding
         agent, binding = container_binding(policy, agent)
-        command = ['/usr/bin/docker', 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1',
-                   binding['container_id'], str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py']
+        command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
+                   *isolated_python(str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py')]
     else:
         user = pwd.getpwnam(agent['runtime_user'])
         if user.pw_dir != agent['home_directory']:

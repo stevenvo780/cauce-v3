@@ -78,7 +78,7 @@ class FakeDocker:
             return b''
         if command == 'create':
             return self.create(arguments)
-        if '-c' in arguments:
+        if '-c' in arguments and '/cauce/lifecycle/cauce-container-runtime.py' not in arguments:
             return b'clear\n'
         name = self.by_id(arguments[arguments.index('--user') + 2] if '--env' not in arguments else arguments[arguments.index('--env') + 2])
         if '/usr/bin/getent' in arguments:

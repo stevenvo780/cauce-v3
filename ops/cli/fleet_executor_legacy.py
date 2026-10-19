@@ -130,7 +130,7 @@ def assert_shared_start(policy: dict, agent: dict):
 def shared_generation(observed: dict, python: str) -> str:
     from fleet_executor_container import docker
     from fleet_executor_policy import SafeFailure, path
-    start = docker('exec', '--user', '0', observed['Id'], str(path(python)), '-B', '-c',
+    start = docker('exec', '-w', '/', '--user', '0', observed['Id'], str(path(python)), '-I', '-B', '-c',
         'raw=open("/proc/1/stat",encoding="utf-8").read();print(raw[raw.rfind(")")+2:].split()[19])').decode().strip()
     current = json.loads(docker('inspect', observed['Id']))
     if not re.fullmatch(r'[0-9]+', start) or int(start) <= 0 or not isinstance(current, list) or len(current) != 1:
@@ -191,7 +191,14 @@ def purge_alias(args):
 
 
 def purge_shared(policy: dict, agent: dict, observed: dict):
-    from fleet_executor_container import EXECUTOR_DESTINATION, docker, helper, identity_for, user_identity
+    from fleet_executor_container import (
+        EXECUTOR_DESTINATION,
+        docker,
+        helper,
+        identity_for,
+        isolated_python,
+        user_identity,
+    )
     from fleet_executor_policy import SafeFailure
     validate_shared_observation(policy, agent, observed)
     if observed['State']['Running'] is not True:
@@ -199,9 +206,10 @@ def purge_shared(policy: dict, agent: dict, observed: dict):
     identity = identity_for(agent, observed)
     uid, _ = user_identity(agent, identity)
     helper(agent, identity, 'prepare-control', '--base', agent['_placement']['control_root'], '--alias', agent['runtime_key'])
-    docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'], agent['_placement']['python'],
-        f'{EXECUTOR_DESTINATION}/fleet_executor_legacy.py', '--key', agent['runtime_key'], '--state-root', agent['_placement']['state_root'],
-        '--control-root', agent['_placement']['control_root'], '--generation', identity['generation'], '--uid', uid)
+    docker('exec', '-w', '/', '--user', '0', identity['container_id'],
+        *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_legacy.py',
+            '--key', agent['runtime_key'], '--state-root', agent['_placement']['state_root'],
+            '--control-root', agent['_placement']['control_root'], '--generation', identity['generation'], '--uid', uid))
 
 
 if __name__ == '__main__':

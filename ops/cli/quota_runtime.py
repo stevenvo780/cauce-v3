@@ -375,7 +375,7 @@ def provider_login_executable(environment: dict) -> str:
               'found=[p.resolve() for p in candidates if p.is_file()];'
               'valid=[p for p in found if p.is_relative_to(root) and p.read_bytes()[:4]==b"\\x7fELF"];'
               'sys.exit(2) if len(valid)!=1 else print(valid[0])')
-    native = docker('exec', '--user', '1000:1000', environment['container_name'], '/usr/bin/python3', '-c', script, prefix).decode().strip()
+    native = docker('exec', '-w', '/', '--user', '1000:1000', environment['container_name'], '/usr/bin/python3', '-I', '-B', '-c', script, prefix).decode().strip()
     pattern = re.escape(prefix) + r'/lib/node_modules/@openai/codex/(?:node_modules/@openai/codex-linux-(?:x64|arm64)/)?vendor/(?:x86_64|aarch64)-unknown-linux-musl/bin/codex'
     if re.fullmatch(pattern, native) is None:
         raise SafeFailure('native quota login executable escapes its provider package')

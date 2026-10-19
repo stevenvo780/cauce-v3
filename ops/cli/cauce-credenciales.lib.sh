@@ -40,7 +40,7 @@ contenedor_alcanzable() {  # $1=alias $2=contenedor
 # Report credential type and a short fingerprint without exposing token contents.
 # The fingerprint verifies whether login changed the credential file.
 huella_claude() {  # $1=alias $2=contenedor $3=usuario $4=CONFIG-DIR de claude (el que sale de claude_home_de)
-  leer_en_alias "$1" "$2" "$3" "$4/.credentials.json" | python3 -c '
+  leer_en_alias "$1" "$2" "$3" "$4/.credentials.json" | python3 -I -B -c '
 import json,sys,hashlib
 try: o=(json.load(sys.stdin).get("claudeAiOauth") or {})
 except Exception: print("sin fichero legible|-"); raise SystemExit
@@ -50,7 +50,7 @@ print("%s|%s" % ("oauth" if r else ("setup-token" if a else "VACIA"),
   || printf 'no pude leerla|-\n'
 }
 huella_codex() {  # $1=alias $2=contenedor $3=usuario $4=codex-home
-  leer_en_alias "$1" "$2" "$3" "$4/auth.json" | python3 -c '
+  leer_en_alias "$1" "$2" "$3" "$4/auth.json" | python3 -I -B -c '
 import json,sys,base64
 try: d=json.load(sys.stdin)
 except Exception: print("sin fichero legible|-|"); raise SystemExit
@@ -103,7 +103,7 @@ objetivos_declarados() {  # $1=harness $2=alias $3=ctr $4=usu $5=cfgdir-claude $
 instala_token_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir ; el TOKEN entra por STDIN
   local json
   # Read the token from stdin so it is not exposed in process arguments.
-  json=$(python3 -c '
+  json=$(python3 -I -B -c '
 import json,sys,time
 t=sys.stdin.read().strip()
 if not t: raise SystemExit(9)
@@ -404,7 +404,7 @@ write_pty_launcher_env() {
 # ops/flota.json is authoritative; stdout and exit statuses form this helper's caller contract.
 flota_estado_alias() {  # $1=alias
   [ -f "$FLOTA_JSON" ] || return 3
-  python3 -c '
+  python3 -I -B -c '
 import json, sys
 alias = sys.argv[2]
 try:
@@ -602,7 +602,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     printf "  [3c] la huella de pty-%s ya esta en %s (se salta)\n" "$a" "$reg"
   elif [ "$dry" = 1 ]; then
     printf "  [3c] haria: anexar {tenant_id=%s, alias=%s, huella, expires_at} en %s\n" "$ap_tenant" "$a" "$reg"
-  elif REG="$reg" TEN="$ap_tenant" AL="$a" FP="$fp_pty" EXP="$vence_pty" python3 - <<'PY'
+  elif REG="$reg" TEN="$ap_tenant" AL="$a" FP="$fp_pty" EXP="$vence_pty" python3 -I -B - <<'PY'
 import fcntl, json, os, shutil
 reg = os.environ["REG"]
 lock = open(reg + ".lock", "a+"); fcntl.flock(lock, fcntl.LOCK_EX)

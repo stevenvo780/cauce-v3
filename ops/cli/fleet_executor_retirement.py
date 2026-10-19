@@ -193,6 +193,7 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
         docker,
         identity_for,
         inspect_container,
+        isolated_python,
         validate_container,
     )
     observed = inspect_container(agent['container_name'])
@@ -200,8 +201,9 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
         return
     validate_container(policy, agent, observed, teardown=True)
     identity = identity_for(agent, observed)
-    docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
-           f'{EXECUTOR_DESTINATION}/fleet_executor_view.py', '--root', '/run/cauce-credentials/' + agent['runtime_key'], '--remove')
+    docker('exec', '-w', '/', '--user', '0', identity['container_id'],
+           *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_view.py',
+                            '--root', '/run/cauce-credentials/' + agent['runtime_key'], '--remove'))
 
 
 def purge_runtime(policy: dict, agent: dict) -> dict:

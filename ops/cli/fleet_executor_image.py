@@ -118,7 +118,7 @@ def assert_no_login(agent: dict, observed: dict) -> None:
     script = ('import os,sys; p="/run/cauce-provider-login"; '
               'sys.exit(1) if os.path.lexists(p) and (os.path.islink(p) or not os.path.isdir(p) '
               'or any(n.endswith((".lock",".json")) for n in os.listdir(p))) else print("clear")')
-    if docker('exec', '--user', '0', observed['Id'], agent['_placement']['python'], '-c', script).strip() != b'clear':
+    if docker('exec', '-w', '/', '--user', '0', observed['Id'], agent['_placement']['python'], '-I', '-B', '-c', script).strip() != b'clear':
         raise SafeFailure('provider login session is open or unverified; image refresh refused')
 
 

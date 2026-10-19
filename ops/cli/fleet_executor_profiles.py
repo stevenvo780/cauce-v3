@@ -139,11 +139,13 @@ def run_extension_prepare(policy: dict, agent: dict, binding: dict, identity: di
             checked_command,
             identity_for,
             inspect_container,
+            isolated_python,
         )
         runtime = identity if identity is not None else identity_for(agent, inspect_container(agent['container_name']))
-        stdout = checked_command([DOCKER, 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1',
-            runtime['container_id'], agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_identity.py',
-            '--prepare-extensions'], input_data=packet, timeout=PREPARE_EXTENSION_TIMEOUT)
+        stdout = checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', agent['runtime_user'],
+            runtime['container_id'], *isolated_python(agent['_placement']['python'],
+                f'{EXECUTOR_DESTINATION}/fleet_provider_identity.py', '--prepare-extensions')],
+            input_data=packet, timeout=PREPARE_EXTENSION_TIMEOUT)
         receipt = accept_extension_receipt(agent, stdout)
     remember_extension_receipt(policy, receipt, operation_id)
     return receipt
@@ -179,6 +181,7 @@ def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None =
         docker,
         identity_for,
         inspect_container,
+        isolated_python,
         user_identity,
         validate_container,
     )
@@ -187,12 +190,13 @@ def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None =
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
     if dynamic:
-        docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'], agent['_placement']['python'],
-            f'{EXECUTOR_DESTINATION}/fleet_executor_profiles.py', '--root', template['path_root'], '--profile', binding['path'],
-            '--uid', uid, '--gid', gid, '--initialize-empty', *(['--provider', 'muse'] if binding['provider'] == 'muse' else []))
+        docker('exec', '-w', '/', '--user', '0', identity['container_id'],
+            *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_profiles.py',
+                '--root', template['path_root'], '--profile', binding['path'], '--uid', uid, '--gid', gid,
+                '--initialize-empty', *(['--provider', 'muse'] if binding['provider'] == 'muse' else [])))
     if 'openclaw' in binding:
-        checked_command([DOCKER, 'exec', '-i', '--user', agent['runtime_user'], '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
-            agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_openclaw.py', '--prepare'],
+        checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], identity['container_id'],
+            *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_provider_openclaw.py', '--prepare')],
             input_data=json.dumps({'profile_binding': binding, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')}}).encode())
     return run_extension_prepare(policy, agent, binding, identity, operation_id=operation_id)
 

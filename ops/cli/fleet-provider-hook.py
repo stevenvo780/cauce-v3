@@ -32,6 +32,7 @@ def validate(packet: dict):
 
 
 def container(packet: dict) -> dict:
+    from fleet_executor_container import isolated_python
     binding = packet["runtime_binding"]
     observed = json.loads(subprocess.check_output(["/usr/bin/docker", "inspect", binding["container_id"]], timeout=10))[
         0
@@ -64,15 +65,14 @@ def container(packet: dict) -> dict:
             "/usr/bin/docker",
             "exec",
             "-i",
+            "-w", "/",
             "--user",
             agent["runtime_user"],
             "--env",
             "HOME=" + agent["home_directory"],
             binding["container_id"],
             "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=" + agent["home_directory"], "PYTHONDONTWRITEBYTECODE=1",
-            interpreter, "-s", "-E",
-            script,
-            "--inside",
+            *isolated_python(interpreter, script, "--inside"),
         ],
         input=json.dumps(packet).encode(),
         capture_output=True,
@@ -84,6 +84,7 @@ def container(packet: dict) -> dict:
 
 
 def shared_container_identity(packet: dict, observed: dict):
+    from fleet_executor_container import isolated_python
     binding, agent = packet["runtime_binding"], packet["agent"]
     mounts = [{field: mount[field] for field in ("Destination", "Source", "Type", "RW")} for mount in observed["Mounts"]]
     if (not isinstance(binding.get("mounts"), list)
@@ -93,10 +94,10 @@ def shared_container_identity(packet: dict, observed: dict):
         value = binding.get(field)
         if not isinstance(value, str) or not value.startswith("/") or str(pathlib.PurePosixPath(value)) != value or ".." in pathlib.PurePosixPath(value).parts:
             raise ValueError("shared runtime proof path differs")
-    subprocess.run(["/usr/bin/docker", "exec", "--user", "0", binding["container_id"], binding["python"],
-        "/cauce/lifecycle/cauce-container-runtime.py", "check", "--alias", agent["runtime_key"], "--state", agent["state_directory"],
+    subprocess.run(["/usr/bin/docker", "exec", "-w", "/", "--user", "0", binding["container_id"],
+        *isolated_python(binding["python"], "/cauce/lifecycle/cauce-container-runtime.py", "check", "--alias", agent["runtime_key"], "--state", agent["state_directory"],
         "--control-dir", binding["control_directory"], "--container-id", binding["container_id"], "--generation", binding["generation"],
-        "--bundle", binding["bundle_directory"], "--bundle-digest", binding["bundle_digest"]], capture_output=True, timeout=10, check=True)
+        "--bundle", binding["bundle_directory"], "--bundle-digest", binding["bundle_digest"])], capture_output=True, timeout=10, check=True)
     raw = subprocess.check_output(["/usr/bin/docker", "exec", "--user", "0", binding["container_id"], "/bin/cat",
         binding["control_directory"] + "/cauce-v3-adapter.json"], timeout=10)
     if len(raw) > 8192:

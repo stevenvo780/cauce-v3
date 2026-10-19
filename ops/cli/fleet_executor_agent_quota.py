@@ -187,7 +187,7 @@ def perform(policy: dict, document: dict) -> dict:
         command[1] = profile
     agent, before = container_binding(policy, agent)
     uid, gid = user_identity(agent, before)
-    arguments = [DOCKER, 'exec', '-i', '--user', uid + ':' + gid, before['container_id'], '/usr/bin/env', '-i',
+    arguments = [DOCKER, 'exec', '-i', '-w', '/', '--user', uid + ':' + gid, before['container_id'], '/usr/bin/env', '-i',
         'HOME=' + agent['home_directory'], 'PATH=/usr/local/bin:/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE=1',
         agent['_placement']['python'], '-I', '-B', EXECUTOR_DESTINATION + '/fleet_executor_agent_quota.py', '--read']
     try:

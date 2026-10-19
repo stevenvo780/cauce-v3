@@ -8,11 +8,13 @@ import pathlib
 import re
 import selectors
 import signal
+import stat
 import subprocess
 import time
 import uuid
 
 from cauce_container_proc import open_pidfd, pidfd_running, signal_pidfd
+from fleet_executor_view import open_directory
 from provider_login_native import Frames, boot_identity, pin_identity, process_identity
 from provider_login_state import (
     LoginFailure,
@@ -107,16 +109,45 @@ def helper_mount(observed: dict, *, cleanup: bool = False) -> bool:
     if expected[0].get('Source') == str(source):
         return True
     if cleanup:
-        from fleet_executor_policy import SafeFailure
-        from fleet_executor_rebind import bound_release
-        try:
-            previous = bound_release(observed, source.parents[1])
-        except SafeFailure:
-            return False
         lifecycle = [row for row in mounts if row.get('Destination') == '/cauce/lifecycle']
-        return previous is not None and expected[0].get('Source') == str(previous / 'ops/cli') \
-            and len(lifecycle) == 1 and lifecycle[0].get('Type') == 'bind' and lifecycle[0].get('RW') is False
+        if len(lifecycle) != 1 or lifecycle[0].get('Type') != 'bind' or lifecycle[0].get('RW') is not False:
+            return False
+        mounted = lifecycle[0].get('Source')
+        suffix = '/ops/container-runtime'
+        if not isinstance(mounted, str) or not mounted.endswith(suffix):
+            return False
+        previous = pathlib.Path(mounted[:-len(suffix)])
+        current = source.parents[1]
+        revision = r'(?:[0-9a-f]{40}|[0-9a-f]{64})'
+        return re.fullmatch(revision, current.name) is not None and re.fullmatch(revision, previous.name) is not None \
+            and previous != current and previous.parent == current.parent \
+            and expected[0].get('Source') == str(previous / 'ops/cli') \
+            and lifecycle[0].get('Source') == str(previous / 'ops/container-runtime') \
+            and trusted_release_directory(previous) and trusted_release_directory(previous / 'ops') \
+            and all(trusted_release_directory(previous / tree, recursive=True)
+                    for tree in ('ops/cli', 'ops/container-runtime'))
     return False
+
+
+def trusted_release_directory(directory: pathlib.Path, *, recursive: bool = False) -> bool:
+    try:
+        descriptor = open_directory(directory)
+        try:
+            details = os.fstat(descriptor)
+            if details.st_uid not in {0, os.geteuid()} or details.st_mode & 0o022:
+                return False
+            for name in os.listdir(descriptor) if recursive else ():
+                details = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if details.st_uid not in {0, os.geteuid()} or details.st_mode & 0o022 \
+                        or not (stat.S_ISREG(details.st_mode) or stat.S_ISDIR(details.st_mode)):
+                    return False
+                if stat.S_ISDIR(details.st_mode) and not trusted_release_directory(directory / name, recursive=True):
+                    return False
+            return True
+        finally:
+            os.close(descriptor)
+    except (OSError, ValueError):
+        return False
 
 
 def observe(binding: dict, *, absent: bool = False) -> bool:
@@ -147,9 +178,12 @@ def observe(binding: dict, *, absent: bool = False) -> bool:
     return True
 
 
-def command(binding: dict, *arguments: str) -> list[str]:
-    return [DOCKER, 'exec', '-i', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1',
-            binding['container_id'], binding['python'], binding['helper'], *arguments]
+def command(binding: dict, *arguments: str, probe: str | None = None) -> list[str]:
+    bootstrap = ('import runpy,sys;sys.path.insert(0,"/cauce/executor");'
+                 'runpy.run_path(sys.argv.pop(1),run_name="__main__")')
+    program = [probe] if probe is not None else [bootstrap, binding['helper'], *arguments]
+    return [DOCKER, 'exec', '-i', '--user', '0', '-w', '/',
+            binding['container_id'], binding['python'], '-I', '-B', '-c', *program]
 
 
 def remote_cleanup(binding: dict, identity: str) -> dict:
@@ -166,7 +200,7 @@ def remote_cleanup(binding: dict, identity: str) -> dict:
             '    if stream.read(4096) != b"/bin/sleep\\0infinity\\0":\n        raise SystemExit(2)\n'
             'if os.path.lexists(' + repr(REMOTE_STATE) + '):\n    raise SystemExit(2)\n'
             'print(json.dumps({"stopped_verified":True}))\n')
-        result = subprocess.run([*command(binding)[:-1], '-c', probe], capture_output=True,
+        result = subprocess.run(command(binding, probe=probe), capture_output=True,
             timeout=8, env={'PATH': '/usr/bin:/bin'})
     if result.returncode or len(result.stdout) > 1024:
         raise LoginFailure('remote login stop was not observed')

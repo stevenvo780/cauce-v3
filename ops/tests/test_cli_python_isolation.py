@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -10,6 +12,30 @@ CLI = pathlib.Path(__file__).resolve().parents[1] / 'cli'
 
 
 class IsolatedPythonInvocationTest(unittest.TestCase):
+    def test_container_python_ignores_untrusted_modules_and_preserves_the_action_directory(self):
+        sys.path.insert(0, str(CLI))
+        from fleet_executor_container import isolated_python
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            working = root / 'workspace'
+            working.mkdir()
+            for directory in (root, working):
+                for module in ('json', 'sitecustomize', 'runpy'):
+                    (directory / (module + '.py')).write_text('raise SystemExit("poisoned-module")\n')
+            script = root / 'observe.py'
+            script.write_text('import json,os,sys;print(json.dumps({"cwd":os.getcwd(),"argv":sys.argv[1:],"path":sys.path}))\n')
+            environment = {**os.environ, 'PYTHONPATH': str(root), 'PYTHONHOME': str(root)}
+            observed = subprocess.run(isolated_python(sys.executable, str(script), '--observed', cwd=str(working)),
+                cwd=working, env=environment, capture_output=True, text=True, timeout=10)
+            self.assertEqual(observed.returncode, 0, observed.stderr)
+            document = json.loads(observed.stdout)
+            self.assertEqual(document['cwd'], str(working))
+            self.assertEqual(document['argv'], ['--observed'])
+            self.assertEqual(document['path'][:2], ['/cauce/executor', '/cauce/lifecycle'])
+            self.assertNotIn('', document['path'])
+            self.assertNotIn(str(root), document['path'])
+            self.assertNotIn(str(working), document['path'])
+
     def test_panel_attach_and_diagnose_do_not_import_cwd_modules(self):
         panel = (CLI / 'cauce-panel').read_text(encoding='utf-8')
         diagnose = (CLI / 'cauce-diagnose').read_text(encoding='utf-8')

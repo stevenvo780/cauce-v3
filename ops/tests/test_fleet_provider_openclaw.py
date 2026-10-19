@@ -177,9 +177,10 @@ class OpenClawProviderTest(unittest.TestCase):
         for call, script, action in zip(execute.call_args_list,
                 ('fleet_provider_openclaw.py', 'fleet_provider_identity.py'), ('--prepare', '--prepare-extensions'), strict=True):
             argv = call.args[0]
-            self.assertEqual(argv, [fleet_executor_container.DOCKER, 'exec', '-i', '--user', agent['runtime_user'],
-                '--env', 'PYTHONDONTWRITEBYTECODE=1', 'a' * 64, agent['_placement']['python'],
-                f'{fleet_executor_container.EXECUTOR_DESTINATION}/{script}', action])
+            self.assertEqual(argv[:8], [fleet_executor_container.DOCKER, 'exec', '-i', '-w', '/',
+                '--user', agent['runtime_user'], 'a' * 64])
+            self.assertEqual(argv[8:12], [agent['_placement']['python'], '-I', '-B', '-c'])
+            self.assertEqual(argv[-3:], ['/', f'{fleet_executor_container.EXECUTOR_DESTINATION}/{script}', action])
             raw = call.kwargs['input_data']
             self.assertIsInstance(raw, bytes)
             self.assertLessEqual(len(raw), 262144)

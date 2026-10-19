@@ -81,8 +81,8 @@ def container_profile(policy: dict, raw_agent: dict, binding: dict):
     command = ('import json,os,sys;fd=os.open("/",os.O_RDONLY|os.O_DIRECTORY);'
         '\nfor part in sys.argv[1].split("/")[1:]:\n next_fd=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd);os.close(fd);fd=next_fd'
         '\nst=os.fstat(fd);print(json.dumps({"uid":os.getuid(),"owner":st.st_uid,"mode":st.st_mode&511}));os.close(fd)')
-    observed = json.loads(docker('exec', '--user', agent['runtime_user'], identity['container_id'],
-        agent['_placement']['python'], '-c', command, str(profile)))
+    observed = json.loads(docker('exec', '-w', '/', '--user', agent['runtime_user'], identity['container_id'],
+        agent['_placement']['python'], '-I', '-B', '-c', command, str(profile)))
     if not isinstance(observed, dict) or set(observed) != {'uid', 'owner', 'mode'} \
             or type(observed['uid']) is not int or observed['uid'] <= 0 \
             or observed['owner'] != observed['uid'] or observed['mode'] & 0o077:

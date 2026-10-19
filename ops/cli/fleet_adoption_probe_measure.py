@@ -119,7 +119,7 @@ def docker_observation(row: dict) -> dict:
     source = pathlib.Path(__file__).read_text().replace('from fleet_adoption_probe_policy import ProbeFailure, digest_file, open_directory', '')
     source = source.replace('from __future__ import annotations', '')
     script = policy_source + '\n' + source + '\nvalue=json.load(sys.stdin)\nprint(json.dumps(observe_local(value["row"],value["container"])))\n'
-    measured = subprocess.run(['docker', 'exec', '-i', '--user', '0', container_id, '/usr/bin/python3', '-B', '-c', script],
+    measured = subprocess.run(['docker', 'exec', '-i', '-w', '/', '--user', '0', container_id, '/usr/bin/python3', '-I', '-B', '-c', script],
                              input=json.dumps({'row': row, 'container': context}), check=True, capture_output=True, text=True, timeout=30)
     if len(measured.stdout) > 8192:
         raise ProbeFailure('observation_exceeds_limit')

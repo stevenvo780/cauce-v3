@@ -122,7 +122,7 @@ credencial_env_de() {  # $1=alias $2=harness  -> "VAR=valor", o nada
   local h key
   case "$2" in codex) key=CODEX_HOME ;; claude) key=CLAUDE_CONFIG_DIR ;; *) return 0 ;; esac
   if es_host_native "$1"; then
-    h=$(systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null | python3 -c 'import shlex,sys; values=dict(item.split("=",1) for item in shlex.split(sys.stdin.read())); sys.stdout.write(values.get(sys.argv[1],""))' "$key") || return 1
+    h=$(systemctl --user show "cauce-v3-host-$1.service" -p Environment --value 2>/dev/null | python3 -I -B -c 'import shlex,sys; values=dict(item.split("=",1) for item in shlex.split(sys.stdin.read())); sys.stdout.write(values.get(sys.argv[1],""))' "$key") || return 1
     [ -n "$h" ] && printf '%s=%s\n' "$key" "$h"
     return 0
   fi
@@ -275,7 +275,7 @@ cmd_flota() {
 }
 
 openclaw_sesiones() {  # $1=alias $2=contenedor $3=usuario $4=stateDirectory
-  docker exec --user "$3" "$2" python3 -c '
+  docker exec --user "$3" -w / "$2" python3 -I -B -c '
 import json, os, subprocess, sys
 alias = sys.argv[1]
 state = sys.argv[2]
@@ -405,7 +405,7 @@ cmd_entrar() {
       pendientes=$(avisos "$a" "$ctr" "$cuser" "$state" "$harness")
       if [ -n "$pendientes" ]; then
         printf "\n  %s%savisos de la sesion compartida:%s\n" "$c_err" "$c_b" "$c_reset"
-        printf '%s\n' "$pendientes" | python3 -c '
+        printf '%s\n' "$pendientes" | python3 -I -B -c '
 import json,sys
 for line in sys.stdin:
     line=line.strip()

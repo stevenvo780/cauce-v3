@@ -51,8 +51,8 @@ finally:
 
 
 def recover_docker(row: dict, session_nonce: str, identity: dict) -> None:
-    result = subprocess.run(['docker', 'exec', '-i', '--user', '0', row['observation']['container_id'],
-        '/usr/bin/python3', '-B', '-c', source()], input=json.dumps({'action': 'recover', 'row': row, 'session_nonce': session_nonce, 'identity': identity}) + '\n',
+    result = subprocess.run(['docker', 'exec', '-i', '-w', '/', '--user', '0', row['observation']['container_id'],
+        '/usr/bin/python3', '-I', '-B', '-c', source()], input=json.dumps({'action': 'recover', 'row': row, 'session_nonce': session_nonce, 'identity': identity}) + '\n',
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=45)
     if result.returncode != 0 or json.loads(result.stdout).get('ok') is not True:
         raise ProbeFailure('container_lifecycle_recovery_unavailable')
@@ -84,7 +84,7 @@ class DockerLifecycleRetainer:
 
     def acquire(self) -> None:
         container_id = self.row['observation']['container_id']
-        self.child = subprocess.Popen(['docker', 'exec', '-i', '--user', '0', container_id, '/usr/bin/python3', '-B', '-c', source()],
+        self.child = subprocess.Popen(['docker', 'exec', '-i', '-w', '/', '--user', '0', container_id, '/usr/bin/python3', '-I', '-B', '-c', source()],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
         self.selector.register(self.child.stdout, selectors.EVENT_READ)
         self.send({'row': self.row, 'container': self.measured['container'], 'identity': self.measured['lifecycle_identity'], 'session_nonce': self.session_nonce})

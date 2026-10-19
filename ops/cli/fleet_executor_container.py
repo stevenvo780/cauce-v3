@@ -100,6 +100,12 @@ def docker(*arguments: str) -> bytes:
     return checked_command([DOCKER, *arguments], timeout=40)
 
 
+def isolated_python(python: str, script: str, *arguments: str, cwd: str = '/') -> list[str]:
+    program = ('import os,runpy,sys;sys.path[:0] = ["/cauce/executor","/cauce/lifecycle"];'
+               'os.chdir(sys.argv.pop(1));runpy.run_path(sys.argv.pop(1),run_name="__main__")')
+    return [python, '-I', '-B', '-c', program, cwd, script, *arguments]
+
+
 def expected_labels(policy: dict, agent: dict) -> dict:
     labels = {'cauce.fleet.runtime_key': agent['runtime_key'], 'cauce.fleet.tenant': agent['tenant_id'],
             'cauce.fleet.alias': agent['alias'], 'cauce.fleet.host': policy['host_id'], 'cauce.fleet.owner': policy['executor_user']}
@@ -379,8 +385,8 @@ def identity_for(agent: dict, observed: dict) -> dict:
 
 def helper(agent: dict, identity: dict, action: str, *extra: str) -> bytes:
     python = str(path(agent['_placement']['python']))
-    return docker('exec', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
-                  python, f'{HELPER_DESTINATION}/{HELPER.name}', action, *extra)
+    return docker('exec', '-w', '/', '--user', '0', identity['container_id'],
+                  *isolated_python(python, f'{HELPER_DESTINATION}/{HELPER.name}', action, *extra))
 
 
 def user_identity(agent: dict, identity: dict) -> tuple[str, str]:
@@ -438,8 +444,9 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     prepare_profile(policy, agent, operation_id=operation_id)
     helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
     view = pathlib.Path('/run/cauce-credentials') / agent['runtime_key'] / ('bootstrap' if bootstrap else 'normal')
-    checked_command([DOCKER, 'exec', '-i', '--user', '0', '--env', 'PYTHONDONTWRITEBYTECODE=1', identity['container_id'],
-        agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_view.py', '--root', str(view), '--uid', uid, '--gid', gid],
+    checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', '0', identity['container_id'],
+        *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_view.py',
+                         '--root', str(view), '--uid', uid, '--gid', gid)],
         input_data=json.dumps(payload_for(policy, agent, bootstrap)).encode())
     environment = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': agent['home_directory'], 'CAUCE_ALIAS': agent['alias'], 'CAUCE_RUNTIME_KEY': agent['runtime_key'], 'CAUCE_TENANT_ID': agent['tenant_id'],
                    'CAUCE_TENANT': agent['tenant_id'], 'CAUCE_STATE_DIR': agent['state_directory'], 'CAUCE_CONTROL_DIR': str(identity['control']),
@@ -453,10 +460,11 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
     arguments = [f'{key}={value}' for key, value in environment.items()]
     try:
-        docker('exec', '-d', '--user', '0', *(['--workdir', workspace] if managed else []), identity['container_id'], '/usr/bin/env', '-i', *arguments, agent['_placement']['python'],
-               f'{HELPER_DESTINATION}/{HELPER.name}', 'run', *lifecycle_arguments(agent, identity),
+        docker('exec', '-d', '-w', '/', '--user', '0', identity['container_id'], '/usr/bin/env', '-i', *arguments,
+               *isolated_python(agent['_placement']['python'], f'{HELPER_DESTINATION}/{HELPER.name}', 'run', *lifecycle_arguments(agent, identity),
                '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', uid, '--runtime-gid', gid,
-               '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'], bundle['executable'], *bundle['argv'])
+               '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'], bundle['executable'], *bundle['argv'],
+               cwd=workspace if managed else observed.get('Config', {}).get('WorkingDir') or '/'))
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             try:
