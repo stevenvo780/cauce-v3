@@ -6,10 +6,13 @@ export interface ProviderAuthRequest {
   account_id: string; harness_id: string; host_id: string; runtime_user: string; profile_id: string;
 }
 export type ProviderAuthStatus = 'opening' | 'awaiting_login' | 'verifying' | 'authenticated' | 'cancelled' | 'expired' | 'failed';
+export type ProviderAuthCode = 'AUTHORITY_REVOKED' | 'SESSION_CONFLICT' | 'INVALID_REQUEST' | 'HOST_UNAVAILABLE' | 'RUNTIME_DRIFT'
+  | 'STOP_UNCONFIRMED' | 'IDENTITY_MISMATCH' | 'FUNCTIONAL_CHECK_FAILED' | 'LOGIN_FAILED' | 'SESSION_EXPIRED';
+export type ProviderAuthReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
 export interface ProviderAuthSnapshot {
   session_id: string; operation_id: string; provider_id: ProviderAuthRequest['provider_id']; account_id: string;
   harness_id: string; host_id: string; runtime_user: string; profile_id: string; method: 'device' | 'terminal';
-  status: ProviderAuthStatus; expires_at: string; cleanup_pending: boolean; error: string | null;
+  status: ProviderAuthStatus; expires_at: string; cleanup_pending: boolean; error: ProviderAuthCode | null; reason?: ProviderAuthReason;
 }
 export interface ProviderAuthClient {
   resolveProviderAuthOperation(id: string): Promise<ProviderAuthRequest>;
@@ -23,8 +26,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,63}$/u;
 const PROVIDERS = ['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'muse', 'agy'];
 const STATUSES = ['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed'];
-const CODES = ['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'STOP_UNCONFIRMED',
+const CODES = ['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'RUNTIME_DRIFT', 'STOP_UNCONFIRMED',
   'IDENTITY_MISMATCH', 'FUNCTIONAL_CHECK_FAILED', 'LOGIN_FAILED', 'SESSION_EXPIRED'];
+const REASONS = ['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT'];
 const SNAPSHOT_KEYS = ['session_id', 'operation_id', 'provider_id', 'account_id', 'harness_id', 'host_id', 'runtime_user',
   'profile_id', 'method', 'status', 'expires_at', 'cleanup_pending', 'error'];
 function invalid(): never { throw new Error('El servidor no acreditó esta conexión.'); }
@@ -35,7 +39,9 @@ function record(value: unknown): Record<string, unknown> {
 }
 function snapshot(value: unknown, expectedId?: string): ProviderAuthSnapshot {
   const result = record(value);
-  if (Object.keys(result).length !== SNAPSHOT_KEYS.length || Object.keys(result).some(key => !SNAPSHOT_KEYS.includes(key))
+  const keys = Object.hasOwn(result, 'reason') ? [...SNAPSHOT_KEYS, 'reason'] : SNAPSHOT_KEYS;
+  if (Object.keys(result).length !== keys.length || Object.keys(result).some(key => !keys.includes(key))
+      || (Object.hasOwn(result, 'reason') && (typeof result.reason !== 'string' || !REASONS.includes(result.reason)))
       || typeof result.session_id !== 'string' || !UUID.test(result.session_id)
       || (expectedId !== undefined && result.session_id !== expectedId)
       || typeof result.operation_id !== 'string' || !UUID.test(result.operation_id)

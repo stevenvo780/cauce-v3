@@ -152,7 +152,8 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
   const cancel = cancellable(operation);
   const rawResume = resumable(operation);
   const resume = rawResume && !stale;
-  const showAuth = operation.status === 'awaiting_auth' && !!onAuthRefreshed;
+  const runtimeDrift = operation.error?.code === 'RUNTIME_DRIFT';
+  const showAuth = operation.status === 'awaiting_auth' && !runtimeDrift && !!onAuthRefreshed;
   const cancelPrimary = cancel && (!!blocking || stale || !resume) && !showAuth;
   const error = operation.error;
   const human = error ? operationErrorHuman(error) : undefined;
@@ -168,7 +169,7 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
     <OperationStepBar operation={operation} />
     {physical && operation.kind !== 'purge' ? <p className="m-0 text-sm" role="status">{physical}</p> : null}
     {operation.kind === 'purge' ? <PurgeOutcome operation={operation} /> : null}
-    {error && operation.status === 'failed' ? <p className="notice m-0 grid gap-1" role="alert">
+    {error && (operation.status === 'failed' || runtimeDrift) ? <p className="notice m-0 grid gap-1" role="alert">
       <span className="flex items-start gap-1.5"><AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /><span>{human?.message} {human?.next}</span></span>
     </p> : null}
     {showAuth ? <AuthOperationPanel operation={operation} allowed={current} onRefreshed={onAuthRefreshed} /> : null}

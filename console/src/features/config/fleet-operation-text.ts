@@ -10,6 +10,7 @@ export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string
   AUTHORITY_REVOKED: 'La autoridad que respaldaba la operación fue revocada.',
   REVISION_CONFLICT: 'La configuración cambió mientras corría la operación.',
   HOST_UNAVAILABLE: 'La computadora del agente no respondió o no está disponible.',
+  RUNTIME_DRIFT: 'El contenedor del agente quedó con una imagen anterior.',
   DEPENDENCIES_PRESENT: 'Quedan dependencias que impiden continuar.',
   STEP_FAILED: 'El ejecutor no pudo completar este paso.',
   PROVIDER_AUTH_REQUIRED: 'El proveedor pide autenticarse de nuevo.',
@@ -43,7 +44,8 @@ export const OPERATION_STATUS_META: Record<FleetOperation['status'], OperationSt
 };
 
 export function operationStatusMeta(operation: FleetOperation): OperationStatusMeta {
-  return OPERATION_STATUS_META[operation.status];
+  const meta = OPERATION_STATUS_META[operation.status];
+  return operation.error?.code === 'RUNTIME_DRIFT' ? { ...meta, label: 'Requiere preparación', tone: 'danger' } : meta;
 }
 
 export function operationTargetName(operation: FleetOperation): string {
@@ -82,6 +84,7 @@ const ERROR_NEXT: Record<NonNullable<FleetOperation['error']>['code'], string> =
   PROVIDER_AUTH_REQUIRED: 'Inicia sesión para continuar.',
   STEP_FAILED: 'Reintenta desde el paso que falló; si se repite, cancela y revisa la computadora.',
   HOST_UNAVAILABLE: 'Espera a que la computadora vuelva y reintenta, o cancela.',
+  RUNTIME_DRIFT: 'Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.',
   AUTHORITY_REVOKED: 'Cancela y vuelve a lanzarla con un permiso vigente.',
   REVISION_CONFLICT: 'Cancela y vuelve a lanzarla con la configuración actual.',
   DEPENDENCIES_PRESENT: 'Resuelve las dependencias que quedan y reintenta.',
@@ -140,6 +143,10 @@ export function physicalResult(operation: FleetOperation): string | undefined {
 export function operationHeadline(operation: FleetOperation, hostId?: string): string {
   const title = operationTitle(operation, hostId);
   const progress = stepProgress(operation);
+  if (operation.error?.code === 'RUNTIME_DRIFT') {
+    const human = operationErrorHuman(operation.error);
+    return `${human.message} ${human.next}`;
+  }
   if (operation.status === 'awaiting_auth') {
     return operation.target.resource === 'agent'
       ? `${operationTargetName(operation)} está esperando que inicies sesión en su proveedor.`
@@ -184,7 +191,7 @@ export function partitionOperations(operations: readonly FleetOperation[]): { at
 export function operationSummary(operation: FleetOperation): string {
   const error = operation.error;
   return `${operationTitle(operation)} · ${OPERATION_STATUS_META[operation.status].label}`
-    + (error && operation.status === 'failed' ? ` · ${operationErrorHuman(error).message}` : '');
+    + (error && (operation.status === 'failed' || error.code === 'RUNTIME_DRIFT') ? ` · ${operationErrorHuman(error).message}` : '');
 }
 
 export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 'preserve' | 'blocked'): string[] {
@@ -262,5 +269,6 @@ export function cancellable(operation: FleetOperation): boolean {
   return ['queued', 'running', 'awaiting_auth', 'failed'].includes(operation.status);
 }
 export function resumable(operation: FleetOperation): boolean {
-  return operation.status === 'awaiting_auth' || (operation.status === 'failed' && operation.error?.retryable === true);
+  return operation.error?.code !== 'RUNTIME_DRIFT'
+    && (operation.status === 'awaiting_auth' || (operation.status === 'failed' && operation.error?.retryable === true));
 }

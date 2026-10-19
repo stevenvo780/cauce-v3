@@ -50,6 +50,48 @@ describe('provider auth panel', () => {
     await screen.findByText(/No se confirmó la parada/);
     expect(screen.queryByRole('button', { name: 'Conectar cuenta' })).not.toBeInTheDocument();
   });
+  it.each([
+    ['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'La imagen o las etiquetas de propiedad del contenedor'],
+    ['CONTAINER_RESOURCE_LIMITS_DRIFT', 'Los límites de recursos del contenedor'],
+    ['CONTAINER_ISOLATION_DRIFT', 'El aislamiento del contenedor'],
+  ] as const)('explains %s while preserving unconfirmed cleanup', async (reason, expected) => {
+    const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', cleanup_pending: true, error: 'STOP_UNCONFIRMED', reason }) as T;
+    const done = vi.fn(); render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} onAuthenticated={done} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('No se confirmó la parada.'); expect(alert).toHaveTextContent(expected);
+    expect(alert).toHaveTextContent('El perfil sigue reservado; revisa su recuperación y confirma la parada antes de volver a iniciar sesión.');
+    expect(screen.queryByRole('button', { name: 'Conectar cuenta' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Verificar conexión' })).not.toBeInTheDocument();
+    expect(done).not.toHaveBeenCalled();
+  });
+  it('explains an unconfirmed stop without claiming the released profile is reserved', async () => {
+    const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', cleanup_pending: false,
+      error: 'STOP_UNCONFIRMED', reason: 'CONTAINER_RESOURCE_LIMITS_DRIFT' }) as T;
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('No se confirmó la parada. Los límites de recursos del contenedor');
+    expect(alert).toHaveTextContent('Revisa su recuperación y confirma la parada antes de volver a iniciar sesión.');
+    expect(alert.textContent).not.toContain('reservado');
+  });
+  it('rejects an unknown cleanup reason without echoing it', async () => {
+    const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', cleanup_pending: true,
+      error: 'STOP_UNCONFIRMED', reason: 'SYNTHETIC_PRIVATE_REASON' }) as T;
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo verificar esta conexión.');
+    expect(document.body.textContent).not.toContain('SYNTHETIC_PRIVATE_REASON');
+  });
+  it('explains an unconfirmed stop HTTP error without echoing private details', async () => {
+    const fetcher: RequestFn = () => Promise.reject(new ApiError('SYNTHETIC_PRIVATE_TOKEN', 503, 'STOP_UNCONFIRMED'));
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('No se confirmó la parada. Revisa su recuperación y confirma la parada');
+    expect(alert.textContent).not.toContain('reservado');
+    expect(alert.textContent).not.toContain('SYNTHETIC_PRIVATE_TOKEN');
+  });
   it('uses CSRF requests and keeps a failed device login unverified', async () => {
     const calls: { options: unknown; init: RequestInit | undefined }[] = [];
     const fetcher: RequestFn = async <T,>(_path: string, init?: RequestInit, options?: RequestOptions) => { calls.push({ options, init });
@@ -72,8 +114,26 @@ describe('provider auth panel', () => {
     render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Revisa su conexión');
+    expect(alert).toHaveTextContent('El ordenador kratos no está disponible. Revisa su estado y su conexión');
     expect(alert.textContent).not.toContain('ENGLISH SERVER ERROR');
+  });
+  it.each(['RUNTIME_DRIFT', 'HOST_UNAVAILABLE'] as const)('explains %s from a validated failed snapshot', async error => {
+    const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', error }) as T;
+    const done = vi.fn(); render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} onAuthenticated={done} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(error === 'RUNTIME_DRIFT'
+      ? 'El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.'
+      : 'El ordenador kratos no está disponible. Revisa su estado y su conexión');
+    expect(done).not.toHaveBeenCalled();
+  });
+  it('explains runtime drift from an HTTP error without showing server details', async () => {
+    const fetcher: RequestFn = () => Promise.reject(new ApiError('SYNTHETIC_PRIVATE_TOKEN', 503, 'RUNTIME_DRIFT'));
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.');
+    expect(alert.textContent).not.toContain('SYNTHETIC_PRIVATE_TOKEN');
   });
   it('cancels and removes the previous sensitive session when its target identity changes', async () => {
     const paths: string[] = [];

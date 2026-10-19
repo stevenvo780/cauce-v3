@@ -6,6 +6,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi, testApi } from '../../test/render';
 import { ApiProvider } from '../../api/context';
 import { AuthOperationPanel } from './AuthOperationPanel';
+import { AgentFleetOperation } from './AgentFleetOperation';
 
 vi.mock('../accounts/ProviderAuthTerminal', () => ({ ProviderAuthTerminal: () => null }));
 const id = '00000000-0000-4000-8000-000000000050';
@@ -32,6 +33,20 @@ async function authenticate() {
   fireEvent.click(await screen.findByRole('button', { name: 'Verificar conexión' }));
 }
 describe('operation-scoped provider authentication', () => {
+  it('requires preparation instead of authentication or resume for a drifted container', () => {
+    const control = vi.fn();
+    renderWithApi(<AgentFleetOperation operation={{ ...operation, error: { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false } }}
+      busy={false} current control={control} onAuthRefreshed={vi.fn()} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.');
+    expect(screen.getByText('Requiere preparación')).toBeInTheDocument();
+    expect(screen.getAllByRole('status')[0]).toHaveTextContent('Cancela esta operación y pulsa Preparar');
+    expect(screen.queryByLabelText('Autenticación de la operación')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reanudar' })).not.toBeInTheDocument();
+    const cancel = screen.getByRole('button', { name: 'Cancelar' });
+    expect(cancel).toBeEnabled(); expect(cancel).toHaveClass('primary');
+    fireEvent.click(cancel); expect(control).toHaveBeenCalledWith('cancel');
+  });
   it('uses the private server scope, hides its profile and rereads current version without automatically resuming', async () => {
     login(); const refreshed = vi.fn(); const resume = vi.fn(); let posted: unknown;
     server.use(http.post('http://localhost/v3/console/provider-auth/sessions', async ({ request }) => {
