@@ -38,6 +38,9 @@ export function agentLifecycleDraft(snapshot: ConfigurationSnapshot, target?: Fl
     row.tenant_id === target.tenant_id && (typeof row.alias === 'string' ? row.alias : row.agent_alias) === target.alias).flatMap((row) =>
     typeof row.room_id === 'string' && typeof row.role === 'string' && typeof row.enabled === 'boolean'
       ? [{ room_id: row.room_id, role: row.role, enabled: row.enabled }] : []) : [];
+  const primaryRoomId = text(agent, 'primary_room_id');
+  const normalizedMemberships = memberships.map((member) =>
+    member.room_id === primaryRoomId ? { ...member, enabled: true } : member);
   return {
     tenantId: target?.tenant_id ?? '', alias: target?.resource === 'agent' ? target.alias : '',
     displayName: text(agent, 'display_name'), runtimeKey: text(agent, 'runtime_key'), harnessId: text(agent, 'harness_id'),
@@ -45,7 +48,7 @@ export function agentLifecycleDraft(snapshot: ConfigurationSnapshot, target?: Fl
     containerName: text(placement, 'container_name'), runtimeUser: text(placement, 'runtime_user'),
     systemdUser: text(placement, 'systemd_user'), homeDirectory: text(placement, 'home_directory'),
     stateDirectory: text(placement, 'state_directory'), primaryAccountId: text(agent, 'primary_account_id'),
-    modelId: text(agent, 'model_id'), primaryRoomId: text(agent, 'primary_room_id'), memberships,
+    modelId: text(agent, 'model_id'), primaryRoomId: text(agent, 'primary_room_id'), memberships: normalizedMemberships,
     reasoningEffort: text(agent, 'reasoning_effort'),
   };
 }

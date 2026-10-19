@@ -7,6 +7,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusPill } from './AgentFleetOperation';
 import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
+import { focusPrimaryMembershipCheckbox, isPrimaryMembershipError, translateFleetOperationError } from './fleet-operation-error-translations';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
@@ -93,7 +94,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     try {
       const receipt = await api.previewFleetOperation(input);
       if (sequence === generation.current && expected === currentFingerprint.current) setValidated({ input, receipt });
-    } catch (cause) { if (sequence === generation.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo previsualizar la operación.'); }
+    } catch (cause) { if (sequence === generation.current) setError(cause instanceof Error ? (translateFleetOperationError(cause.message, draft.primaryRoomId) ?? fleetErrorText(cause.message, flow.operation, kind)) : 'No se pudo previsualizar la operación.'); }
     finally { setSending(false); setPreviewing(false); }
   }
   async function enqueue() {
@@ -104,7 +105,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       const operation = await api.enqueueFleetOperation(validated.input);
       if (sequence === generation.current) { flow.accept(operation); setValidated(undefined); setKey(newKey()); setTypedAlias(''); onDirtyChange?.(false); }
     } catch (cause) {
-      if (sequence === generation.current) setError(cause instanceof Error ? fleetErrorText(cause.message, flow.operation, kind) : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
+      if (sequence === generation.current) setError(cause instanceof Error ? (translateFleetOperationError(cause.message, draft.primaryRoomId) ?? fleetErrorText(cause.message, flow.operation, kind)) : 'No se pudo confirmar el encolado. Reintenta con la misma solicitud.');
     } finally { setSending(false); }
   }
   async function revalidate() {
@@ -175,7 +176,9 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
           onClick={() => { void enqueue(); }}>Encolar operación</button></div>
       {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
-      {error ? <p className="notice" role="alert">{error}</p> : null}
+      {error ? (isPrimaryMembershipError(error)
+        ? <p className="notice" role="alert"><button type="button" className="button secondary" onClick={() => { focusPrimaryMembershipCheckbox(); }}>{error} Ir a la casilla «Habilitar membresía».</button></p>
+        : <p className="notice" role="alert">{error}</p>) : null}
       {samePreview ? <><AgentFleetPreview preview={validated.receipt} />
         <details><summary>Detalles técnicos de la solicitud</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
       {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}

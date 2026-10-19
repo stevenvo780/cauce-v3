@@ -3,6 +3,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { defaultMembershipRole, lifecycleAccountForProvider, lifecycleAccountProvider, lifecycleOptions, membershipRoleOptions, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { estadoDeComputadora } from './fleet-host-model';
+import { PRIMARY_MEMBERSHIP_CHECKBOX_ID } from './fleet-operation-error-translations';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
 
 export function AgentLifecycleFields({ draft, snapshot, capability, target, disabled, edit }: {
@@ -48,7 +49,11 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
       <label>Arnés operativo<select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }}>
         <option value="">Elige un arnés registrado</option>{options('harness_definitions')}
       </select></label>
-      <label>Grupo primario<select value={draft.primaryRoomId} onChange={(event) => { edit({ primaryRoomId: event.target.value }); }}>
+      <label>Grupo primario<select value={draft.primaryRoomId} onChange={(event) => {
+        const nextPrimary = event.target.value;
+        edit({ primaryRoomId: nextPrimary, memberships: draft.memberships.map((entry) =>
+          entry.room_id === nextPrimary ? { ...entry, enabled: true } : entry) });
+      }}>
         <option value="">Elige una membresía</option>{draft.memberships.map((member) =>
           <option key={member.room_id} value={member.room_id}>{JSON.stringify(member.room_id)}</option>)}
       </select></label>
@@ -67,8 +72,11 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
               <option value="">Elige un rol</option>
               {(roles.includes(member.role) || !member.role ? roles : [member.role, ...roles]).map((role) => <option key={role} value={role}>{role}</option>)}
             </select></label>
-              <label><input type="checkbox" checked={member.enabled} onChange={(event) => { replace({ enabled: event.target.checked }); }} />
-                Habilitar membresía {JSON.stringify(room.id)}</label></> : null}
+              <label><input id={draft.primaryRoomId === room.id ? PRIMARY_MEMBERSHIP_CHECKBOX_ID : undefined}
+                data-primary-membership-checkbox={draft.primaryRoomId === room.id ? 'true' : undefined}
+                type="checkbox" checked={member.enabled} onChange={(event) => { replace({ enabled: event.target.checked }); }} />
+                Habilitar membresía {JSON.stringify(room.id)}</label>
+              {draft.primaryRoomId === room.id && !member.enabled ? <p role="note">Para activar el agente su grupo principal ({room.id}) debe quedar habilitado. Marca «Habilitar membresía».</p> : null}</> : null}
           </div>;
         })}
         {!lifecycleOptions(snapshot, 'rooms', draft.tenantId).length ? <p>No hay grupos publicados para este espacio de trabajo.</p> : null}

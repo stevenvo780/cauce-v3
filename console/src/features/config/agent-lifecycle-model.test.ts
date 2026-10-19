@@ -53,7 +53,13 @@ describe('agent lifecycle intent', () => {
     expect(result.error).toMatch(/inmutable/);
     const valid = agentLifecycleRequest(draft, snapshot, capability, 'update', 'request_key', target);
     expect(valid.request).toMatchObject({ target, parameters: { runtime_key: 'runtime-one', primary_room_id: ' Sala ',
-      memberships: [{ room_id: ' Sala ', role: 'rol con espacios', enabled: false }] } });
+      memberships: [{ room_id: ' Sala ', role: 'rol con espacios', enabled: true }] } });
+  });
+  it('enables the primary membership by default when it is paused in the snapshot', () => {
+    const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+    const draft = agentLifecycleDraft(snapshot, target);
+    expect(draft.memberships).toEqual([{ room_id: ' Sala ', role: 'rol con espacios', enabled: true }]);
+    expect(draft.primaryRoomId).toBe(' Sala ');
   });
   it('requires explicit capability and approved host/user/paths before preparing an inactive agent', () => {
     const draft = { ...agentLifecycleDraft(snapshot), tenantId: 'A', alias: 'new-agent', runtimeKey: 'new-agent',

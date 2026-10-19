@@ -94,6 +94,45 @@ it('shows the state directory read-only while a template is selected and editabl
   expect(state).toHaveAttribute('readonly');
 });
 
+it('marks the paused primary membership as enabled by default and explains when unchecked', async () => {
+  const user = userEvent.setup();
+  const withAgent: ConfigurationSnapshot = { ...snapshot, revision: 1,
+    rooms: [{ id: 'grp.test', tenant_id: 'A', display_name: 'Grupo test' }],
+    agents: [{ tenant_id: 'A', alias: 'zz-canary-worker', runtime_key: 'zz-canary-worker', harness_id: 'openclaw', primary_room_id: 'grp.test', host_id: 'test-host', runtime_user: 'runner', home_directory: '/home/runner', state_directory: '/state/zz-canary-worker' }],
+    memberships: [{ tenant_id: 'A', alias: 'zz-canary-worker', room_id: 'grp.test', role: 'agent', enabled: false }],
+    role_policies: [{ role: 'agent' }] };
+  function PausedForm() {
+    const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'zz-canary-worker' };
+    const [draft, setDraft] = useState(() => agentLifecycleDraft(withAgent, target));
+    return <AgentLifecycleFields draft={draft} snapshot={withAgent} capability={capability} disabled={false}
+      edit={patch => { setDraft(previous => ({ ...previous, ...patch })); }} />;
+  }
+  renderWithApi(<PausedForm />);
+  const checkbox = screen.getByRole('checkbox', { name: /Habilitar membresía "grp\.test"/ });
+  expect(checkbox).toBeChecked();
+  expect(checkbox).toHaveAttribute('id', 'primary-membership-enabled');
+  await user.click(checkbox);
+  expect(checkbox).not.toBeChecked();
+  expect(screen.getByRole('note')).toHaveTextContent('Para activar el agente su grupo principal (grp.test) debe quedar habilitado. Marca «Habilitar membresía».');
+});
+
+it('enables a membership when it becomes the primary group', async () => {
+  const user = userEvent.setup();
+  function TwoGroups() {
+    const [draft, setDraft] = useState({ ...agentLifecycleDraft(snapshot), tenantId: 'A', alias: 'worker',
+      runtimeKey: 'worker', harnessId: 'openclaw', hostId: 'test-host', runtimeUser: 'runner', systemdUser: 'runner',
+      homeDirectory: '/home/runner', stateDirectory: '/state/worker', primaryAccountId: 'codex-account',
+      primaryRoomId: 'r1', memberships: [{ room_id: 'r1', role: 'agent', enabled: true }, { room_id: 'r2', role: 'agent', enabled: false }] });
+    const twoRooms: ConfigurationSnapshot = { ...snapshot, rooms: [{ id: 'r1', tenant_id: 'A', display_name: 'Uno' }, { id: 'r2', tenant_id: 'A', display_name: 'Dos' }], role_policies: [{ role: 'agent' }] };
+    return <AgentLifecycleFields draft={draft} snapshot={twoRooms} capability={capability} disabled={false}
+      edit={patch => { setDraft(previous => ({ ...previous, ...patch })); }} />;
+  }
+  renderWithApi(<TwoGroups />);
+  expect(screen.getByRole('checkbox', { name: /Habilitar membresía "r2"/ })).not.toBeChecked();
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Grupo primario' }), 'r2');
+  expect(screen.getByRole('checkbox', { name: /Habilitar membresía "r2"/ })).toBeChecked();
+});
+
 it('offers a membership role select from role_policies with agent preselected', async () => {
   const user = userEvent.setup();
   const withRooms = { ...snapshot, rooms: [{ id: 'r1', tenant_id: 'A' }],

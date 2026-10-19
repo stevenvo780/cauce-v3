@@ -238,6 +238,22 @@ it('shows the newest pending operation on open and still refuses an older versio
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/estado distinto del recibo o una versión anterior/);
 });
+it('translates the primary membership refusal and jumps to its checkbox on click', async () => {
+  renderPanel();
+  server.use(http.post('http://localhost/v3/console/fleet/operations/preview', () =>
+    HttpResponse.json({ error: 'conflict', message: 'primary membership must be enabled in the activation intent' }, { status: 409 })));
+  const user = await fill();
+  const checkbox = screen.getByRole('checkbox', { name: /Habilitar membresía " Sala "/ });
+  await user.click(checkbox);
+  expect(checkbox).not.toBeChecked();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('Para activar el agente su grupo principal ( Sala ) debe quedar habilitado. Marca "Habilitar membresía".');
+  expect(alert).not.toHaveTextContent('primary membership must be enabled');
+  const jump = within(alert).getByRole('button');
+  await user.click(jump);
+  expect(checkbox).toHaveFocus();
+});
 it('keeps an edited operational draft when the inventory re-polls', async () => {
   const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
   const withAgent = { ...snapshot, agents: [{ tenant_id: 'A', alias: 'one', harness_id: 'codex', display_name: 'Uno' }] };
