@@ -228,8 +228,7 @@ test("Codex receives images through its native provider attachment argument", as
     });
     const request = runner.requests[0];
     assert.ok(request);
-    assert.ok(request.args.includes("--image"));
-    assert.ok(request.args.includes("/tmp/cauce-fixture/pixel.png"));
+    assert.ok(request.args.includes("--image=/tmp/cauce-fixture/pixel.png"));
     assert.match(request.stdin, /delivery_mode=native/u);
   }
 });

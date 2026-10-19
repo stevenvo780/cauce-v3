@@ -15,7 +15,8 @@ export function planAttachments(
     const native = harness === "codex" && attachment.kind === "image" &&
       NATIVE_IMAGE_MEDIA_TYPES.has(attachment.mimeType.toLowerCase());
     if (native) {
-      args.push("--image", attachment.path);
+      // Codex's --image takes 1.. values: the separated form swallows the `resume` subcommand that follows.
+      args.push(`--image=${attachment.path}`);
       lines.push(`attachment_${String(index + 1)} delivery_mode=native metadata=${JSON.stringify({
         name: attachment.name, mime_type: attachment.mimeType, size: attachment.size,
         sha256: attachment.sha256,
