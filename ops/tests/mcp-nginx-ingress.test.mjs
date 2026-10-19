@@ -96,7 +96,7 @@ for (const route of routes) {
 test('every gateway proxy overwrites client IP headers and strips forwarded host and protocol', () => {
   const bodies = [...config.matchAll(/^ {2}location .+ \{([\s\S]*?)^ {2}\}/gmu)]
     .map(match => match[1]).filter(body => body.includes('proxy_pass https://gateway:8443;'));
-  assert.equal(bodies.length, 12);
+  assert.equal(bodies.length, 13);
   for (const body of bodies) {
     expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');
@@ -175,4 +175,11 @@ test('space backup downloads stream unbuffered through the same verified gateway
     assert.deepEqual(values(body, directive), values(locationBody('/v3/'), directive));
   }
   assert.deepEqual(values(locationBody('/v3/'), 'proxy_buffering'), []);
+});
+
+test('provider sign-in verify keeps the /v3/ proxy policy and only waits longer', () => {
+  const directives = body => body.split('\n').map(line => line.trim()).filter(Boolean).sort();
+  const verify = directives(locationBody('~ "^/v3/console/provider-auth/sessions/[0-9a-f-]{36}/verify$"'));
+  const general = directives(locationBody('/v3/'));
+  assert.deepEqual(verify, [...general, 'proxy_read_timeout 360s;', 'proxy_send_timeout 360s;'].sort());
 });
