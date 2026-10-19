@@ -93,6 +93,13 @@ const ERROR_NEXT: Record<NonNullable<FleetOperation['error']>['code'], string> =
   CANCELLED: '',
 };
 
+export const GUIDED_RECREATE_LABEL = 'Recrear contenedor e iniciar sesión';
+
+/** Headline for a drifted container when the guided recreate action is available. */
+export function guidedDriftHeadline(): string {
+  return `El contenedor del agente quedó con una imagen anterior. Pulsa «${GUIDED_RECREATE_LABEL}» y la consola lo recrea y abre el inicio de sesión.`;
+}
+
 /** Human message and next action for an operation error. The raw code never belongs here. */
 export function operationErrorHuman(error: NonNullable<FleetOperation['error']>): OperationErrorHuman {
   const fallback = ERRORS[error.code];

@@ -6,9 +6,38 @@ import { Time } from '../../components/ui';
 import { cn } from '../../cn';
 import { AuthOperationPanel } from './AuthOperationPanel';
 import {
-  blockingOperation, blockingText, cancellable, operationErrorHuman, operationHeadline, operationStatusMeta,
+  blockingOperation, blockingText, cancellable, GUIDED_RECREATE_LABEL, guidedDriftHeadline, operationErrorHuman, operationHeadline, operationStatusMeta,
   operationTitle, physicalResult, purgeBlockers, purgeEntries, resumable, STALE_RESUME_TEXT, STEPS,
 } from './fleet-operation-text';
+import {
+  GUIDED_STEPS, guidedProgressLine, guidedStepStatus, isGuidedDrift, isRuntimeDrift,
+  type GuidedState,
+} from './guided-recreate';
+
+export interface GuidedRecreateControl { state: GuidedState; onStart: () => void; onRetry: () => void }
+
+function GuidedStepIcon({ status }: { status: ReturnType<typeof guidedStepStatus> }) {
+  if (status === 'done') return <Check size={13} aria-hidden="true" />;
+  if (status === 'failed') return <X size={13} aria-hidden="true" />;
+  if (status === 'current') return <Loader2 size={13} aria-hidden="true" className="animate-spin" />;
+  return <Circle size={13} aria-hidden="true" />;
+}
+
+export function GuidedRecreateProgress({ state }: { state: GuidedState }) {
+  return <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="Pasos para recrear e iniciar sesión">
+    {GUIDED_STEPS.map((step) => {
+      const status = guidedStepStatus(state, step.id);
+      return <li key={step.id} data-step={step.id} data-status={status}
+        className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap',
+          status === 'done' ? 'border-ok/30 bg-ok-soft text-ok-ink'
+            : status === 'failed' ? 'border-danger/30 bg-danger-soft text-danger-ink font-semibold'
+              : status === 'current' ? 'border-info/30 bg-info-soft text-info-ink'
+                : 'border-line bg-subtle text-muted')}>
+        <GuidedStepIcon status={status} />{step.label}
+      </li>;
+    })}
+  </ol>;
+}
 
 const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio', network: 'Red' };
 
@@ -143,26 +172,33 @@ export function PurgeOutcome({ operation }: { operation: FleetOperation }) {
   return <section aria-label="Resultado de la purga"><p role="status" className="m-0 text-sm">{physical}</p></section>;
 }
 
-export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed, intended, stale = false, hostId }: {
+export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed, intended, stale = false, hostId, guided }: {
   operation: FleetOperation; busy: boolean; current: boolean; control: (action: 'cancel' | 'resume') => void;
   onAuthRefreshed?: (value: FleetOperation) => void;
   intended?: FleetOperation['kind']; stale?: boolean; hostId?: string | undefined;
+  guided?: GuidedRecreateControl;
 }) {
   const blocking = intended ? blockingOperation(operation, intended) : undefined;
   const cancel = cancellable(operation);
   const rawResume = resumable(operation);
   const resume = rawResume && !stale;
-  const runtimeDrift = operation.error?.code === 'RUNTIME_DRIFT';
+  const runtimeDrift = isRuntimeDrift(operation);
+  const drift = isGuidedDrift(operation);
+  const guidedActive = !!guided && guided.state.status !== 'idle';
+  const showGuided = !!guided && (drift || guidedActive);
   const showAuth = operation.status === 'awaiting_auth' && !runtimeDrift && !!onAuthRefreshed;
-  const cancelPrimary = cancel && (!!blocking || stale || !resume) && !showAuth;
+  const cancelPrimary = cancel && (!!blocking || stale || !resume) && !showAuth && !showGuided;
   const error = operation.error;
   const human = error ? operationErrorHuman(error) : undefined;
   const physical = operation.status === 'succeeded' ? physicalResult(operation) : undefined;
   const showResume = rawResume;
   const showCancel = cancel;
+  const guidedBusy = !!guided && guided.state.status === 'running';
+  const hideLegacyActions = showGuided && (drift || guided.state.status === 'running' || guided.state.status === 'failed');
+  const headline = drift && guided ? guidedDriftHeadline() : operationHeadline(operation, hostId);
   return <section className="agent-fleet-receipt grid gap-3" aria-label="Operación de flota">
     <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-      <p role="status" className="m-0 min-w-0 flex-1 text-sm font-semibold break-words">{operationHeadline(operation, hostId)}</p>
+      <p role="status" className="m-0 min-w-0 flex-1 text-sm font-semibold break-words">{headline}</p>
       <OperationStatusPill operation={operation} />
     </div>
     <OperationMetaLine operation={operation} />
@@ -170,18 +206,32 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
     {physical && operation.kind !== 'purge' ? <p className="m-0 text-sm" role="status">{physical}</p> : null}
     {operation.kind === 'purge' ? <PurgeOutcome operation={operation} /> : null}
     {error && (operation.status === 'failed' || runtimeDrift) ? <p className="notice m-0 grid gap-1" role="alert">
-      <span className="flex items-start gap-1.5"><AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /><span>{human?.message} {human?.next}</span></span>
+      <span className="flex items-start gap-1.5"><AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /><span>{showGuided && drift ? human?.message : `${human?.message ?? ''} ${human?.next ?? ''}`}</span></span>
     </p> : null}
-    {showAuth ? <AuthOperationPanel operation={operation} allowed={current} onRefreshed={onAuthRefreshed} /> : null}
-    {blocking && intended ? <p className="notice m-0" role="note">{blockingText(blocking, intended)}</p> : null}
+    {showGuided ? <section aria-label="Recrear contenedor e iniciar sesión" className="grid gap-2">
+      <p role="status" className="m-0 text-sm">{guidedProgressLine(guided.state)}</p>
+      <GuidedRecreateProgress state={guided.state} />
+      {guided.state.status === 'failed' && guided.state.message ? <p className="notice m-0" role="alert">{guided.state.message}</p> : null}
+      <div className="acciones flex flex-wrap items-center gap-2">
+        {guided.state.status === 'idle' ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { guided.onStart(); }}>{GUIDED_RECREATE_LABEL}</button> : null}
+        {guided.state.status === 'running' ? <button type="button" className="button primary" disabled aria-busy="true"><Loader2 size={14} aria-hidden="true" className="animate-spin" />Recreando…</button> : null}
+        {guided.state.status === 'failed' ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { guided.onRetry(); }}>Reintentar</button> : null}
+        {guided.state.status === 'awaiting_auth' ? <p className="m-0 text-sm" role="status">Complétalo en la ventana del proveedor.</p> : null}
+        {guided.state.status === 'done' ? <p className="m-0 text-sm" role="status">Contenedor recreado.</p> : null}
+        {showCancel ? <button type="button" className="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline underline-offset-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !current || guidedBusy} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
+        {showCancel ? <span className="text-xs text-muted">{drift ? 'Cancelar solo cancela la operación desfasada, sin recrear el contenedor.' : 'Cancelar detiene esta operación sin seguir el camino guiado.'}</span> : null}
+      </div>
+    </section> : null}
+    {showAuth ? <AuthOperationPanel operation={operation} allowed={current} onRefreshed={onAuthRefreshed} autoOpen={guided?.state.status === 'awaiting_auth'} /> : null}
+    {blocking && intended && !showGuided ? <p className="notice m-0" role="note">{blockingText(blocking, intended)}</p> : null}
     {stale ? <p className="notice m-0" role="alert">{STALE_RESUME_TEXT}</p> : null}
     {!current ? <p className="notice m-0">No pudimos confirmar la última lectura de esta operación. Pulsa «Releer operación» para actualizarla antes de seguir.</p> : null}
-    {(showResume || showCancel) ? <div className="acciones flex flex-wrap items-center gap-2">
+    {!hideLegacyActions && (showResume || showCancel) ? <div className="acciones flex flex-wrap items-center gap-2">
       {showResume ? <button type="button" className={resume && !cancelPrimary && !showAuth ? 'button primary' : 'button secondary'} disabled={busy || !current || !resume} onClick={() => { control('resume'); }}>
         {operation.status === 'failed' ? 'Reintentar' : 'Reanudar'}
       </button> : null}
       {cancelPrimary ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
-      {showCancel && !cancelPrimary ? <button type="button" className="button secondary" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
+      {showCancel && !cancelPrimary && !showGuided ? <button type="button" className="button secondary" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
       {cancelPrimary && (blocking || stale) ? <span className="text-xs text-muted">Cancela esta operación para poder seguir con la que quieres lanzar.</span>
         : showAuth && showResume ? <span className="text-xs text-muted">Primero inicia sesión; después pulsa «Reanudar».</span>
           : showResume && cancel && operation.status === 'failed' ? <span className="text-xs text-muted">Reintenta desde el paso que falló, o cancela si ya no lo necesitas.</span> : null}
