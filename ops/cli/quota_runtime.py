@@ -8,7 +8,7 @@ import re
 import subprocess
 import uuid
 
-from fleet_executor_container import diagnostic, docker, inspect_container
+from fleet_executor_container import docker, inspect_container
 from fleet_executor_policy import SafeFailure
 
 NON_HARNESS_PROVIDERS = frozenset({'agy'})
@@ -551,6 +551,19 @@ def verify_authentication(policy: dict, document: dict) -> dict:
     return {'authenticated_verified': True, 'account_identity': identity}
 
 
+# Failure texts the gateway already maps to a closed quota step reason; any other
+# failure of an update leaves this one static code instead of raw installer output.
+_UPDATE_KNOWN_FAILURES = frozenset({
+    'cli_update_failed', 'cli_update_timed_out', 'runtime_release_stale', 'runtime_image_stale',
+    'quota environment is not running', 'quota container isolation or ownership differs',
+    'quota profile volume ownership differs',
+})
+
+
+def _update_cli_failure(error: SafeFailure) -> SafeFailure:
+    return error if str(error) in _UPDATE_KNOWN_FAILURES else SafeFailure('cli_update_failed')
+
+
 def perform(policy: dict, document: dict) -> dict:
     if isinstance(document, dict) and document.get('action') == 'query_agent':
         from fleet_executor_agent_quota import perform as query_agent
@@ -561,6 +574,25 @@ def perform(policy: dict, document: dict) -> dict:
         return create(policy, environment)
     if action == 'delete':
         return remove(policy, environment)
+    if action == 'update_cli':
+        try:
+            require_current_runtime(policy, environment)
+            # Under the host receipt budget (240s) so a timeout is reported instead of a killed process with no stderr.
+            command = ['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],
+                       *provider_operation(policy, environment['provider'], 'update', command=True)]
+            try:
+                result = subprocess.run(command, capture_output=True, timeout=200, check=False)
+            except subprocess.TimeoutExpired as error:
+                raise SafeFailure('cli_update_timed_out') from error
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SafeFailure('cli_update_failed') from error
+            if result.returncode:
+                raise SafeFailure('cli_update_failed')
+            return {'cli_updated_verified': True, 'cli_version': provider_version(environment, updated=True)}
+        except SafeFailure as error:
+            raise _update_cli_failure(error) from None
+        except Exception:
+            raise SafeFailure('cli_update_failed') from None
     require_current_runtime(policy, environment)
     if action == 'authenticate':
         return {'awaiting_auth': True, 'login_plan': login_plan(policy, document)}
@@ -569,15 +601,4 @@ def perform(policy: dict, document: dict) -> dict:
         from quota_snapshot import normalize_cli_snapshot
         return {**normalize_cli_snapshot(environment['provider'], raw, environment['account_id']),
                 'cli_version': provider_version(environment)}
-    if action == 'update_cli':
-        # Under the host receipt budget (240s) so a timeout is reported instead of a killed process with no stderr.
-        command = ['/usr/bin/docker', 'exec', '--user', '1000:1000', environment['container_name'],
-                   *provider_operation(policy, environment['provider'], 'update', command=True)]
-        try:
-            result = subprocess.run(command, capture_output=True, timeout=200, check=False)
-        except subprocess.TimeoutExpired as error:
-            raise SafeFailure('cli_update_timed_out') from error
-        if result.returncode:
-            raise SafeFailure('cli_update_failed: ' + diagnostic(result.stderr))
-        return {'cli_updated_verified': True, 'cli_version': provider_version(environment, updated=True)}
     raise SafeFailure('unsupported quota environment action')

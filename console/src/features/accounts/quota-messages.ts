@@ -130,10 +130,23 @@ export function describeOperationError(code: string): string {
   return describeKnownOperationError(code) ?? 'La operación falló. Reintenta; si se repite, revisa el entorno.';
 }
 
-export function describeQuotaOperationFailure(operation: { error_code: string | null; result: Record<string, unknown> | null }): string {
+const QUOTA_OPERATION_LABEL: Record<string, string> = {
+  create: 'Crear entorno', authenticate: 'Iniciar sesión', query: 'Consultar cuotas',
+  update_cli: 'Actualizar CLI', delete: 'Eliminar entorno',
+};
+
+export function describeQuotaOperationFailure(operation: {
+  action?: string; error_code: string | null; result: Record<string, unknown> | null;
+}): string {
+  const label = operation.action ? QUOTA_OPERATION_LABEL[operation.action] : undefined;
   const reason = operation.result?.failure_reason;
   if (typeof reason === 'string' && Object.hasOwn(QUOTA_STEP_REASON, reason)) {
-    return QUOTA_STEP_REASON[reason] ?? describeOperationError(operation.error_code ?? 'STEP_FAILED');
+    const text = QUOTA_STEP_REASON[reason] ?? describeOperationError(operation.error_code ?? 'STEP_FAILED');
+    return label ? `«${label}» falló: ${text}` : text;
+  }
+  if (label && (operation.error_code === 'STEP_FAILED' || operation.error_code === null)) {
+    return `«${label}» falló y el ejecutor no dejó un motivo que esta consola pueda mostrar. `
+      + 'Vuelve a intentarlo. Si se repite, el diario del ejecutor en ese ordenador trae el motivo.';
   }
   return describeOperationError(operation.error_code ?? 'STEP_FAILED');
 }

@@ -118,6 +118,29 @@ class QuotaRuntimeTest(unittest.TestCase):
                 with self.assertRaises(runtime.SafeFailure):
                     runtime.verify_authentication(self.policy,self.document)
 
+    def test_update_cli_failures_leave_a_static_sanitized_code(self):
+        document = copy.deepcopy(self.document)
+        document['action'] = 'update_cli'
+        failed = subprocess.CompletedProcess([], 1, stderr=b'npm error token=fixture-secret path=/home/node')
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'provider_operation', return_value=['/usr/local/bin/codex', 'update']), \
+                patch.object(runtime.subprocess, 'run', return_value=failed):
+            with self.assertRaises(runtime.SafeFailure) as caught:
+                runtime.perform(self.policy, document)
+        self.assertEqual(str(caught.exception), 'cli_update_failed')
+        self.assertNotIn('fixture-secret', str(caught.exception))
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'provider_operation', return_value=['/usr/local/bin/codex', 'update']), \
+                patch.object(runtime.subprocess, 'run', side_effect=subprocess.TimeoutExpired(['docker', 'exec'], 200)):
+            with self.assertRaises(runtime.SafeFailure) as caught:
+                runtime.perform(self.policy, document)
+        self.assertEqual(str(caught.exception), 'cli_update_timed_out')
+        with patch.object(runtime, 'inspect_container', return_value=self.observed), patch.object(runtime, 'validate'), \
+                patch.object(runtime, 'provider_operation', side_effect=runtime.SafeFailure('quota provider operation or pinned descriptor is unavailable')):
+            with self.assertRaises(runtime.SafeFailure) as caught:
+                runtime.perform(self.policy, document)
+        self.assertEqual(str(caught.exception), 'cli_update_failed')
+
     def test_normalization_preserves_limits_and_strips_private_identity(self):
         report = normalize_cli_snapshot('codex', {'ok': True, 'email': 'private@fixture.invalid', 'extra': {'access_token': 'fixture-secret'},
             'ventanas': [{'clave': 'spark:5h', 'key': '5h', 'limitId': 'spark', 'model': 'codex-spark', 'usado_pct': 12,
