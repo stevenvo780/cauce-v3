@@ -49,7 +49,7 @@ def simulate(args, plan_path, load_plan, target_parameters):
     result = {'alias': args.alias, 'simular': True, 'changes': False, 'network': False,
               'plan': str(plan_path), 'state': 'preflight_required', 'blockers': [], 'checks': {},
               'steps': ['medir-antes', 'verificar-origen', 'detener-origen', 'comprobar-alcance-final',
-                        'copiar-integral', 'restaurar-espacio', 'reubicar-flota', 'limites-destino',
+                        'copiar-integral', 'restaurar-espacio', 'reubicar-flota',
                         'aplicar-contexto-destino', 'verificar-nonce-terminal-contexto-host-cuenta', 'medir-despues'],
               'outage': {'simulated_seconds': 0, 'real_seconds': None,
                          'interval': 'desde solicitar stop hasta verificar nonce, contexto y terminal',
@@ -66,8 +66,7 @@ def simulate(args, plan_path, load_plan, target_parameters):
     try:
         plan = {**load_plan(plan_path, args.alias), 'alias': args.alias}
         checks['plan_valid'] = True
-        from v4_mover_agente import destination_limits
-        checks['destination_limits'] = destination_limits(plan)
+        checks['resource_limits'] = 'canonical_fleet_extensions_only'
         checks['repositories'] = plan.get('repositories', [])
         checks['extensions'] = plan.get('extensions', [])
         if checks['repositories']:

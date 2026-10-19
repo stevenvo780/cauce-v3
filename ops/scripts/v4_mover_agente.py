@@ -15,28 +15,12 @@ import subprocess
 import sys
 import time
 import uuid
-from decimal import Decimal
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from v4_mover_host import Remote  # noqa: E402
-
-
-def destination_limits(plan):
-    defaults = {'gaia': (1024**3, 1.5), 'hades': (1024**3, 1), 'argos': (3 * 1024**3, 2), 'hegel': (2 * 1024**3, 2)}
-    memory, cpus = defaults.get(plan.get('alias'), (1024**3, 1))
-    limits = plan['destination'].get('limits', {'memory_bytes': memory, 'cpus': cpus})
-    if not isinstance(limits, dict) or set(limits) != {'memory_bytes', 'cpus'} \
-            or type(limits['memory_bytes']) is not int or not 6 * 1024**2 <= limits['memory_bytes'] < 2**63 \
-            or type(limits['cpus']) not in (int, float) or not math.isfinite(limits['cpus']) \
-            or not 0.01 <= limits['cpus'] <= 1024:
-        raise ValueError('limits requiere memory_bytes de 6 MiB a int64 y cpus entre 0.01 y 1024')
-    nano_cpus = Decimal(str(limits['cpus'])) * 1_000_000_000
-    if nano_cpus != nano_cpus.to_integral_value():
-        raise ValueError('cpus solo admite precisión de nanocpu')
-    return dict(limits)
 
 
 def write_json(path, value):
@@ -60,7 +44,7 @@ def failure_details(error, step):
     return detail
 
 
-def load_plan(path, alias):
+def load_plan(path, alias, *, allow_legacy_limits=False):
     if path.is_symlink():
         raise ValueError('el plan debe ser un archivo propio, sin enlaces')
     info = path.stat()
@@ -107,7 +91,8 @@ def load_plan(path, alias):
         raise ValueError('systemd_scope debe ser user o system')
     if not isinstance(plan['destination'].get('host_id'), str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', plan['destination']['host_id']):
         raise ValueError('host_id de destino inválido')
-    destination_limits({**plan, 'alias': alias})
+    if 'limits' in plan['destination'] and not allow_legacy_limits:
+        raise ValueError('destination.limits no se admite; los recursos deben declararse en extensions antes de create')
     names = set()
     targets = []
     for item in plan['roots']:
@@ -428,10 +413,6 @@ class Cut:
                 self.relocation_attempted = True
                 self.step('reubicar-flota', lambda: self.fleet.operation(
                     'update', alias, target, timeout=timeout, **authentication))
-            if target['placement']['mode'] == 'container':
-                limits = destination_limits(self.plan)
-                self.step('limites-destino', lambda: self.destination.call('limit', {
-                    **common, 'memory': limits['memory_bytes'], 'cpus': limits['cpus']}))
             if common['repositories']:
                 repositories = self.step('clonar-repositorios', lambda: self.destination.call('clone-repositories', common))
                 if repositories.get('verified') is not True:

@@ -85,7 +85,7 @@ def rollback_receipt(args):
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         receipt = own_json(receipt_path)
-        plan = load_plan(evidence / 'plan-corte.json', args.alias)
+        plan = load_plan(evidence / 'plan-corte.json', args.alias, allow_legacy_limits=True)
         own_json(evidence / 'alias-config-corte.json')
         if receipt_path.name != 'recibo.json' or receipt.get('schema') != 'cauce.v4-mover-agente/1' \
                 or receipt.get('state') not in ({'moved_pending_login', 'succeeded'}

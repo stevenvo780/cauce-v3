@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 import zipfile
-from decimal import Decimal
 
 BOOTSTRAP = '''import base64,io,json,pathlib,sys,tempfile,zipfile
 request=json.loads(sys.stdin.buffer.readline())
@@ -261,21 +260,6 @@ def dispatch(request):
                 unpack(request, work)
         elif action == 'unpack':
             unpack(request, work)
-        elif action == 'limit':
-            info = json.loads(docker('inspect', request['placement']['container_name']))[0]
-            labels = info['Config'].get('Labels') or {}
-            if any(labels.get('cauce.fleet.' + key) != request[field] for key, field in
-                   [('runtime_key', 'runtime_key'), ('tenant', 'tenant'), ('alias', 'alias')]) \
-                    or labels.get('cauce.fleet.host') != request['placement']['host_id']:
-                raise ValueError('runtime identity differs before applying limits')
-            docker('update', '--memory', str(request['memory']), '--memory-swap', str(request['memory']),
-                   '--cpus', str(request['cpus']), info['Id'])
-            info = json.loads(docker('inspect', info['Id']))[0]
-            if info['HostConfig']['Memory'] != request['memory'] \
-                    or info['HostConfig']['MemorySwap'] != request['memory'] \
-                    or info['HostConfig']['NanoCpus'] != int(Decimal(str(request['cpus'])) * 1_000_000_000):
-                raise ValueError('resource limits did not apply')
-            print(json.dumps({'verified': True, 'memory': request['memory'], 'cpus': request['cpus']}))
         else:
             raise ValueError('unknown host action')
 
