@@ -30,13 +30,15 @@ def canonical_path(value) -> str:
     return value
 
 
-def pinned_digest(filename: str) -> str:
+def pinned_digest(filename: str, *, readonly_owner: int | None = None) -> str:
     parent = open_directory(pathlib.Path(canonical_path(filename)).parent)
     try:
         descriptor = os.open(pathlib.Path(filename).name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
         try:
             details = os.fstat(descriptor)
-            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_uid not in {0, os.geteuid()} \
+            trusted_owner = details.st_uid in {0, os.geteuid()} or readonly_owner is not None \
+                and details.st_uid == readonly_owner and os.fstatvfs(descriptor).f_flag & os.ST_RDONLY
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or not trusted_owner \
                     or details.st_mode & 0o022:
                 raise LoginFailure('pinned login file ownership or mode differs')
             fingerprint = hashlib.sha256()

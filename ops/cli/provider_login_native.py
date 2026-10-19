@@ -209,10 +209,19 @@ def native_user(plan: dict, *, child: bool = False):
         os.close(directory)
     else:
         validate_native_home(plan, user)
-    if plan.get('command_sha256') is not None and pinned_digest(plan['command'][0]) != plan['command_sha256']:
+    readonly_owner = None
+    if child:
+        descriptor = os.open(__file__, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            if os.fstatvfs(descriptor).f_flag & os.ST_RDONLY:
+                readonly_owner = os.fstat(descriptor).st_uid
+        finally:
+            os.close(descriptor)
+    if plan.get('command_sha256') is not None and pinned_digest(
+            plan['command'][0], readonly_owner=readonly_owner) != plan['command_sha256']:
         raise LoginFailure('pinned login executable changed')
     for filename, fingerprint in plan.get('command_files', {}).items():
-        if pinned_digest(filename) != fingerprint:
+        if pinned_digest(filename, readonly_owner=readonly_owner) != fingerprint:
             raise LoginFailure('pinned login argument file changed')
     return user
 

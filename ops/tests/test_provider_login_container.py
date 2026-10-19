@@ -376,6 +376,47 @@ class ContainerLoginPtyTest(unittest.TestCase):
         self.assert_remote_stopped(started)
         self.assertFalse((self.state / (self.operation + '.json')).exists())
 
+    def test_container_login_accepts_executor_owned_pinned_bridge_on_readonly_mount(self):
+        self.worker.write_text(self.plan['command'][2])
+        self.plan['command'] = [self.binding['runtime_binding']['python'], '-I', '-B', str(self.worker)]
+        self.plan['command_files'] = {str(self.worker): hashlib.sha256(self.worker.read_bytes()).hexdigest()}
+        started = self.start()
+        self.send({'type': 'close'})
+        self.assertTrue(self.wait_for('exited')['stopped_verified'])
+        self.assertEqual(self.process.wait(timeout=10), 0, self.process.stderr.read().decode())
+        self.assert_remote_stopped(started)
+
+    def test_container_pins_reject_writable_mounts_and_changed_or_unsafe_bridge_files(self):
+        self.plan['command_files'] = {str(self.worker): hashlib.sha256(self.worker.read_bytes()).hexdigest()}
+        code = ('import json,sys;sys.path.insert(0,"/cauce/executor");'
+                'import provider_login_native as n;n.native_user(json.load(sys.stdin),child=True)')
+        def validate():
+            return subprocess.run([login.DOCKER, 'exec', '-i', '--user', '0', '-w', '/', self.container,
+                self.binding['runtime_binding']['python'], '-I', '-B', '-c', code],
+                input=json.dumps(self.plan), capture_output=True, text=True, timeout=10)
+        self.assertEqual(validate().returncode, 0)
+        self.plan['command_files'][str(self.worker)] = '0' * 64
+        self.assertNotEqual(validate().returncode, 0)
+        self.plan['command_files'][str(self.worker)] = hashlib.sha256(self.worker.read_bytes()).hexdigest()
+        self.worker.chmod(0o666)
+        self.assertNotEqual(validate().returncode, 0)
+        self.worker.chmod(0o644)
+        alias = self.bundle / 'bridge-alias.py'
+        os.link(self.worker, alias)
+        self.assertNotEqual(validate().returncode, 0)
+        alias.unlink()
+        alias.symlink_to(self.worker)
+        self.plan['command_files'] = {str(alias): hashlib.sha256(self.worker.read_bytes()).hexdigest()}
+        self.assertNotEqual(validate().returncode, 0)
+        writable = self.agent['state_directory'] + '/writable-bridge.py'
+        prepare = ('import os,pathlib,sys;p=pathlib.Path(sys.argv[1]);p.write_text("fixture");'
+                   'os.chown(p,int(sys.argv[2]),int(sys.argv[2]));p.chmod(0o644)')
+        subprocess.run([login.DOCKER, 'exec', '--user', '0', self.container,
+            self.binding['runtime_binding']['python'], '-I', '-B', '-c', prepare, writable, str(os.geteuid() or 1000)],
+            check=True, capture_output=True, timeout=10)
+        self.plan['command_files'] = {writable: hashlib.sha256(b'fixture').hexdigest()}
+        self.assertNotEqual(validate().returncode, 0)
+
     def test_container_controller_crash_cleanup_uses_exact_namespace(self):
         started = self.start()
         self.process.kill()
