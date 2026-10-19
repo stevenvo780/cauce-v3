@@ -55,6 +55,11 @@ class IsolatedProviderTests(unittest.TestCase):
         self.assertEqual(driver.environment(self.binding, self.agent), {'GROK_HOME': self.binding['path']})
         self.assertEqual(driver.login_command(self.binding), [str(self.cli), 'login', '--device-auth'])
 
+    def test_grok_container_profile_points_tmpdir_into_its_home(self):
+        driver = self.driver('grok')
+        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container'})
+        self.assertEqual(values['TMPDIR'], values['GROK_HOME'] + '/tmp')
+
     def test_muse_profile_environment_separates_auth_and_sessions(self):
         driver = self.driver('muse')
         values = driver.environment(self.binding, self.agent)

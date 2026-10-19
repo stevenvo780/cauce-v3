@@ -27,6 +27,8 @@ def environment(binding: dict, agent: dict) -> dict:
     if agent.get('runtime_mode') == 'container':
         # The adapter seeds AGENTS.md where the harness runs (start_container's working directory).
         values['CAUCE_GROK_WORKSPACE'] = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
+        # Read-only container root: the adapter stages fd 0 under TMPDIR and grok writes temp files there.
+        values['TMPDIR'] = str(root / 'tmp')
     return values
 
 
@@ -151,11 +153,13 @@ def reply_text(output: bytes):
 
 def authenticated_identity(packet: dict) -> str | None:
     try:
-        root = environment(packet['profile_binding'], packet['agent'])['GROK_HOME']
-        identity = select_account_identity(packet['identity'], verified_identities(root))
-        if identity is None or not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
+        env = environment(packet['profile_binding'], packet['agent'])
+        if 'TMPDIR' in env:
+            os.makedirs(env['TMPDIR'], mode=0o700, exist_ok=True)
+        # Grok renews its 6 h access token when it starts: run it first so userinfo sees a live token.
+        if not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
             return None
-        return identity
+        return select_account_identity(packet['identity'], verified_identities(env['GROK_HOME']))
     except Exception:
         return None
 

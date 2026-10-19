@@ -19,7 +19,9 @@ class ProviderProofError(ValueError):
     pass
 
 
-ROUNDTRIP_TIMEOUT = 30
+# Grok spends ~10 s starting (memory_init) before it reasons. The in-container hook's docker exec waits 110 s
+# and grok adds up to 10 s of userinfo after the round trip.
+ROUNDTRIP_TIMEOUT = 90
 
 
 NON_HARNESS_MODULES = frozenset({'identity', 'probe', 'revoke'})
