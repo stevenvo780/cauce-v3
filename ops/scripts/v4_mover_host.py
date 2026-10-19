@@ -197,6 +197,9 @@ def dispatch(request):
         elif action == 'terminal-probe':
             from v4_mover_legado import terminal_probe
             print(json.dumps(terminal_probe(request)))
+        elif action == 'repair-migration-shape':
+            from v4_mover_recursos import repair_shape
+            print(json.dumps(repair_shape(request)))
         elif action == 'clone-repositories':
             from v4_mover_repos import clone_repositories
             print(json.dumps(clone_repositories(request)))
@@ -267,7 +270,7 @@ def dispatch(request):
 def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
-    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_mover_destino.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
+    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_mover_destino.py', 'v4_mover_recursos.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
              'v4_git_migracion.py', 'v4_alcance_copia.py', 'v4_medicion_migracion.py']
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
