@@ -37,6 +37,16 @@ import { readBoundedBlob } from './client/bounded-blob';
  * gate revalidates against `/v3/auth/session` right away.
  */
 type UnauthorizedListener = () => void;
+
+/** Transient loss of the gateway, shown as one discreet notice: reads retry on their own, writes wait for a person. */
+export type ConnectionNotice = { kind: 'reconnecting' } | { kind: 'write-failed' };
+
+const RECONNECT_DELAYS_MS = [400, 1_200, 3_000];
+
+function isTransientFailure(cause: unknown): boolean {
+  if (cause instanceof ApiError) return cause.status === 502 || cause.status === 503;
+  return cause instanceof TypeError;
+}
 /**
  * The auth endpoints are excluded from the announcement: `/v3/auth/session` answering 401 would
  * make the listener ask it again in a loop, and a 401 from `/v3/auth/login` is a wrong password,
@@ -60,6 +70,9 @@ export class CauceApi {
   private companySwitchInFlight = false;
   private companyScopeVerified = true;
   private readonly developmentIdentity?: { tenant: string; alias: string };
+  private connectionNoticeState: ConnectionNotice | undefined;
+  private failedWrite: (() => Promise<unknown>) | undefined;
+  private readonly connectionListeners = new Set<(notice: ConnectionNotice | undefined) => void>();
   private readonly unauthorizedListeners = new Set<UnauthorizedListener>();
   private readonly authSessionListeners = new Set<(state: ConsoleAuthState) => void>();
   private readonly authGenerationListeners = new Set<() => void>();
@@ -87,7 +100,73 @@ export class CauceApi {
     Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, this.baseUrl));
   }
 
+  get connectionNotice(): ConnectionNotice | undefined {
+    return this.connectionNoticeState;
+  }
+
+  onConnectionNotice(listener: (notice: ConnectionNotice | undefined) => void): () => void {
+    this.connectionListeners.add(listener);
+    return () => { this.connectionListeners.delete(listener); };
+  }
+
+  private setConnectionNotice(notice: ConnectionNotice | undefined): void {
+    if (notice?.kind === 'reconnecting' && this.connectionNoticeState?.kind === 'write-failed') return;
+    if (notice === undefined && this.connectionNoticeState?.kind === 'write-failed') return;
+    this.connectionNoticeState = notice;
+    for (const listener of [...this.connectionListeners]) listener(notice);
+  }
+
+  dismissConnectionNotice(): void {
+    this.failedWrite = undefined;
+    this.connectionNoticeState = undefined;
+    for (const listener of [...this.connectionListeners]) listener(undefined);
+  }
+
+  async retryLastFailedWrite(): Promise<unknown> {
+    const retry = this.failedWrite;
+    if (!retry) return undefined;
+    const result = await retry();
+    this.dismissConnectionNotice();
+    return result;
+  }
+
   private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const method = init.method?.toUpperCase() ?? 'GET';
+    if (isUnsafeMethod(method)) {
+      try {
+        return await this.requestOnce<T>(path, init, options);
+      } catch (cause) {
+        if (isTransientFailure(cause)) {
+          this.failedWrite = () => this.requestOnce(path, init, options);
+          this.connectionNoticeState = { kind: 'write-failed' };
+          for (const listener of [...this.connectionListeners]) listener(this.connectionNoticeState);
+        }
+        throw cause;
+      }
+    }
+    let lastCause: unknown;
+    for (let attempt = 0; attempt <= RECONNECT_DELAYS_MS.length; attempt += 1) {
+      try {
+        const result = await this.requestOnce<T>(path, init, options);
+        if (attempt > 0) this.setConnectionNotice(undefined);
+        return result;
+      } catch (cause) {
+        lastCause = cause;
+        if (!isTransientFailure(cause) || attempt === RECONNECT_DELAYS_MS.length || init.signal?.aborted) break;
+        this.setConnectionNotice({ kind: 'reconnecting' });
+        await new Promise((resolve) => { setTimeout(resolve, RECONNECT_DELAYS_MS[attempt]); });
+        if (init.signal?.aborted) break;
+      }
+    }
+    this.setConnectionNotice(undefined);
+    throw lastCause;
+  }
+
+  private async requestOnce<T>(
     path: string,
     init: RequestInit = {},
     options: RequestOptions = {},
