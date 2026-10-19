@@ -1,6 +1,7 @@
 .provider-auth-terminal {
-  height: 20rem;
+  height: min(20rem, 52dvh);
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   background: var(--surface-2);
 }

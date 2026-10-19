@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import '../terminal/xterm-csp.css';
@@ -22,6 +22,49 @@ export function ProviderAuthTerminal({ session, client, onDisconnect }: Props) {
     const terminal = new Terminal({ documentOverride: documentoQueNiegaLosEstilos(), fontFamily: FUENTE_TERMINAL,
       theme: TEMA_TERMINAL, fontSize: 13, lineHeight: 1.15, scrollback: 0, disableStdin: true, cursorBlink: false });
     const fit = new FitAddon(); terminal.loadAddon(fit);
+    // The provider prints its authorization URL as plain terminal text: without a link
+    // provider it is painted on canvas, so on touch devices it can neither be tapped
+    // nor followed. Only http(s) URLs painted by the provider become links.
+    const links = terminal.registerLinkProvider({
+      provideLinks: (lineNumber, callback) => {
+        const buffer = terminal.buffer.active;
+        const first = buffer.getLine(lineNumber - 1);
+        // A wrapped continuation is reported from the line where its logical line starts.
+        if (!first || first.isWrapped) { callback(undefined); return; }
+        const parts: string[] = [];
+        for (let y = lineNumber - 1; ; y += 1) {
+          const line = buffer.getLine(y);
+          if (!line || (y > lineNumber - 1 && !line.isWrapped)) break;
+          parts.push(line.translateToString(false));
+          if (!buffer.getLine(y + 1)?.isWrapped) break;
+        }
+        const text = parts.join('');
+        const locate = (index: number) => {
+          let rest = index;
+          for (let part = 0; part < parts.length; part += 1) {
+            if (rest < parts[part].length) return { x: rest + 1, y: lineNumber + part };
+            rest -= parts[part].length;
+          }
+          const last = parts.length - 1;
+          return { x: parts[last].length, y: lineNumber + last };
+        };
+        const found: ILink[] = [];
+        for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gu)) {
+          let uri = match[0];
+          while (/[).,;:]$/.test(uri)) uri = uri.slice(0, -1);
+          if (!uri) continue;
+          const start = locate(match.index);
+          const end = locate(match.index + uri.length - 1);
+          found.push({
+            text: uri,
+            range: { start, end },
+            decorations: { underline: true, pointerCursor: true },
+            activate: () => { window.open(uri, '_blank', 'noopener,noreferrer'); },
+          });
+        }
+        callback(found.length ? found : undefined);
+      },
+    });
     const clear = () => { ready = false; terminal.options.disableStdin = true; terminal.clear(); terminal.reset(); };
     const fail = () => {
       if (disposed || ended) return;
@@ -73,7 +116,7 @@ export function ProviderAuthTerminal({ session, client, onDisconnect }: Props) {
     return () => {
       disposed = true;
       if (socket) { socket.onopen = null; socket.onmessage = null; socket.onclose = null; socket.onerror = null; socket.close(); }
-      observer.disconnect(); input.dispose(); clear();
+      observer.disconnect(); input.dispose(); links.dispose(); clear();
       // xterm 5.5 still has scroll-area syncs queued (a timeout from open(), a frame from each clear or reset)
       // that read the renderer dispose() drops: disposing now throws in the page. The private bytes are already
       // wiped, so detach the element at once and dispose once the next frame and those timers have run.

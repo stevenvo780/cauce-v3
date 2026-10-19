@@ -134,6 +134,7 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
         : session.method === 'device' ? 'Sigue la autorización del proveedor en el terminal.' : 'Completa el inicio de sesión en el terminal.'}
         {autoStart && session.status === 'awaiting_login' ? ' Cuando el proveedor confirme el inicio de sesión, pulsa «Verificar conexión».' : ''}</p>
       <ProviderAuthTerminal session={session} client={client} onDisconnect={disconnected} />
+      <p className="m-0 text-xs text-muted">Toca el enlace del terminal para abrir la página del proveedor; el código que muestra el terminal es el que debes ingresar allí. También puedes seleccionar el texto del terminal para copiarlo.</p>
     </>}
     <div className="flex flex-wrap gap-2">
       {session?.status === 'awaiting_login' && <Button size="sm" variant="primary" disabled={busy} onClick={() => { void run('verify'); }}>Verificar conexión</Button>}
