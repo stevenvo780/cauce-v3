@@ -15,6 +15,7 @@ import uuid
 from fleet_provider_identity import (
     nonce_roundtrip,
     profile_jwt_candidates,
+    read_profile_json,
     select_account_identity,
     validate_provider_binding,
     validate_provider_selection,
@@ -217,15 +218,29 @@ def verify_id_token(token: str, jwks: dict) -> dict:
     return claims
 
 
+def credential_email(config: str) -> str | None:
+    """The account email Muse 1.4 stores next to its Meta access token (that format carries no id_token)."""
+    document = read_profile_json(str(config) + '/muse/auth.json')
+    providers = document.get('providers') if isinstance(document, dict) else None
+    meta = providers.get('meta') if isinstance(providers, dict) else None
+    if not isinstance(meta, dict) or not isinstance(meta.get('access_token'), str) or not meta['access_token']:
+        return None
+    email = meta.get('user_email')
+    return email if isinstance(email, str) and re.fullmatch(r'[^@\s]{1,128}@[^@\s]{1,127}\.[^@\s]{1,63}', email) else None
+
+
 def verified_identities(config: str) -> set:
-    # Exactly one active credential may vouch for the identity.
+    # Exactly one active credential may vouch for the identity: a signed id_token when the file has one,
+    # otherwise the email of the stored Meta token. The caller only asks after the nonce round trip proved
+    # that this same credential answers the model.
     tokens = list(dict.fromkeys(profile_jwt_candidates(str(config) + '/muse/auth.json')))
-    if len(tokens) != 1:
-        return set()
-    try:
-        return {verify_id_token(tokens[0], fetch_jwks())['sub']}
-    except Exception:
-        return set()
+    if len(tokens) == 1:
+        try:
+            return {verify_id_token(tokens[0], fetch_jwks())['sub']}
+        except Exception:
+            pass
+    email = credential_email(config)
+    return {email} if email else set()
 
 
 def authenticated_identity(packet: dict) -> str | None:

@@ -174,6 +174,17 @@ else:
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
 
+    def test_muse_without_id_token_uses_the_email_of_its_meta_token(self):
+        packet = self.install_fake_cli('muse', 'ok', 'owner@fixture.invalid')
+        auth = pathlib.Path(self.binding['path']) / 'config' / 'muse' / 'auth.json'
+        auth.write_text(json.dumps({'providers': {'meta': {'access_token': 'fixture-token', 'api_base_url': 'api.fixture.invalid',
+            'user_email': 'owner@fixture.invalid'}}}))
+        self.assertTrue(identity.authenticated_provider({**packet, 'identity': 'owner@fixture.invalid'}))
+        self.assertTrue(identity.authenticated_provider({**packet, 'identity': 'unverified:muse'}))
+        self.assertFalse(identity.authenticated_provider({**packet, 'identity': 'foreign@fixture.invalid'}))
+        auth.write_text(json.dumps({'providers': {'meta': {'user_email': 'owner@fixture.invalid'}}}))
+        self.assertFalse(identity.authenticated_provider({**packet, 'identity': 'owner@fixture.invalid'}))
+
 class MuseBridgeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='muse-bridge-', dir='/var/tmp')
