@@ -42,6 +42,27 @@ export function agentView(agent: SettingsAgent, snapshot: ConfigurationSnapshot,
   };
 }
 
+const LIFECYCLE_LABEL: Record<string, string> = {
+  draft: 'En borrador',
+  ready: 'Listo para trabajar',
+  auth_pending: 'Esperando inicio de sesión',
+  retired: 'Retirado',
+  failed: 'Con error',
+};
+
+/** Human label of the durable lifecycle state; an unknown value stays available via `title`, never as the main text. */
+export function lifecycleLabel(state: string): string {
+  return LIFECYCLE_LABEL[state] ?? 'Estado sin traducir';
+}
+
+/** Visible name of a tenant/space: its display name when it differs from the raw id. */
+export function tenantName(snapshot: ConfigurationSnapshot, tenantId: string | null | undefined): string | undefined {
+  if (!tenantId) return undefined;
+  const row = snapshot.tenants?.find((entry) => entry.id === tenantId);
+  const name = typeof row?.display_name === 'string' ? row.display_name.trim() : '';
+  return name && name !== tenantId ? name : undefined;
+}
+
 export type SheetTab = 'resumen' | 'registro' | 'operacion' | 'grupos' | 'ampliaciones';
 
 /** `Tenant/alias` from the deep-link value; both halves must be present. */

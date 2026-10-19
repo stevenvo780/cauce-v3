@@ -4,7 +4,8 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { Button, LinkButton, Notice, Pill } from '../../components/kit';
 import { onNavClick } from '../../router';
 import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
-import type { AgentView } from './agent-view';
+import { PROVIDER_LABEL } from '../accounts/quotas';
+import { lifecycleLabel, tenantName, type AgentView } from './agent-view';
 import { GroupMembershipMove } from './GroupMembershipMove';
 import { insigniaDeComputadora, estadoDeComputadora } from './fleet-host-model';
 import type { SettingsAgent } from './settings-model';
@@ -29,21 +30,33 @@ export function GroupChips({ agent, max }: { agent: SettingsAgent; max?: number 
   </>;
 }
 
+function rowText(row: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = row?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; view: AgentView; snapshot: ConfigurationSnapshot }) {
   const href = `/messages/${encodeURIComponent(agent.tenantId)}/${encodeURIComponent(agent.alias)}?view=context`;
   const lifecycle = typeof view.row?.lifecycle_state === 'string' ? view.row.lifecycle_state : undefined;
   const host = view.host ? estadoDeComputadora(view.host) : undefined;
-  const primaryAccount = snapshot.provider_accounts?.find(row => row.id === view.row?.primary_account_id);
+  const accountId = rowText(view.row, 'primary_account_id');
+  const primaryAccount = snapshot.provider_accounts?.find((row) => row.id === accountId);
+  const accountLabel = rowText(primaryAccount, 'label');
+  const accountProvider = rowText(primaryAccount, 'provider');
+  const accountName = accountLabel ?? accountId;
+  const providerName = accountProvider ? PROVIDER_LABEL[accountProvider] ?? accountProvider : undefined;
+  const payerId = rowText(primaryAccount, 'payer_tenant_id');
+  const payerName = payerId === agent.tenantId ? 'La misma empresa' : tenantName(snapshot, payerId) ?? (payerId ? 'Otra empresa' : undefined);
   return <div className="grid gap-4">
     {agent.registered ? null : <Notice role="note">
       Este agente solo aparece como miembro de un grupo: no tiene registro editable, por eso no ofrece edición ni operaciones.
     </Notice>}
     <dl className="m-0 grid-cols-1 gap-0 rounded-lg border border-line bg-surface px-4" aria-label={`Datos de ${view.ref}`}>
       <Fact label="Arnés declarado">{agent.harness ?? 'desconocido'}</Fact>
-      <Fact label="Cuenta de ejecución">{typeof view.row?.primary_account_id === 'string'
-        ? view.row.primary_account_id : 'Sin cuenta declarada'}</Fact>
+      <Fact label="Cuenta de ejecución">{accountName
+        ? <span title={accountId}>{accountName}{providerName && providerName !== accountName ? ` · ${providerName}` : ''}</span> : 'Sin cuenta declarada'}</Fact>
       <Fact label="Modelo">{typeof view.row?.model_id === 'string' ? view.row.model_id : 'Sin modelo declarado'}</Fact>
-      <Fact label="Pagador">{typeof primaryAccount?.payer_tenant_id === 'string' ? primaryAccount.payer_tenant_id : 'Sin informar'}</Fact>
+      <Fact label="Pagador">{payerName ? <span title={payerId}>{payerName}</span> : 'Sin informar'}</Fact>
       <Fact label="Computadora">
         {agent.registered ? <span className="flex flex-wrap items-center gap-2">
           {view.hostName}
@@ -51,10 +64,9 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
           {insigniaDeComputadora(view.host) ? <span className="text-xs text-warn-ink">{insigniaDeComputadora(view.host)}</span> : null}
         </span> : 'No aplica'}
       </Fact>
-      <Fact label="Estado del registro">{view.state.label}{lifecycle ? ` · ciclo de vida: ${lifecycle}` : ''}</Fact>
+      <Fact label="Estado del registro">{view.state.label}{lifecycle ? <> · <span title={lifecycle}>{lifecycleLabel(lifecycle)}</span></> : ''}</Fact>
       <Fact label="Grupos"><span className="flex flex-wrap gap-1.5"><GroupChips agent={agent} /></span></Fact>
       <Fact label="Responsabilidad">{agent.responsibility ?? <span className="text-muted italic">Sin publicar en esta lectura</span>}</Fact>
-      <Fact label="Última revisión leída">{typeof snapshot.revision === 'number' ? snapshot.revision : 'desconocida'}</Fact>
     </dl>
     {agent.registered ? <AgentAuthenticate tenantId={agent.tenantId} alias={agent.alias} harnessId={agent.harness} /> : null}
     {agent.registered ? <div>
