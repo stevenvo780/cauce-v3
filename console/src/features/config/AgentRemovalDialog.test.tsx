@@ -11,7 +11,9 @@ import { renderWithApi } from '../../test/render';
 import { AgentRemovalDialog } from './AgentRemovalDialog';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
-const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [{ tenant_id: 'A', alias: 'w', runtime_key: 'w' }] };
+const snapshot: ConfigurationSnapshot = { revision: 4, tenants: [{ id: 'A' }], agents: [{ tenant_id: 'A', alias: 'w', runtime_key: 'w',
+  harness_id: 'codex', host_id: 'test-host', runtime_mode: 'container', container_name: 'ws-w',
+  runtime_user: 'runner', systemd_user: 'runner', home_directory: '/home/runner', state_directory: '/state/w' }] };
 const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'w' };
 const id = '44444444-4444-4444-8444-444444444444';
 async function operation(kind: FleetOperationRequest['kind'], status: string, version: number, retryable = true) {

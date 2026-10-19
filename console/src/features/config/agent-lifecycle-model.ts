@@ -130,8 +130,13 @@ const PLACEMENT_FIELDS: readonly (readonly [string, string])[] = [['host_id', 'c
   ['runtime_mode', 'modo de ejecución'], ['container_name', 'contenedor'], ['runtime_user', 'usuario de ejecución'],
   ['systemd_user', 'usuario systemd'], ['home_directory', 'directorio personal'], ['state_directory', 'directorio de estado']];
 function placementGaps(row: Record<string, unknown>): string[] {
-  return PLACEMENT_FIELDS.filter(([field]) => typeof row[field] !== 'string' || row[field] === ''
-    || (field === 'runtime_mode' && !['container', 'native'].includes(row[field]))).map(([, label]) => label);
+  return PLACEMENT_FIELDS.filter(([field]) => {
+    // The fleet placement contract requires a container name only in container mode and makes the systemd user optional.
+    if (field === 'systemd_user') return false;
+    if (field === 'container_name' && row.runtime_mode !== 'container') return false;
+    return typeof row[field] !== 'string' || row[field] === ''
+      || (field === 'runtime_mode' && !['container', 'native'].includes(row[field]));
+  }).map(([, label]) => label);
 }
 /**
  * Why the fleet executor cannot operate the agents in scope: an agent installed before the fleet has a runtime
