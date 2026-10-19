@@ -420,12 +420,13 @@ class Executor:
         account, binding = binding_for(self.policy, agent)
         if not self.authenticated_binding_matches(account, binding):
             raise SafeFailure('provider profile has no current authenticated identity proof')
-        if self.journal.get('login_stopped') is True:
-            # The console login stopped this runtime; the profile and verify probes need it running again.
-            self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
-            del self.journal['login_stopped']
-            self.record_extension_receipt()
-            self.save()
+        # The probes need a live runtime on the approved image. The console login may have stopped it, the adapter may
+        # have exited, or a deploy may have pinned a new image since the runtime step: start() is idempotent and
+        # recreates a container left on an older image before (re)starting its adapter.
+        self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
+        self.journal.pop('login_stopped', None)
+        self.record_extension_receipt()
+        self.save()
         observed = invoke(self.policy, self.context, agent, 'profile')
         if observed.get('profile_verified') is not True:
             raise SafeFailure('provider profile was not acknowledged')
