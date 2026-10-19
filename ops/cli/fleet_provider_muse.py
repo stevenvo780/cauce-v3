@@ -45,8 +45,10 @@ def environment(binding: dict, agent: dict) -> dict:
     root = validate_provider_binding(binding, agent, 'muse')
     validate_provider_selection(agent, 'muse', EFFORTS)
     validate_definition(binding.get('muse'), binding['provider'])
+    # The container root is read-only: Muse's reviewer sandbox needs a writable temp root inside the profile.
     return {'XDG_CONFIG_HOME': str(root / 'config'), 'XDG_DATA_HOME': str(root / 'data'), 'MUSE_NO_AUTO_UPDATE': '1',
-            'CAUCE_MUSE_CLI_COMMAND': binding['command'], 'CAUCE_MUSE_CLI_SHA256': binding['command_sha256']}
+            'CAUCE_MUSE_CLI_COMMAND': binding['command'], 'CAUCE_MUSE_CLI_SHA256': binding['command_sha256'],
+            'TMPDIR': str(root / 'tmp')}
 
 
 def validate_binding(binding: dict, agent: dict) -> None:
@@ -245,7 +247,9 @@ def verified_identities(config: str) -> set:
 
 def authenticated_identity(packet: dict) -> str | None:
     try:
-        config = environment(packet['profile_binding'], packet['agent'])['XDG_CONFIG_HOME']
+        env = environment(packet['profile_binding'], packet['agent'])
+        config = env['XDG_CONFIG_HOME']
+        os.makedirs(env['TMPDIR'], mode=0o700, exist_ok=True)
         if not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
             return None
         return select_account_identity(packet['identity'], verified_identities(config))
