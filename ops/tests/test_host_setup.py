@@ -99,6 +99,19 @@ class HostSetupTests(unittest.TestCase):
             self.docker_images[command[-1]] = self.docker_images[command[-2]]
         return subprocess.CompletedProcess(command, 0, out, b'')
 
+    def test_capabilities_imports_release_modules_without_bytecode_with_shared_umask(self):
+        release = self.home / 'release'
+        cli = release / 'ops/cli'
+        cli.mkdir(parents=True)
+        (cli / 'release_dependency.py').write_text('VALUE=1\n')
+        (cli / 'fleet-executor.py').write_text('import os,sys,json\nos.umask(0o002)\nimport release_dependency\n'
+            'assert sys.dont_write_bytecode and release_dependency.VALUE==1\n'
+            'print(json.dumps({"available":True,"placements":[]}))\n')
+        with mock.patch.object(host_setup, 'runner', host_setup.default_runner), \
+                mock.patch.dict(os.environ, {'PYTHONDONTWRITEBYTECODE': ''}):
+            self.assertTrue(host_setup.capabilities_report(release, self.home / 'policy.json')['available'])
+        self.assertFalse((cli / '__pycache__').exists())
+
     def artifacts(self) -> list[dict]:
         items = [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(), 'size': len(self.archive)}]
         if self.image:

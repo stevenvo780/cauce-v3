@@ -5,6 +5,7 @@ import importlib.util
 import json
 import pathlib
 import ssl
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -90,6 +91,18 @@ class ProviderHookTests(unittest.TestCase):
         policy["bundles"]["grok"]["digest"] = bundle_digest(str(bundle))
         self.assertIsNone(identity.resolve_fleet_module(policy, "grok"))
         self.assertEqual(identity.resolve_fleet_module({}, "grok"), "fleet_provider_grok")
+
+    def test_published_shebang_imports_without_bytecode_when_python_ignores_environment(self):
+        executable = self.root / 'fleet-provider-hook.py'
+        executable.write_bytes((CLI / executable.name).read_bytes())
+        executable.chmod(0o700)
+        (self.root / 'fleet_provider_identity.py').write_text('def authenticated_identity(_packet): return None\n')
+        (self.root / 'fleet_provider_probe.py').write_text('def probe(_packet): return {}\n')
+        result = subprocess.run([str(executable)], input=b'{}', capture_output=True, check=False, umask=0o002,
+            env={'PATH': '/usr/bin:/bin', 'HOME': str(self.root), 'PYTHONDONTWRITEBYTECODE': '1'})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, b'Functional provider effect is unverified\n')
+        self.assertFalse((self.root / '__pycache__').exists())
 
     def test_absolute_pinned_provider_identity_and_real_process_nonce(self):
         with patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}):

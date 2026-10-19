@@ -8,6 +8,7 @@ import json
 import os
 import pathlib
 import pwd
+import shlex
 import signal
 import socket
 import subprocess
@@ -302,6 +303,24 @@ class LegacySupervisorFenceTests(unittest.TestCase):
         unit, _ = installer.render(row, str(self.policy), sys.executable, str(OPS / 'scripts/alias-lock-exec.py'),
             str(OPS / 'cli/fleet-adoption-probe.py'), str(self.lock_root))
         self.assertEqual(unit, 'cauce-v3-container-iza.service')
+        helper = self.root / 'bytecode-helper.py'
+        (self.root / 'release_dependency.py').write_text('VALUE=1\n')
+        helper.write_text('import os,subprocess,sys\n'
+            'if "--child" not in sys.argv:\n sys.exit(subprocess.run([sys.executable,__file__,"--child"],check=False).returncode)\n'
+            'os.umask(0o002)\nimport release_dependency\n'
+            'assert sys.dont_write_bytecode and release_dependency.VALUE==1\n')
+        for target in (self.row, row):
+            _, body = installer.render(target, str(self.policy), sys.executable, str(helper), str(helper), str(self.lock_root))
+            environment = {'PATH': '/usr/bin:/bin', 'HOME': str(self.home)}
+            for line in body.splitlines():
+                if line.startswith('Environment='):
+                    environment.update(assignment.split('=', 1) for assignment in shlex.split(line.split('=', 1)[1]))
+            for line in body.splitlines():
+                if line.startswith(('ExecStart=', 'ExecStop=')) and line.split('=', 1)[1]:
+                    result = subprocess.run(shlex.split(line.split('=', 1)[1]), capture_output=True, text=True,
+                        env=environment, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / '__pycache__').exists())
 
     def test_policy_symlink_and_changed_command_are_rejected(self):
         link = self.root / 'link.json'

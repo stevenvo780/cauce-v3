@@ -51,7 +51,7 @@ def main() -> int:
     boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     generation = hashlib.sha256((host + '\0' + boot + '\0' + placement['state_directory']).encode()).hexdigest()
     helper = str(pathlib.Path(observation['lifecycle_directory']) / 'cauce-container-runtime.py')
-    base = [sys.executable, helper, 'run' if sys.argv[1] == 'start' else 'stop', '--alias', row['runtime_key'],
+    base = [sys.executable, '-B', helper, 'run' if sys.argv[1] == 'start' else 'stop', '--alias', row['runtime_key'],
         '--state', placement['state_directory'], '--control-dir', str(control), '--container-id', host, '--generation', generation]
     if sys.argv[1] == 'stop':
         descriptor = os.environ.get('CAUCE_ADOPTION_CONTROL_FD', '')

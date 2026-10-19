@@ -1,4 +1,4 @@
-#!/usr/bin/env -S python3 -s -E
+#!/usr/bin/env -S python3 -s -E -B
 from __future__ import annotations
 
 import hashlib

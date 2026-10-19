@@ -493,7 +493,7 @@ def write_if_changed(filename: pathlib.Path, content: str, mode: int) -> bool:
 
 def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dict:
     try:
-        result = runner([shutil.which('python3') or sys.executable, str(release / 'ops/cli/fleet-executor.py'),
+        result = runner([shutil.which('python3') or sys.executable, '-B', str(release / 'ops/cli/fleet-executor.py'),
             '--policy', str(policy_file), '--capabilities'], CAPABILITIES_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         raise HostFailure(f'la verificación de capacidades del executor superó {CAPABILITIES_TIMEOUT_SECONDS} segundos; '

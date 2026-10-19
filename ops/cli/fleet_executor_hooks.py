@@ -147,7 +147,7 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
             raise SafeFailure('executor cannot use the exact functional hook user')
         command = ['/usr/sbin/runuser', '-u', hook['user'], '--', *command]
     result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=45,
-                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory']}, check=False)
+                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
     if result.returncode or len(result.stdout) > 8192:
         raise SafeFailure('functional hook has not demonstrated its effect')
     try:

@@ -261,7 +261,7 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
     environment.update(provider_environment(policy, agent))
     if operation_id is not None:
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
-    command = [str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'run', *lifecycle_arguments(agent, identity),
+    command = [str(pathlib.Path(sys.executable).resolve()), '-B', str(HELPER), 'run', *lifecycle_arguments(agent, identity),
         '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', str(user.pw_uid),
         '--runtime-gid', str(user.pw_gid), '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'],
         bundle['executable'], *bundle['argv']]
@@ -291,7 +291,7 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
                 publish_environment(identity, agent, None)
                 systemctl('stop', manager['unit'])
             else:
-                checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
+                checked_command([str(pathlib.Path(sys.executable).resolve()), '-B', str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
         finally:
             if controller is not None:
                 controller.wait(timeout=10)
@@ -317,8 +317,8 @@ def stop_native(policy: dict, raw_agent: dict) -> dict:
         if systemctl('show', manager['unit'], '--property=ActiveState', '--value') not in {'inactive', 'failed'}:
             raise SafeFailure('native systemd unit has not remained stopped')
     if identity['control'].exists():
-        checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
-    checked_command([str(pathlib.Path(sys.executable).resolve()), str(HELPER), 'stopped', *lifecycle_arguments(agent, identity)])
+        checked_command([str(pathlib.Path(sys.executable).resolve()), '-B', str(HELPER), 'stop', *lifecycle_arguments(agent, identity)])
+    checked_command([str(pathlib.Path(sys.executable).resolve()), '-B', str(HELPER), 'stopped', *lifecycle_arguments(agent, identity)])
     if identity['control'].exists():
         descriptor = open_control_directory(str(identity['control']))
         try:

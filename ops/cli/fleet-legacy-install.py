@@ -24,11 +24,11 @@ def render(row: dict, policy: str, python: str, lock_helper: str, probe: str, lo
         raise ProbeFailure('supervisor_command_changed')
     alias = row['runtime_key']
     mode = row['placement']['mode']
-    start = [python, lock_helper, 'run', '--lock-root', lock_root, '--alias', alias, '--', command, 'start', alias]
-    stop = [python, probe, 'control', '--policy', policy, '--runtime-key', alias, '--', command, 'stop', alias]
+    start = [python, '-B', lock_helper, 'run', '--lock-root', lock_root, '--alias', alias, '--', command, 'start', alias]
+    stop = [python, '-B', probe, 'control', '--policy', policy, '--runtime-key', alias, '--', command, 'stop', alias]
     lines = ['[Service]', 'UMask=0077', 'KillMode=process', 'TimeoutStopSec=infinity', 'SendSIGKILL=no',
         'Environment=' + argument('CAUCE_ADOPTION_PROBE_POLICY_FILE=' + policy),
-        'Environment=CAUCE_ADOPTION_LIFECYCLE_FENCE=1']
+        'Environment=CAUCE_ADOPTION_LIFECYCLE_FENCE=1', 'Environment=PYTHONDONTWRITEBYTECODE=1']
     if mode == 'native':
         placement = row['placement']
         user = pwd.getpwnam(placement['runtime_user'])

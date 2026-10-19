@@ -145,6 +145,29 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.assertTrue(json.loads(stopped.stdout)['evidence']['stopped_verified'])
         self.assertFalse(pathlib.Path(f'/proc/{pid}').exists())
 
+    def test_native_lifecycle_imports_release_modules_without_bytecode_with_shared_umask(self):
+        self.configure_signer()
+        for step in ('artifacts', 'credentials'):
+            result = self.run_step(step)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        release = self.root / 'release'
+        release.mkdir(mode=0o700)
+        (release / 'release_dependency.py').write_text('VALUE=1\n')
+        helper = release / 'helper.py'
+        helper.write_text('import os,sys,runpy\nos.umask(0o002)\nimport release_dependency\n'
+            'assert sys.dont_write_bytecode and release_dependency.VALUE==1\n'
+            f'sys.path.insert(0,{str(OPS / "container-runtime")!r})\n'
+            f'runpy.run_path({str(OPS / "container-runtime/cauce-container-runtime.py")!r},run_name="__main__")\n')
+        program = ('import json,pathlib,sys\nsys.path.insert(0,sys.argv[1])\nimport fleet_executor_runtime as runtime\n'
+            'runtime.HELPER=pathlib.Path(sys.argv[2])\npolicy=json.loads(pathlib.Path(sys.argv[3]).read_text())\n'
+            'agent=json.loads(sys.argv[4])\n'
+            'try: runtime.start_native(policy,agent,operation_id=sys.argv[5])\n'
+            'finally: runtime.stop_native(policy,agent)\n')
+        result = subprocess.run([sys.executable, '-B', '-c', program, str(CLI.parent), str(helper), str(self.policy_file),
+            json.dumps(self.agent), self.context['operation_id']], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((release / '__pycache__').exists())
+
     def configure_hooks(self, wrong_nonce=False):
         profile = self.root / 'provider-profile'
         profile.mkdir(mode=0o700)
@@ -182,6 +205,19 @@ class PhysicalExecutorTest(unittest.TestCase):
         result = self.run_step('authenticate')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('provider_verified', result.stdout)
+
+    def test_hook_imports_release_modules_without_bytecode_with_shared_umask(self):
+        self.configure_hooks()
+        (self.root / 'release_dependency.py').write_text('VALUE=1\n')
+        driver = self.root / 'driver.py'
+        driver.write_text('import os,sys\nos.umask(0o002)\nimport release_dependency\n'
+            'assert sys.dont_write_bytecode and release_dependency.VALUE==1\n' + driver.read_text())
+        for hook in self.policy['hooks'].values():
+            hook['files'][str(driver)] = hashlib.sha256(driver.read_bytes()).hexdigest()
+        self.save_policy()
+        result = self.run_step('authenticate')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.root / '__pycache__').exists())
 
     def test_hook_script_changed_after_policy_approval_is_not_executed(self):
         self.configure_hooks()
