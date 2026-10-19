@@ -119,7 +119,7 @@ export class BootstrapRepository {
           nonce: previous.probe.nonce, account_id: previous.probe.account_id, profile_revision: previous.probe.profile_revision }, input)) throw conflict();
         return { probe: previous.probe, state: previous.state, proof: previous.proof };
       }
-      if (records.some(record => record.probe.phase === input.phase && record.state !== 'succeeded')) throw conflict();
+      if (records.some(record => record.probe.phase === input.phase && this.pending(record, context))) throw conflict();
       if (input.phase === 'normal' && (input.action !== 'verify' || !records.some(record => record.probe.phase === 'bootstrap'
           && record.probe.action === 'verify' && record.state === 'succeeded' && record.epoch === context.operation.epoch
           && record.probe.profile_revision === input.profile_revision))) throw conflict();
@@ -159,7 +159,7 @@ export class BootstrapRepository {
       if (context.operation.status !== 'running' || context.operation.cancel_requested || !context.operation.worker_live
           || !context.operation.worker_id || !context.operation.claim_token || context.agent.enabled) throw conflict();
       if (runtimeKey !== context.agent.runtime_key) throw forbidden();
-      const record = (await this.records(client, operationId)).find(record => record.probe.phase === phase && record.state !== 'succeeded');
+      const record = (await this.records(client, operationId)).find(record => record.probe.phase === phase && this.pending(record, context));
       if (!record) return null;
       this.assertRecord(record, context, phase);
       if (record.state === 'claimed' || !context.operation.steps.some(step => step.name === (phase === 'normal' ? 'admission' : record.probe.action) && step.status === 'running')) throw conflict();
@@ -193,6 +193,11 @@ export class BootstrapRepository {
       record.state = 'succeeded'; record.proof = proof; delete record.claim_expires_at;
       await this.event(client, context, record); return { probe, state: record.state, proof };
     });
+  }
+  /** An unfinished probe of this attempt. One left by an earlier epoch or past its deadline (its runtime died
+   * after claiming it) must not block the next attempt's create and claim forever. */
+  private pending(record: BootstrapRecord, context: Context): boolean {
+    return record.state !== 'succeeded' && record.epoch === context.operation.epoch && Date.parse(record.probe.deadline) > Date.now();
   }
   private normalVerified(records: BootstrapRecord[], context: Context): boolean {
     return records.some(record => {
