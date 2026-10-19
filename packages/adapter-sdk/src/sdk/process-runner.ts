@@ -215,7 +215,9 @@ export class SpawnCommandRunner {
       phase("child_spawned");
       this.logger({ event: "spawn", harness: request.harness });
       const pid = child.pid;
-      let stdout: Buffer = Buffer.alloc(0);
+      // Appended without re-copying: a JSONL harness writes thousands of small chunks per turn.
+      const stdoutChunks: Buffer[] = [];
+      let stdoutBytes = 0;
       let stderr: Buffer = Buffer.alloc(0);
       const witness = request.startWitness;
       let harnessStarted: boolean | undefined = witness === undefined ? undefined : false;
@@ -256,7 +258,7 @@ export class SpawnCommandRunner {
           return;
         }
         resolve({
-          stdout: stdout.toString("utf8"),
+          stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString("utf8"),
           stderr: stderr.toString("utf8").replaceAll(`${HARNESS_PROGRESS_MARKER}\n`, ""),
           exitCode,
           signal: exitSignal,
@@ -333,7 +335,13 @@ export class SpawnCommandRunner {
 
       child.stdout.on("data", (chunk: Buffer) => {
         noteProgress();
-        stdout = collect(stdout, chunk);
+        const room = this.maxOutputBytes - stdoutBytes;
+        if (room > 0) {
+          const kept = chunk.byteLength > room ? chunk.subarray(0, room) : chunk;
+          stdoutChunks.push(kept);
+          stdoutBytes += kept.byteLength;
+        }
+        if (chunk.byteLength > room) terminate("output");
         if (witness?.kind === "stdout-first-byte" && chunk.byteLength > 0) noteHarnessStart();
       });
       child.stderr.on("data", (chunk: Buffer) => {

@@ -334,7 +334,8 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     const { MuseMspRunner } = await import("../sdk/muse-msp-runner.js");
     baseRunner = new MuseMspRunner(runtime.muse);
   } else {
-    baseRunner = new SpawnCommandRunner();
+    // `muse exec --json` emits ~0.5 KB per text fragment and ~25 KB of lifecycle events per tool call.
+    baseRunner = new SpawnCommandRunner(harnessId === "muse" ? { maxOutputBytes: 32 * 1024 * 1024 } : {});
   }
   const logger = operationalLogger(runtime.alias);
   const override = commandOverride(harnessId, definition, commandPins === undefined ? runtime : { ...runtime, harnessCommand: commandPins.command });

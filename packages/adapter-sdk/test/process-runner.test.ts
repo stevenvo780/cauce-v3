@@ -204,6 +204,24 @@ test("output limit after spawn is explicitly ambiguous and non-retryable", async
   );
 });
 
+const chunkedChild = (total: number): string => `
+  let left = ${String(total)};
+  const step = () => { if (left <= 0) return; const size = Math.min(512, left); left -= size; process.stdout.write("x".repeat(size), step); };
+  step();
+`;
+
+test("small stdout chunks are kept up to the limit exactly and one byte more is ambiguous", async () => {
+  const limit = 64 * 1024;
+  const runner = new SpawnCommandRunner({ maxOutputBytes: limit, killGraceMs: 10 });
+  const request = (total: number) => ({ command: process.execPath, args: ["--eval", chunkedChild(total)], harness: "fake",
+    stdin: "", timeoutMs: 5_000, signal: new AbortController().signal });
+  const exact = await runner.run(request(limit));
+  assert.equal(exact.exitCode, 0);
+  assert.equal(exact.stdout.length, limit);
+  await assert.rejects(runner.run(request(limit + 1)),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === "OUTPUT_LIMIT_AMBIGUOUS" && !error.retryable);
+});
+
 const progressingChild = `
   const until = Date.now() + 1_500;
   const tick = setInterval(() => {
