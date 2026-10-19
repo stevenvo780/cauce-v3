@@ -2,9 +2,9 @@ import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/flee
 
 export const STATUS = { queued: 'En cola', running: 'En ejecución', awaiting_auth: 'Esperando autenticación',
   cancelling: 'Cancelación en curso', cancelled: 'Cancelada', failed: 'Fallida', succeeded: 'Completada' };
-export const STEPS = { prepare: 'Preparación', artifacts: 'Artefactos', credentials: 'Credenciales', runtime: 'Runtime',
-  authenticate: 'Autenticación', profile: 'Perfil', verify: 'Verificación', admission: 'Admisión', fence: 'Cierre de entregas',
-  stop: 'Detención', revoke: 'Revocación', purge: 'Purga' };
+export const STEPS = { prepare: 'Preparación', artifacts: 'Archivos', credentials: 'Cuenta', runtime: 'Entorno',
+  authenticate: 'Inicio de sesión', profile: 'Perfil', verify: 'Comprobación', admission: 'Activar mensajes', fence: 'Cerrar mensajes anteriores',
+  stop: 'Detención', revoke: 'Retirar accesos', purge: 'Borrado final' };
 export const STEP_STATUS = { pending: 'Pendiente', running: 'En ejecución', waiting: 'En espera', succeeded: 'Acreditado', failed: 'Fallido', compensated: 'Compensado' };
 export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string> = {
   AUTHORITY_REVOKED: 'La autoridad que respaldaba la operación fue revocada.',

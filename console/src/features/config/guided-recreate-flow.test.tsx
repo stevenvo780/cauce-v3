@@ -102,12 +102,12 @@ it('recreates a drifted zz-canary container and auto-opens login in one guided p
   const user = userEvent.setup();
   const card = await screen.findByLabelText('Operación de flota');
   const guidedButton = within(card).getByRole('button', { name: 'Recrear contenedor e iniciar sesión' });
-  expect(guidedButton).toHaveClass('primary');
+  expect(guidedButton).toHaveClass('bg-brand');
   expect(within(card).getByText('Requiere preparación')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Previsualizar operación' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Encolar operación' })).not.toBeInTheDocument();
   const cancel = within(card).getByRole('button', { name: 'Cancelar' });
-  expect(cancel).not.toHaveClass('primary');
+  expect(cancel).not.toHaveClass('bg-brand');
   expect(cancel.className).toContain('underline');
   expect(screen.getByRole('button', { name: 'Releer operación' }).className).toContain('underline');
   await user.click(guidedButton);

@@ -197,17 +197,14 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
       <span>{operationHeadline(operation)}</span>
     </Notice> : null}
     {operational.error ? <Notice role="alert" tone="danger">{operational.error}</Notice> : null}
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <span className="text-xs text-muted">Revisión esperada: {String(snapshot.revision ?? 'desconocida')}</span>
-      <div className="flex flex-wrap gap-2">
-        {dirty ? <Button disabled={disabled} onClick={() => { setDraft(undefined); setTypedAlias(''); operational.clear(); }}>Descartar borrador</Button> : null}
-        <Button disabled={!published || !operational.canPreview} aria-busy={operational.previewing}
-          title={published ? operational.previewBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
-          onClick={() => { if (published) void operational.preview(); }}>Vista previa</Button>
-        <Button variant="primary" disabled={!published || !operational.canEnqueue} aria-busy={operational.sending}
-          title={published ? operational.enqueueBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
-          onClick={() => { if (published) void operational.enqueue(); }}>{operational.canRetry ? 'Reintentar envío' : 'Aplicar y recrear'}</Button>
-      </div>
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {dirty ? <Button variant="ghost" disabled={disabled} onClick={() => { setDraft(undefined); setTypedAlias(''); operational.clear(); }}>Descartar borrador</Button> : null}
+      <Button disabled={!published || !operational.canPreview} aria-busy={operational.previewing}
+        title={published ? operational.previewBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
+        onClick={() => { if (published) void operational.preview(); }}>Vista previa</Button>
+      <Button variant="primary" disabled={!published || !operational.canEnqueue} aria-busy={operational.sending}
+        title={published ? operational.enqueueBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
+        onClick={() => { if (published) void operational.enqueue(); }}>{operational.canRetry ? 'Reintentar envío' : 'Aplicar y recrear'}</Button>
     </div>
     {!operational.canWrite ? <Notice role="note">Edición de ampliaciones en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
     {operational.previewReceipt ? <AgentFleetPreview preview={operational.previewReceipt} /> : null}
@@ -220,10 +217,11 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
       <AgentFleetOperation operation={operation} busy={controlsBusy} intended="update" stale={flow.stale}
         current={operational.canWrite && operational.available && !flow.readError}
         control={(action) => { void flow.control(action); }} onAuthRefreshed={(value) => { flow.accept(value); }} />
-      <div><Button disabled={controlsBusy} onClick={() => { void flow.refresh(); }}>Releer operación</Button></div>
-    </> : null}
-    <div><Button disabled={controlsBusy} aria-busy={operational.reloading}
-      onClick={() => { void operational.reload(); }}>Releer inventario</Button></div>
+      <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="ghost" className="underline underline-offset-2" disabled={controlsBusy} onClick={() => { void flow.refresh(); }}>Releer operación</Button>
+      <Button size="sm" variant="ghost" className="underline underline-offset-2" disabled={controlsBusy} aria-busy={operational.reloading}
+        onClick={() => { void operational.reload(); }}>Releer inventario</Button></div>
+    </> : <div><Button size="sm" variant="ghost" className="underline underline-offset-2" disabled={controlsBusy} aria-busy={operational.reloading}
+      onClick={() => { void operational.reload(); }}>Releer inventario</Button></div>}
     <p className={HINT}>Quitar una ampliación también recrea el contenedor al aplicar.</p>
   </div>;
 }

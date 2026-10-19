@@ -44,7 +44,7 @@ describe('operation-scoped provider authentication', () => {
     expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Reanudar' })).not.toBeInTheDocument();
     const cancel = screen.getByRole('button', { name: 'Cancelar' });
-    expect(cancel).toBeEnabled(); expect(cancel).toHaveClass('primary');
+    expect(cancel).toBeEnabled(); expect(cancel).toHaveClass('text-danger-ink');
     fireEvent.click(cancel); expect(control).toHaveBeenCalledWith('cancel');
   });
   it('uses the private server scope, hides its profile and rereads current version without automatically resuming', async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FleetOperationSubmissionSchema, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol/fleet-operation';
 import { ActionButton } from '../../components/action-button';
+import { Button } from '../../components/kit';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
@@ -9,6 +10,7 @@ import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusP
 import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, guidedDriftHeadline, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
 import { focusPrimaryMembershipCheckbox, isPrimaryMembershipError, translateFleetOperationError } from './fleet-operation-error-translations';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
+import { lifecycleLabel } from './agent-view';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import { isGuidedDrift } from './guided-recreate';
 import { useGuidedRecreate } from './use-guided-recreate';
@@ -145,23 +147,25 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const enqueueBlock = previewBlock ?? (!samePreview ? 'Previsualiza la operación para poder encolarla.'
     : !validated.receipt.can_apply ? 'La previsualización no permite aplicar esta operación. Revisa los motivos de la previsualización.' : undefined);
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
-    {hideTrigger ? null : <button ref={trigger} type="button" className="button secondary"
+    {hideTrigger ? null : <Button ref={trigger}
       onClick={() => { setOpen((value) => !value); }} aria-expanded={open}
       aria-label={triggerLabel ?? (target?.resource === 'agent' ? `Operar agente ${target.tenant_id}/${target.alias}` : 'Preparar agente')}>
       {triggerLabel ?? (target ? 'Operar agente' : 'Preparar agente')}
-    </button>}
+    </Button>}
     {open ? <section className="settings-context" aria-label={target?.resource === 'agent' ? `Operación de ${target.tenant_id}/${target.alias}` : 'Alta operativa de agente'}>
       <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
-        {embedded ? null : <button type="button" className="button secondary" onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</button>}
+        {embedded ? null : <Button onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</Button>}
       </div>
       {flow.operation && needsAttention(flow.operation) ? <div className="notice grid gap-1" role="status" aria-label="Operación en curso">
         <span className="flex flex-wrap items-center gap-2"><OperationStatusPill operation={flow.operation} /><strong className="text-sm">{operationTitle(flow.operation)}</strong></span>
         <span className="text-sm">{driftGuided ? guidedDriftHeadline() : operationHeadline(flow.operation)}</span>
       </div> : null}
       {fixedKind ? null : <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>}
-      {agent ? <p>Estado durable del agente: {typeof agent.lifecycle_state === 'string' ? agent.lifecycle_state : 'Sin publicar en esta lectura'}.</p> : null}
+      {agent ? <p>{typeof agent.lifecycle_state === 'string'
+        ? <span title={agent.lifecycle_state}>Estado del agente: {lifecycleLabel(agent.lifecycle_state)}.</span>
+        : 'Estado del agente sin publicar en esta lectura.'}</p> : null}
       {!canWrite ? <p className="notice">No se acreditó permiso para operar agentes desde esta cuenta.</p> : null}
-      {sessionInvalid ? <button type="button" className="button secondary" onClick={() => { void revalidate(); }}>Revalidar sesión y cerrar borrador</button> : null}
+      {sessionInvalid ? <Button onClick={() => { void revalidate(); }}>Revalidar sesión y cerrar borrador</Button> : null}
       {!flow.capability && !flow.capabilityError ? <p role="status">Leyendo capacidades de flota…</p> : null}
       {inventoryNotice ? <p className="notice" role="note">{inventoryNotice}</p> : null}
       {draftKind && flow.capability?.available && !flow.capability.placements.length ? <p className="notice">El ejecutor no publicó hosts permitidos para preparar agentes.</p> : null}
@@ -185,14 +189,14 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
           }} /></label>
       </section> : null}
       {driftGuided ? <p className="notice" role="note">El contenedor quedó desfasado. Usa «Recrear contenedor e iniciar sesión» en la operación de abajo: cancela la operación anterior, reprepara el agente con la intención de arriba y abre el inicio de sesión en un solo camino.</p> : <>
-        <div className="acciones"><button type="button" className="button secondary" disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
-          aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</button>
-          <button type="button" className="button" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
-            onClick={() => { void enqueue(); }}>Encolar operación</button></div>
+        <div className="flex flex-wrap items-center gap-2"><Button disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
+          aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</Button>
+          <Button variant="primary" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
+            onClick={() => { void enqueue(); }}>Encolar operación</Button></div>
         {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
       </>}
       {error ? (isPrimaryMembershipError(error)
-        ? <p className="notice" role="alert"><button type="button" className="button secondary" onClick={() => { focusPrimaryMembershipCheckbox(); }}>{error} Ir a la casilla «Habilitar membresía».</button></p>
+        ? <p className="notice" role="alert"><Button onClick={() => { focusPrimaryMembershipCheckbox(); }}>{error} Ir a la casilla «Habilitar membresía».</Button></p>
         : <p className="notice" role="alert">{error}</p>) : null}
       {samePreview ? <><AgentFleetPreview preview={validated.receipt} />
         <details><summary>Detalles técnicos de la solicitud</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
@@ -211,8 +215,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
           const { attention, finished } = partitionOperations(flow.history);
           const row = (operation: (typeof flow.history)[number]) => <li key={operation.id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-line p-3">
             <OperationLine operation={operation} />
-            <button type="button" className="button secondary" aria-label={`Ver detalle de ${operationTitle(operation)}`}
-              disabled={busy} onClick={() => { flow.accept(operation); }}>Ver</button>
+            <Button size="sm" aria-label={`Ver detalle de ${operationTitle(operation)}`}
+              disabled={busy} onClick={() => { flow.accept(operation); }}>Ver</Button>
           </li>;
           return <div className="grid gap-2">
             {attention.length ? <ul className="m-0 grid list-none gap-2 p-0">{attention.map(row)}</ul> : null}

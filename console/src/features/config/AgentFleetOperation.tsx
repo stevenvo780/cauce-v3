@@ -1,7 +1,7 @@
 import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
 import { AlertTriangle, Ban, Check, CheckCircle2, Circle, Clock, KeyRound, Loader2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { Pill } from '../../components/kit';
+import { Button, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { cn } from '../../cn';
 import { AuthOperationPanel } from './AuthOperationPanel';
@@ -73,7 +73,14 @@ export function OperationStepBar({ operation }: { operation: FleetOperation }) {
   if (!operation.steps.length) return null;
   const done = operation.steps.filter((step) => step.status === 'succeeded' || step.status === 'compensated').length;
   const percent = Math.round((done / operation.steps.length) * 100);
+  const active = operation.steps.find((step) => step.status === 'running' || step.status === 'waiting' || step.status === 'failed');
+  const summary = active
+    ? `Hecho: ${String(done)} de ${String(operation.steps.length)} · Ahora: ${STEPS[active.name]}`
+    : done === operation.steps.length
+      ? `Hecho: los ${String(operation.steps.length)} pasos`
+      : `Hecho: ${String(done)} de ${String(operation.steps.length)} pasos`;
   return <div className="grid gap-2">
+    <p className="m-0 text-xs text-muted">{summary}</p>
     <div className="h-1.5 overflow-hidden rounded-full bg-muted-bg" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}
       aria-label={`Progreso: ${String(done)} de ${String(operation.steps.length)} pasos`}>
       <div className={cn('h-full rounded-full transition-all', operation.status === 'failed' ? 'bg-danger' : 'bg-brand')} style={{ width: `${String(percent)}%` }} />
@@ -212,13 +219,13 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
       <p role="status" className="m-0 text-sm">{guidedProgressLine(guided.state)}</p>
       <GuidedRecreateProgress state={guided.state} />
       {guided.state.status === 'failed' && guided.state.message ? <p className="notice m-0" role="alert">{guided.state.message}</p> : null}
-      <div className="acciones flex flex-wrap items-center gap-2">
-        {guided.state.status === 'idle' ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { guided.onStart(); }}>{GUIDED_RECREATE_LABEL}</button> : null}
-        {guided.state.status === 'running' ? <button type="button" className="button primary" disabled aria-busy="true"><Loader2 size={14} aria-hidden="true" className="animate-spin" />Recreando…</button> : null}
-        {guided.state.status === 'failed' ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { guided.onRetry(); }}>Reintentar</button> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {guided.state.status === 'idle' ? <Button variant="primary" disabled={busy || !current} onClick={() => { guided.onStart(); }}>{GUIDED_RECREATE_LABEL}</Button> : null}
+        {guided.state.status === 'running' ? <Button variant="primary" disabled aria-busy="true"><Loader2 size={14} aria-hidden="true" className="animate-spin" />Recreando…</Button> : null}
+        {guided.state.status === 'failed' ? <Button variant="primary" disabled={busy || !current} onClick={() => { guided.onRetry(); }}>Reintentar</Button> : null}
         {guided.state.status === 'awaiting_auth' ? <p className="m-0 text-sm" role="status">Complétalo en la ventana del proveedor.</p> : null}
         {guided.state.status === 'done' ? <p className="m-0 text-sm" role="status">Contenedor recreado.</p> : null}
-        {showCancel ? <button type="button" className="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline underline-offset-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !current || guidedBusy} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
+        {showCancel ? <Button size="sm" variant="ghost" className="underline underline-offset-2" disabled={busy || !current || guidedBusy} onClick={() => { control('cancel'); }}>Cancelar</Button> : null}
         {showCancel ? <span className="text-xs text-muted">{drift ? 'Cancelar solo cancela la operación desfasada, sin recrear el contenedor.' : 'Cancelar detiene esta operación sin seguir el camino guiado.'}</span> : null}
       </div>
     </section> : null}
@@ -226,12 +233,12 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
     {blocking && intended && !showGuided ? <p className="notice m-0" role="note">{blockingText(blocking, intended)}</p> : null}
     {stale ? <p className="notice m-0" role="alert">{STALE_RESUME_TEXT}</p> : null}
     {!current ? <p className="notice m-0">No pudimos confirmar la última lectura de esta operación. Pulsa «Releer operación» para actualizarla antes de seguir.</p> : null}
-    {!hideLegacyActions && (showResume || showCancel) ? <div className="acciones flex flex-wrap items-center gap-2">
-      {showResume ? <button type="button" className={resume && !cancelPrimary && !showAuth ? 'button primary' : 'button secondary'} disabled={busy || !current || !resume} onClick={() => { control('resume'); }}>
+    {!hideLegacyActions && (showResume || showCancel) ? <div className="flex flex-wrap items-center gap-2">
+      {showResume ? <Button variant={resume && !cancelPrimary && !showAuth ? 'primary' : 'secondary'} disabled={busy || !current || !resume} onClick={() => { control('resume'); }}>
         {operation.status === 'failed' ? 'Reintentar' : 'Reanudar'}
-      </button> : null}
-      {cancelPrimary ? <button type="button" className="button primary" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
-      {showCancel && !cancelPrimary && !showGuided ? <button type="button" className="button secondary" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</button> : null}
+      </Button> : null}
+      {cancelPrimary ? <Button variant="danger" disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</Button> : null}
+      {showCancel && !cancelPrimary && !showGuided ? <Button disabled={busy || !current} onClick={() => { control('cancel'); }}>Cancelar</Button> : null}
       {cancelPrimary && (blocking || stale) ? <span className="text-xs text-muted">Cancela esta operación para poder seguir con la que quieres lanzar.</span>
         : showAuth && showResume ? <span className="text-xs text-muted">Primero inicia sesión; después pulsa «Reanudar».</span>
           : showResume && cancel && operation.status === 'failed' ? <span className="text-xs text-muted">Reintenta desde el paso que falló, o cancela si ya no lo necesitas.</span> : null}

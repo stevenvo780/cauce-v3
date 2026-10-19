@@ -66,7 +66,7 @@ it('keeps a host failure and partial fence visible and requires a current CAS ve
   await screen.findByLabelText('Operación de flota');
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('La computadora del agente no respondió');
-  expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('Cierre de entregas');
+  expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('Cerrar mensajes anteriores');
   expect(screen.getByLabelText('Operación de flota')).toHaveTextContent('HOST_UNAVAILABLE');
   await user.click(screen.getByRole('button', { name: 'Reintentar' }));
   await waitFor(() => { expect(controls).toEqual([{ expected_version: 2 }]); });

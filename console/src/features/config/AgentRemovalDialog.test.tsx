@@ -52,8 +52,8 @@ it('asks to cancel a failed create before retiring, and lets the retire preview 
   expect(await screen.findByText('Hay una operación de preparación sin terminar; cancélala para poder retirar.')).toBeInTheDocument();
   const cancel = screen.getByRole('button', { name: 'Cancelar' });
   expect(cancel).toBeEnabled();
-  expect(cancel).toHaveClass('primary');
-  expect(screen.getByRole('button', { name: 'Reintentar' })).not.toHaveClass('primary');
+  expect(cancel).toHaveClass('text-danger-ink');
+  expect(screen.getByRole('button', { name: 'Reintentar' })).not.toHaveClass('bg-brand');
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
   await user.click(cancel);
   await waitFor(() => { expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeEnabled(); });
@@ -78,11 +78,11 @@ it('explains a resume refused after a revision change and makes cancelling the p
     { error: 'conflict', message: 'configuration revision changed; preview the operation again' }, { status: 409 })));
   const user = userEvent.setup();
   const resume = await screen.findByRole('button', { name: 'Reintentar' });
-  expect(resume).toHaveClass('primary');
+  expect(resume).toHaveClass('bg-brand');
   await user.click(resume);
   expect(await screen.findByText('La configuración cambió desde que se lanzó; cancélala y vuelve a lanzarla.')).toBeInTheDocument();
   const cancel = screen.getByRole('button', { name: 'Cancelar' });
   expect(cancel).toBeEnabled();
-  expect(cancel).toHaveClass('primary');
+  expect(cancel).toHaveClass('text-danger-ink');
   expect(screen.getByRole('button', { name: 'Reintentar' })).toBeDisabled();
 });
