@@ -128,7 +128,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       </nav> : null}
       <p className="m-0 text-xs text-muted">El registro describe la configuración guardada. El arnés en ejecución,
         los permisos y la aplicación del contexto se comprueban en la página de cada agente; si falta evidencia, se indica como desconocida.
-        «Eliminar» (en cada tarjeta y en la ficha) guía los dos pasos: retirar, que detiene la ejecución y conserva el historial, y eliminar definitivamente.</p>
+        Pulsa una tarjeta para abrir su ficha; el menú «⋯» salta a una sección. «Eliminar», solo dentro de la ficha, guía los dos pasos: retirar, que detiene la ejecución y conserva el historial, y eliminar definitivamente.</p>
     </SectionCard>
     {retired.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
       <p className="m-0 text-xs text-muted">«Eliminar definitivamente» es el paso 2: borra la configuración del agente y conserva los mensajes ya enviados. No se puede deshacer.</p>
