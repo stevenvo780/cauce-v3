@@ -96,6 +96,20 @@ describe('operation-scoped provider authentication', () => {
     expect(document.body.textContent).not.toContain('PRIVATE_PROFILE_LOCATOR');
   });
 
+  it('resolves a fresh request once an expired login moved the version on while the dialog is closed', async () => {
+    let version = 2; const scopes = vi.fn();
+    server.use(http.get(path, () => { scopes(); return HttpResponse.json({ ...scope, expected_operation_version: version }); }));
+    const view = renderWithApi(<AuthOperationPanel operation={operation} allowed onRefreshed={vi.fn()} />);
+    await screen.findByRole('button', { name: 'Iniciar sesión' });
+    expect(scopes).toHaveBeenCalledOnce();
+    version = 3;
+    view.rerender(<ApiProvider api={testApi}><AuthOperationPanel operation={{ ...operation, version: 3 }} allowed onRefreshed={vi.fn()} /></ApiProvider>);
+    await waitFor(() => { expect(scopes).toHaveBeenCalledTimes(2); });
+    expect(await screen.findByRole('button', { name: 'Iniciar sesión' })).toBeEnabled();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(scopes).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps its active login across the journal version increments created by its own reservation', async () => {
     login(); const cancelled = vi.fn(); const scopes = vi.fn(); const refreshed = vi.fn();
     server.use(http.get(path, () => { scopes(); return HttpResponse.json(scope); }),

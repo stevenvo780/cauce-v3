@@ -58,6 +58,13 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed, autoOpen =
   }, [api, permitted, reading, key, operation, identity, onRefreshed]);
   const request = permitted && scope?.key === key ? scope.request : undefined;
   const error = scope?.key === key ? scope.error : undefined;
+  // An expired, failed or cancelled login released its reservation and moved the operation version on. With the dialog
+  // closed, a request resolved for an older version can never start again: resolve a fresh one (never while open,
+  // since the reservation itself bumps the version).
+  useEffect(() => {
+    if (open || !permitted || !request || request.expected_operation_version >= operation.version) return;
+    setRetry(value => value + 1);
+  }, [open, permitted, request, operation.version]);
   const autoOpenedFor = useRef<string | null>(null);
   useEffect(() => {
     if (!autoOpen || !request || open) return;
