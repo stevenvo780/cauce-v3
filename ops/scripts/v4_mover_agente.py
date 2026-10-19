@@ -1,4 +1,4 @@
-"""One explicit cut: stop, copy, restore, relocate through the fleet and verify, with inverse relocation on failure."""
+"""Stop, copy and relocate; retain the source while destination login is pending."""
 from __future__ import annotations
 
 import argparse
@@ -251,14 +251,8 @@ class Cut:
     def awaiting_authentication(self, operation):
         observed = datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
         self.receipt['awaiting_auth'] = {'operation_id': operation['id'], 'observed_at': observed,
-                                       'timeout_seconds': self.plan['authentication_wait_seconds']}
+                                       'timeout_seconds': None, 'automatic_rollback': False}
         self.save()
-        marker = ROOT / '.delegados/v4/hechas' / ('corte-' + self.plan['alias'] + '.listo')
-        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with marker.open('x', encoding='utf-8') as writer:
-            writer.write('awaiting_auth ' + observed + '\n')
-            writer.flush()
-            os.fsync(writer.fileno())
 
     def measure(self, label):
         if self.plan['source'].get('sudo'):
@@ -289,7 +283,11 @@ class Cut:
         if self.legacy:
             return self.rollback_legacy()
         if self.relocation_attempted:
-            self.fleet.rollback(self.plan['alias'], self.original, timeout=self.plan.get('timeout', 300))
+            operation = self.fleet.last_operation or {}
+            restored = operation.get('kind') == 'update' and operation.get('status') == 'succeeded' \
+                and self.fleet.parameters(self.fleet.agent(self.plan['alias'])) == self.original
+            if not restored:
+                self.fleet.rollback(self.plan['alias'], self.original, timeout=self.plan.get('timeout', 300))
         else:
             self.fleet.operation('start', self.plan['alias'], {}, timeout=self.plan.get('timeout', 300))
         self.fleet.refresh_context(self.plan['alias'], 'Restablecer el contexto del agente tras revertir su traslado.',
@@ -304,12 +302,19 @@ class Cut:
         return self.source.call('legacy-' + action, {'alias': self.plan['alias'], 'source': self.plan['source'],
                                'config': json.loads(self.alias_config.read_text())})
 
+    def legacy_registry_matches(self, row):
+        fields = ('host_id', 'runtime_mode', 'container_name', 'runtime_user', 'home_directory', 'state_directory',
+                  'systemd_user', 'harness_id', 'primary_room_id', 'primary_account_id', 'model_id',
+                  'reasoning_effort', 'enabled', 'lifecycle_state', 'display_name', 'extensions')
+        return all(row.get(key) == self.original_row.get(key) for key in fields)
+
     def rollback_legacy(self):
         alias, timeout = self.plan['alias'], self.plan.get('timeout', 300)
         cleanup_failure = None
+        current = self.fleet.agent(alias, include_retired=True)
+        restored = self.legacy_registry_matches(current)
         if self.create_attempted:
-            current = self.fleet.agent(alias)
-            if current.get('runtime_mode') is not None:
+            if current.get('runtime_mode') is not None and current.get('retired_at') is None:
                 self.fleet.operation('retire', alias, {}, timeout=timeout)
         if self.data_staged:
             self.common['create_operation_id'] = self.receipt.get('create_operation_id')
@@ -320,13 +325,12 @@ class Cut:
                     raise
                 cleanup_failure = error
                 self.receipt['destination_cleanup'] = {'verified': False, 'error': type(error).__name__}
-        if self.legacy_prepared:
+            self.save()
+        if self.legacy_prepared and not restored:
             self.receipt['registry_rollback'] = self.fleet.restore_legacy(alias, self.original_row, self.receipt['target'])
+            self.save()
         row = self.fleet.agent(alias)
-        fields = ('host_id', 'runtime_mode', 'container_name', 'runtime_user', 'home_directory', 'state_directory',
-                  'systemd_user', 'harness_id', 'primary_room_id', 'primary_account_id', 'model_id',
-                  'reasoning_effort', 'enabled', 'lifecycle_state')
-        if any(row.get(key) != self.original_row.get(key) for key in fields):
+        if not self.legacy_registry_matches(row):
             raise ValueError('la reversión no restauró el registro legado')
         unit = self.legacy_control('start')
         proof = {'verified': cleanup_failure is None, 'unit': unit, 'registry_restored': True, 'source_restarted': True,
@@ -340,7 +344,7 @@ class Cut:
 
     def run(self):
         alias, timeout = self.plan['alias'], self.plan.get('timeout', 300)
-        authentication = {'authentication_wait': self.plan.get('authentication_wait_seconds', 0),
+        authentication = {'allow_pending_auth': True,
                           'on_authentication': self.awaiting_authentication}
         self.original_row = self.fleet.agent(alias)
         self.legacy = self.original_row.get('runtime_mode') is None
@@ -360,6 +364,7 @@ class Cut:
                   'directory': target['placement']['state_directory'] + '/space', 'require_new': self.legacy,
                   'migration_id': self.evidence.name, 'legacy': self.legacy}
         self.common = common
+        self.receipt['recovery_common'] = common
         if self.legacy and self.plan.get('enrollment'):
             from v4_mover_destino import prepare_destination
             self.step('limpiar-destino-inactivo', lambda: prepare_destination(
@@ -432,6 +437,10 @@ class Cut:
                 if repositories.get('verified') is not True:
                     raise ValueError('los clones propios no quedaron verificados')
                 write_json(self.evidence / 'repositorios.json', repositories)
+            if self.fleet.last_operation.get('status') == 'awaiting_auth':
+                from v4_mover_recibo import finish_pending_auth
+                if self.step('finalizar-pendiente-login', lambda: finish_pending_auth(self)):
+                    return
             self.step('aplicar-contexto-destino', lambda: self.fleet.refresh_context(alias,
                 'Aplicar el contexto del agente en su nuevo ordenador tras el traslado.', timeout=timeout))
             proof = self.step('verificar', lambda: self.fleet.verify(alias, target, timeout=timeout))
@@ -468,6 +477,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--simular', action='store_true')
     mode.add_argument('--ejecutar', action='store_true')
+    mode.add_argument('--revertir', type=pathlib.Path, metavar='RECIBO', help='revertir explícitamente un corte terminado')
     parser.add_argument('--plan', type=pathlib.Path)
     parser.add_argument('--alias-config', type=pathlib.Path, default=HERE.parent / 'container-aliases.json')
     parser.add_argument('--recibos', type=pathlib.Path, default=ROOT / '.delegados/v4/recibos/migraciones')
@@ -476,6 +486,11 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', args.alias):
         parser.error('alias inválido; debe identificar un agente del registro de la empresa')
+    if args.revertir:
+        if args.inventario or args.copia or args.plan:
+            parser.error('--revertir usa el plan conservado junto al recibo')
+        from v4_mover_recibo import rollback_receipt
+        return rollback_receipt(args)
     plan_path = args.plan or ROOT / '.delegados/v4/migracion' / (args.alias + '.json')
     if not args.ejecutar:
         from v4_simular_traslado import simulate
@@ -493,6 +508,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         evidence = args.recibos / (args.alias + '-' + uuid.uuid4().hex)
         evidence.mkdir(mode=0o700)
+        write_json(evidence / 'plan-corte.json', plan)
+        write_json(evidence / 'alias-config-corte.json', json.loads(args.alias_config.read_text()))
         fleet = Fleet(plan.get('gateway'), plan.get('session_file'), plan['company'], ca_file=plan.get('ca_file'),
                       platform_gateway=plan.get('platform_gateway'))
         fleet.tenant = plan['tenant']
@@ -509,7 +526,7 @@ def main():
                 cut.save()
             print(json.dumps({'state': cut.receipt['state'], 'receipt': str(evidence / 'recibo.json')}))
             return 1
-        print(json.dumps({'state': 'succeeded', 'receipt': str(evidence / 'recibo.json'),
+        print(json.dumps({'state': cut.receipt['state'], 'receipt': str(evidence / 'recibo.json'),
                           'outage_seconds': cut.receipt['outage_seconds']}))
         return 0
     finally:

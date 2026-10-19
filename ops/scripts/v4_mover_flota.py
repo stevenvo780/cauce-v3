@@ -116,7 +116,10 @@ class Fleet:
         result = dict(rows[0])
         if not isinstance(result.get('tenant_id'), str) or not IDENTIFIER.fullmatch(result['tenant_id']):
             raise FleetFailure('agent tenant identity is invalid')
-        result['memberships'] = [dict(row) for row in snapshot.get('memberships', []) if isinstance(row, dict)
+        memberships = snapshot.get('memberships', [])
+        if include_retired and result.get('retired_at') is not None:
+            memberships = [*memberships, *(snapshot.get('retired') or {}).get('memberships', [])]
+        result['memberships'] = [dict(row) for row in memberships if isinstance(row, dict)
                                  and row.get('tenant_id') == result['tenant_id'] and row.get('alias') == selected]
         result['revision'] = snapshot['revision']
         target = {'resource': 'agent', 'tenant_id': result['tenant_id'], 'alias': result['alias']}
@@ -222,10 +225,11 @@ class Fleet:
         return row
 
     def operation(self, kind: str, alias: str, parameters: dict, timeout: float = 300, *,
-                  authentication_wait: float = 0, on_authentication=None) -> dict:
+                  authentication_wait: float = 0, on_authentication=None, allow_pending_auth: bool = False) -> dict:
         if kind not in {'create', 'update', 'start', 'stop', 'retire'} or not isinstance(parameters, dict) \
                 or not math.isfinite(timeout) or timeout <= 0 \
-                or not math.isfinite(authentication_wait) or not 0 <= authentication_wait <= 1800:
+                or not math.isfinite(authentication_wait) or not 0 <= authentication_wait <= 1800 \
+                or type(allow_pending_auth) is not bool or allow_pending_auth and kind not in {'create', 'update'}:
             raise FleetFailure('invalid migration operation')
         agent = self.agent(alias)
         target = {'resource': 'agent', 'tenant_id': agent['tenant_id'], 'alias': agent['alias']}
@@ -241,6 +245,10 @@ class Fleet:
         authentication_deadline = None
         while row['status'] not in TERMINAL:
             waiting = row['status'] == 'awaiting_auth'
+            if waiting and allow_pending_auth:
+                if on_authentication is not None:
+                    on_authentication(row)
+                return row
             if waiting and authentication_wait and authentication_deadline is None:
                 authentication_deadline = time.monotonic() + authentication_wait
                 deadline += authentication_wait
