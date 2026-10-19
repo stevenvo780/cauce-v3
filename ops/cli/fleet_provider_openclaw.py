@@ -289,8 +289,10 @@ def authenticated_identity(packet: dict) -> str | None:
         if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
                 or selected.get('type') not in flow['profile_types'] or identity is None:
             return None
-        if any(selected.get(field) for field in ('cooldownUntil', 'disabledUntil')):
-            return None
+        for field in ('cooldownUntil', 'disabledUntil'):
+            until = selected.get(field)
+            if until and (not isinstance(until, str) or datetime.fromisoformat(until.replace('Z', '+00:00')) > datetime.now(UTC)):
+                return None
         if 'expiresAt' in selected or flow['expiry_required']:
             if not isinstance(selected.get('expiresAt'), str):
                 return None

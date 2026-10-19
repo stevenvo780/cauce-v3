@@ -35,6 +35,7 @@ else if(argv.includes('list')) {
  if(mode==='agent') meta.agentId='foreign';
  if(mode==='expiry') meta.profiles[0].expiresAt='2000-01-01T00:00:00Z';
  if(mode==='cooldown') meta.profiles[0].cooldownUntil='2099-01-01T00:00:00Z';
+ if(mode==='cooldown-expired') meta.profiles[0].cooldownUntil='2000-01-01T00:00:00Z';
  if(mode==='ambiguous') meta.profiles.push({...meta.profiles[0],id:'other'});
  if(mode==='type') meta.profiles[0].type='api_key';
  if(mode==='shape') meta=[];
@@ -104,6 +105,10 @@ class OpenClawProviderTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 (self.profile / 'mode').write_text(mode)
                 self.assertFalse(identity.authenticated_provider(self.packet))
+
+    def test_an_expired_cooldown_no_longer_blocks_the_identity(self):
+        (self.profile / 'mode').write_text('cooldown-expired')
+        self.assertTrue(identity.authenticated_provider(self.packet))
 
     def test_capability_probe_prepares_its_isolated_temporary_directories(self):
         self.assertTrue(driver.measured_definition(self.binding))
