@@ -84,7 +84,7 @@ export class AgentProviderAuthHost {
           case 'open': {
             if (session || this.logins.size >= 64) throw new Error('Agent login is already open');
             const config = await hostProviderLoginConfiguration(this.options, context.execution, context.physical, this.abort.signal, true);
-            config.packet.ttl_seconds = Math.max(1, Math.min(600, Math.ceil((Date.parse(fence.expires_at) - Date.now()) / 1000)));
+            config.packet.ttl_seconds = Math.max(1, Math.min(900, Math.ceil((Date.parse(fence.expires_at) - Date.now()) / 1000)));
             const login = await (this.options.createLogin ?? createProviderLogin)(config, this.abort.signal);
             const unsubscribe = login.subscribeOutput(bytes => {
               for (let offset = 0; offset < bytes.byteLength; offset += 4096) {

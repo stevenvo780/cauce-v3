@@ -221,7 +221,7 @@ async function loginConfiguration(options: HostProviderAuthOptions, execution: F
     packet: { operation_id: scope.operation_id, command: projected.command, command_sha256: login.sha256,
       ...(projected.files === undefined ? {} : { command_files: projected.files }), runtime_user: agent.runtime_user,
       home: agent.home_directory, cwd: agent.home_directory, env, backend: agent.runtime_mode, state_root: policy.state_root,
-      account_scope: scope.account_id, ttl_seconds: 600,
+      account_scope: scope.account_id, ttl_seconds: 900,
       ...(binding.runtime_binding === undefined ? {} : { container_binding: binding.runtime_binding }) } };
 }
 function guardedLogin(login: ProviderAuthLogin, start: () => Promise<void>): ProviderAuthLogin {

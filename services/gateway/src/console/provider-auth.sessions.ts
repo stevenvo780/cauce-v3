@@ -32,8 +32,9 @@ export class ProviderAuthManager {
   private readonly tickets = new Map<string, { actor: ProviderAuthActor; sessionId: string; expires: number }>();
   private readonly ttlMs: number;
   constructor(private readonly dependencies: ProviderAuthDependencies, options: { ttlMs?: number } = {}) {
-    this.ttlMs = options.ttlMs ?? 300_000;
-    if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs < 1000 || this.ttlMs > 600_000) throw new ProviderAuthError('INVALID_REQUEST');
+    // A person must open the provider page, sign in and type the device code: 15 minutes, the device-code lifetime.
+    this.ttlMs = options.ttlMs ?? 900_000;
+    if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs < 1000 || this.ttlMs > 900_000) throw new ProviderAuthError('INVALID_REQUEST');
   }
 
   async start(actor: ProviderAuthActor, value: unknown): Promise<ProviderAuthSnapshot> {

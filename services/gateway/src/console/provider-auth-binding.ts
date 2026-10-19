@@ -124,7 +124,7 @@ export function createProviderAuthDependencies(
     authorize,
     reserve: async (actor, request, sessionId, expiresAt) => {
       const expires = Date.parse(expiresAt);
-      if (!Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + 600_000) throw new ProviderAuthError('SESSION_EXPIRED');
+      if (!Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + 900_000) throw new ProviderAuthError('SESSION_EXPIRED');
       const cohort = JSON.stringify([request.host_id, request.runtime_user, request.profile_id]);
       let expectedVersion = request.expected_operation_version;
       const inspect = async (client: DatabaseClient) => {
