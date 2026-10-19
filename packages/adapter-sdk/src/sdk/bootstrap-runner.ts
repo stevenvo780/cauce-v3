@@ -59,7 +59,7 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
       };
       const result = await options.runner.run({ ...invocation, executionSelection: selection,
         ...(options.commandPins === undefined ? {} : { commandPins: options.commandPins }),
-        stdin: probe.prompt, timeoutMs: Math.max(1, Math.min(45_000, Date.parse(probe.deadline) - Date.now())), signal,
+        stdin: probe.prompt, timeoutMs: Math.max(1, Math.min(100_000, Date.parse(probe.deadline) - Date.now())), signal,
         ...(sessionId === undefined ? {} : { sessionId }),
         ...(definition.startWitness === undefined ? {} : { startWitness: definition.startWitness }),
         ...(definition.stdinSource === undefined ? {} : { stdinSource: definition.stdinSource }),

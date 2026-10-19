@@ -40,7 +40,7 @@ export async function performHostLoginStop(config: HostCommandConfig, execution:
 async function runHostCommand(
   config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop', execution: FleetExecution, signal: AbortSignal,
 ): Promise<FleetEffectResult> {
-  const timeoutMs = config.timeoutMs ?? 60_000;
+  const timeoutMs = config.timeoutMs ?? 150_000;
   const isAborted = () => signal.aborted;
   if (![config.python, config.executable, config.policyFile].every(absolute)
       || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 || signal.aborted) throw unverified();

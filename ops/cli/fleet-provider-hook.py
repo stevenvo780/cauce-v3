@@ -76,7 +76,7 @@ def container(packet: dict) -> dict:
         ],
         input=json.dumps(packet).encode(),
         capture_output=True,
-        timeout=43,
+        timeout=110,
     )
     if result.returncode != 0 or len(result.stdout) > 8192:
         raise ValueError("container did not return a bounded proof")

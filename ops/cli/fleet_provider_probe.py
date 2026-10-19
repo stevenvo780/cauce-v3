@@ -81,7 +81,8 @@ def probe(packet: dict) -> dict:
         descriptor.get(key) != value for key, value in {**expected, **create}.items()
     ):
         raise ProbeError("probe identity changed")
-    deadline = time.monotonic() + 40
+    # A real provider round trip at maximum reasoning effort takes ~30-40 s; the probe itself allows 120 s.
+    deadline = time.monotonic() + 105
     endpoint = "/v3/bootstrap/probes/" + descriptor["probe_id"]
     while receipt.get("state") != "succeeded" and time.monotonic() < deadline:
         time.sleep(0.2)
