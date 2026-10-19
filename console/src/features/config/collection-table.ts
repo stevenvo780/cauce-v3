@@ -128,6 +128,14 @@ export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUME
   return puntos.length <= largo ? valor : `${puntos.slice(0, largo).join('')}…`;
 }
 
+/** Name shown for a room or tenant row: its visible name, falling back to its id when it has none. */
+export function nombreMostrado(coleccion: string, fila: Record<string, unknown>): string | undefined {
+  if (coleccion !== 'rooms' && coleccion !== 'tenants') return undefined;
+  const nombre = typeof fila.display_name === 'string' ? fila.display_name.trim() : '';
+  if (nombre) return nombre;
+  return typeof fila.id === 'string' && fila.id.trim() !== '' ? fila.id : undefined;
+}
+
 /** Display name of each space, keyed by its id. */
 export function nombresDeEspacio(espacios: readonly Record<string, unknown>[] | null | undefined): Record<string, string> {
   const nombres: Record<string, string> = {};

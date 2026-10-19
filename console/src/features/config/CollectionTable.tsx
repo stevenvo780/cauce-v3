@@ -12,7 +12,7 @@ import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import type { ConfigCollection } from './collections';
 import {
   accionDeRol, claveDeFila, columnaNumerica, columnasDe, detalleDeColumna, esColumnaDeFecha, esColumnaFundida,
-  idDeEspacioOculto, nombresDeEspacio,
+  idDeEspacioOculto, nombreMostrado, nombresDeEspacio,
   esColumnaLarga, identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
   type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
@@ -327,6 +327,10 @@ function Celda({
     return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="text-muted italic">(vacío)</span>;
   }
   if (valor !== null && typeof valor === 'object') return <code>{JSON.stringify(valor)}</code>;
+  if (columna.clave === 'display_name') {
+    const nombre = nombreMostrado(coleccion, fila);
+    if (nombre) return <span title={typeof fila.id === 'string' ? fila.id : undefined}>{nombre}</span>;
+  }
   return <Unknown value={valor} />;
 }
 
