@@ -2,9 +2,9 @@ import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/flee
 
 export const STATUS = { queued: 'En cola', running: 'En ejecución', awaiting_auth: 'Esperando autenticación',
   cancelling: 'Cancelación en curso', cancelled: 'Cancelada', failed: 'Fallida', succeeded: 'Completada' };
-export const STEPS = { prepare: 'Preparación', artifacts: 'Archivos', credentials: 'Cuenta', runtime: 'Entorno',
-  authenticate: 'Inicio de sesión', profile: 'Perfil', verify: 'Comprobación', admission: 'Activar mensajes', fence: 'Cerrar mensajes anteriores',
-  stop: 'Detención', revoke: 'Retirar accesos', purge: 'Borrado final' };
+export const STEPS = { prepare: 'Preparar el cambio', artifacts: 'Archivos', credentials: 'Cuenta', runtime: 'Entorno',
+  authenticate: 'Inicio de sesión', profile: 'Aplicar el perfil', verify: 'Comprobación', admission: 'Activar mensajes', fence: 'Cerrar mensajes anteriores',
+  stop: 'Detener el contenedor', revoke: 'Retirar accesos', purge: 'Borrado final' };
 export const STEP_STATUS = { pending: 'Pendiente', running: 'En ejecución', waiting: 'En espera', succeeded: 'Acreditado', failed: 'Fallido', compensated: 'Compensado' };
 export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string> = {
   AUTHORITY_REVOKED: 'La autoridad que respaldaba la operación fue revocada.',
@@ -109,12 +109,12 @@ export function operationErrorHuman(error: NonNullable<FleetOperation['error']>)
   return { message: fallback, next: ERROR_NEXT[error.code] };
 }
 
-export function stepProgress(operation: FleetOperation): { current: number; total: number; label?: string } {
+export function stepProgress(operation: FleetOperation): { current: number; total: number; done: number; label?: string } {
   const total = operation.steps.length;
   const active = operation.steps.find((step) => step.status === 'running' || step.status === 'waiting' || step.status === 'failed');
   const done = operation.steps.filter((step) => step.status === 'succeeded' || step.status === 'compensated').length;
   const current = active ? operation.steps.indexOf(active) + 1 : Math.min(done + 1, Math.max(total, 1));
-  return { current: total ? current : 0, total, label: active ? STEPS[active.name] : undefined };
+  return { current: total ? current : 0, total, done, label: active ? STEPS[active.name] : undefined };
 }
 
 const REMOVED_NOUN: Record<string, { one: string; many: string }> = {
@@ -162,7 +162,7 @@ export function operationHeadline(operation: FleetOperation, hostId?: string): s
   if (operation.status === 'queued') return `${title} está en cola. Empezará en cuanto el ejecutor tenga turno.`;
   if (operation.status === 'running') {
     return progress.total
-      ? `${title} está en curso: paso ${String(progress.current)} de ${String(progress.total)}${progress.label ? ` · ${progress.label}` : ''}.`
+      ? `${title} está en curso. Hecho: ${String(progress.done)} de ${String(progress.total)}${progress.label ? ` · Ahora: ${progress.label}` : ' pasos'}.`
       : `${title} está en curso.`;
   }
   if (operation.status === 'cancelling') return `Cancelando: ${title.charAt(0).toLowerCase()}${title.slice(1)}.`;

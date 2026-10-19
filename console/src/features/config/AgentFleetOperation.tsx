@@ -24,11 +24,11 @@ function GuidedStepIcon({ status }: { status: ReturnType<typeof guidedStepStatus
 }
 
 export function GuidedRecreateProgress({ state }: { state: GuidedState }) {
-  return <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label="Pasos para recrear e iniciar sesión">
+  return <ol className="m-0 flex list-none gap-1.5 overflow-x-auto p-0 pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0" aria-label="Pasos para recrear e iniciar sesión">
     {GUIDED_STEPS.map((step) => {
       const status = guidedStepStatus(state, step.id);
       return <li key={step.id} data-step={step.id} data-status={status}
-        className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap',
+        className={cn('inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap',
           status === 'done' ? 'border-ok/30 bg-ok-soft text-ok-ink'
             : status === 'failed' ? 'border-danger/30 bg-danger-soft text-danger-ink font-semibold'
               : status === 'current' ? 'border-info/30 bg-info-soft text-info-ink'
@@ -85,9 +85,9 @@ export function OperationStepBar({ operation }: { operation: FleetOperation }) {
       aria-label={`Progreso: ${String(done)} de ${String(operation.steps.length)} pasos`}>
       <div className={cn('h-full rounded-full transition-all', operation.status === 'failed' ? 'bg-danger' : 'bg-brand')} style={{ width: `${String(percent)}%` }} />
     </div>
-    <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+    <ol className="m-0 flex list-none gap-1.5 overflow-x-auto p-0 pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
       {operation.steps.map((step) => <li key={step.name} data-status={step.status}
-        className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap',
+        className={cn('inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] whitespace-nowrap',
           step.status === 'succeeded' || step.status === 'compensated' ? 'border-ok/30 bg-ok-soft text-ok-ink'
             : step.status === 'failed' ? 'border-danger/30 bg-danger-soft text-danger-ink font-semibold'
               : step.status === 'running' ? 'border-info/30 bg-info-soft text-info-ink'
@@ -135,8 +135,8 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
   return <section aria-label="Previsualización operativa" className="agent-fleet-receipt grid gap-3">
     <p className="m-0 text-sm font-semibold">{previewTitle(preview)}</p>
     <p className="m-0 text-xs text-muted">Esto es el plan. Todavía no se hizo nada; el resultado real se muestra cuando la operación termina.</p>
-    {preview.steps.length ? <ol className="m-0 flex list-none flex-wrap gap-1.5 p-0">
-      {preview.steps.map((step, index) => <li key={step} className="inline-flex items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] whitespace-nowrap text-muted">
+    {preview.steps.length ? <ol className="m-0 flex list-none gap-1.5 overflow-x-auto p-0 pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+      {preview.steps.map((step, index) => <li key={step} className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-subtle px-2 py-0.5 text-[11px] whitespace-nowrap text-muted">
         <span aria-hidden="true">{index + 1}.</span>{STEPS[step]}
       </li>)}
     </ol> : null}
