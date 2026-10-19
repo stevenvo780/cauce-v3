@@ -281,6 +281,16 @@ Activos: `cred-guard.timer` (30 min, último 16:21 hora local, `rc=0 problemas=0
 Fuera de este inventario: el «lector V3 de contextos» citado en `GOAL.md` §9 no se midió aquí; se
 revisa con la tarea de contextos.
 
+## Diagnóstico de login de agente
+
+El diagnóstico de un login de agente que no avanza no usa este inventario: sigue el orden de la
+sección [Diagnóstico de login de agente para operadores](v4-autenticacion-runtime.md#diagnóstico-de-login-de-agente-para-operadores)
+—primero la operación y sus eventos en la consola, después el diario del executor en el ordenador
+del agente— con el significado y la acción de cada código cerrado (`RUNTIME_DRIFT` y sus motivos
+de forma, `STOP_UNCONFIRMED`, `HOST_UNAVAILABLE`, `SESSION_CONFLICT`, `IDENTITY_MISMATCH`,
+`FUNCTIONAL_CHECK_FAILED` y `SESSION_EXPIRED`). Esa sección es la referencia vigente; este
+inventario histórico no la duplica.
+
 ## 11. Aplicación de la poda (ola w4, carril muse1)
 
 Registro de ejecución; las secciones 1–10 quedan como se midieron.

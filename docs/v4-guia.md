@@ -37,7 +37,7 @@ El latido confirma conexión; el ejecutor listo confirma que puede operar agente
 
 Las ventanas, porcentajes disponibles y reinicios vienen del CLI del proveedor; cada proveedor puede informar ventanas distintas. Revisa la hora de lectura. **Sin datos**, **datos antiguos** y **error** son estados distintos de cuota agotada. Si la sesión vence, vuelve a **Iniciar sesión** y repite la consulta.
 
-El saldo se consulta en **Mis cuotas**. **Cuentas** mantiene **Inventario** y **Asignaciones**, para administrar pagadores y ruteo; la antigua pestaña **Consumo** está retirada. Para mantener el CLI o retirar su contenedor, usa **Actualizar CLI** o **Eliminar entorno**. Eliminar una cuenta exige retirar antes sus entornos y asignaciones. Capacidades y límites: [cuotas](v4-cuotas.md).
+El saldo se consulta en **Mis cuotas**. **Cuentas** mantiene **Inventario** y **Asignaciones**, para administrar pagadores y ruteo; la antigua pestaña **Consumo** está retirada. Para mantener el CLI o retirar su contenedor, usa **Actualizar CLI** o **Eliminar entorno**. Si **Actualizar CLI** falla, el aviso nombra la operación y su causa; vuelve a intentarlo y, si se repite, el diario del ejecutor en ese ordenador trae el motivo. Eliminar una cuenta exige retirar antes sus entornos y asignaciones. Capacidades y límites: [cuotas](v4-cuotas.md).
 
 ## Compartir una cuenta entre agentes
 
@@ -51,6 +51,10 @@ En la ficha del agente, abre **Registro → Cuentas de cuota**, elige la cuenta,
 4. Con una computadora asignada, pulsa **Preparar en la computadora**, revisa el plan y encola la operación. También puedes abrir la ficha, ir a **Operación** y elegir **Preparar agente**. Completa la autenticación del proveedor cuando se solicite.
 
 El asistente también ofrece **Solo preparar, sin desplegar**. Una operación en cola o en ejecución todavía no está completada: revisa sus pasos y el estado final antes de iniciar el trabajo. Operación y CLI: [gestión de espacios](v4-cli.md).
+
+Si el agente estaba pausado y su grupo principal quedó deshabilitado, al reprepararlo la propia ficha marca ese grupo para que lo habilites: el aviso «Para activar el agente su grupo principal debe quedar habilitado» señala la casilla **Habilitar membresía** que hay que marcar, y los rechazos conocidos de la preparación se muestran ya traducidos con la acción siguiente en lugar del mensaje crudo del servidor.
+
+Si tras un despliegue la operación muestra **Requiere preparación**, el contenedor quedó con una imagen anterior y esa operación ya no se puede reanudar. Pulsa **Recrear contenedor e iniciar sesión** en la propia operación: la consola cancela la operación desfasada, comprueba la preparación, encola la recreación, sigue sus pasos y abre el inicio de sesión en un solo camino, conservando volúmenes, sesión y ampliaciones. Si un paso falla, el camino se detiene en ese paso y **Reintentar** lo retoma desde ahí con la misma solicitud; cancelar el camino guiado solo cancela la operación desfasada, sin recrear nada.
 
 ## Crear una sala
 
@@ -111,6 +115,6 @@ Solo el **administrador de plataforma** puede usar **Purgar definitivamente**, y
 
 ## Resolver un fallo o publicar una actualización
 
-Si una acción falla, conserva su identificador y el paso afectado. **Señales y auditoría**, el historial de operaciones y `cauce diagnose <id>` permiten seguir la causa. Ante una sesión vencida, vuelve a entrar; ante un conflicto de revisión, relee antes de reintentar.
+Si una acción falla, conserva su identificador y el paso afectado. **Señales y auditoría**, el historial de operaciones y `cauce diagnose <id>` permiten seguir la causa. Ante una sesión vencida, vuelve a entrar; ante un conflicto de revisión, relee antes de reintentar. Durante un despliegue, si el servidor no responde unos segundos, verás «Reconectando con el servidor…»: las lecturas se reintentan solas y no tienes que recargar; una escritura que cayó en ese momento no se repite sola y el aviso te ofrece **Reintentar** cuando quieras ejecutarla, o **Descartar**. Si el fallo es de login de un agente, la tabla de códigos y el orden de consulta están en [diagnóstico de login](v4-autenticacion-runtime.md#diagnóstico-de-login-de-agente-para-operadores).
 
 El operador publica un candidato con el gate de tres pasos y el procedimiento **`corte.sh` → `deploy1-local.sh` → `deploy1-vps.sh`**, seguido de smoke y recorrido funcional. Requisitos, copias, actualización del controlador y reversión: [Desplegar V4](operacion.md#desplegar-v4).

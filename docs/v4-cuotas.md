@@ -35,6 +35,8 @@ docker image inspect cauce-cuotas-local --format '{{.Id}}'
 
 Actualizar una versión requiere reconstruir la imagen y cambiar `policy.quota_environments.image`. Los entornos existentes conservan su imagen hasta recrearse; `update_cli` actualiza el paquete definido por el descriptor en el perfil del entorno. La comprobación local es `docker image inspect <etiqueta> --format '{{.Id}}'` igual al digest declarado en esa política. La imagen no instala Gemini: el build falla si aparece el binario o el paquete, y el repositorio de entornos rechaza el proveedor `gemini`.
 
+Cuando **Actualizar CLI** falla, el ejecutor no incrusta la salida cruda del instalador en el motivo. Toda la actualización deja un código cerrado: `cli_update_failed` si el comando termina con error o no se puede lanzar, y `cli_update_timed_out` si supera su tiempo límite, además de los motivos ya conocidos de entorno o imagen desfasados. La consola nombra la operación y su causa, por ejemplo «Actualizar CLI» falló seguido del texto de ese código; si el ejecutor no dejó un motivo mostrable, lo dice así y remite al diario del ejecutor en ese ordenador en lugar de mostrar un genérico sin operación.
+
 Muse se descarga del manifiesto público del canal `muse-stable` con la versión y el SHA-256 del binario fijados en el `Dockerfile`; se instala directamente como `/usr/local/bin/muse`, sin el lanzador bash, porque este rompe la comprobación de identidad del proceso de login. Antigravity no publica un paquete fijable (solo su auto-actualizador), así que su binario —el `~/.local/bin/agy` de kratos, instalado por ese auto-actualizador— se pasa al build como contexto externo fuera del repositorio y el `Dockerfile` verifica su SHA-256 fijado al construir:
 
 ```bash

@@ -26,9 +26,11 @@ Una ampliación solo se aplica si la permiten **las dos** partes:
 
 El executor sigue validando el contenedor **exactamente**. El conjunto esperado de montajes, redes, capacidades y límites se calcula como lo base más las ampliaciones. Cualquier diferencia con lo observado es un fallo, igual que hoy.
 
-Cambiar las ampliaciones de un agente obliga a recrear su contenedor. La consola lo avisa y hace el cambio como una operación de flota con vista previa: detener, recrear con los volúmenes conservados y arrancar.
+Cambiar las ampliaciones de un agente obliga a recrear su contenedor. La consola lo avisa y hace el cambio como una operación de flota con vista previa: detener, recrear con los volúmenes conservados y arrancar. La misma recreación ocurre cuando cambia la imagen aprobada o el release del executor: el reemplazo se crea con los mismos montajes, la sesión del proveedor que vive en los volúmenes persistentes y las ampliaciones ya declaradas, y se valida de forma exacta antes de darlo por bueno. Si la validación falla, se restaura el contenedor anterior y los volúmenes no se tocan. Una sesión de login abierta o sin verificar bloquea la recreación hasta que se cierra y se confirma su parada.
 
 La operación debe enviar directamente `fleet update` con `parameters.extensions`; guardar antes una mutación de configuración perdería la declaración anterior necesaria para decidir la recreación. La mutación `host_extensions_allowed` rechaza retirar tipos, raíces, redes o niveles Docker que un agente aún declara. Primero se quita la ampliación y se completa su recreación; después se reduce el permiso del ordenador y se descarga su paquete de setup firmado actualizado.
+
+Los límites de recursos de un agente solo existen como ampliación `resources` (`memory`, `cpus`, `pids`). No hay un segundo camino de límites fuera de esa declaración: una herramienta que traslada un agente rechaza un campo de límites suelto en su plan y exige declararlos en `extensions` antes de crear el destino, para que la forma aprobada, la validación del contenedor y el traslado hablen de lo mismo. Un contenedor cuyos límites observados no coinciden con esa forma se detecta como deriva de límites (`CONTAINER_RESOURCE_LIMITS_DRIFT`, ver [Autenticación de proveedores](v4-autenticacion-runtime.md)).
 
 ## Tipos
 
