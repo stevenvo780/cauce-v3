@@ -564,6 +564,10 @@ def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:
     purge_sidecars(policy, {**agent, '_operation_id': operation_id})
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     for name in (agent['container_name'] + '-state', agent['container_name'] + '-provider-profiles'):
+        # A container recreated without this operation's label (older releases) still mounts the volume:
+        # removing it fails forever ("volume is in use") and would drop a signed-in provider profile.
+        if name in existing and docker('ps', '-a', '-q', '--filter', 'volume=' + name).strip():
+            continue
         if name in existing and all((json.loads(docker('volume', 'inspect', name))[0].get('Labels') or {}).get(key) == value
                                     for key, value in labels.items()):
             docker('volume', 'rm', name)

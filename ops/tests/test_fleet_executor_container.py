@@ -208,6 +208,17 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual(report['sweep_exit'], 0)
         self.assertEqual((self.containers(), self.volumes()), ([], []))
 
+    def test_discard_keeps_operation_volumes_still_mounted_by_an_unlabelled_container(self):
+        module, policy = self.operation_fixture()
+        operation = str(uuid.uuid4())
+        module.create_container(policy, self.agent, operation_id=operation)
+        # An older release recreated the container without the operation label over the same volumes.
+        subprocess.run(['docker', 'rm', '-f', self.container], check=True, capture_output=True, timeout=plazo(40))
+        module.create_container(policy, self.agent)
+        module.discard_operation(policy, self.agent, operation)
+        self.assertEqual(len(self.containers()), 1)
+        self.assertEqual(set(self.volumes()), {self.container + '-state', self.container + '-provider-profiles'})
+
     def test_real_purge_removes_container_and_provider_volumes_before_the_sweep(self):
         import test_fleet_executor_lifecycle as lifecycle_fixtures
         module, policy = self.operation_fixture()
