@@ -23,6 +23,11 @@ export function GroupMembershipMove({ tenantId, roomId, snapshot, runner, busy, 
     if (intent.runtimeTarget) { setRuntimeOpen(true); setError(undefined); return; }
     if (intent.batch) { setError(undefined); await runner.run(intent.batch, true); }
   }
+  async function confirm() {
+    if (!intent?.batch) return;
+    const applied = await runner.run(intent.batch, false);
+    if (applied) { setAlias(initialAlias); setDestination(''); setError(undefined); }
+  }
   return <section className="config-room-members" aria-label={`Movimiento de miembros de ${tenantId}/${roomId}`}>
     <h4>Mover miembros a otro grupo</h4>
     <p>El registro inactivo cambia membresía y grupo primario en una transacción. Un agente con runtime requiere preparar y verificar la nueva intención operativa.</p>
@@ -38,7 +43,7 @@ export function GroupMembershipMove({ tenantId, roomId, snapshot, runner, busy, 
     <div className="config-actions"><button type="button" className="button secondary" disabled={busy || !runner.canWrite}
       onClick={() => { void preview(); }}>{intent?.runtimeTarget ? 'Preparar movimiento operativo' : 'Previsualizar movimiento atómico'}</button>
       <button type="button" className="button primary" disabled={busy || !runner.canWrite || !intent?.batch || !runner.isValidated(intent.batch)}
-        onClick={() => { if (intent?.batch) void runner.run(intent.batch, false); }}>Confirmar movimiento atómico</button></div>
+        onClick={() => { void confirm(); }}>Confirmar movimiento atómico</button></div>
     {intent?.batch && runner.isValidated(intent.batch) ? <pre aria-label="Movimiento atómico propuesto">{JSON.stringify(intent.batch, null, 2)}</pre> : null}
     {runner.notice ? <p className={`notice ${runner.notice.tone}`} role={runner.notice.tone === 'success' ? 'status' : 'alert'}>{runner.notice.text}</p> : null}
     {runtimeOpen && intent?.runtimeTarget && intent.runtimeDraft ? <AgentLifecyclePanel key={JSON.stringify([tenantId, alias, destination])}

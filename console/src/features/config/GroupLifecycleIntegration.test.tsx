@@ -82,6 +82,8 @@ it('moves a draft membership and primary room in one accepted batch from the exi
   await screen.findByLabelText('Movimiento atómico propuesto');
   await user.click(screen.getByRole('button', { name: 'Confirmar movimiento atómico' }));
   await waitFor(() => { expect(submitted).toHaveLength(2); });
+  expect(screen.getAllByText(/Aplicado en revisión 5/).length).toBeGreaterThan(0);
+  await waitFor(() => { expect(screen.getByRole('combobox', { name: 'Grupo de destino' })).toHaveValue(''); });
   expect(submitted.map((row) => row.expected_revision)).toEqual([4, 4]);
   expect(submitted[1]?.mutation).toEqual({ resource: 'batch', action: 'apply', mutations: [
     { resource: 'membership', action: 'create', tenant_id: 'Miguel', room_id: 'Sala', alias: 'janus', value: { role: 'agent', enabled: true } },
