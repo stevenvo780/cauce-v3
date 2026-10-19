@@ -444,8 +444,11 @@ it.each([
     http.get('*/v3/console/quota-accounts', () => {
       reads += 1;
       if (reads === 1) return snapshot();
-      if (reads === 2) return unavailable();
-      return new Promise<Response>(resolve => { resolveRetry = resolve; });
+      // A 503 read is retried three times by the client before it surfaces, so one failed
+      // refresh consumes four reads; the next refresh is the one held open below.
+      if (reads <= 5) return unavailable();
+      if (reads === 6) return new Promise<Response>(resolve => { resolveRetry = resolve; });
+      return unavailable();
     }),
     http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
       capabilities: { available: true, providers: ['codex'], hosts: [], actions: ['create'] } })),

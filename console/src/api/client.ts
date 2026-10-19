@@ -41,7 +41,7 @@ type UnauthorizedListener = () => void;
 /** Transient loss of the gateway, shown as one discreet notice: reads retry on their own, writes wait for a person. */
 export type ConnectionNotice = { kind: 'reconnecting' } | { kind: 'write-failed' };
 
-const RECONNECT_DELAYS_MS = [400, 1_200, 3_000];
+const RECONNECT_DELAYS_MS = [250, 750, 1_500];
 
 function isTransientFailure(cause: unknown): boolean {
   if (cause instanceof ApiError) return cause.status === 502 || cause.status === 503;
