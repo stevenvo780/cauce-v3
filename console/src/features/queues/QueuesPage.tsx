@@ -102,11 +102,11 @@ function QueuesPageContent() {
           be rescued. When the page holds fewer rows than the total, the tile says how many. */}
       <div role="group" aria-label="Filtrar por estado" className="mb-3 grid grid-cols-4 gap-1.5 sm:mb-4 sm:gap-2">
         <TarjetaFiltro
-          etiqueta="Todas" valor={items.length} detalle="en este snapshot"
+          etiqueta="Todas" valor={items.length} detalle="en esta lectura"
           grupo="todas" activo={filtro.grupo === 'todas'} enPagina={items.length} bloqueado={conFoco} onElegir={elegirGrupo}
         />
         <TarjetaFiltro
-          etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} detalle="disponibles o claimed"
+          etiqueta="Pendientes" valor={totalDelGrupo(snapshot, 'pendientes')} detalle="en espera o ya tomadas"
           grupo="pendientes" activo={filtro.grupo === 'pendientes'} enPagina={porGrupo.pendientes}
           bloqueado={conFoco} onElegir={elegirGrupo}
         />
@@ -160,7 +160,7 @@ function QueuesPageContent() {
             <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted" role="status">
               <span>
                 {filas.length === items.length
-                  ? `${String(items.length)} entregas en este snapshot.`
+                  ? `${String(items.length)} entregas en esta lectura.`
                   : `${String(filas.length)} de ${String(items.length)} entregas · ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` que dicen «${filtro.texto.trim()}»` : ''}.`}
               </span>
               {filtro.grupo !== 'todas' || filtro.texto.trim() ? (
@@ -177,9 +177,9 @@ function QueuesPageContent() {
           onChanged={resource.reload}
           snapshotVersion={snapshot?.observed_at}
           empty={foco.estado === 'ausente'
-            ? 'Este snapshot no trae ninguna fila para la entrega pedida.'
+            ? 'Esta lectura no trae ninguna fila para la entrega pedida.'
             : filas.length === 0 && items.length > 0
-              ? `Ninguna de las ${String(items.length)} entregas de este snapshot es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
+              ? `Ninguna de las ${String(items.length)} entregas de esta lectura es ${ROTULO_DEL_GRUPO[filtro.grupo]}${filtro.texto.trim() ? ` y dice «${filtro.texto.trim()}»` : ''}.`
               : 'No hay entregas informadas.'}
         />
       </ViewTabPanel>
