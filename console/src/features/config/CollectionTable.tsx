@@ -6,11 +6,13 @@ import { groupOperationTarget } from './GroupMembershipModel';
 import { configFormDefinition, type ConfigFormTarget } from './config-form-model';
 import { cn } from '../../cn';
 import { Button, CARD_TABLE, Notice, Outcome, PREVIEW, SCROLL, SectionCard } from '../../components/kit';
+import { compactId } from '../../lib';
 import { Badge, Desplazable, EmptyState, Time, Unknown } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import type { ConfigCollection } from './collections';
 import {
   accionDeRol, claveDeFila, columnaNumerica, columnasDe, detalleDeColumna, esColumnaDeFecha, esColumnaFundida,
+  idDeEspacioOculto, nombresDeEspacio,
   esColumnaLarga, identidadFundida, motivoSinCambioDeRol, resumirTextoLargo, rolesDisponibles,
   type AccionDeRol, type ColumnaTabla,
 } from './collection-table';
@@ -38,12 +40,14 @@ export interface AvisoDeColeccion {
  * Interactive table to view and modify configuration collections via toggles.
  */
 export function CollectionTable({
-  coleccion, politicasDeRol, soloLectura, busy, control, pendiente, aviso,
+  coleccion, politicasDeRol, espacios, soloLectura, busy, control, pendiente, aviso,
   onPedir, onConfirmar, onCancelar, editor, onFormAction, onFormAllowed, bloqueoDeCatalogo, retiredRows, onGroupOperation,
 }: {
   coleccion: ConfigCollection;
   /** `role_policies` from the snapshot: feeds the role selector of memberships. */
   politicasDeRol: readonly Record<string, unknown>[] | undefined;
+  /** Tenant rows, so a space id can be shown by its name. */
+  espacios?: readonly Record<string, unknown>[] | null;
   soloLectura: boolean;
   busy: boolean;
   control: ControlDeInterruptores;
@@ -62,7 +66,8 @@ export function CollectionTable({
 }) {
   const { key, title, rows } = coleccion;
   const filas = rows ?? [];
-  const columnas = columnasDe(key, filas);
+  const columnas = columnasDe(key, filas).filter((columna) => !(columna.clave === 'id' && idDeEspacioOculto(key, filas)));
+  const nombres = nombresDeEspacio(espacios);
   // Which columns right-align. Decided from this collection's DATA, not a name list: `max_per_hour`
   // is numeric here and might not be on a gateway that publishes something else under that name.
   // See `columnaNumerica`.
@@ -149,7 +154,7 @@ export function CollectionTable({
                   >
                     <Celda
                       coleccion={key} columna={columna} fila={fila} filaId={filaId} indice={indice}
-                      politicasDeRol={politicasDeRol} soloLectura={soloLectura || catalogo} busy={busy}
+                      politicasDeRol={politicasDeRol} nombres={nombres} soloLectura={soloLectura || catalogo} busy={busy}
                       {...(bloqueoDeCatalogo ? { motivo: bloqueoDeCatalogo } : {})}
                       control={control} onPedir={onPedir}
                     />
@@ -213,7 +218,7 @@ export function CollectionTable({
 }
 
 function Celda({
-  coleccion, columna, fila, filaId, indice, politicasDeRol, soloLectura, busy, motivo, control, onPedir,
+  coleccion, columna, fila, filaId, indice, politicasDeRol, nombres, soloLectura, busy, motivo, control, onPedir,
 }: {
   coleccion: string;
   columna: ColumnaTabla;
@@ -221,6 +226,7 @@ function Celda({
   filaId: string;
   indice: number;
   politicasDeRol: readonly Record<string, unknown>[] | undefined;
+  nombres: Readonly<Record<string, string>>;
   soloLectura: boolean;
   busy: boolean;
   motivo?: string;
@@ -299,7 +305,23 @@ function Celda({
       {detalle.length ? <span className="text-xs text-muted">{detalle.join(' · ')}</span> : null}
     </span>;
   }
+  if (columna.clave === 'retired_at') {
+    if (valor === null || valor === undefined || valor === '') return <span>No</span>;
+    return <Time value={valor} relativo />;
+  }
   if (esColumnaDeFecha(columna.clave)) return <Time value={valor} relativo />;
+  if (typeof valor === 'string') {
+    const nombre = (columna.clave === 'tenant_id' || columna.clave === 'from_tenant' || columna.clave === 'to_tenant')
+      ? nombres[valor] : undefined;
+    if (nombre) return <span title={valor}>{nombre}</span>;
+    if (coleccion === 'tenants' && columna.clave === 'display_name') {
+      const id = typeof fila.id === 'string' ? fila.id : undefined;
+      return <span title={id}>{valor}</span>;
+    }
+    if (valor.length > 18 && /^(?:hub-)?[0-9a-f-]{16,}$/iu.test(valor)) {
+      return <span className="font-mono text-[12.5px]" title={valor}>{compactId(valor)}</span>;
+    }
+  }
   if (Array.isArray(valor)) {
     // An empty list is a known datum —"has none"—, not UNKNOWN.
     return valor.length ? <span>{valor.map((item) => String(item)).join(', ')}</span> : <span className="text-muted italic">(vacío)</span>;

@@ -7,7 +7,7 @@ import { AgentOrb } from '../../components/AgentOrb';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { Button, Notice, Pill } from '../../components/kit';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { agentView, type SheetTab } from './agent-view';
+import { agentView, subtituloDeAgente, type SheetTab } from './agent-view';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { AgentRemovalDialog } from './AgentRemovalDialog';
@@ -97,8 +97,8 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
           <AgentOrb seed={view.ref} size={40} />
           <div className="min-w-0 flex-1">
             <Dialog.Title className="m-0 truncate text-base font-semibold" title={agent.name}>{agent.name}</Dialog.Title>
-            <Dialog.Description className="m-0 truncate font-mono text-xs text-muted" title={view.ref}>
-              {agent.tenantId} / {agent.alias}
+            <Dialog.Description className="m-0 truncate text-xs text-muted" title={view.ref}>
+              {subtituloDeAgente(agent, snapshot)}
             </Dialog.Description>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               {retired ? <Pill tone="neutral">Retirado</Pill> : <>

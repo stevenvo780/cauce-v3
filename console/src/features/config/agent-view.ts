@@ -16,6 +16,14 @@ export interface AgentView {
   state: { label: string; tone: Tone };
 }
 
+/** Line under the agent name. The raw tenant id stays in `title` via `AgentView.ref`. */
+export function subtituloDeAgente(agent: SettingsAgent, snapshot: ConfigurationSnapshot): string {
+  const fila = snapshot.tenants?.find((row) => row.id === agent.tenantId);
+  const nombre = typeof fila?.display_name === 'string' ? fila.display_name.trim() : '';
+  if (nombre !== '' && nombre !== agent.name.trim()) return `${nombre} · ${agent.alias}`;
+  return agent.alias;
+}
+
 /** What a tile and the sheet header both say about an agent, derived once. */
 export function agentView(agent: SettingsAgent, snapshot: ConfigurationSnapshot, hosts: FleetHost[] | undefined): AgentView {
   const row = agentHostRow(snapshot, agent.tenantId, agent.alias);

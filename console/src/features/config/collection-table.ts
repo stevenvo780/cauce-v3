@@ -10,9 +10,9 @@ const COLUMNAS_FIJAS: Record<string, readonly string[]> = {
 };
 
 const ETIQUETAS: Record<string, string> = {
-  id: 'Id', tenant_id: 'Tenant', room_id: 'Room', alias: 'Alias', role: 'Rol de permisos',
-  display_name: 'Nombre', is_hub: 'Hub', enabled: 'Habilitado',
-  created_at: 'Alta', updated_at: 'Última edición',
+  id: 'Id', tenant_id: 'Espacio', room_id: 'Sala', alias: 'Alias', role: 'Rol de permisos',
+  display_name: 'Nombre', is_hub: 'Principal', enabled: 'Habilitado',
+  created_at: 'Alta', updated_at: 'Última edición', retired_at: 'Retirado',
   from_tenant: 'Desde', to_tenant: 'Hacia',
   allow_route: 'Ruta', allow_read: 'Lectura', allow_control: 'Control',
   allow_notify: 'Aviso proactivo', harness_id: 'Harness', command: 'Comando',
@@ -126,6 +126,26 @@ const LARGO_DE_RESUMEN = 120;
 export function resumirTextoLargo(valor: string, largo: number = LARGO_DE_RESUMEN): string {
   const puntos = Array.from(valor);
   return puntos.length <= largo ? valor : `${puntos.slice(0, largo).join('')}…`;
+}
+
+/** Display name of each space, keyed by its id. */
+export function nombresDeEspacio(espacios: readonly Record<string, unknown>[] | null | undefined): Record<string, string> {
+  const nombres: Record<string, string> = {};
+  for (const fila of espacios ?? []) {
+    const id = typeof fila.id === 'string' ? fila.id : undefined;
+    const nombre = typeof fila.display_name === 'string' ? fila.display_name.trim() : '';
+    if (id && nombre) nombres[id] = nombre;
+  }
+  return nombres;
+}
+
+/**
+ * The hub id is not a client label when every row already has a display name.
+ * The id stays on the name cell's title and in the raw dump.
+ */
+export function idDeEspacioOculto(clave: string, filas: readonly Record<string, unknown>[]): boolean {
+  if (clave !== 'tenants' || filas.length === 0) return false;
+  return filas.every((fila) => typeof fila.display_name === 'string' && fila.display_name.trim() !== '');
 }
 
 /**

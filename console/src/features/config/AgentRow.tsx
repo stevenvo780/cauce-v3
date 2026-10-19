@@ -7,7 +7,7 @@ import { onNavClick } from '../../router';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { fleetScopeGap } from './agent-lifecycle-model';
 import { agentWriteBlock } from './agent-registry-create';
-import { agentView, type SheetTab } from './agent-view';
+import { agentView, subtituloDeAgente, type SheetTab } from './agent-view';
 import { GroupChips } from './AgentSheetTabs';
 import type { SettingsAgent } from './settings-model';
 
@@ -41,7 +41,7 @@ export function AgentRow({ agent, snapshot, hosts, writeBlock, retireBlock, onOp
         <AgentOrb seed={view.ref} size={36} />
         <span className="grid min-w-0 flex-1">
           <strong className="truncate text-sm" title={agent.name}>{agent.name}</strong>
-          <span className="truncate font-mono text-xs text-muted" title={view.ref}>{agent.tenantId} / {agent.alias}</span>
+          <span className="truncate text-xs text-muted" title={view.ref}>{subtituloDeAgente(agent, snapshot)}</span>
         </span>
       </span>
       <span className="flex flex-wrap items-center gap-1.5">

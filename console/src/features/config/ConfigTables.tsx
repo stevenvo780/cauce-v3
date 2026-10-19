@@ -59,6 +59,7 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
         key={coleccion.key}
         coleccion={coleccion}
         politicasDeRol={ctx.politicasDeRol}
+        espacios={ctx.config.data?.tenants}
         soloLectura={ctx.soloLectura}
         busy={ctx.busy}
         control={ctx.interruptores}

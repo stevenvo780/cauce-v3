@@ -12,7 +12,7 @@ import type { ConfigWrites } from './use-config-writes';
 import { AgentRegistryCreate } from './AgentRegistryCreate';
 import { AgentRow } from './AgentRow';
 import { AgentSheet, type SheetIntent } from './AgentSheet';
-import { parseAgentRef } from './agent-view';
+import { parseAgentRef, subtituloDeAgente } from './agent-view';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import { filterSettingsAgents, settingsAgents, type SettingsAgent } from './settings-model';
 import type { ConfigMutationNotice } from './use-config-mutation';
@@ -134,7 +134,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       <p className="m-0 text-xs text-muted">«Eliminar definitivamente» es el paso 2: borra la configuración del agente y conserva los mensajes ya enviados. No se puede deshacer.</p>
       <ul className="m-0 grid list-none gap-2 p-0" aria-label="Agentes retirados">
         {retired.map((agent) => <li key={agent.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
-          <strong className="font-mono text-[13px]">{agent.tenantId}/{agent.alias}</strong>
+          <strong className="text-[13px]" title={`${agent.tenantId}/${agent.alias}`}>{subtituloDeAgente(agent, leido)}</strong>
           <span className="flex flex-wrap items-center gap-2">
             <Button size="sm" aria-label={`Operar agente ${agent.tenantId}/${agent.alias}`}
               onClick={() => { open(agent, 'operacion'); }}>Operar</Button>
@@ -153,7 +153,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       </div>
     </details> : null}
     <SectionCard level={3} title="Cuentas y ruteo de suscripciones"
-      description="El inventario de provider_account, los techos y los bindings tienen una única autoridad de lectura y escritura.">
+      description="Las suscripciones y el orden en que se consultan se editan en un solo sitio.">
       <p className="m-0 text-[13px] text-fg-2">Se administran junto con su orden de consulta en «Cuentas»; su saldo está en «Mis cuotas». Estas tablas no se repiten en Ajustes.</p>
       <div>
         <LinkButton href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Ir a Cuentas</LinkButton>

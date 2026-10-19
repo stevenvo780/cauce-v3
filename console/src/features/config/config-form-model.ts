@@ -33,7 +33,7 @@ const limit = (key: string, label: string, min: number, max: number, initial?: s
 const DEFINITIONS: Record<string, ConfigFormDefinition> = {
   tenants: { resource: 'tenant', label: 'espacio', fields: [
     { key: 'id', label: 'Id del espacio', identity: true }, name,
-    permission('is_hub', 'Hub'), enabled,
+    permission('is_hub', 'Espacio principal'), enabled,
   ] },
   rooms: { resource: 'room', label: 'sala/grupo', fields: [
     tenant, { key: 'id', label: 'Id de la sala/grupo', identity: true }, name, enabled,
