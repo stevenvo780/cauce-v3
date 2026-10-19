@@ -16,7 +16,7 @@ import time
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from v4_alcance_copia import check_sources, host_containers, tenant_scope  # noqa: E402
+from v4_alcance_copia import CHROME_VOLATILE_REASON, check_sources, host_containers, is_chrome_volatile, tenant_scope  # noqa: E402
 from v4_copia_migracion import (  # noqa: E402
     CHUNK,
     CREDENTIAL,
@@ -159,6 +159,11 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
         folded = fold_text(name)
         if snapshot_credential(name):
             omissions.append({'path': path, 'reason': 'credential'})
+            return
+        if is_chrome_volatile(path):
+            kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) \
+                else 'symlink' if stat.S_ISLNK(info.st_mode) else 'socket' if stat.S_ISSOCK(info.st_mode) else 'special'
+            omissions.append({'path': path, 'reason': CHROME_VOLATILE_REASON, 'kind': kind})
             return
         if folded == '.git' and not stat.S_ISDIR(info.st_mode):
             raise Failure('a Git file or symlink cannot form a self-contained snapshot')
@@ -362,7 +367,7 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
                         pending.extendleft(reversed(linked['target'].split('/')))
     if any(root not in entries for root in roots):
         raise Failure('missing manifest root')
-    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'sensitive-content', 'regenerable', 'regenerable-socket', 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
+    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'sensitive-content', 'regenerable', 'regenerable-socket', CHROME_VOLATILE_REASON, 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
         raise Failure('invalid manifest omissions')
     if not legacy:
         for item in manifest['omissions']:
@@ -384,7 +389,12 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
                     and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory' \
                     and not any(under(entry_path, path) for entry_path in entries):
                 continue
-            raise Failure('an integral snapshot may omit only credentials and sensitive Git metadata')
+            if item['reason'] == CHROME_VOLATILE_REASON and item.get('kind') in ('file', 'symlink', 'socket', 'directory') \
+                    and is_chrome_volatile(path) \
+                    and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory' \
+                    and not any(under(entry_path, path) for entry_path in entries):
+                continue
+            raise Failure('an integral snapshot may omit only credentials, Chrome volatile artifacts and sensitive Git metadata')
         if manifest.get('repositories'):
             raise Failure('an integral snapshot cannot replace raw Git with bundles')
     repos = manifest.get('repositories', [])
