@@ -393,8 +393,10 @@ it('una relectura fallida avisa y conserva los incidentes de la última lectura 
 
   await user.click(screen.getByRole('button', { name: /actualizar/i }));
 
-  const aviso = await screen.findByRole('alert');
-  expect(aviso).toHaveTextContent(/No se pudo actualizar la lista de incidentes: la reconciliación no respondió/u);
+  // The refresh control also announces the failure inline, so the panel notice is
+  // found by its full text instead of by the shared alert role.
+  const aviso = await screen.findByText(/No se pudo actualizar la lista de incidentes: la reconciliación no respondió/u);
+  expect(aviso).toBeInTheDocument();
   expect(within(screen.getByRole('table', { name: /incidentes de dlq/i })).getByText('Steven')).toBeInTheDocument();
 });
 

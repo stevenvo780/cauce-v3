@@ -90,7 +90,9 @@ describe('AuditPanel keyset pagination', () => {
       const before = new URL(request.url).searchParams.get('before');
       if (before === null) return HttpResponse.json({ items: [event('5')], next_cursor: '5' });
       olderAttempts += 1;
-      if (olderAttempts === 1) return HttpResponse.json({ error: 'down' }, { status: 503 });
+      // A 503 read is retried three times by the client before it surfaces, so one failed
+      // older-page load consumes four attempts; the manual retry after that is the fifth.
+      if (olderAttempts <= 4) return HttpResponse.json({ error: 'down' }, { status: 503 });
       return HttpResponse.json({ items: [event('4')], next_cursor: null });
     }));
     const user = userEvent.setup();
@@ -104,6 +106,6 @@ describe('AuditPanel keyset pagination', () => {
     await user.click(screen.getByRole('button', { name: 'Reintentar' }));
     await waitFor(() => { expect(screen.queryByRole('alert')).not.toBeInTheDocument(); });
     expect(await screen.findByText('audit.event.4')).toBeInTheDocument();
-    expect(olderAttempts).toBe(2);
+    expect(olderAttempts).toBe(5);
   });
 });

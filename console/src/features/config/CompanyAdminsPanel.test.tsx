@@ -26,7 +26,9 @@ it('releer autoridad recupera también una lectura fallida de personas', async (
     capabilities: { grant_admin: true, grant_owner: true, revoke: true } })),
   http.get('*/v3/console/people', () => {
     reads += 1;
-    return reads === 1 ? HttpResponse.json({ error: 'unavailable', message: 'personas caídas' }, { status: 503 })
+    // A 503 read is retried three times by the client before it surfaces, so one failed
+    // people read consumes four reads; the manual reread after that is the fifth.
+    return reads <= 4 ? HttpResponse.json({ error: 'unavailable', message: 'personas caídas' }, { status: 503 })
       : HttpResponse.json({ items: [], capabilities: SIN_CAPACIDADES });
   }));
   renderWithApi(<CompanyAdminsPanel companyId="two" canAssignPeople />);
@@ -36,7 +38,7 @@ it('releer autoridad recupera también una lectura fallida de personas', async (
   expect(await screen.findByText(/No hay personas activas elegibles para asignar/u)).toBeVisible();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('combobox', { name: 'Persona' })).toBeEnabled();
-  expect(reads).toBe(2);
+  expect(reads).toBe(5);
 });
 
 it('dice que no hay administradores ni personas elegibles cuando las dos lecturas llegan vacías', async () => {

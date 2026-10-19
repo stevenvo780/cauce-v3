@@ -123,8 +123,13 @@ test('the operator-facing refresh control preserves its loading announcement', a
   const freshness = await readFile(new URL('../src/components/PageFreshness.tsx', import.meta.url), 'utf8');
   assert.ok(freshness.includes('<RefreshButton onClick={onRefresh} loading={loading} compact />'));
   const ui = await readFile(new URL('../src/components/ui.tsx', import.meta.url), 'utf8');
-  assert.ok(ui.includes("const label = loading ? 'Actualizando…' : 'Actualizar'"));
-  assert.ok(ui.includes("...(compact ? { 'aria-label': label, title: label } : {})"));
+  assert.ok(ui.includes('label="Actualizar"'));
+  assert.ok(ui.includes('pendingLabel="Releyendo…"'));
+  assert.ok(ui.includes('busy={loading}'));
+  const actionButton = await readFile(new URL('../src/components/action-button.tsx', import.meta.url), 'utf8');
+  assert.ok(actionButton.includes('aria-label={name ?? label}'));
+  assert.ok(actionButton.includes('showPending ? pendingLabel : label'));
+  assert.ok(actionButton.includes("'aria-busy': true"));
 });
 
 test('keyboard scan is scoped to the active modal, preserving inert checks inside it', async () => {

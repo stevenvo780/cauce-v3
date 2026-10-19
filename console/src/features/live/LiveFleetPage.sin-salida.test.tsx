@@ -79,9 +79,9 @@ describe('/live cuando el gateway no contesta', () => {
 
     await waitFor(() => { expect(aviso).toHaveTextContent(/Hay una lectura en curso/); });
     expect(aviso).toHaveTextContent(/se corta a los 30 s/);
-    // And the button stays pressable: disabling it would leave it inert almost always, because
-    // with this view's auto-refresh there is almost always a reading in flight.
-    expect(screen.getByRole('button', { name: /reintentar/i })).toBeEnabled();
+    // And the shared action control says it is working instead of looking dead: while this
+    // reading is in flight it is disabled, and its accessible name stays «Reintentar».
+    expect(screen.getByRole('button', { name: /reintentar/i })).toBeDisabled();
   });
 
   it('a healthy reading does not see either the timeout or the warning: it keeps painting the fleet', async () => {

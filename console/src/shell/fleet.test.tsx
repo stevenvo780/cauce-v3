@@ -56,8 +56,10 @@ it.each([false, true])('retains the registry-only chat after a 503 without stale
     http.get('*/v3/console/queues', () => HttpResponse.json({ items: [] })),
     http.get('*/v3/console/activity', async () => {
       reads += 1;
-      if (reads === 2) return HttpResponse.json({ error: 'unavailable', message: 'actividad sin servicio' }, { status: 503 });
-      if (reads > 2) await recovery;
+      // A 503 read is retried three times by the client before it surfaces, so one failed
+      // refresh consumes four reads; the recovery read after that is the one held open below.
+      if (reads >= 2 && reads <= 5) return HttpResponse.json({ error: 'unavailable', message: 'actividad sin servicio' }, { status: 503 });
+      if (reads > 5) await recovery;
       return HttpResponse.json({ agents: [reads === 1 ? gaia : {
         tenant_id: 'Steven', alias: 'hegel', registered: true, work_state: 'working', in_flight: 1,
       }] });
@@ -89,7 +91,7 @@ it.each([false, true])('retains the registry-only chat after a 503 without stale
   expect(screen.getByRole('link', { name: /^argos\b/u })).toBeInTheDocument();
 
   await user.click(within(alert).getByRole('button', { name: 'Reintentar' }));
-  await waitFor(() => { expect(reads).toBe(3); });
+  await waitFor(() => { expect(reads).toBe(6); });
   const pending = snapshot();
   expect(pending.live['Steven:gaia']).toBeUndefined();
   expect(pending.salud['Steven:gaia']).toBeUndefined();
