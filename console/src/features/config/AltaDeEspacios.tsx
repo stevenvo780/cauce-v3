@@ -37,7 +37,7 @@ export function AltaDeEspacios({ soloLectura, busy, onChange }: {
   const activo = MODOS.find((entrada) => entrada.id === modo) ?? MODOS[0];
 
   return <SectionCard level={3} title="Alta de espacios"
-    description="Se manda por el mismo endpoint versionado que el editor JSON, con revisión esperada.">
+    description="Un recurso suelto o el espacio completo. Puedes previsualizar el cambio antes de crearlo.">
     <div className="grid gap-1.5">
       <ToggleGroup aria-label="Modo de alta" value={[activo.id]}
         onValueChange={(valor) => { const siguiente = valor[0] as ModoDeAlta | undefined; if (siguiente) setModo(siguiente); }}
