@@ -48,6 +48,14 @@ const SAFE_ENVIRONMENT = [
   "CAUCE_OPENCLAW_WORKSPACE",
   "CAUCE_OPENCLAW_AGENT_ID",
   "CAUCE_OPENCLAW_LOCAL",
+  // Non-secret Muse and Grok profile paths and the pinned CLI the muse-cauce bridge verifies (V4 containers).
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "MUSE_NO_AUTO_UPDATE",
+  "MUSE_REASONING_EFFORT",
+  "CAUCE_MUSE_CLI_COMMAND",
+  "CAUCE_MUSE_CLI_SHA256",
+  "GROK_HOME",
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
 
