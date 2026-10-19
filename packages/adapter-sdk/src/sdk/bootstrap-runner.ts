@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 import type { BootstrapDescriptor, BootstrapProfile, BootstrapProof, BootstrapTransport } from './bootstrap-client.js';
 import { measureBootstrapProfile } from './bootstrap-profile.js';
+import { sanitizeProcessOutput } from '../harnesses/shared/errors.js';
 import type { CommandRunner, HarnessCommandOverride, HarnessDefinition } from './types.js';
 import type { CommandPins } from './command-pins.js';
 import { invocationDigest, projectSelectionArguments, selectionForProfile, type ExecutionSelection } from './execution-selection.js';
@@ -64,7 +65,9 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
         ...(definition.startWitness === undefined ? {} : { startWitness: definition.startWitness }),
         ...(definition.stdinSource === undefined ? {} : { stdinSource: definition.stdinSource }),
       });
-      if (result.exitCode !== 0 || result.timedOut || result.cancelled || result.signal !== null) throw new Error('bootstrap harness failed');
+      if (result.exitCode !== 0 || result.timedOut || result.cancelled || result.signal !== null) {
+        throw new Error(`bootstrap harness failed (exit=${String(result.exitCode)} signal=${String(result.signal)} timedOut=${String(result.timedOut)}): ${sanitizeProcessOutput(result.stderr, 400)}`);
+      }
       if (result.invocationWitness?.source !== 'spawn-argv' || result.invocationWitness.argvSha256 !== invocationDigest(invocation)
           || result.invocationWitness.modelId !== (selection.modelId ?? null)
           || result.invocationWitness.reasoningEffort !== (selection.reasoningEffort ?? null)
