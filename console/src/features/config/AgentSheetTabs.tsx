@@ -43,7 +43,7 @@ export function SummaryTab({ agent, view, snapshot }: { agent: SettingsAgent; vi
   const primaryAccount = snapshot.provider_accounts?.find((row) => row.id === accountId);
   const accountLabel = rowText(primaryAccount, 'label');
   const accountProvider = rowText(primaryAccount, 'provider');
-  const accountName = accountLabel ?? accountId;
+  const accountName = accountLabel ?? (accountId ? 'Cuenta sin etiqueta' : undefined);
   const providerName = accountProvider ? PROVIDER_LABEL[accountProvider] ?? accountProvider : undefined;
   const payerId = rowText(primaryAccount, 'payer_tenant_id');
   const payerName = payerId === agent.tenantId ? 'La misma empresa' : tenantName(snapshot, payerId) ?? (payerId ? 'Otra empresa' : undefined);
