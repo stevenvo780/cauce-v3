@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { createPool, FleetOperationsRepository, withTransaction, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { channelCapabilities, channelCompany, channelCreate, channelHost, channelPost } from './host-channel.fixtures.js';
@@ -16,6 +16,9 @@ import { HostCapabilityRegistry } from './host-channel.capabilities.js';
 import * as providerAuthBinding from '../console/provider-auth-binding.js';
 import * as hostProviderAuth from './host-provider-auth.js';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
+import { randomUUID } from 'node:crypto';
+import type { ProviderAuthDependencies } from '../console/provider-auth.types.js';
+import { recoverAgentAuthSession } from './agent-provider-auth-recovery.js';
 
 let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let app: FastifyInstance;
 let router: ReturnType<typeof createFleetProviderAuthRouter> | undefined;
@@ -82,6 +85,44 @@ describe('enrolled agent provider authentication', () => {
     expect(session.status).toBe('awaiting_login');
     return { broker, local, router, request, session };
   }
+  it('cleans a releasing reservation even before its first host binding exists', async () => {
+    let dependencies: ProviderAuthDependencies | undefined;
+    const createDependencies = providerAuthBinding.createProviderAuthDependencies;
+    vi.spyOn(providerAuthBinding, 'createProviderAuthDependencies').mockImplementation((...args) => {
+      dependencies = createDependencies(...args); return dependencies;
+    });
+    const broker = new AgentProviderAuthBroker(pool); registerAgentProviderAuthHostRoute(app, pool, broker);
+    local = await enrolledAgentAuthFixture(pool, app);
+    router = createFleetProviderAuthRouter(pool, { hosts: [], enrolled: broker.service });
+    const request = await router.resolve(local.actor, local.operation.id);
+    if (!dependencies) throw new Error('dependencies absent');
+    const sessionId = randomUUID();
+    const reservation = await dependencies.reserve(local.actor, request, sessionId, new Date(Date.now() + 10_000).toISOString());
+    expect((await pool.query(`SELECT 1 FROM fleet_operation_events WHERE operation_id=$1
+      AND metadata ? 'agent_provider_auth_scope'`, [local.operation.id])).rowCount).toBe(0);
+    await reservation.release();
+    expect((await pool.query<{ state: string }>(`SELECT metadata->'provider_auth'->>'state' AS state FROM fleet_operation_events
+      WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`, [local.operation.id])).rows[0]?.state).toBe('released');
+  }, 30_000);
+  it('does not hold a pool connection or operation locks during recovery cleanup', async () => {
+    const f = await ready();
+    const restricted = createPool(current.url, { max: 1, connectionTimeoutMillis: 1000 });
+    let started!: () => void; let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const recovering = recoverAgentAuthSession(restricted, f.local.actor, f.session.session_id, async binding => {
+      expect(binding.fence.session_id).toBe(f.session.session_id); started(); await response; return true;
+    }, true);
+    try {
+      await waiting;
+      await withTransaction(restricted, async client => {
+        await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE NOWAIT', [f.local.operation.id]);
+        expect((await client.query<{ free: boolean }>('SELECT pg_try_advisory_xact_lock(hashtextextended($1,783003005)) AS free',
+          [JSON.stringify([f.request.host_id, f.request.runtime_user, f.request.profile_id])])).rows[0]?.free).toBe(true);
+      });
+    } finally { finish(); await recovering; await restricted.end(); }
+    expect(await recovering).toMatchObject({ status: 'cancelled', cleanup_pending: false });
+  }, 30_000);
   it('recovers an unavailable cleanup as a durable unconfirmed stop without releasing its reservation', async () => {
     const f = await ready(); const recovered = new AgentProviderAuthBroker(pool);
     const exchange = vi.spyOn(f.broker, 'exchange').mockImplementation((...args) => recovered.exchange(...args));

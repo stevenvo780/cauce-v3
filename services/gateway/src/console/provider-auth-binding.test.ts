@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createPool, planFleetHostSlices, type DatabasePool, type FleetOperationRow } from '@cauce/store';
+import { createPool, planFleetHostSlices, withTransaction, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { createProviderAuthDependencies, type ProviderAuthPhysicalHooks } from './provider-auth-binding.js';
 import type { ProviderAuthRequest } from './provider-auth.types.js';
+import { latestProviderAuthReservation, recordProviderAuthReservation, releaseProviderAuthReservation } from './provider-auth-reservation.js';
 
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
@@ -16,7 +17,7 @@ let cleanupConfirmed: boolean;
 preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
 beforeEach(async ({ task }) => {
   if (!database) throw new Error('test database absent');
-  current = await startTestCaseDatabase(database); pool = createPool(current.url, { max: 1 });
+  current = await startTestCaseDatabase(database); pool = createPool(current.url, { max: 1, connectionTimeoutMillis: 1000 });
   await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('auth-hub','Steven')");
   await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','auth-hub','auth-human','operator')");
   const human = (await pool.query<{ id: string }>(`INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias)
@@ -51,15 +52,22 @@ beforeEach(async ({ task }) => {
 });
 afterEach(async () => { await pool.end(); await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
-function dependencies() {
+function dependencies(overrides: Partial<ProviderAuthPhysicalHooks> = {}) {
   const hooks: ProviderAuthPhysicalHooks = {
     stopAdapter: async () => ({ stopped: true }), openLogin: async () => ({ method: 'device', subscribeOutput: () => () => undefined,
       start: async () => undefined, write: async () => undefined, resize: async () => undefined, close: async () => ({ stopped: true }) }),
     verify: async () => ({ identity_matches: true, functional_call_verified: true }),
     cleanup: async (_scope, id) => { cleaned.push(id); return { stopped: cleanupConfirmed }; },
+    ...overrides,
   };
   return createProviderAuthDependencies(pool, async () => ({ provider_id: 'codex', account_id: 'auth-main',
     harness_id: 'codex', host_id: 'isolated', runtime_user: 'dev', profile_id: 'auth-main' }), hooks);
+}
+async function expireReservation() {
+  await pool.query(`INSERT INTO fleet_operation_events(operation_id,version,event,metadata)
+    SELECT operation_id,version,'step_started',jsonb_set(metadata,'{provider_auth,expires_at}',to_jsonb($2::text))
+    FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`,
+  [request.operation_id, new Date(Date.now() - 1000).toISOString()]);
 }
 describe('durable provider authentication reservations', () => {
   it('authorizes an exact sealed physical host when the controller runs elsewhere', async () => {
@@ -97,13 +105,13 @@ describe('durable provider authentication reservations', () => {
     await expect(dependencies().reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString())).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
     await first.release();
     await expect(dependencies().reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString())).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
-    expect((await pool.query<{ n: number }>('SELECT count(*)::integer AS n FROM fleet_operation_events')).rows[0]?.n).toBe(4);
+    expect((await pool.query<{ n: number }>('SELECT count(*)::integer AS n FROM fleet_operation_events')).rows[0]?.n).toBe(5);
   });
   it('requires demonstrated cleanup of an expired reservation before another process may reopen', async () => {
     const prior = randomUUID();
-    await dependencies().reserve(actor, request, prior, new Date(Date.now() + 20).toISOString());
+    await dependencies().reserve(actor, request, prior, new Date(Date.now() + 10_000).toISOString());
     await pool.query(`UPDATE fleet_operations SET version=version+1 WHERE id=$1`, [request.operation_id]);
-    await new Promise(resolve => setTimeout(resolve, 25));
+    await expireReservation();
     request.expected_operation_version = 2;
     cleanupConfirmed = false;
     await expect(dependencies().reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString())).rejects.toMatchObject({ code: 'STOP_UNCONFIRMED' });
@@ -126,5 +134,110 @@ describe('durable provider authentication reservations', () => {
       VALUES('other@example.test','other@example.test',$1,'Other','operator','Steven','auth-human') RETURNING id`, ['$scrypt$' + 'x'.repeat(48)])).rows[0];
     if (!other) throw new Error('fixture absent');
     await expect(dependencies().authorize({ ...actor, subject: `console:${other.id}` }, request)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
+  it('leaves the single pool connection and operation locks free while cleanup waits for the host', async () => {
+    let started!: () => void; let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const id = randomUUID();
+    const reservation = await dependencies({ cleanup: async (_scope, session) => {
+      expect(session).toBe(id); cleaned.push(session); started();
+      await response; return { stopped: true };
+    } }).reserve(actor, request, id, new Date(Date.now() + 10_000).toISOString());
+    const releasing = reservation.release();
+    try {
+      await waiting;
+      await withTransaction(pool, async client => {
+        expect((await client.query<{ free: boolean }>('SELECT pg_try_advisory_xact_lock(hashtextextended($1,783003005)) AS free',
+          [JSON.stringify([request.host_id, request.runtime_user, request.profile_id])])).rows[0]?.free).toBe(true);
+        await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE NOWAIT', [request.operation_id]);
+        expect((await latestProviderAuthReservation(client, request.operation_id))?.state).toBe('releasing');
+      });
+      await expect(reservation.release()).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+      await expect(reservation.verify(new AbortController().signal)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+      const version = (await pool.query<{ version: string }>('SELECT version FROM fleet_operations WHERE id=$1', [request.operation_id])).rows[0];
+      await expect(dependencies().reserve(actor, { ...request, expected_operation_version: Number(version?.version) }, randomUUID(),
+        new Date(Date.now() + 10_000).toISOString())).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+    } finally { finish(); await releasing; }
+    await reservation.release(); expect(cleaned).toEqual([id]);
+  });
+  it('cleans an expired reservation outside transactions before reserving its replacement', async () => {
+    const prior = randomUUID();
+    await dependencies().reserve(actor, request, prior, new Date(Date.now() + 10_000).toISOString());
+    await expireReservation();
+    const version = (await pool.query<{ version: string }>('SELECT version FROM fleet_operations WHERE id=$1', [request.operation_id])).rows[0];
+    let started!: () => void; let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const reserving = dependencies({ cleanup: async (_scope, session) => {
+      if (session === prior) { started(); await response; }
+      return { stopped: true };
+    } }).reserve(actor, { ...request, expected_operation_version: Number(version?.version) }, randomUUID(), new Date(Date.now() + 10_000).toISOString());
+    try {
+      await waiting;
+      await withTransaction(pool, async client => {
+        await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE NOWAIT', [request.operation_id]);
+        expect((await latestProviderAuthReservation(client, request.operation_id))?.state).toBe('releasing');
+      });
+    } finally { finish(); }
+    await (await reserving).release();
+  });
+  it('fences a late cleanup result from a different current session', async () => {
+    let started!: () => void; let finish!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const response = new Promise<void>(resolve => { finish = resolve; });
+    const reservation = await dependencies({ cleanup: async () => { started(); await response; return { stopped: true }; } })
+      .reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString());
+    const releasing = reservation.release();
+    const outcome = expect(releasing).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+    const successor = randomUUID();
+    try {
+      await waiting;
+      await withTransaction(pool, async client => {
+        const previous = await latestProviderAuthReservation(client, request.operation_id);
+        if (!previous) throw new Error('reservation absent');
+        await recordProviderAuthReservation(client, request.operation_id, 'step_started', { ...previous, session_id: successor, state: 'reserved' });
+      });
+    } finally { finish(); }
+    await outcome;
+    expect((await withTransaction(pool, client => latestProviderAuthReservation(client, request.operation_id)))?.session_id).toBe(successor);
+  });
+  it('fences the result of an expired cleanup claim for the same session', async () => {
+    let firstStarted!: () => void; let secondStarted!: () => void;
+    let firstFinish!: () => void; let secondFinish!: () => void; let calls = 0;
+    const firstWaiting = new Promise<void>(resolve => { firstStarted = resolve; });
+    const secondWaiting = new Promise<void>(resolve => { secondStarted = resolve; });
+    const firstResponse = new Promise<void>(resolve => { firstFinish = resolve; });
+    const secondResponse = new Promise<void>(resolve => { secondFinish = resolve; });
+    const reservation = await dependencies({ cleanup: async () => {
+      calls += 1;
+      if (calls === 1) { firstStarted(); await firstResponse; } else { secondStarted(); await secondResponse; }
+      return { stopped: true };
+    } }).reserve(actor, request, randomUUID(), new Date(Date.now() + 10_000).toISOString());
+    const firstRelease = expect(reservation.release()).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
+    await firstWaiting;
+    await withTransaction(pool, async client => {
+      const previous = await latestProviderAuthReservation(client, request.operation_id);
+      if (!previous) throw new Error('reservation absent');
+      await recordProviderAuthReservation(client, request.operation_id, 'step_started',
+        { ...previous, release_until: new Date(Date.now() - 1000).toISOString() }, false);
+    });
+    const secondRelease = reservation.release();
+    try {
+      await secondWaiting; firstFinish(); await firstRelease;
+      expect((await withTransaction(pool, client => latestProviderAuthReservation(client, request.operation_id)))?.state).toBe('releasing');
+    } finally { firstFinish(); secondFinish(); await secondRelease; }
+    await reservation.release(); expect(calls).toBe(2);
+    expect((await pool.query<{ n: number }>(`SELECT count(*)::integer AS n FROM fleet_operation_events
+      WHERE operation_id=$1 AND metadata->'provider_auth'->>'state'='released'`, [request.operation_id])).rows[0]?.n).toBe(1);
+  });
+  it('keeps release and its durable result atomic when recording the result fails', async () => {
+    const id = randomUUID();
+    const reservation = await dependencies().reserve(actor, request, id, new Date(Date.now() + 10_000).toISOString());
+    const cohort = JSON.stringify([request.host_id, request.runtime_user, request.profile_id]);
+    await expect(releaseProviderAuthReservation(pool, request.operation_id, cohort, id, async () => ({ stopped: true }),
+      async () => { throw new Error('result recording unavailable'); })).rejects.toThrow('result recording unavailable');
+    expect((await withTransaction(pool, client => latestProviderAuthReservation(client, request.operation_id)))?.state).toBe('releasing');
+    await expect(reservation.release()).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
   });
 });

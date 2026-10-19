@@ -1,9 +1,10 @@
 import { StoreError, assertFleetRelocationSourceBarrier, bindProviderAccountIdentity, enableProviderAccountAfterAgentAuth, loadFleetHostScope, lockCompanyAuthority, planFleetHostSlices, preparedState, selectFleetHostSlices, providerAccountConsentSql, withTransaction,
   type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
-import { isLiteralTrue } from '@cauce/protocol';
 import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
 import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthRequest } from './provider-auth.types.js';
+import { latestProviderAuthReservation as latest, recordProviderAuthReservation as event, releaseProviderAuthReservation,
+  type ProviderAuthReservation as Reservation } from './provider-auth-reservation.js';
 
 type ProviderAuthPolicyScope = Pick<ProviderAuthRequest, 'provider_id' | 'account_id' | 'harness_id' | 'host_id' | 'runtime_user' | 'profile_id'>;
 interface Agent extends Record<string, unknown> { tenant_id: string; alias: string; runtime_key: string; harness_id: string; host_id: string;
@@ -19,10 +20,7 @@ export interface ProviderAuthPhysicalHooks {
   stopAdapter(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ stopped: boolean }>;
   openLogin(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<ProviderAuthLogin>;
   verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean; account_identity?: string }>;
-  cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal, client?: DatabaseClient): Promise<{ stopped: boolean }>;
-}
-interface Reservation {
-  session_id: string; actor_subject: string; cohort: string; expires_at: string; state: 'reserved' | 'released';
+  cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 
@@ -104,18 +102,6 @@ async function scope(client: DatabaseClient, value: ProviderAuthPolicyContext, r
   return { ...policy, operation_id: value.operation.id, tenant_id: value.agent.tenant_id, alias: value.agent.alias,
     runtime_key: value.agent.runtime_key, host_scope_sha256: sealed.target_sha256, expected_external_account_id: value.account.external_account_id };
 }
-async function event(client: DatabaseClient, operationId: string, name: 'step_started' | 'step_completed', reservation: Reservation): Promise<void> {
-  const next = (await client.query<{ version: string }>(`UPDATE fleet_operations SET version=version+1,updated_at=clock_timestamp()
-    WHERE id=$1 RETURNING version`, [operationId])).rows[0];
-  if (!next) throw new ProviderAuthError('SESSION_CONFLICT');
-  await client.query('INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,$2,$3,$4::jsonb)',
-    [operationId, next.version, name, JSON.stringify({ step: 'authenticate', provider_auth: reservation })]);
-}
-async function latest(client: DatabaseClient, operationId: string): Promise<Reservation | undefined> {
-  return (await client.query<{ reservation: Reservation }>(`SELECT metadata->'provider_auth' AS reservation FROM fleet_operation_events
-    WHERE operation_id=$1 AND metadata ? 'provider_auth' ORDER BY id DESC LIMIT 1`, [operationId])).rows[0]?.reservation;
-}
-
 export async function resolveProviderAuthRequest(pool: DatabasePool, actor: ProviderAuthActor, operationId: string,
   resolve: ProviderAuthPolicyResolver): Promise<ProviderAuthRequest> {
   return withTransaction(pool, async client => {
@@ -140,23 +126,34 @@ export function createProviderAuthDependencies(
       const expires = Date.parse(expiresAt);
       if (!Number.isFinite(expires) || expires <= Date.now() || expires > Date.now() + 600_000) throw new ProviderAuthError('SESSION_EXPIRED');
       const cohort = JSON.stringify([request.host_id, request.runtime_user, request.profile_id]);
-      const physical = await withTransaction(pool, async client => {
+      let expectedVersion = request.expected_operation_version;
+      const inspect = async (client: DatabaseClient) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,783003005))', [cohort]);
         const value = await context(client, actor, request, true);
-        if (Number(value.operation.version) !== request.expected_operation_version) throw new ProviderAuthError('SESSION_CONFLICT');
+        if (Number(value.operation.version) !== expectedVersion) throw new ProviderAuthError('SESSION_CONFLICT');
         const trusted = await scope(client, value, request, resolve);
         const reservations = await client.query<{ operation_id: string; reservation: Reservation }>(`SELECT DISTINCT ON (event.operation_id)
           event.operation_id,event.metadata->'provider_auth' AS reservation FROM fleet_operation_events event
           JOIN fleet_operations operation ON operation.id=event.operation_id AND operation.company_id=$2
           WHERE event.metadata->'provider_auth'->>'cohort'=$1 ORDER BY event.operation_id,event.id DESC`, [cohort, value.agent.company_id]);
-        for (const prior of reservations.rows) {
-          if (prior.reservation.state !== 'reserved') continue;
-          if (Date.parse(prior.reservation.expires_at) > Date.now()) throw new ProviderAuthError('SESSION_CONFLICT');
-          await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE', [prior.operation_id]);
-          const stopped = await hooks.cleanup({ ...trusted, operation_id: prior.operation_id }, prior.reservation.session_id, new AbortController().signal, client);
-          if (!isLiteralTrue(stopped.stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
-          await event(client, prior.operation_id, 'step_completed', { ...prior.reservation, state: 'released' });
+        const pending = reservations.rows.filter(prior => prior.reservation.state !== 'released');
+        if (pending.some(prior => prior.reservation.state === 'releasing'
+          && Date.parse(prior.reservation.release_until ?? '') > Date.now()
+          || prior.reservation.state === 'reserved' && Date.parse(prior.reservation.expires_at) > Date.now())) {
+          throw new ProviderAuthError('SESSION_CONFLICT');
         }
+        return { trusted, pending };
+      };
+      const previous = await withTransaction(pool, inspect);
+      for (const prior of previous.pending) {
+        const released = await releaseProviderAuthReservation(pool, prior.operation_id, cohort, prior.reservation.session_id,
+          () => hooks.cleanup({ ...previous.trusted, operation_id: prior.operation_id }, prior.reservation.session_id, new AbortController().signal));
+        if (released && prior.operation_id === request.operation_id) expectedVersion += 1;
+      }
+      const physical = await withTransaction(pool, async client => {
+        const { trusted, pending } = await inspect(client);
+        if (pending.length > 0) throw new ProviderAuthError('SESSION_CONFLICT');
+        if (expires <= Date.now()) throw new ProviderAuthError('SESSION_EXPIRED');
         await event(client, request.operation_id, 'step_started', { session_id: sessionId, actor_subject: actor.subject,
           cohort, expires_at: expiresAt, state: 'reserved' });
         return trusted;
@@ -203,15 +200,8 @@ export function createProviderAuthDependencies(
           return evidence;
         },
         release: async () => {
-          await withTransaction(pool, async client => {
-            await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,783003005))', [cohort]);
-            await client.query('SELECT id FROM fleet_operations WHERE id=$1 FOR UPDATE', [request.operation_id]);
-            const current = await latest(client, request.operation_id);
-            if (current?.session_id !== sessionId) throw new ProviderAuthError('SESSION_CONFLICT');
-            if (current.state === 'released') return;
-            if (!isLiteralTrue((await hooks.cleanup(physical, sessionId, new AbortController().signal, client)).stopped)) throw new ProviderAuthError('STOP_UNCONFIRMED');
-            await event(client, request.operation_id, 'step_completed', { ...current, state: 'released' });
-          });
+          await releaseProviderAuthReservation(pool, request.operation_id, cohort, sessionId,
+            () => hooks.cleanup(physical, sessionId, new AbortController().signal));
         },
       };
     },

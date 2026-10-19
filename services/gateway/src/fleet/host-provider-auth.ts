@@ -12,6 +12,7 @@ import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { assertProviderAuthSealedScope, createProviderAuthDependencies, resolveProviderAuthRequest,
   type ProviderAuthPhysicalScope, type ProviderAuthPolicyResolver } from '../console/provider-auth-binding.js';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
+import { latestProviderAuthReservation } from '../console/provider-auth-reservation.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
@@ -241,11 +242,17 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
   const logins = new Map<string, ProviderAuthLogin>();
   const run = async <T>(scope: ProviderAuthPhysicalScope, signal: AbortSignal, effect: (execution: FleetExecution) => Promise<T>): Promise<T> => {
     signal.throwIfAborted();
-    return withTransaction(pool, async client => {
-      const execution = await activeExecution(client, scope, snapshotQuery); signal.throwIfAborted();
-      const result = await effect(execution); signal.throwIfAborted();
-      await activeExecution(client, scope, snapshotQuery); return result;
+    const prepared = await withTransaction(pool, async client => ({ execution: await activeExecution(client, scope, snapshotQuery),
+      sessionId: (await latestProviderAuthReservation(client, scope.operation_id))?.session_id }));
+    signal.throwIfAborted();
+    const result = await effect(prepared.execution); signal.throwIfAborted();
+    await withTransaction(pool, async client => {
+      await activeExecution(client, scope, snapshotQuery);
+      if ((await latestProviderAuthReservation(client, scope.operation_id))?.session_id !== prepared.sessionId) {
+        throw new ProviderAuthError('SESSION_EXPIRED');
+      }
     });
+    return result;
   };
   const dependencies = createProviderAuthDependencies(pool, resolve, {
     stopAdapter: (scope, signal) => run(scope, signal, execution => performHostLoginStop(options.hostConfig.command, execution, signal)),
@@ -270,10 +277,10 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
           ...(result.account_identity === undefined ? {} : { account_identity: result.account_identity }) };
       });
     },
-    cleanup: async (scope, _sessionId, signal, borrowedClient) => {
+    cleanup: async (scope, _sessionId, signal) => {
       try {
         const policy = await policies(options);
-        const client = borrowedClient ?? await pool.connect(); let execution: FleetExecution;
+        const client = await pool.connect(); let execution: FleetExecution;
         try {
           const row = await operation(client, scope, false); const prepared = await preparedState(client, row.id);
           const sealed = await loadFleetHostScope(client, row, options.hostConfig.host);
@@ -288,7 +295,7 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
           execution = { operation: publicFleetOperation(row), request: FleetOperationRequestSchema.parse(row.request),
             ...fleetHostInputs(sealed.targets, { ...prepared, previous_agents }),
             snapshot: { agents, memberships: [], rolePolicies: [] }, trusted_accounts: await readFleetProviderAccounts(client, agents) };
-        } finally { if (!borrowedClient) client.release(); }
+        } finally { client.release(); }
         const stopped = await cleanupProviderLogin({ python: options.hostConfig.command.python, helper: policy.helper,
           stateRoot: policy.state_root }, scope.operation_id, signal);
         if (!stopped.stopped) return stopped;

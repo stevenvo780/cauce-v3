@@ -53,8 +53,8 @@ export class AgentProviderAuthBroker {
           functional_call_verified: response.ok && response.functional_call_verified === true,
           ...(response.account_identity === undefined ? {} : { account_identity: response.account_identity }) };
       },
-      cleanup: async (physical, sessionId, _signal, client) => {
-        const binding = await this.binding(physical, sessionId, client);
+      cleanup: async (physical, sessionId) => {
+        const binding = await this.binding(physical, sessionId);
         const response = await this.command(binding, { id: randomUUID(), type: 'cleanup' });
         if (response.stopped === true) this.outputs.delete(sessionId);
         return { stopped: response.ok && response.stopped === true };
@@ -83,7 +83,7 @@ export class AgentProviderAuthBroker {
       ON identity.host_id=host.host_id AND identity.company_id=host.company_id
       WHERE host.host_id=$1 AND host.company_id=$2 AND host.enabled AND identity.enabled`, [host, company])).rowCount !== 1) throw denied();
   }
-  private async binding(physical: ProviderAuthPhysicalScope, sessionId?: string, borrowed?: DatabaseClient): Promise<AgentAuthBinding> {
+  private async binding(physical: ProviderAuthPhysicalScope, sessionId?: string): Promise<AgentAuthBinding> {
     const run = async (client: DatabaseClient) => {
       const rows = await client.query<{ binding: unknown }>(`SELECT metadata->'agent_provider_auth_scope' AS binding FROM fleet_operation_events
         WHERE operation_id=$1 AND metadata ? 'agent_provider_auth_scope' ORDER BY id DESC`, [physical.operation_id]);
@@ -94,7 +94,8 @@ export class AgentProviderAuthBroker {
         if (!isDeepStrictEqual(existing.physical, physical)) throw denied();
         return existing;
       }
-      if (reservation?.state !== 'reserved' || sessionId !== undefined && reservation.session_id !== sessionId) throw denied();
+      if (!reservation || reservation.state !== 'reserved' && !(sessionId !== undefined && reservation.state === 'releasing')
+          || sessionId !== undefined && reservation.session_id !== sessionId) throw denied();
       const row = (await client.query<FleetOperationRow>('SELECT * FROM fleet_operations WHERE id=$1', [physical.operation_id])).rows[0];
       if (row?.desired_revision == null) throw denied();
       const actor = { tenant_id: row.actor_tenant, alias: row.actor_alias, subject: reservation.actor_subject,
@@ -111,7 +112,7 @@ export class AgentProviderAuthBroker {
         VALUES($1,$2,'step_started',$3::jsonb)`, [row.id, row.version, JSON.stringify({ step: 'authenticate', agent_provider_auth_scope: binding })]);
       return binding;
     };
-    return borrowed === undefined ? withTransaction(this.pool, run) : run(borrowed);
+    return withTransaction(this.pool, run);
   }
   private async active(client: DatabaseClient, binding: AgentAuthBinding): Promise<FleetExecution> {
     if (Date.parse(binding.fence.expires_at) <= Date.now()) throw new ProviderAuthError('SESSION_EXPIRED');
