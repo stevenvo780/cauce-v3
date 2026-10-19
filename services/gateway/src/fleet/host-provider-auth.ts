@@ -200,13 +200,13 @@ async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysic
     ...fleetHostInputs(hostScope.targets, prepared), snapshot, trusted_accounts };
 }
 async function loginConfiguration(options: HostProviderAuthOptions, execution: FleetExecution, scope: ProviderAuthPhysicalScope,
-  signal: AbortSignal): Promise<ProviderLoginConfig> {
+  signal: AbortSignal, prepareLogin = false): Promise<ProviderLoginConfig> {
   const policy = await policies(options);
   const target = Snapshot.parse(execution.snapshot).agents;
   const expected = target.find(value => value.tenant_id === scope.tenant_id && value.alias === scope.alias);
   const agent = Agent.parse(expected);
   const { profile, login } = selected(policy, scope.account_id, scope.provider_id, scope.expected_external_account_id, scope.runtime_user, agent, agent.harness_id);
-  const binding = Binding.parse(await queryProviderLoginBinding(options.hostConfig.command, execution, signal));
+  const binding = Binding.parse(await queryProviderLoginBinding(options.hostConfig.command, execution, signal, prepareLogin));
   for (const key of ['tenant_id', 'alias', 'runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name', 'runtime_user',
     'home_directory', 'state_directory', 'primary_account_id'] as const) if (binding.agent[key] !== agent[key]) throw denied();
   if (!isDeepStrictEqual(binding.profile_binding, profile) || (agent.runtime_mode === 'container') !== (binding.runtime_binding !== undefined)
@@ -257,7 +257,7 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
   const dependencies = createProviderAuthDependencies(pool, resolve, {
     stopAdapter: (scope, signal) => run(scope, signal, execution => performHostLoginStop(options.hostConfig.command, execution, signal)),
     openLogin: (scope, signal) => run(scope, signal, async execution => {
-      const config = await loginConfiguration(options, execution, scope, signal);
+      const config = await loginConfiguration(options, execution, scope, signal, true);
       const login = await createProviderLogin(config, signal);
       const guarded = guardedLogin(login, () => run(scope, signal, async fresh => {
         const current = await loginConfiguration(options, fresh, scope, signal);

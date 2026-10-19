@@ -135,9 +135,14 @@ def runtime_mounts(policy: dict, agent: dict, root: pathlib.Path | None = None, 
 
 
 def observe_container(policy: dict, agent: dict) -> dict | None:
+    from fleet_executor_image import recover_image, refresh_image
+    if agent['_placement'].get('ownership') != 'shared':
+        recover_image(policy, agent)
     observed = inspect_container(agent['container_name'])
     if observed is None or agent['_placement'].get('ownership') == 'shared':
         return observed
+    if observed.get('Image') != agent['_placement']['image']:
+        return refresh_image(policy, agent, observed)
     from fleet_executor_rebind import bound_release, rebind
     previous = bound_release(observed, RELEASE_ROOT)
     return observed if previous is None else rebind(policy, agent, observed, previous, RELEASE_ROOT)
@@ -479,7 +484,7 @@ def stop_running_adapter(agent: dict, observed: dict) -> dict:
     return {'stopped_verified': True}
 
 
-def stop_container(policy: dict, raw_agent: dict) -> dict:
+def stop_container(policy: dict, raw_agent: dict, *, login: bool = False) -> dict:
     agent = approve_agent(policy, raw_agent)
     extensions_approved = True
     try:
@@ -492,11 +497,12 @@ def stop_container(policy: dict, raw_agent: dict) -> dict:
     if observed is None:
         return {'stopped_verified': True}
     placement = agent['_placement']
-    if placement.get('ownership') != 'shared' and observed.get('Image') != placement['image']:
-        # Rebind refuses a drifted image before any Docker call and would replace the container.
-        # The profile login execs into this container, so the adapter stops where it already runs.
+    if login and placement.get('ownership') != 'shared':
+        # Login remains bound to this exact container across release and image changes.
         if not ownership_labels_match(policy, agent, observed):
             raise SafeFailure('container image or ownership labels differ')
+        from fleet_executor_image import validate_previous
+        validate_previous(policy, agent, observed)
         return stop_running_adapter(agent, observed)
     if extensions_approved:
         observed = observe_container(policy, agent)

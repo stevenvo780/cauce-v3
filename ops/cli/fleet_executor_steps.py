@@ -521,7 +521,11 @@ class Executor:
             return {'evidence': self.compensate()}
         if step == 'login-stop':
             for row in self.physical_placements():
-                stop(self.policy, row)
+                if row.get('runtime_mode') == 'container':
+                    from fleet_executor_container import stop_container
+                    stop_container(self.policy, row, login=True)
+                else:
+                    stop(self.policy, row)
             if 'runtime' in self.journal:
                 self.journal['login_stopped'] = True
                 self.save()

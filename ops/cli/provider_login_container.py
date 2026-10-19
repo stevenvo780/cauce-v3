@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import selectors
 import signal
 import subprocess
 import time
+import uuid
 
 from cauce_container_proc import open_pidfd, pidfd_running, signal_pidfd
 from provider_login_native import Frames, boot_identity, pin_identity, process_identity
@@ -25,6 +27,63 @@ from provider_login_state import (
 
 DOCKER = '/usr/bin/docker'
 REMOTE_STATE = '/run/cauce-provider-login'
+
+
+@contextlib.contextmanager
+def runtime_guard(container_id: str):
+    if not isinstance(container_id, str) or re.fullmatch(r'[0-9a-f]{64}', container_id) is None:
+        raise LoginFailure('invalid guarded container identity')
+    root = private_state('/tmp/cauce-provider-runtime-' + str(os.geteuid()), create=True)
+    identity = str(uuid.uuid5(uuid.NAMESPACE_OID, container_id))
+    try:
+        lock = acquire(root, identity)
+        try:
+            yield
+        finally:
+            release(root, identity, lock)
+    finally:
+        os.close(root)
+
+
+def reservation_root() -> int:
+    return private_state('/tmp/cauce-provider-runtime-' + str(os.geteuid()), create=True)
+
+
+def reserve_runtime(binding: dict, operation_id: str) -> None:
+    with runtime_guard(binding['container_id']):
+        observe(binding)
+        root = reservation_root()
+        try:
+            saved = read_metadata(root, operation_id)
+            if saved is not None and saved.get('container_id') != binding['container_id']:
+                raise LoginFailure('login reservation belongs to another container')
+            write_metadata(root, operation_id, {'schemaVersion': 1, 'operation_id': operation_id,
+                                               'container_id': binding['container_id']})
+        finally:
+            os.close(root)
+
+
+def assert_unreserved(container_id: str) -> None:
+    root = reservation_root()
+    try:
+        for name in os.listdir(root):
+            if name.endswith('.json'):
+                saved = read_metadata(root, name[:-5])
+                if saved is not None and saved.get('container_id') == container_id:
+                    raise LoginFailure('provider login session is open; image refresh refused')
+    finally:
+        os.close(root)
+
+
+def release_reservation(operation_id: str) -> None:
+    try:
+        root = private_state('/tmp/cauce-provider-runtime-' + str(os.geteuid()))
+    except FileNotFoundError:
+        return
+    try:
+        remove_metadata(root, operation_id)
+    finally:
+        os.close(root)
 
 
 def validate_binding(binding) -> dict:
@@ -94,6 +153,7 @@ def cleanup_container(identity: str, state_root: str) -> dict:
         saved = read_metadata(root, identity)
         if saved is None:
             lock = acquire(root, identity, wait=6)
+            release_reservation(identity)
             return {'stopped_verified': True}
         fields = {'schemaVersion', 'operation_id', 'account_scope', 'backend', 'expires_at',
                   'boot_id', 'controller', 'bridge', 'container_binding'}
@@ -113,6 +173,7 @@ def cleanup_container(identity: str, state_root: str) -> dict:
                 os.close(descriptor)
         lock = acquire(root, identity, wait=6)
         remove_metadata(root, identity)
+        release_reservation(identity)
         return {'stopped_verified': True}
     finally:
         try:
@@ -124,6 +185,11 @@ def cleanup_container(identity: str, state_root: str) -> dict:
 
 def run_container(plan: dict) -> int:
     binding = validate_binding(plan.get('container_binding'))
+    with runtime_guard(binding['container_id']):
+        return run_guarded_container(plan, binding)
+
+
+def run_guarded_container(plan: dict, binding: dict) -> int:
     observe(binding)
     root = private_state(plan['state_root'])
     try:

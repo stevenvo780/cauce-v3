@@ -9,7 +9,6 @@ import stat
 from fleet_executor_container import (
     EXTENSIONS_LABEL,
     HELPER_DESTINATION,
-    create_container,
     docker,
     helper,
     identity_for,
@@ -77,25 +76,8 @@ def bound_release(observed: dict, release: pathlib.Path) -> pathlib.Path | None:
 def rebind(policy: dict, agent: dict, observed: dict, previous: pathlib.Path, release: pathlib.Path) -> dict:
     if agent['_placement'].get('ownership') == 'shared':
         raise SafeFailure('shared containers are never recreated')
-    validate_container(policy, agent, observed, runtime_mounts(policy, agent, previous, release))
-    owned_volumes(policy, agent)
-    running = observed['State']['Running'] is True
-    if running:
-        identity = identity_for(agent, observed)
-        helper(agent, identity, 'stop', *lifecycle_arguments(agent, identity))
-        helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
-    docker('rm', '-f', observed['Id'])
-    if inspect_container(agent['container_name']) is not None:
-        raise SafeFailure('previous container removal was not observed')
-    binds = runtime_mounts(policy, agent, release, release)
-    replacement = create_container(policy, agent, binds)
-    if running:
-        docker('start', replacement['Id'])
-        replacement = inspect_container(agent['container_name'])
-        if replacement is None or replacement['State']['Running'] is not True or replacement['State']['Pid'] <= 0:
-            raise SafeFailure('recreated container is not observed running')
-    validate_container(policy, agent, replacement, binds)
-    return replacement
+    from fleet_executor_image import refresh_image
+    return refresh_image(policy, agent, observed, release)
 
 
 def owned_agent(policy: dict, name: str, observed: dict, root: pathlib.Path, release: pathlib.Path) -> dict:
@@ -158,6 +140,8 @@ def rebind_all(policy: dict, release: pathlib.Path, *, include_running: bool = F
             continue
         if previous is None:
             receipt['current'].append(name)
+        elif observed['State']['Running'] is True and not (previous / 'ops/cli/fleet_executor_image.py').is_file():
+            receipt['deferred'].append({'container': name, 'release': previous.name, 'reason': 'login_guard_unavailable'})
         elif observed['State']['Running'] is True and not include_running and (dry_run or not adapter_stopped(agent, observed)):
             receipt['deferred'].append({'container': name, 'release': previous.name})
         else:

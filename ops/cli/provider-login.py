@@ -39,6 +39,8 @@ def main() -> int:
             proof = cleanup_container(identity, state)
         else:
             proof = cleanup_native(identity, state)
+            from provider_login_container import release_reservation
+            release_reservation(identity)
         print(json.dumps(proof, separators=(',', ':')))
         return 0
     if sys.argv[1:] not in ([], ['--container-child']):

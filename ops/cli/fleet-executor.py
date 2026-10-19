@@ -7,8 +7,9 @@ import signal
 import sys
 
 from fleet_executor_hooks import binding_for, container_binding
+from fleet_executor_image import image_operation
 from fleet_executor_policy import SafeFailure, approve_agent, load_policy, target_agent, validate_payload
-from fleet_executor_steps import perform
+from fleet_executor_steps import executor_lock, perform
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 from update_alias_lib import SafeArgumentParser
@@ -18,8 +19,11 @@ def cancelled(_signal, _frame):
     raise SafeFailure('fleet effect cancelled')
 
 
-def approved_binding(policy: dict, context: dict) -> dict:
+def approved_binding(policy: dict, context: dict, *, prepare_login: bool = False) -> dict:
     agent = approve_agent(policy, target_agent(context))
+    if prepare_login and agent['runtime_mode'] == 'container':
+        from fleet_executor_container import observe_container
+        observe_container(policy, agent)
     _account, profile = binding_for(policy, agent)
     receipt = {'agent': {key: value for key, value in agent.items() if not key.startswith('_')},
                'profile_binding': profile}
@@ -29,6 +33,9 @@ def approved_binding(policy: dict, context: dict) -> dict:
         receipt['runtime_binding']['generation'] = identity['login_generation']
         receipt['runtime_binding'].update(image_digest=agent['_placement']['image'],
             python=agent['_placement']['python'], helper='/cauce/executor/provider-login.py')
+        if prepare_login:
+            from provider_login_container import reserve_runtime
+            reserve_runtime(receipt['runtime_binding'], context['operation_id'])
     return receipt
 
 
@@ -37,12 +44,15 @@ def main() -> int:
     parser.add_argument('--policy', type=pathlib.Path, required=True)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--binding', action='store_true')
+    parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
     action.add_argument('--quota', action='store_true')
     action.add_argument('--quota-auth-verify', action='store_true')
     action.add_argument('--step', choices=('prepare', 'artifacts', 'credentials', 'runtime', 'authenticate',
         'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge', 'compensate', 'login-stop'))
     args = parser.parse_args()
+    if args.prepare_login and not args.binding:
+        raise SafeFailure('login preparation requires a binding request')
     policy = load_policy(args.policy)
     if args.capabilities:
         from fleet_executor_templates import capabilities
@@ -64,7 +74,16 @@ def main() -> int:
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     context = validate_payload(json.loads(encoded))
-    receipt = approved_binding(policy, context) if args.binding else perform(policy, context, args.step)
+    with image_operation(context['operation_id'], legacy_target=context['request']['target']['resource'] == 'agent'):
+        if args.binding:
+            agent = approve_agent(policy, target_agent(context))
+            if args.prepare_login and agent['runtime_mode'] == 'container':
+                with executor_lock(policy):
+                    receipt = approved_binding(policy, context, prepare_login=True)
+            else:
+                receipt = approved_binding(policy, context)
+        else:
+            receipt = perform(policy, context, args.step)
     print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
     return 0
 

@@ -67,8 +67,19 @@ class FakeDocker:
         if command == 'start':
             self.containers[self.by_id(arguments[1])]['State'].update(Running=True, Pid=9000 + self.counter, StartedAt='restarted')
             return b''
+        if command == 'stop':
+            self.containers[self.by_id(arguments[1])]['State'].update(Running=False, Pid=0)
+            return b''
+        if command == 'rename':
+            old_name = self.by_id(arguments[1])
+            row = self.containers.pop(old_name)
+            row['Name'] = '/' + arguments[2]
+            self.containers[arguments[2]] = row
+            return b''
         if command == 'create':
             return self.create(arguments)
+        if '-c' in arguments:
+            return b'clear\n'
         name = self.by_id(arguments[arguments.index('--user') + 2] if '--env' not in arguments else arguments[arguments.index('--env') + 2])
         if '/usr/bin/getent' in arguments:
             return b'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n'
@@ -113,6 +124,7 @@ class ReleaseFixture(unittest.TestCase):
             for tree in ('ops/cli', 'ops/container-runtime', 'adapter'):
                 (self.base / release / tree).mkdir(parents=True)
             (self.base / release / 'ops/container-runtime/cauce-container-runtime.py').write_text('helper\n')
+            (self.base / release / 'ops/cli/fleet_executor_image.py').write_text('guard\n')
             (self.base / release / 'adapter/worker.py').write_text('import time\ntime.sleep(60)\n')
         self.old, self.new = self.base / OLD, self.base / NEW
         self.user = pwd.getpwuid(os.geteuid()).pw_name
@@ -121,6 +133,7 @@ class ReleaseFixture(unittest.TestCase):
             self.addCleanup(patch.stop)
         self.name = 'cauce-fleet-rebind-' + uuid.uuid4().hex[:8]
         self.policy = {'host_id': 'fixture-host', 'executor_user': self.user, 'native': [], 'profiles': {}, 'hooks': {},
+            'roots': {'state': str(pathlib.Path(self.temporary.name))},
             'containers': {self.name: {'image': IMAGE, 'runtime_user': 'nobody', 'systemd_user': self.user,
                 'home_directory': '/nonexistent', 'state_root': '/tmp/cauce-state', 'python': '/usr/local/bin/python3.12'}},
             'bundles': {'codex': {'directory': str(self.new / 'adapter'), 'digest': 'sha256:' + '0' * 64,
@@ -207,6 +220,15 @@ class RebindEffectTests(ReleaseFixture):
         sources = {row['Destination']: row['Source'] for row in self.docker.containers[self.name]['Mounts']}
         self.assertEqual(sources['/cauce/executor'], str(self.old / 'ops/cli'))
         self.assertEqual(sources[str(self.old / 'adapter')], str(self.old / 'adapter'))
+
+    def test_setup_defers_running_legacy_release_without_login_reservations(self):
+        before = self.old_container()
+        (self.old / 'ops/cli/fleet_executor_image.py').unlink()
+        receipt = rebind.rebind_all(self.policy, self.new, include_running=True)
+        self.assertEqual(receipt['deferred'], [{'container': self.name, 'release': OLD,
+                                              'reason': 'login_guard_unavailable'}])
+        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+        self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'stop', 'rename', 'rm', 'create'}])
 
 
 class CredentialViewRemovalTests(unittest.TestCase):

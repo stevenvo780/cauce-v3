@@ -176,12 +176,13 @@ export async function cleanupProviderLogin(config: ProviderLoginTransport, opera
     return { stopped: true };
   } catch { return { stopped: false }; }
 }
-export function queryProviderLoginBinding(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal): Promise<unknown> {
+export function queryProviderLoginBinding(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal, prepareLogin = false): Promise<unknown> {
   const body = JSON.stringify({ operation_id: execution.operation.id, request: FleetOperationRequestSchema.parse(execution.request),
     fenced_targets: execution.fenced_targets, previous_agents: execution.previous_agents ?? [], desired_memberships: execution.desired_memberships ?? [],
     ...(execution.trusted_accounts === undefined ? {} : { trusted_accounts: execution.trusted_accounts }),
     ...(execution.snapshot === undefined ? {} : { snapshot: execution.snapshot }) });
-  return boundedProviderReceipt(config.python, [config.executable, '--policy', config.policyFile, '--binding'], body, signal, config.timeoutMs);
+  return boundedProviderReceipt(config.python, [config.executable, '--policy', config.policyFile, '--binding',
+    ...(prepareLogin ? ['--prepare-login'] : [])], body, signal, config.timeoutMs);
 }
 
 class HostProviderLogin implements ProviderAuthLogin {
