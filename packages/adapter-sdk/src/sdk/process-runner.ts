@@ -57,14 +57,19 @@ const SAFE_ENVIRONMENT = [
   "CAUCE_MUSE_CLI_SHA256",
 ];
 const SECRET_ENVIRONMENT = /(?:secret|token|password|passwd|api[_-]?key|auth|credential|cookie|session)/iu;
+// Profile homes only the owning harness inherits: on a native host the adapter env may carry another
+// agent's GROK_HOME, so it never reaches a codex/claude/... child (process-runner.test.ts).
+const HARNESS_ENVIRONMENT: Readonly<Record<string, readonly string[]>> = { grok: ["GROK_HOME"] };
 
 export function childEnvironment(
   additions: Readonly<Record<string, string>> | undefined,
   endpoint: string | undefined,
   inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+  harness?: string,
 ): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
-  for (const key of SAFE_ENVIRONMENT) {
+  const owned = harness !== undefined && Object.hasOwn(HARNESS_ENVIRONMENT, harness) ? HARNESS_ENVIRONMENT[harness] ?? [] : [];
+  for (const key of [...SAFE_ENVIRONMENT, ...owned]) {
     const value = inheritedEnvironment[key];
     if (value !== undefined) environment[key] = value;
   }
@@ -166,7 +171,7 @@ export class SpawnCommandRunner {
       );
     }
 
-    const environment = childEnvironment(request.env, request.emissionSocketPath);
+    const environment = childEnvironment(request.env, request.emissionSocketPath, process.env, request.harness);
     const attestor = request.harness === "claude" || request.harness === "codex"
       ? await import("./headless-consumption.js") : undefined;
     const openClaw = request.harness === "openclaw" ? await import("./openclaw-consumption.js") : undefined;

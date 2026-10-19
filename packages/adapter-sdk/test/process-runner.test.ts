@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
-import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
+import { childEnvironment, SpawnCommandRunner } from "../src/sdk/process-runner.js";
 
 const secretLikeKeys = [
   "API_KEY",
@@ -122,6 +122,13 @@ test("child inherits CODEX_HOME and CLAUDE_CONFIG_DIR from the adapter env, not 
   assert.equal(received.CLAUDE_CONFIG_DIR, claudeConfigDir);
   assert.equal(received.GROK_HOME, null, "GROK_HOME leaked despite not being allowlisted");
   for (const key of secretLikeKeys) assert.equal(received[key], null, `${key} leaked to the child`);
+});
+
+test("GROK_HOME reaches only a grok child", () => {
+  const inherited = { GROK_HOME: "/profiles/grok" };
+  assert.equal(childEnvironment(undefined, undefined, inherited, "grok").GROK_HOME, "/profiles/grok");
+  assert.equal(childEnvironment(undefined, undefined, inherited, "codex").GROK_HOME, undefined);
+  assert.equal(childEnvironment(undefined, undefined, inherited).GROK_HOME, undefined);
 });
 
 test("request.env rejects every secret-like key", async () => {
