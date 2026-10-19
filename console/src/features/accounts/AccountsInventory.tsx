@@ -106,11 +106,11 @@ export function AccountsInventory({ config, access, registry }: {
     : [];
   const deleteInvalid = form?.kind === 'delete'
     ? !ceiling.available
-      ? 'No se puede borrar con seguridad: el gateway no publicó alias_routing_ceiling y no se sabe si algún alias todavía referencia la cuenta.'
+      ? 'No se puede borrar con seguridad: el gateway no publicó los accesos y no se sabe si algún agente todavía usa la cuenta.'
       : accountCeilings.length > 0
         ? accountCeilings.length === 1
-          ? `Primero revocá el techo que todavía apunta a esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
-          : `Primero revocá los ${String(accountCeilings.length)} techos que todavía apuntan a esta cuenta: ${accountCeilings.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
+          ? `Primero quitá el acceso que todavía usa esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
+          : `Primero quitá los ${String(accountCeilings.length)} accesos que todavía usan esta cuenta: ${accountCeilings.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
         : form.confirmation !== form.accountId
           ? `Escribí exactamente «${form.accountId}» para confirmar el borrado.`
           : undefined
@@ -191,28 +191,30 @@ export function AccountsInventory({ config, access, registry }: {
                         ? <Badge tone="unknown">SIN DATO</Badge>
                         : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
                       <td data-label="Actualizada"><Time value={account.updatedAt} relativo /></td>
-                      <td data-label="Acciones" data-wide><span className="-ml-1 inline-flex flex-wrap items-center gap-1">
-                        <RowAction {...writeProps} label={`Editar «${account.id}»`} onClick={() => { open({ kind: 'edit', edit: editFrom(account) }); }}>
-                          <PencilLine size={15} aria-hidden="true" />
+                      <td data-label="Acciones" data-wide><span className="inline-flex flex-wrap items-center gap-1.5">
+                        <RowAction {...writeProps} label={`Editar «${account.id}»`} text="Editar" onClick={() => { open({ kind: 'edit', edit: editFrom(account) }); }}>
+                          <PencilLine size={13} aria-hidden="true" />
                         </RowAction>
                         <RowAction
                           label={account.enabled === true ? `Deshabilitar «${account.id}»` : `Habilitar «${account.id}»`}
+                          text={account.enabled === true ? 'Deshabilitar' : 'Habilitar'}
                           {...writeProps}
                           undoes={account.enabled === true}
                           onClick={() => { open({ kind: 'edit', edit: editFrom(account, { enabled: account.enabled !== true }) }); }}
                         >
-                          {account.enabled === true ? <PowerOff size={15} aria-hidden="true" /> : <Power size={15} aria-hidden="true" />}
+                          {account.enabled === true ? <PowerOff size={13} aria-hidden="true" /> : <Power size={13} aria-hidden="true" />}
                         </RowAction>
                         <RowAction
                           label={account.sharedWithPool === true ? `Despublicar «${account.id}» del pool` : `Publicar «${account.id}» al pool`}
+                          text={account.sharedWithPool === true ? 'Despublicar' : 'Publicar'}
                           {...writeProps}
                           undoes={account.sharedWithPool === true}
                           onClick={() => { open({ kind: 'edit', edit: editFrom(account, { sharedWithPool: account.sharedWithPool !== true }) }); }}
                         >
-                          {account.sharedWithPool === true ? <Lock size={15} aria-hidden="true" /> : <Share2 size={15} aria-hidden="true" />}
+                          {account.sharedWithPool === true ? <Lock size={13} aria-hidden="true" /> : <Share2 size={13} aria-hidden="true" />}
                         </RowAction>
-                        <RowAction {...writeProps} label={`Retirar o rotar «${account.id}»`} undoes onClick={() => { open({ kind: 'delete', accountId: account.id, confirmation: '' }); }}>
-                          <Trash2 size={15} aria-hidden="true" />
+                        <RowAction {...writeProps} label={`Retirar o rotar «${account.id}»`} text="Retirar" undoes onClick={() => { open({ kind: 'delete', accountId: account.id, confirmation: '' }); }}>
+                          <Trash2 size={13} aria-hidden="true" />
                         </RowAction>
                       </span></td>
                     </tr>;
@@ -229,7 +231,7 @@ export function AccountsInventory({ config, access, registry }: {
 
     <FormDialog open={shown && form?.kind === 'edit'} onClose={close} busy={runner.busy}
       title={form?.kind === 'edit' ? `Edición de «${form.edit.id}»` : 'Edición'}
-      description="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador son inmutables porque los techos ya referencian este id.">
+      description="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
       {form?.kind === 'edit' ? <>
         <div className="grid gap-3">
           <label>Etiqueta <span className={HINT}>vacío guarda null</span>
@@ -239,7 +241,7 @@ export function AccountsInventory({ config, access, registry }: {
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
         </div>
         <Notice>
-          Despublicar del pool falla mientras otro tenant tenga la cuenta en el techo de alguno de sus alias (<code>alias_routing_ceiling_borrow_requires_pool</code>). Hay que revocar antes ese techo, que a su vez cascadea su binding.
+          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta (<code>alias_routing_ceiling_borrow_requires_pool</code>). Quitá antes ese acceso, que también borra su orden de consulta.
         </Notice>
         <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
       </> : null}
@@ -250,7 +252,7 @@ export function AccountsInventory({ config, access, registry }: {
       description="Borrar retira esta cuenta del inventario de forma irreversible. Las cuentas nuevas se registran desde «Mis cuotas».">
       {form?.kind === 'delete' ? <>
         <Notice tone="danger" role="note">
-          El borrado falla si cualquier alias conserva esta cuenta en su techo. Revoca antes esos accesos y retira sus entornos de consulta.
+          El borrado falla si cualquier agente conserva acceso a esta cuenta. Quitá antes esos accesos y retira sus entornos de consulta.
         </Notice>
         <label>
           <span>Confirmá escribiendo <strong className="mono">{form.accountId}</strong></span>
@@ -272,11 +274,12 @@ export function AccountsInventory({ config, access, registry }: {
 }
 
 /**
- * A row action in the width of an icon: the accessible name carries the verb and the account, and
+ * A row action with a visible verb: the accessible name carries the verb and the account, and
  * `undoes` tints the direction that takes something away. No click here writes anything —it opens
  * a form whose write still goes through its dry-run before applying. */
-function RowAction({ label, onClick, undoes = false, disabled = false, title, children }: {
+function RowAction({ label, text, onClick, undoes = false, disabled = false, title, children }: {
   label: string;
+  text: string;
   onClick: () => void;
   undoes?: boolean;
   disabled?: boolean;
@@ -286,7 +289,7 @@ function RowAction({ label, onClick, undoes = false, disabled = false, title, ch
   return (
     <button
       className={cn(
-        'inline-grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent p-0 text-muted transition-colors enabled:hover:bg-muted-bg enabled:hover:text-fg disabled:cursor-not-allowed disabled:opacity-40',
+        'inline-flex min-h-7 cursor-pointer items-center gap-1 rounded-md border border-line-strong bg-surface px-2 text-xs font-medium whitespace-nowrap text-fg transition-colors enabled:hover:bg-subtle disabled:cursor-not-allowed disabled:opacity-40',
         undoes && 'enabled:hover:bg-warn-soft enabled:hover:text-warn-ink',
       )}
       type="button"
@@ -295,7 +298,7 @@ function RowAction({ label, onClick, undoes = false, disabled = false, title, ch
       disabled={disabled}
       onClick={onClick}
     >
-      {children}
+      {children}{text}
     </button>
   );
 }

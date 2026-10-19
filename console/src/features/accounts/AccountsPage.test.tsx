@@ -209,7 +209,7 @@ it('no deja borrar una cuenta mientras un techo la referencia', async () => {
   await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
   await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
 
-  expect(screen.getByText(/primero revocá el techo.*Steven\/kant/i)).toBeInTheDocument();
+  expect(screen.getByText(/primero quitá el acceso.*Steven\/kant/i)).toBeInTheDocument();
   expect(deleteActions().getByRole('button', { name: /previsualizar/i })).toBeDisabled();
   expect(changes).toEqual([]);
 });

@@ -81,8 +81,8 @@ it('la matriz vive DENTRO de «Cuentas», sin segunda ruta y sin segundo h1', as
   expect(screen.getByRole('heading', { name: /^inventario$/i })).toBeInTheDocument();
 
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
-  expect(screen.getByRole('heading', { name: /techo por alias/i })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: /orden de consulta registrado/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /qué cuenta puede usar cada agente/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /orden en que se consulta/i })).toBeInTheDocument();
 });
 
 it('muestra el techo por alias y el orden de consulta derivado de los bindings habilitados', async () => {
@@ -91,12 +91,12 @@ it('muestra el techo por alias y el orden de consulta derivado de los bindings h
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  expect(await screen.findByRole('button', { name: /Steven\/kant × codex-steven: #1 · prio 10/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: /Steven\/kant × codex-steven: 1\.º en consulta/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i })).toBeInTheDocument();
 
-  const fallback = within(screen.getByRole('list', { name: /orden de consulta por agente/i }));
-  expect(fallback.getByText(/1\. codex-steven \(prio 10\)/)).toBeInTheDocument();
-  expect(fallback.getByText(/sin binding habilitado: minimax-pablo/i)).toBeInTheDocument();
+  const fallback = within(screen.getByRole('list', { name: /orden por agente/i }));
+  expect(fallback.getByText(/1\.º codex-steven/)).toBeInTheDocument();
+  expect(fallback.getByText(/con acceso pero sin orden activo: minimax-pablo/i)).toBeInTheDocument();
 });
 
 it('declara la cuenta principal explícita y conserva esa cuenta durante los reintentos', async () => {
@@ -139,7 +139,7 @@ it('otorga un techo con dry-run previo y una sola mutación de alias_routing_cei
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Sin acceso/i }));
   await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]).toEqual({
@@ -165,7 +165,7 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   await user.type(await screen.findByLabelText(/etiqueta/i), ' del equipo');
   await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
-  await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: sin techo/i }));
+  await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: Sin acceso/i }));
   await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes).toHaveLength(1);
@@ -186,9 +186,9 @@ it('ordena las consultas con una mutación de binding que lleva prioridad y esta
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
-  await user.clear(screen.getByLabelText(/prioridad/i));
-  await user.type(screen.getByLabelText(/prioridad/i), '20');
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
+  await user.clear(screen.getByLabelText(/orden de consulta/i));
+  await user.type(screen.getByLabelText(/orden de consulta/i), '20');
   await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]?.mutation).toEqual({
@@ -205,13 +205,13 @@ it('no convierte una prioridad vacía en 0, que es la más alta', async () => {
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
   // `Number('')` is 0 and 0 passed `Number.isInteger(n) && n >= 0`: clearing the field silently
   // assembled the highest priority instead of asking for a value.
-  await user.clear(screen.getByLabelText(/prioridad/i));
+  await user.clear(screen.getByLabelText(/orden de consulta/i));
 
   expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
-  expect(screen.getByText(/la prioridad debe ser un entero entre 0 y 32767/i)).toBeInTheDocument();
+  expect(screen.getByText(/el orden debe ser un entero entre 0 y 32767/i)).toBeInTheDocument();
   expect(changes).toHaveLength(0);
 });
 
@@ -223,9 +223,9 @@ it('tampoco acepta una prioridad de puros espacios', async () => {
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
-  await user.clear(screen.getByLabelText(/prioridad/i));
-  await user.type(screen.getByLabelText(/prioridad/i), '   ');
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
+  await user.clear(screen.getByLabelText(/orden de consulta/i));
+  await user.type(screen.getByLabelText(/orden de consulta/i), '   ');
 
   expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
@@ -239,9 +239,9 @@ it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', asy
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: binding off · prio 50/i }));
-  await user.clear(screen.getByLabelText(/prioridad/i));
-  await user.type(screen.getByLabelText(/prioridad/i), '0');
+  await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
+  await user.clear(screen.getByLabelText(/orden de consulta/i));
+  await user.type(screen.getByLabelText(/orden de consulta/i), '0');
   await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
 
   expect(changes[0]?.mutation).toEqual({
@@ -258,7 +258,7 @@ it('avisa que revocar el techo cascadea el binding', async () => {
   await openMatrix(user);
   await user.click(await screen.findByRole('button', { name: /nueva asignación/i }));
   await user.selectOptions(await screen.findByLabelText(/operación/i), 'revoke-ceiling');
-  expect(screen.getByText(/borra en cascada el binding/i)).toBeInTheDocument();
+  expect(screen.getByText(/borra también el orden de consulta/i)).toBeInTheDocument();
 });
 
 it('lee el snapshot UNA sola vez para las dos mitades', async () => {
@@ -276,7 +276,7 @@ it('lee el snapshot UNA sola vez para las dos mitades', async () => {
   renderWithApi(<AccountsPage />);
 
   await openMatrix(user);
-  await screen.findByRole('heading', { name: /techo por alias/i });
+  await screen.findByRole('heading', { name: /qué cuenta puede usar cada agente/i });
   // Before the merge there were two routes with their own `useResource`, which does not share
   // cache: mounting both halves requested `/v3/console/config` twice. The matrix now receives it via props.
   expect(configReads).toBe(1);

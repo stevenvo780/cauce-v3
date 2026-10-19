@@ -34,10 +34,10 @@ interface Assignment {
 }
 
 function cellBadge(cell: MatrixCell): { tone: 'online' | 'warning' | 'offline' | 'unknown'; label: string } {
-  if (cell.state === 'bound-enabled') return { tone: 'online', label: `#${String(cell.rank ?? '?')} · prio ${String(cell.priority ?? 'UNKNOWN')}` };
-  if (cell.state === 'bound-disabled') return { tone: 'offline', label: `binding off · prio ${String(cell.priority ?? 'UNKNOWN')}` };
-  if (cell.state === 'ceiling-only') return { tone: 'warning', label: 'techo sin binding' };
-  return { tone: 'unknown', label: 'sin techo' };
+  if (cell.state === 'bound-enabled') return { tone: 'online', label: `${String(cell.rank ?? '?')}.º en consulta` };
+  if (cell.state === 'bound-disabled') return { tone: 'offline', label: 'Pausada' };
+  if (cell.state === 'ceiling-only') return { tone: 'warning', label: 'Sin orden' };
+  return { tone: 'unknown', label: 'Sin acceso' };
 }
 
 function agentKeyOf(tenantId: string, alias: string): string {
@@ -113,7 +113,7 @@ export function AssignmentMatrix({ config, access, registry }: {
     : !assignment.accountId
       ? 'Elegí una cuenta.'
       : needsPriority && !priorityValid
-        ? 'La prioridad debe ser un entero entre 0 y 32767; menor aparece primero en las consultas.'
+        ? 'El orden debe ser un entero entre 0 y 32767; el número menor se consulta primero.'
         : undefined;
 
   const mutation: ConfigMutation | undefined = invalid || !selectedTenant || !selectedAlias ? undefined
@@ -138,11 +138,11 @@ export function AssignmentMatrix({ config, access, registry }: {
       en su configuración. La matriz se muestra incompleta a propósito; la consola no rellena lo que el servidor no informa.
     </Notice> : null}
 
-    <section aria-label="Techo por alias">
+    <section aria-label="Qué cuenta puede usar cada agente">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
-          <h2 className="m-0 text-sm font-semibold">Techo por alias</h2>
-          <p className="m-0 mt-0.5 text-xs text-muted">Tocá una celda para asignar: cada cambio pasa por una vista previa.</p>
+          <h2 className="m-0 text-sm font-semibold">Qué cuenta puede usar cada agente</h2>
+          <p className="m-0 mt-0.5 text-xs text-muted">Tocá una celda para cambiar el acceso o el orden: cada cambio pasa por una vista previa.</p>
         </div>
         <Button variant="primary" {...writeProps} onClick={() => { setFormOpen(true); }}>
           <Plus size={15} aria-hidden="true" />Nueva asignación
@@ -151,7 +151,7 @@ export function AssignmentMatrix({ config, access, registry }: {
       <p className="m-0 mb-3 text-xs text-muted">Estas asignaciones vinculan las cuotas y guardan su orden de consulta.
         No cambian la cuenta principal ni la ejecución del agente, y no activan un respaldo automático.</p>
       <Explain title="¿Qué cambia esta asignación?">
-        <p>El techo (<code>alias_routing_ceiling</code>) limita las cuentas que puede consultar el alias; el binding vincula sus cuotas y ordena su presentación en el perfil. Un binding no puede existir fuera del techo.</p>
+        <p>El acceso marca qué cuentas puede consultar cada agente; el orden marca en qué orden se prueban al consultar. El orden solo existe dentro del acceso: sin acceso no hay orden que guardar.</p>
         <p>Los agentes administrados usan la cuenta principal elegida en «Operar agente». Para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.</p>
       </Explain>
       {!available && agents.items.length === 0
@@ -189,7 +189,7 @@ export function AssignmentMatrix({ config, access, registry }: {
                             className="inline-flex cursor-pointer items-center gap-1 rounded-full border-0 bg-transparent p-0 enabled:hover:opacity-75 disabled:cursor-not-allowed disabled:opacity-60"
                             type="button"
                             aria-label={`${key} × ${cell.accountId}: ${badge.label}`}
-                            title={cell.grantedBy ? `Techo otorgado por ${cell.grantedBy}` : undefined}
+                            title={cell.grantedBy ? `Acceso dado por ${cell.grantedBy}` : undefined}
                             onClick={() => { selectCell(key, cell.accountId, cell); }}
                           >
                             <Badge tone={badge.tone}>{badge.label}</Badge>
@@ -204,10 +204,10 @@ export function AssignmentMatrix({ config, access, registry }: {
             </Desplazable>}
     </section>
 
-    <section aria-label="Orden de consulta registrado">
-      <h2 className="m-0 text-sm font-semibold">Orden de consulta registrado</h2>
-      <p className="m-0 mt-0.5 mb-3 text-xs text-muted">Sólo bindings habilitados y dentro del techo, de menor a mayor prioridad.</p>
-      {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Orden de consulta por agente">
+    <section aria-label="Orden en que se consulta">
+      <h2 className="m-0 text-sm font-semibold">Orden en que se consulta</h2>
+      <p className="m-0 mt-0.5 mb-3 text-xs text-muted">Solo cuentas con acceso y orden activo, de la primera a la última.</p>
+      {matrix.length === 0 ? <EmptyState>Sin agentes registrados.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Orden por agente">
         {matrix.map((row) => <li key={agentKeyOf(row.agent.tenantId, row.agent.alias)}
           className="flex flex-wrap items-start gap-x-3 gap-y-1.5 rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px]">
           <span className="flex min-w-0 max-w-full items-center gap-2">
@@ -219,11 +219,11 @@ export function AssignmentMatrix({ config, access, registry }: {
               ? <span className="unknown inline-flex items-center gap-1"><Ban size={13} aria-hidden="true" /> sin cuentas de cuota vinculadas</span>
               : <span className="chip-list">
                 {row.fallback.map((step) => <span className="chip" key={step.accountId}>
-                  <ArrowDownUp size={12} aria-hidden="true" /> {step.rank}. {step.accountId} (prio {step.priority ?? 'UNKNOWN'}){step.borrowed ? ' · prestada' : ''}
+                  <ArrowDownUp size={12} aria-hidden="true" /> {step.rank}.º {step.accountId}{step.borrowed ? ' · prestada' : ''}
                 </span>)}
               </span>}
             {row.idleCeiling.length
-              ? <div className={cn(HINT, 'mt-1')}>En el techo pero sin binding habilitado: {row.idleCeiling.join(', ')}</div>
+              ? <div className={cn(HINT, 'mt-1')}>Con acceso pero sin orden activo: {row.idleCeiling.join(', ')}</div>
               : null}
           </div>
         </li>)}
@@ -256,13 +256,13 @@ export function AssignmentMatrix({ config, access, registry }: {
             {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
           </select>
         </label>
-        {needsPriority ? <label>Prioridad de consulta <span className={HINT}>0–32767, menor aparece primero</span>
+        {needsPriority ? <label>Orden de consulta <span className={HINT}>número menor = se consulta primero</span>
           <input {...writeProps} value={assignment.priority} onChange={(event) => { patch({ priority: event.target.value }); }} />
         </label> : null}
-        {needsPriority ? <label className="flex items-center gap-2 self-end font-normal"><input {...writeProps} type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Binding habilitado</label> : null}
+        {needsPriority ? <label className="flex items-center gap-2 self-end font-normal"><input {...writeProps} type="checkbox" checked={assignment.enabled} onChange={(event) => { patch({ enabled: event.target.checked }); }} /> Orden activo</label> : null}
       </div>
       {assignment.operation === 'revoke-ceiling' ? <Notice role="note" className="flex items-start gap-1.5">
-        <Link2Off size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Revocar el techo borra en cascada el binding de ese alias hacia esa cuenta: la revocación no depende del orden en que se hagan las cosas.
+        <Link2Off size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Quitar el acceso borra también el orden de consulta de ese agente hacia esa cuenta.
       </Notice> : null}
       {assignment.operation === 'grant-ceiling' ? <Notice role="note" className="flex items-start gap-1.5">
         <ShieldQuestion size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Si la cuenta la paga otro tenant, sólo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
