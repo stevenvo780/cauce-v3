@@ -219,7 +219,9 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
                 docker('stop', current['Id'])
             docker('rename', current['Id'], backup)
             binds = runtime_mounts(policy, agent, release, release) if release else None
-            replacement = create_container(policy, agent, binds)
+            # Keep the operation that created it: cancelling that operation must still find and discard it.
+            replacement = create_container(policy, agent, binds,
+                                           operation_id=(current['Config'].get('Labels') or {}).get('cauce.fleet.operation'))
             if receipt['was_running']:
                 docker('start', replacement['Id'])
                 replacement = inspect_container(agent['container_name'])
