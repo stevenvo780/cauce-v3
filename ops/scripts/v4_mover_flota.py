@@ -41,6 +41,8 @@ def parameters(row: dict) -> dict:
                                           'primary_account_id', 'model_id', 'reasoning_effort')}
     result['memberships'] = [{key: member[key] for key in ('room_id', 'role', 'enabled') if key in member}
                              for member in row.get('memberships', [])]
+    if 'extensions' in row:
+        result['extensions'] = row['extensions']
     result['placement'] = dict(row.get('placement') or {
         key: row[source] for key, source in (('host_id', 'host_id'), ('mode', 'runtime_mode'),
             ('container_name', 'container_name'), ('runtime_user', 'runtime_user'),
