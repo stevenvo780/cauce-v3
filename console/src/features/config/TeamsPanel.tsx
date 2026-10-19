@@ -77,7 +77,7 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
                   </span>
                 </span>
               </div>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
+              <div className="flex shrink-0 flex-wrap gap-2">
                 <Button size="sm" disabled={Boolean(editBlock) || ctx.busy} title={editBlock} aria-label={`Editar equipo ${id}`}
                   onClick={() => { open(edit); }}><Pencil size={12} aria-hidden="true" />Editar</Button>
                 {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(retireBlock) || ctx.busy} title={retireBlock ?? 'Retirar el equipo: primer paso para borrarlo; después podrás purgarlo'}
@@ -97,15 +97,15 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
           const restoreBlock = teamBlock(ctx, 'restore', room);
           return <li key={id} className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
             <span className="font-mono text-xs">{id}</span>
-            <span className="flex gap-1.5">
+            <span className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={Boolean(restoreBlock) || ctx.busy}
+                title={restoreBlock ?? 'Vuelve a activar el equipo retirado'} aria-label={`Restaurar equipo ${id}`}
+                onClick={() => { open({ collection: 'rooms', action: 'restore', row: room }); }}>Restaurar</Button>
               {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(restoreBlock) || ctx.busy}
-                title={restoreBlock ?? 'Paso 2: borra la configuración retirada; los mensajes quedan como historial'}
+                title={restoreBlock ?? 'Paso 2 de 2 · definitivo: borra la configuración retirada; los mensajes quedan como historial'}
                 aria-label={`Purgar equipo ${id}`}
                 onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'purge' }); }}>
                 <Trash2 size={12} aria-hidden="true" />Purgar equipo</Button> : null}
-              <Button size="sm" disabled={Boolean(restoreBlock) || ctx.busy}
-                title={restoreBlock} aria-label={`Restaurar equipo ${id}`}
-                onClick={() => { open({ collection: 'rooms', action: 'restore', row: room }); }}>Restaurar</Button>
             </span>
           </li>;
         })}

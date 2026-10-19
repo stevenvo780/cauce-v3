@@ -1,3 +1,4 @@
+import { Pin, PinOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AccountQuotaWindow, QuotaAccount, QuotaRefreshStatus } from '../../api/client/my-quotas-client';
 import { Button, Notice, Pill } from '../../components/kit';
@@ -90,7 +91,8 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
     {!account.windows.length ? <Notice tone="info">{OBSERVATION_LABEL[account.observation_status]}. No hay ventanas informadas para esta cuenta.</Notice> : null}
     <p className="m-0 text-xs text-muted">{measured ? <>Medido <Time value={measured} relativo /></> : 'Sin medición'}</p>
     <footer className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-      {onPin ? <Button size="sm" aria-pressed={pinned} disabled={!canPin} onClick={onPin}>{pinned ? 'Desfijar cuenta' : 'Fijar cuenta'}</Button> : null}
+      {onPin ? <Button size="sm" variant="ghost" className="mr-auto" aria-pressed={pinned} disabled={!canPin} onClick={onPin}>
+        {pinned ? <PinOff size={12} aria-hidden="true" /> : <Pin size={12} aria-hidden="true" />}{pinned ? 'Desfijar cuenta' : 'Fijar cuenta'}</Button> : null}
       {onEdit ? <Button size="sm" disabled={!canEdit} onClick={onEdit}>Editar cuenta</Button> : null}
       {onRemove ? <Button size="sm" variant="danger" disabled={!canEdit} onClick={onRemove}>Eliminar cuenta</Button> : null}
     </footer>

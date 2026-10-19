@@ -11,6 +11,15 @@ const account: QuotaAccount = { id: 'subscription', provider: 'codex', label: 'C
   payer_tenant_id: 'One', shared: false, agent_count: 0, agents: [], paused_until: null, paused_reason: null,
   observation_status: 'stale', remaining_percent: 56, note: null, windows: [] };
 
+it('fijar es una preferencia fantasma y eliminar es el único peligro del pie', () => {
+  render(<QuotaAccountCard account={account} pinned={false} canPin canEdit onPin={vi.fn()} onEdit={vi.fn()} onRemove={vi.fn()} />);
+  const pin = screen.getByRole('button', { name: 'Fijar cuenta' });
+  expect(pin).toHaveAttribute('aria-pressed', 'false');
+  expect(pin).not.toHaveClass('bg-brand');
+  expect(screen.getByRole('button', { name: 'Eliminar cuenta' })).toHaveClass('text-danger-ink');
+  expect(screen.getByRole('button', { name: 'Editar cuenta' })).not.toHaveClass('text-danger-ink');
+});
+
 it('muestra la actualización automática sin acreditar disponibilidad con una lectura antigua', () => {
   const view = render(<QuotaAccountCard account={{ ...account, refresh_status: 'updating' }} pinned={false} />);
   const card = within(screen.getByRole('article', { name: 'Cuotas de Cuenta' }));
