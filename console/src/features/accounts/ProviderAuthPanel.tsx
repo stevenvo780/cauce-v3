@@ -108,7 +108,10 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
     try {
       const value = action === 'start' ? await client.start(request) : session ? await client[action](session.session_id) : null;
       if (value) accept(value);
-    } catch (cause) { if (alive.current) setError(requestError(cause, request.host_id)); }
+    } catch (cause) {
+      // A late reply (the verify POST after the poll already saw «authenticated») must not undo a verified login.
+      if (alive.current && current.current?.status !== 'authenticated') setError(requestError(cause, request.host_id));
+    }
     finally { if (alive.current) setBusy(false); }
   };
   const started = useRef<string | null>(null);

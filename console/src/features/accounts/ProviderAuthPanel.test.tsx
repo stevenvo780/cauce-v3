@@ -32,6 +32,23 @@ describe('provider auth panel', () => {
     expect(onAuthenticated).toHaveBeenCalledWith(expect.objectContaining({ status: 'authenticated' }));
     expect(paths).toContain('/v3/console/provider-auth/sessions/00000000-0000-4000-8000-000000000051/verify');
   });
+  it('keeps a login the poll already verified when the slower verify reply fails afterwards', async () => {
+    let failVerify: (cause: unknown) => void = () => undefined;
+    let authenticated = false;
+    const fetcher: RequestFn = async <T,>(path: string) => {
+      if (path.endsWith('/verify')) return new Promise<T>((_resolve, reject) => { failVerify = reject; });
+      return (authenticated ? { ...session, status: 'authenticated' } : session) as T;
+    };
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Verificar conexión' }));
+    authenticated = true;
+    await screen.findByText('Cuenta e identidad verificadas', undefined, { timeout: 3000 });
+    failVerify(new ApiError('operator lost permission', 403, 'forbidden'));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('Cuenta e identidad verificadas')).toBeInTheDocument();
+  });
   it('never marks a wrong account authenticated and keeps private errors out of the page', async () => {
     const fetcher: RequestFn = async <T,>() => ({ ...session, account_id: 'other-account', status: 'authenticated' }) as T;
     const done = vi.fn();
