@@ -15,6 +15,8 @@ describe('measured OpenClaw provider login', () => {
     expect(projection.command).toEqual([...login.command, '--provider', 'openai', '--method', 'device-code', '--profile-id', 'cauce:account-one']);
     expect(projection.env.OPENCLAW_HOME).toBe(profile.path); expect(projection.env.CODEX_HOME).toBe(`${profile.path}/.external-cli-disabled`);
     expect(projection.env.OPENCLAW_AGENT_DIR).toBe(`${profile.path}/agents/runtime-one/agent`);
+    expect(projection.env.TMPDIR).toBe(`${profile.path}/tmp`);
+    expect(projection.env.NODE_COMPILE_CACHE).toBe(`${profile.path}/tmp/node-compile-cache`);
     expect(projection.env.CAUCE_OPENCLAW_LOCAL).toBe('1'); expect(projection.env.CAUCE_OPENCLAW_DIST_DIR).toBe('/usr/lib/openclaw/dist');
     expect(projection.files[profile.command]).toBe(profile.command_sha256); expect(projection.files[driver.auth_list_source]).toBe(source);
   });

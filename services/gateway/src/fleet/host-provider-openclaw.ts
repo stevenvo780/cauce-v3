@@ -35,5 +35,6 @@ login: { command: string[]; sha256: string; files?: Record<string, string> | und
   env: { OPENCLAW_HOME: profile.path, OPENCLAW_STATE_DIR: profile.path, OPENCLAW_CONFIG_PATH: join(profile.path, 'openclaw.json'),
     OPENCLAW_AGENT_DIR: join(profile.path, 'agents', agent.runtime_key, 'agent'), CAUCE_OPENCLAW_AGENT_ID: agent.runtime_key,
     CAUCE_OPENCLAW_WORKSPACE: join(agent.state_directory, 'workspace'), CAUCE_OPENCLAW_LOCAL: '1', CAUCE_OPENCLAW_DIST_DIR: dirname(driver.auth_list_source),
-    CODEX_HOME: external, CLAUDE_CONFIG_DIR: external } };
+    CODEX_HOME: external, CLAUDE_CONFIG_DIR: external,
+    TMPDIR: join(profile.path, 'tmp'), NODE_COMPILE_CACHE: join(profile.path, 'tmp', 'node-compile-cache') } };
 }

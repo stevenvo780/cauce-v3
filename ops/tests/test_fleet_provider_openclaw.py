@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,6 +20,7 @@ import fleet_provider_openclaw as driver  # noqa: E402
 SCRIPT = '''import fs from 'node:fs';
 const argv=process.argv.slice(2);
 const root=process.env.OPENCLAW_HOME;
+if(!fs.statSync(process.env.TMPDIR).isDirectory()||!fs.statSync(process.env.NODE_COMPILE_CACHE).isDirectory()) process.exit(2);
 const mode=fs.existsSync(root+'/mode')?fs.readFileSync(root+'/mode','utf8'):'';
 if(argv.includes('--version')) { console.log(mode==='version'?'2026.1.1':'OpenClaw 2026.7.1-2 (0790d9f)'); }
 else if(argv.includes('list')) {
@@ -101,6 +104,42 @@ class OpenClawProviderTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 (self.profile / 'mode').write_text(mode)
                 self.assertFalse(identity.authenticated_provider(self.packet))
+
+    def test_capability_probe_prepares_its_isolated_temporary_directories(self):
+        self.assertTrue(driver.measured_definition(self.binding))
+
+    def test_preparation_creates_private_temporary_and_compile_directories_for_node(self):
+        env = driver.environment(self.binding, self.agent)
+        self.assertEqual(env['TMPDIR'], str(self.profile / 'tmp'))
+        self.assertEqual(env['NODE_COMPILE_CACHE'], str(self.profile / 'tmp' / 'node-compile-cache'))
+        for key in ('TMPDIR', 'NODE_COMPILE_CACHE'):
+            details = pathlib.Path(env[key]).stat()
+            self.assertEqual(details.st_uid, os.geteuid())
+            self.assertEqual(details.st_mode & 0o777, 0o700)
+        result = subprocess.run([self.node, '--input-type=module', '-e',
+            "import fs from 'node:fs';import os from 'node:os';"
+            "const path=fs.mkdtempSync(os.tmpdir()+'/openclaw-');"
+            "fs.writeFileSync(path+'/probe','synthetic');console.log(os.tmpdir());"],
+            env={**env, 'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, check=True, timeout=5)
+        self.assertEqual(result.stdout.strip(), env['TMPDIR'])
+        self.assertTrue(any(pathlib.Path(env['NODE_COMPILE_CACHE']).iterdir()))
+
+    def test_temporary_directories_reject_symlinks_or_public_permissions(self):
+        for directory in (self.profile / 'tmp' / 'node-compile-cache', self.profile / 'tmp'):
+            with self.subTest(directory=directory):
+                directory.chmod(0o755)
+                with self.assertRaises(ValueError):
+                    driver.prepare(self.binding, self.agent)
+                directory.chmod(0o700)
+                if directory.name == 'tmp':
+                    (directory / 'node-compile-cache').rmdir()
+                directory.rmdir()
+                directory.symlink_to(self.state, target_is_directory=True)
+                with self.assertRaises((OSError, ValueError)):
+                    driver.prepare(self.binding, self.agent)
+                directory.unlink()
+                driver.prepare(self.binding, self.agent)
+        self.assertEqual(list(self.state.iterdir()), [self.state / 'workspace'])
 
     def test_config_is_idempotent_and_rejects_foreign_changes_without_overwrite(self):
         config = self.profile / 'openclaw.json'

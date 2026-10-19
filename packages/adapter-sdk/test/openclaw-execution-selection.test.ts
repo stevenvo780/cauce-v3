@@ -63,13 +63,16 @@ test('raw bridge rejects invalid and duplicate selection before native execution
 });
 test('only approved OpenClaw profile paths cross the child environment boundary', () => {
   const env = childEnvironment(undefined, undefined, { OPENCLAW_HOME: '/profiles/isolated', OPENCLAW_STATE_DIR: '/profiles/isolated', OPENCLAW_AGENT_DIR: '/profiles/isolated/agent',
-    CAUCE_OPENCLAW_WORKSPACE: '/workspace/isolated', CAUCE_OPENCLAW_AGENT_ID: 'main', CAUCE_OPENCLAW_LOCAL: '1', OPENCLAW_AUTH_TOKEN: 'secret' });
+    CAUCE_OPENCLAW_WORKSPACE: '/workspace/isolated', CAUCE_OPENCLAW_AGENT_ID: 'main', CAUCE_OPENCLAW_LOCAL: '1', OPENCLAW_AUTH_TOKEN: 'secret',
+    TMPDIR: '/profiles/isolated/tmp', NODE_COMPILE_CACHE: '/profiles/isolated/tmp/node-compile-cache' });
   assert.equal(env.OPENCLAW_STATE_DIR, '/profiles/isolated');
   assert.equal(env.OPENCLAW_HOME, '/profiles/isolated');
   assert.equal(env.OPENCLAW_AGENT_DIR, '/profiles/isolated/agent');
   assert.equal(env.CAUCE_OPENCLAW_AGENT_ID, 'main');
   assert.equal(env.CAUCE_OPENCLAW_WORKSPACE, '/workspace/isolated');
   assert.equal(env.CAUCE_OPENCLAW_LOCAL, '1');
+  assert.equal(env.TMPDIR, '/profiles/isolated/tmp');
+  assert.equal(env.NODE_COMPILE_CACHE, '/profiles/isolated/tmp/node-compile-cache');
   assert.equal(env.OPENCLAW_AUTH_TOKEN, undefined);
 });
 test('OpenClaw loopback API rejects unsupported explicit selection before reading credentials or dispatch', async () => {

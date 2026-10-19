@@ -89,7 +89,8 @@ def environment(binding: dict, agent: dict) -> dict:
     return {'OPENCLAW_HOME': str(root), 'OPENCLAW_STATE_DIR': str(root), 'OPENCLAW_CONFIG_PATH': str(root / 'openclaw.json'),
             'OPENCLAW_AGENT_DIR': str(root / 'agents' / key / 'agent'), 'CAUCE_OPENCLAW_AGENT_ID': key,
             'CAUCE_OPENCLAW_WORKSPACE': str(pathlib.Path(agent['state_directory']) / 'workspace'), 'CAUCE_OPENCLAW_LOCAL': '1', 'CAUCE_OPENCLAW_DIST_DIR': str(pathlib.Path(binding['openclaw']['auth_list_source']).parent),
-            'CODEX_HOME': str(root / '.external-cli-disabled'), 'CLAUDE_CONFIG_DIR': str(root / '.external-cli-disabled')}
+            'CODEX_HOME': str(root / '.external-cli-disabled'), 'CLAUDE_CONFIG_DIR': str(root / '.external-cli-disabled'),
+            'TMPDIR': str(root / 'tmp'), 'NODE_COMPILE_CACHE': str(root / 'tmp' / 'node-compile-cache')}
 
 
 def profile_id(account: str) -> str:
@@ -153,6 +154,7 @@ def read_config(binding: dict, agent: dict) -> dict:
 def prepare(binding: dict, agent: dict) -> None:
     env = environment(binding, agent)
     root = pathlib.Path(binding['path'])
+    prepare_temporary(root)
     for directory in [root / 'agents', root / 'agents' / agent['runtime_key'], pathlib.Path(env['OPENCLAW_AGENT_DIR']),
                       root / '.external-cli-disabled', pathlib.Path(env['CAUCE_OPENCLAW_WORKSPACE'])]:
         os.close(owned_directory(directory, create=True))
@@ -167,6 +169,12 @@ def prepare(binding: dict, agent: dict) -> None:
             os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def prepare_temporary(root: pathlib.Path) -> None:
+    os.close(owned_directory(root))
+    for directory in (root / 'tmp', root / 'tmp' / 'node-compile-cache'):
+        os.close(owned_directory(directory, create=True))
 
 
 def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
@@ -205,6 +213,7 @@ def measured_definition(binding: dict) -> bool:
     from fleet_provider_identity import command_output, provider_command
     try:
         with tempfile.TemporaryDirectory(prefix='cauce-openclaw-capability-') as directory:
+            prepare_temporary(pathlib.Path(directory))
             packet = {'profile_binding': {**binding, 'path': directory}, 'agent': {'harness_id': 'openclaw',
                 'runtime_key': 'capability-probe', 'state_directory': directory, 'home_directory': directory}}
             command = provider_command(pinned_packet(packet))

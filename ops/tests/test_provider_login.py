@@ -129,6 +129,24 @@ class ProviderLoginPtyTest(unittest.TestCase):
         self.assertEqual((self.root / 'new-private-file').stat().st_mode & 0o777, 0o600)
         self.assertEqual((self.root / 'new-private-directory').stat().st_mode & 0o777, 0o700)
 
+    def test_openclaw_login_prepares_existing_profile_temporary_paths_before_exec(self):
+        profile = self.root / 'profile'
+        profile.mkdir(mode=0o700)
+        self.plan['env'].update(OPENCLAW_STATE_DIR=str(profile), TMPDIR=str(profile / 'tmp'),
+            NODE_COMPILE_CACHE=str(profile / 'tmp' / 'node-compile-cache'))
+        self.worker.write_text(self.worker.read_text().replace('print("TTY_READY"',
+            'assert os.path.isdir(os.environ["TMPDIR"])\n'
+            'assert os.path.isdir(os.environ["NODE_COMPILE_CACHE"])\n'
+            'print("TTY_READY"'))
+        self.assertFalse((profile / 'tmp').exists())
+        self.start(umask=0)
+        self.output_until(b'TTY_READY')
+        for directory in (profile / 'tmp', profile / 'tmp' / 'node-compile-cache'):
+            self.assertEqual(directory.stat().st_uid, os.getuid())
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.send({'type': 'close'})
+        self.assertTrue(self.wait_for('exited')['stopped_verified'])
+
     def test_real_pty_input_resize_close_and_no_transcript_persisted(self):
         started = self.start()
         self.output_until(b'TTY_READY')

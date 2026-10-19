@@ -249,6 +249,11 @@ def run_guardian(plan: dict, user, root: int, lock: int, controller: dict) -> in
             if os.getuid() != user.pw_uid or os.getgid() != user.pw_gid:
                 os._exit(125)
             os.umask(0o077)
+            if 'OPENCLAW_STATE_DIR' in plan['env']:
+                profile = pathlib.Path(canonical_path(plan['env']['OPENCLAW_STATE_DIR']))
+                os.close(private_state(str(profile)))
+                for directory in (profile / 'tmp', profile / 'tmp' / 'node-compile-cache'):
+                    os.close(private_state(str(directory), create=True))
             os.chdir(plan['cwd'])
             os.execve(plan['command'][0], plan['command'], {**plan['env'], 'HOME': plan['home'],
                 'USER': user.pw_name, 'LOGNAME': user.pw_name, 'TERM': 'xterm-256color'})
