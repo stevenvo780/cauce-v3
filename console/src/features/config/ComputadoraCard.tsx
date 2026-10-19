@@ -73,8 +73,7 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
         <Monitor size={18} />
       </span>
       <div className="grid min-w-0 flex-1 gap-0.5">
-        <h4 id={idTitulo} className="m-0 text-[15px] leading-snug font-semibold break-words">{host.display_name}</h4>
-        <code className="text-xs break-all text-muted">{host.host_id}</code>
+        <h4 id={idTitulo} title={host.host_id} className="m-0 text-[15px] leading-snug font-semibold break-words">{host.display_name}</h4>
       </div>
       <Pill tone={insignia.tono} title={host.registered ? `${estado.etiqueta}, ${estado.fuente}` : undefined}>{insignia.etiqueta}</Pill>
     </header>
@@ -86,10 +85,6 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
         <span className="ml-auto text-right">{host.last_seen_at ? <Time value={host.last_seen_at} relativo /> : 'Nunca'}</span>
       </li>
       {host.registered ? <>
-        <li className="flex items-start gap-2 text-muted">
-          <span aria-hidden="true" className="size-3.5 shrink-0" />
-          <span>Estado: {estado.fuente}</span>
-        </li>
         <li className={cn('flex items-start gap-2', !host.approved && 'text-warn-ink')}>
           {host.approved
             ? <ShieldCheck size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-ok" />
@@ -104,17 +99,21 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
 
     <AgentChips host={host} />
 
-    <footer className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
+    <footer className="mt-auto grid gap-2 border-t border-line pt-3">
       {host.registered ? <>
-        <Interruptor host={host} disabled={!escribe || busy || bloqueada} title={interruptorBlock} onChange={() => { onAlternar(host); }} />
-        <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button size="sm" disabled={!escribe || busy} title={editarBlock} onClick={() => { onEditar(host); }}>Editar</Button>
-          {sePuedeEliminar(host)
-            ? <Button size="sm" variant="danger" disabled={!borra || busy || bloqueada} title={eliminarBlock} onClick={() => { onEliminar(host); }}>Eliminar</Button>
-            : null}
-        </span>
-        {sePuedeEliminar(host) ? null : <p className="m-0 basis-full text-xs text-muted">Para eliminarla, quita antes sus agentes.</p>}
-      </> : <Button size="sm" variant="primary" className="ml-auto" disabled={!crea || busy} title={registrarBlock} onClick={() => { onRegistrar(host); }}>Registrar</Button>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Interruptor host={host} disabled={!escribe || busy || bloqueada} title={interruptorBlock} onChange={() => { onAlternar(host); }} />
+          <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <Button size="sm" disabled={!escribe || busy} title={editarBlock} onClick={() => { onEditar(host); }}>Editar</Button>
+            {sePuedeEliminar(host)
+              ? <Button size="sm" variant="danger" disabled={!borra || busy || bloqueada} title={eliminarBlock} onClick={() => { onEliminar(host); }}>Eliminar</Button>
+              : null}
+          </span>
+        </div>
+        <p className="m-0 min-h-4 text-xs text-muted" aria-hidden={sePuedeEliminar(host)}>
+          {sePuedeEliminar(host) ? ' ' : 'Para eliminarla, quita antes sus agentes.'}
+        </p>
+      </> : <div className="flex"><Button size="sm" variant="primary" className="ml-auto" disabled={!crea || busy} title={registrarBlock} onClick={() => { onRegistrar(host); }}>Registrar</Button></div>}
     </footer>
   </article>;
 }

@@ -71,16 +71,17 @@ it('lista cada computadora con su estado, su fuente, su ejecutor y sus agentes',
   expect(resumen.getByText('Agentes').nextElementSibling).toHaveTextContent('1');
   expect(screen.getByRole('heading', { name: 'Detectadas sin registrar (1)' })).toBeInTheDocument();
   const uno = tarjeta('Equipo uno');
-  expect(within(uno).getByText('uno')).toBeInTheDocument();
-  expect(within(uno).getByText('Conectada')).toBeInTheDocument();
-  expect(within(uno).getByText('Estado: según el controlador de flota')).toBeInTheDocument();
+  expect(within(uno).getByRole('heading', { name: 'Equipo uno' })).toHaveAttribute('title', 'uno');
+  expect(within(uno).queryByText('uno')).not.toBeInTheDocument();
+  expect(within(uno).getByText('Conectada')).toHaveAttribute('title', 'Conectada, según el controlador de flota');
+  expect(within(uno).queryByText(/Estado: según/)).not.toBeInTheDocument();
   expect(within(uno).getByText('Aprobada para crear agentes')).toBeInTheDocument();
   expect(within(uno).getByText('worker')).toBeInTheDocument();
   expect(within(uno).getByText('A, en línea')).toBeInTheDocument();
 
   const dos = tarjeta('Equipo dos');
-  expect(within(dos).getByText('Sin datos')).toBeInTheDocument();
-  expect(within(dos).getByText('Estado: ningún controlador ni agente lo ha reportado')).toBeInTheDocument();
+  expect(within(dos).getByText('Sin datos')).toHaveAttribute('title', 'Sin datos, ningún controlador ni agente lo ha reportado');
+  expect(within(dos).queryByText(/Estado: ningún/)).not.toBeInTheDocument();
   expect(within(dos).getByText('Pendiente: el ejecutor no está listo; ejecuta cauce hosts setup en esta computadora')).toBeInTheDocument();
   expect(within(dos).getByText('Nunca')).toBeInTheDocument();
 
