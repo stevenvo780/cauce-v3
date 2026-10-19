@@ -7,7 +7,7 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusPill } from './AgentFleetOperation';
-import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, guidedDriftHeadline, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, guidedDriftHeadline, isStaleResume, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
 import { focusPrimaryMembershipCheckbox, isPrimaryMembershipError, translateFleetOperationError } from './fleet-operation-error-translations';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { lifecycleLabel } from './agent-view';
@@ -43,6 +43,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const [inventoryNotice, setInventoryNotice] = useState<string>();
   const [typedAlias, setTypedAlias] = useState('');
   const previousRevision = useRef(snapshot.revision);
+  const selfReload = useRef(false);
   const flow = useAgentLifecycle(open, target, () => { void reloadSnapshot(); });
   const heading = useRef<HTMLHeadingElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -80,7 +81,9 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   useEffect(() => { if (open) heading.current?.focus({ preventScroll: true }); }, [open]);
   useEffect(() => {
     if (previousRevision.current === snapshot.revision) return;
-    previousRevision.current = snapshot.revision; generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias('');
+    previousRevision.current = snapshot.revision;
+    if (selfReload.current) { selfReload.current = false; return; }
+    generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias('');
     const keepDraft = dirty.current;
     if (target && !keepDraft) setDraft(agentLifecycleDraft(snapshot, target));
     setInventoryNotice(target && !keepDraft ? 'El inventario cambió. Se cargaron los datos actuales; revisa la intención antes de previsualizar otra operación.'
@@ -90,10 +93,10 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     generation.current += 1; setSessionInvalid(true); setValidated(undefined); setError('La sesión cambió. Relee permisos y capacidades antes de continuar.');
   }), [api]);
 
-  function simpleRequest(): { request?: FleetOperationRequest; error?: string } {
+  function simpleRequest(revision = snapshot.revision): { request?: FleetOperationRequest; error?: string } {
     if (!target || !available) return { error: 'El servidor no acredita esta acción para el agente seleccionado.' };
     const parameters = kind === 'purge' && target.resource === 'agent' ? { confirm_alias: typedAlias } : {};
-    const result = FleetOperationSubmissionSchema.safeParse({ kind, target, parameters, expected_revision: snapshot.revision, idempotency_key: key });
+    const result = FleetOperationSubmissionSchema.safeParse({ kind, target, parameters, expected_revision: revision, idempotency_key: key });
     return result.success ? { request: result.data } : { error: 'Falta una identidad o revisión durable válida.' };
   }
   function edit(patch: Partial<AgentLifecycleDraft>) {
@@ -109,8 +112,26 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
     try {
       const receipt = await api.previewFleetOperation(input);
       if (sequence === generation.current && expected === currentFingerprint.current) setValidated({ input, receipt });
-    } catch (cause) { if (sequence === generation.current) setError(cause instanceof Error ? (translateFleetOperationError(cause.message, draft.primaryRoomId) ?? fleetErrorText(cause.message, flow.operation, kind)) : 'No se pudo previsualizar la operación.'); }
+    } catch (cause) {
+      if (sequence === generation.current && cause instanceof Error && isStaleResume(cause.message)
+        && await retryPreviewWithFreshRevision(sequence)) return;
+      if (sequence === generation.current) setError(cause instanceof Error ? (translateFleetOperationError(cause.message, draft.primaryRoomId) ?? fleetErrorText(cause.message, flow.operation, kind)) : 'No se pudo previsualizar la operación.');
+    }
     finally { setSending(false); setPreviewing(false); }
+  }
+  async function retryPreviewWithFreshRevision(sequence: number): Promise<boolean> {
+    let fresh: ConfigurationSnapshot;
+    try { fresh = await api.getConfiguration(); } catch { return false; }
+    if (sequence !== generation.current || fresh.revision === snapshot.revision) return false;
+    const rebuilt = draftKind ? agentLifecycleRequest(draft, fresh, flow.capability, kind, key, target) : simpleRequest(fresh.revision);
+    if (!rebuilt.request) { if (rebuilt.error) setError(rebuilt.error); return true; }
+    selfReload.current = onReloaded !== undefined;
+    onReloaded?.(fresh);
+    try {
+      const receipt = await api.previewFleetOperation(rebuilt.request);
+      if (sequence === generation.current) setValidated({ input: rebuilt.request, receipt });
+      return true;
+    } catch { selfReload.current = false; return false; }
   }
   async function enqueue() {
     if (!canWrite || !available || busy || inProgress || blocked || !samePreview || !validated.receipt.can_apply || !aliasConfirmed) return;

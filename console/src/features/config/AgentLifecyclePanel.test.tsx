@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto';
+import { useState } from 'react';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -71,6 +72,35 @@ it('prepares an agent without an active runtime and binds exact memberships to a
   expect(screen.queryByText('Listo')).not.toBeInTheDocument();
   expect(captured).toMatchObject({ kind: 'create', target: { tenant_id: 'A', alias: 'new-worker' }, parameters: {
     primary_room_id: ' Sala ', memberships: [{ room_id: ' Sala ', role: 'rol con espacios', enabled: true }] } });
+});
+it('relee la revisión y reintenta la primera vista previa tras otra operación, conservando lo rellenado', async () => {
+  const revisions: number[] = [];
+  server.use(http.get('http://localhost/v3/console/access', () => HttpResponse.json({
+    subject: 'A:operator', roles: ['operator'], permissions: ['config.read', 'config.write'] })),
+  http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json(capability)),
+  http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [] })),
+  http.get('http://localhost/v3/console/config', () => HttpResponse.json({ ...snapshot, revision: 5 })),
+  http.post('http://localhost/v3/console/fleet/operations/preview', async ({ request }) => {
+    const input = await request.json() as FleetOperationRequest;
+    revisions.push(input.expected_revision);
+    if (input.expected_revision !== 5) {
+      return HttpResponse.json({ error: 'conflict', message: 'configuration revision changed; preview the operation again' }, { status: 409 });
+    }
+    return HttpResponse.json({ request_sha256: await fleetRequestHash(input), kind: input.kind, target: input.target,
+      expected_revision: input.expected_revision, steps: ['prepare', 'verify'], dependencies: [], can_apply: true });
+  }));
+  function Wrapper() {
+    const [current, setCurrent] = useState(snapshot);
+    return <ConsoleAccessBoundary><AgentLifecyclePanel snapshot={current} onReloaded={setCurrent} /></ConsoleAccessBoundary>;
+  }
+  renderWithApi(<Wrapper />);
+  const user = await fill();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Huella exacta');
+  expect(revisions).toEqual([4, 5]);
+  expect(screen.getByRole('textbox', { name: 'Alias operativo' })).toHaveValue('new-worker');
+  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.queryByText(/La configuración cambió desde que se lanzó/)).not.toBeInTheDocument();
 });
 it('invalidates preview on edits and keeps one idempotency key when a lost enqueue is retried', async () => {
   renderPanel();
