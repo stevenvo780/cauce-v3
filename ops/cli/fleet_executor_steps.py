@@ -417,14 +417,7 @@ class Executor:
 
     def profile(self):
         agent = self.agent()
-        # The probes need a live runtime on the approved image. The console login may have stopped it, the adapter may
-        # have exited, or a deploy may have pinned a new image since the runtime step: start() is idempotent and
-        # recreates a container left on an older image before (re)starting its adapter. It runs before the binding
-        # check, which validates the container against the current image.
-        self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
-        self.journal.pop('login_stopped', None)
-        self.record_extension_receipt()
-        self.save()
+        self.ensure_runtime(agent)
         account, binding = binding_for(self.policy, agent)
         if not self.authenticated_binding_matches(account, binding):
             raise SafeFailure('provider profile has no current authenticated identity proof')
@@ -435,10 +428,22 @@ class Executor:
         self.save()
         return {'profile_verified': True}
 
+    def ensure_runtime(self, agent: dict) -> None:
+        """The probes need a live runtime on the approved image. The console login may have stopped it, the adapter may
+        have exited, or a deploy may have pinned a new image since the runtime step: start() is idempotent and recreates
+        a container left on an older image before (re)starting its adapter. It runs before any binding check, which
+        validates the container against the current image."""
+        self.journal['runtime'] = start(self.policy, agent, operation_id=self.context['operation_id'])['runtime_digest']
+        self.journal.pop('login_stopped', None)
+        self.record_extension_receipt()
+        self.save()
+
     def verify(self):
         if self.journal.get('profile') is not True or 'runtime' not in self.journal:
             raise SafeFailure('runtime profile was not prepared before functional verification')
-        observed = invoke(self.policy, self.context, self.agent(), 'verify', phase='bootstrap')
+        agent = self.agent()
+        self.ensure_runtime(agent)
+        observed = invoke(self.policy, self.context, agent, 'verify', phase='bootstrap')
         required = ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')
         if any(observed.get(field) is not True for field in required):
             raise SafeFailure('provider, profile, bootstrap or nonce roundtrip was not demonstrated')
@@ -452,6 +457,10 @@ class Executor:
         if not self.journal.get('verified') or not all(self.journal['verified'].values()):
             raise SafeFailure('admission requires complete functional verification')
         agent = self.agent()
+        if agent['runtime_mode'] == 'container':
+            # A deploy between steps pins a new image; refresh the container before the binding check validates it.
+            from fleet_executor_container import observe_container
+            observe_container(self.policy, agent)
         account, binding = binding_for(self.policy, agent)
         if not self.authenticated_binding_matches(account, binding):
             raise SafeFailure('admission provider account or profile binding changed')
