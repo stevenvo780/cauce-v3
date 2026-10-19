@@ -48,7 +48,9 @@ def environment(binding: dict, agent: dict) -> dict:
     # The container root is read-only: Muse's reviewer sandbox needs a writable temp root inside the profile.
     return {'XDG_CONFIG_HOME': str(root / 'config'), 'XDG_DATA_HOME': str(root / 'data'), 'MUSE_NO_AUTO_UPDATE': '1',
             'CAUCE_MUSE_CLI_COMMAND': binding['command'], 'CAUCE_MUSE_CLI_SHA256': binding['command_sha256'],
-            'TMPDIR': str(root / 'tmp')}
+            'TMPDIR': str(root / 'tmp'),
+            **({'CAUCE_MUSE_WORKSPACE': str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')}
+               if agent.get('runtime_mode') == 'container' else {})}
 
 
 def validate_binding(binding: dict, agent: dict) -> None:

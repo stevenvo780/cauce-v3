@@ -23,7 +23,11 @@ VERSION = '1.0.41'
 def environment(binding: dict, agent: dict) -> dict:
     root = validate_provider_binding(binding, agent, 'grok')
     validate_provider_selection(agent, 'grok', frozenset())
-    return {'GROK_HOME': str(root)}
+    values = {'GROK_HOME': str(root)}
+    if agent.get('runtime_mode') == 'container':
+        # The adapter seeds AGENTS.md where the harness runs (start_container's working directory).
+        values['CAUCE_GROK_WORKSPACE'] = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
+    return values
 
 
 def validate_binding(binding: dict, agent: dict) -> None:
