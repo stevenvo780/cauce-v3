@@ -50,7 +50,7 @@ export async function fleetSshArguments(input: FleetSshTransport, options: { cle
   return arguments_;
 }
 export async function fleetHostSpawn(config: { python: string; executable: string; policyFile: string; transport?: FleetSshTransport }, step: string) {
-  const arguments_ = [config.executable, '--policy', config.policyFile, '--step', step];
+  const arguments_ = ['-B', config.executable, '--policy', config.policyFile, '--step', step];
   if (!config.transport) return { executable: config.python, arguments: arguments_ };
   const options = await fleetSshArguments(config.transport);
   return { executable: config.transport.executable, arguments: [...options, config.transport.destination,

@@ -172,7 +172,7 @@ export async function boundedProviderReceipt(python: string, argv: string[], bod
 export async function cleanupProviderLogin(config: ProviderLoginTransport, operationId: string, signal: AbortSignal): Promise<{ stopped: boolean }> {
   try {
     await validateTransport(config); z.uuid().parse(operationId);
-    CleanupSchema.parse(await boundedProviderReceipt(config.python, [config.helper.executable, '--cleanup', operationId, config.stateRoot], '', signal, config.stopTimeoutMs ?? 5000));
+    CleanupSchema.parse(await boundedProviderReceipt(config.python, ['-B', config.helper.executable, '--cleanup', operationId, config.stateRoot], '', signal, config.stopTimeoutMs ?? 5000));
     return { stopped: true };
   } catch { return { stopped: false }; }
 }
@@ -181,7 +181,7 @@ export function queryProviderLoginBinding(config: HostCommandConfig, execution: 
     fenced_targets: execution.fenced_targets, previous_agents: execution.previous_agents ?? [], desired_memberships: execution.desired_memberships ?? [],
     ...(execution.trusted_accounts === undefined ? {} : { trusted_accounts: execution.trusted_accounts }),
     ...(execution.snapshot === undefined ? {} : { snapshot: execution.snapshot }) });
-  return boundedProviderReceipt(config.python, [config.executable, '--policy', config.policyFile, '--binding',
+  return boundedProviderReceipt(config.python, ['-B', config.executable, '--policy', config.policyFile, '--binding',
     ...(prepareLogin ? ['--prepare-login'] : [])], body, signal, config.timeoutMs);
 }
 
@@ -201,7 +201,7 @@ class HostProviderLogin implements ProviderAuthLogin {
     await validateTransport(this.config);
     await validatePacketPins(this.config.packet);
     if (readMutableBoolean(this.closed) || isSignalAborted(this.signal)) throw unavailable();
-    const child = spawnPrivate(this.config.python, [this.config.helper.executable]); this.child = child;
+    const child = spawnPrivate(this.config.python, ['-B', this.config.helper.executable]); this.child = child;
     let buffer = ''; let rejectStart!: (error: Error) => void; let resolveStart!: () => void;
     const starting = new Promise<void>((resolve, reject) => { resolveStart = resolve; rejectStart = reject; });
     const invalid = () => { this.verifiedStop = false; rejectStart(unavailable()); kill(child); };

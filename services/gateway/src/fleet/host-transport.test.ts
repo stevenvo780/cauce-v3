@@ -1,6 +1,6 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer, connect } from 'node:net';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { performHostCommand } from './host-command.js';
 import { fleetHostSpawn } from './host-transport.js';
 import type { FleetExecution } from './executor.js';
+import { performQuotaHostCommand } from './quota-host-command.js';
+import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 
 const execute = promisify(execFile); const hash = (body: Buffer | string) => createHash('sha256').update(body).digest('hex');
 let directory: string; let daemon: ChildProcess | undefined; let port: number;
@@ -47,7 +49,8 @@ beforeAll(async () => {
   const hostKey = (await readFile(join(directory, 'server-key.pub'), 'utf8')).trim().split(' ').slice(0, 2).join(' ');
   const knownHosts = `[127.0.0.1]:${String(port)} ${hostKey}\n`; await writeFile(join(directory, 'known_hosts'), knownHosts, { mode: 0o600 });
   const executable = join(directory, "executor 'quoted;$fixture.py"); const policyFile = join(directory, "policy 'quoted;$fixture.json");
-  await writeFile(executable, `import json,sys\nx=json.load(sys.stdin)\nassert sys.argv[2]==${JSON.stringify(policyFile)}\nassert x['request']['target']['alias']=='fixture'\nassert sys.argv[-1]=='stop'\nprint(json.dumps({'evidence':{'stopped_verified':True}}))\n`, { mode: 0o600 });
+  await writeFile(join(directory, 'release_dependency.py'), 'VALUE=1\n', { mode: 0o600 });
+  await writeFile(executable, `import os\nos.umask(0o002)\nimport release_dependency,json,sys\nassert sys.dont_write_bytecode and release_dependency.VALUE==1\nx=json.load(sys.stdin)\nassert sys.argv[2]==${JSON.stringify(policyFile)}\nassert x['request']['target']['alias']=='fixture'\nassert sys.argv[-1]=='stop'\nprint(json.dumps({'evidence':{'stopped_verified':True}}))\n`, { mode: 0o600 });
   config = { python: '/usr/bin/python3', executable, policyFile, transport: { executable: '/usr/bin/ssh',
     executable_sha256: hash(await readFile('/usr/bin/ssh')), destination: `${userInfo().username}@127.0.0.1`, port,
     known_hosts_file: join(directory, 'known_hosts'), known_hosts_sha256: hash(knownHosts),
@@ -64,7 +67,23 @@ describe('fleet SSH transport with a real private fixture daemon', () => {
     try {
       expect(await performHostCommand({ ...config, timeoutMs: 5000 }, 'stop', execution, new AbortController().signal))
         .toEqual({ evidence: { stopped_verified: true } });
+      expect(await readdir(directory)).not.toContain('__pycache__');
     } catch { throw new Error(`Private SSH fixture failed: ${diagnostic}`); }
+  });
+  it('imports quota helpers over SSH without bytecode under a shared umask', async () => {
+    const executable = join(directory, 'quota.py');
+    await writeFile(executable, "import os\nos.umask(0o002)\nimport release_dependency,json,sys\nassert sys.dont_write_bytecode and release_dependency.VALUE==1\nx=json.load(sys.stdin)\nif x['action']=='delete': result={'stopped_verified':True,'profile_removed_verified':True}\nelse:\n a=x['agent']\n result={'operation_id':x['operation_id'],'tenant':a['tenant_id'],'alias':a['alias'],'host_id':a['host_id'],'container_name':a['container_name'],'harness':a['harness_id'],'captured_at':'2026-01-01T00:00:00Z','status':'unsupported','reason':'quota_reader_unavailable'}\nprint(json.dumps(result))\n", { mode: 0o600 });
+    const command = { ...config, executable, timeoutMs: 5000 }; const operationId = execution.operation.id;
+    expect(await performQuotaHostCommand(command, { operation_id: operationId, action: 'delete', consent: false,
+      environment: { id: operationId, company_id: 'fixture', account_id: 'fixture-account', host_id: 'fixture-host',
+        provider: 'codex', container_name: 'cauce-quota-72000000000040008000000000000001' } }, new AbortController().signal))
+      .toEqual({ stopped_verified: true, profile_removed_verified: true });
+    expect(await performAgentQuotaHostCommand(command, { operation_id: operationId, action: 'query', agent: {
+      operation_id: operationId, expected_revision: 0, company_id: 'fixture', tenant_id: 'Steven', alias: 'fixture',
+      harness_id: 'codex', host_id: 'fixture-host', runtime_mode: 'container', container_name: 'cauce-fixture', runtime_user: 'dev',
+      home_directory: '/home/dev', state_directory: '/home/dev/.cauce', runtime_key: 'fixture', systemd_user: null, primary_account_id: null,
+    } }, new AbortController().signal)).toMatchObject({ status: 'unsupported', reason: 'quota_reader_unavailable' });
+    expect(await readdir(directory)).not.toContain('__pycache__');
   });
   it('rejects a changed host key pin before spawning a remote command', async () => {
     if (!config.transport) throw new Error('Fixture transport absent');

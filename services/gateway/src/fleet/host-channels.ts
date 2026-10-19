@@ -88,7 +88,7 @@ async function remote(channel: Pick<Channel, 'host' | 'transport'>, script: stri
   const base = await fleetSshArguments(channel.transport);
   if (signal?.aborted) throw unavailable();
   const child = spawn(channel.transport.executable, [...base, channel.transport.destination,
-    [channel.host.command.python, '-c', script, ...args].map(quote).join(' ')], { detached: true,
+    [channel.host.command.python, '-B', '-c', script, ...args].map(quote).join(' ')], { detached: true,
     stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '' } });
   const aborted = () => { void stop(child); };
   signal?.addEventListener('abort', aborted, { once: true });

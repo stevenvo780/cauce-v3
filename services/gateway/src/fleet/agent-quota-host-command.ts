@@ -15,7 +15,7 @@ export async function performAgentQuotaHostCommand(config: HostCommandConfig, va
     tenant_id, alias, runtime_key, harness_id, host_id, runtime_mode, container_name, runtime_user,
     home_directory, state_directory, systemd_user, primary_account_id,
   } };
-  const args = [config.executable, '--policy', config.policyFile, '--quota'];
+  const args = ['-B', config.executable, '--policy', config.policyFile, '--quota'];
   const command = config.transport === undefined ? { executable: config.python, args }
     : { executable: config.transport.executable, args: [...await fleetSshArguments(config.transport), config.transport.destination,
       [config.python, ...args].map(quote).join(' ')] };

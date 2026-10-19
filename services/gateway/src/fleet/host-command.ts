@@ -57,7 +57,7 @@ async function runHostCommand(
   return new Promise((resolve, reject) => {
     const child = spawn(specification.executable, specification.arguments, {
       detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp' },
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp', PYTHONDONTWRITEBYTECODE: '1' },
     });
     let failed = false; let done = false; let bytes = 0; let runtimeStderr = '';
     let force: NodeJS.Timeout | undefined;

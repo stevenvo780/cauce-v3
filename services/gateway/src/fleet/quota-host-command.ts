@@ -43,7 +43,7 @@ async function invokeQuotaHostCommand(config: HostCommandConfig, execution: Quot
   signal: AbortSignal, action: '--quota' | '--quota-auth-verify'): Promise<unknown> {
   const input = QuotaExecutionSchema.parse(execution);
   [config.python, config.executable, config.policyFile].forEach(value => LoginPathSchema.parse(value));
-  const args = [config.executable, '--policy', config.policyFile, action];
+  const args = ['-B', config.executable, '--policy', config.policyFile, action];
   const command = config.transport === undefined ? { executable: config.python, args }
     : { executable: config.transport.executable, args: [...await fleetSshArguments(config.transport), config.transport.destination,
       [config.python, ...args].map(quote).join(' ')] };

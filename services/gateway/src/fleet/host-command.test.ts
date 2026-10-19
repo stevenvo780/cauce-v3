@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { performHostCommand, performHostCompensation, performHostLoginStop } from './host-command.js';
 import type { FleetExecution } from './executor.js';
 const directories: string[] = [];
@@ -13,6 +13,12 @@ async function helper(body: string) {
   return { python: '/usr/bin/python3', executable, policyFile: join(directory, 'policy.json'), timeoutMs: 1000 };
 }
 describe('host effect transport', () => {
+  it('imports release modules without creating bytecode under a shared umask', async () => {
+    const config = await helper("import os\nos.umask(0o002)\nimport release_dependency,json,sys\nsys.stdin.read()\nassert sys.dont_write_bytecode and release_dependency.VALUE==1\nassert os.environ['PYTHONDONTWRITEBYTECODE']=='1'\nprint(json.dumps({'evidence':{'stopped_verified':True}}))");
+    await writeFile(join(dirname(config.executable), 'release_dependency.py'), 'VALUE=1\n');
+    expect(await performHostCommand(config, 'stop', execution, new AbortController().signal)).toEqual({ evidence: { stopped_verified: true } });
+    expect(await readdir(dirname(config.executable))).not.toContain('__pycache__');
+  });
   it.each([
     ['container image or ownership labels differ', 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT'],
     ['container resource limits differ from the approved shape', 'CONTAINER_RESOURCE_LIMITS_DRIFT'],

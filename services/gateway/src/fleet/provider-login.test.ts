@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as files from 'node:fs/promises';
-import { chmod, link, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,17 @@ async function fixture(mode = 'verified'): Promise<ProviderLoginConfig> {
       env: { HOME: '/home/dev' }, backend: 'native', state_root: root, account_scope: 'test-account' } };
 }
 describe('private provider login transport', () => {
+  it('imports helper modules without bytecode during login and cleanup under a shared umask', async () => {
+    const config = await fixture();
+    await writeFile(join(config.stateRoot, 'release_dependency.py'), 'VALUE=1\n');
+    const body = "import os\nos.umask(0o002)\nimport release_dependency,sys\nassert sys.dont_write_bytecode and release_dependency.VALUE==1\n"
+      + await readFile(config.helper.executable, 'utf8');
+    await writeFile(config.helper.executable, body); config.helper.sha256 = createHash('sha256').update(body).digest('hex');
+    const login = await createProviderLogin(config, new AbortController().signal);
+    try { await login.start(); } finally { await login.close(); }
+    expect(await cleanupProviderLogin(config, operationId, new AbortController().signal)).toEqual({ stopped: true });
+    expect(await readdir(config.stateRoot)).not.toContain('__pycache__');
+  });
   it.each([
     { name: 'exact runtime drift', stderr: 'SYNTHETIC_PRIVATE_FIXTURE https://example.invalid/login?code=private\u001b[31m\n'
       + 'fleet effect failed: container image or ownership labels differ\n', code: 'RUNTIME_DRIFT', quotaReason: undefined,
