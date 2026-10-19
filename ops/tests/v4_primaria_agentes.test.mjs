@@ -3,16 +3,20 @@
 // cauce:timeout-ms 240000
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { GenericContainer, Wait } from 'testcontainers';
 import { tsImport } from 'tsx/esm/api';
-import { parseArguments, proposePrimary, runPrimary } from '../scripts/v4_primaria_agentes.mjs';
+import { loadHarnessCompatibility, parseArguments, proposePrimary, runPrimary } from '../scripts/v4_primaria_agentes.mjs';
 
 const script = fileURLToPath(new URL('../scripts/v4_primaria_agentes.mjs', import.meta.url));
+const compatibility = await loadHarnessCompatibility();
+const propose = (value, revision = 0) => proposePrimary(value, revision, compatibility);
 const agent = { company_id: 'humanizar', tenant_id: 'Steven', alias: 'zz-canary-primary', enabled: true, lifecycle_state: 'ready',
-  primary_account_id: null, bindings: [{ account_id: 'zz-canary-account', eligible: true }],
+  primary_account_id: null, bindings: [{ account_id: 'zz-canary-account', provider: 'codex', eligible: true }],
   runtime_key: 'zz-canary-primary', harness_id: 'codex', display_name: 'Canary', primary_room_id: 'zz-canary-room',
   host_id: 'zz-canary-host', runtime_mode: 'container', container_name: 'zz-canary-container', runtime_user: 'dev',
   home_directory: '/home/dev', state_directory: '/home/dev/.cauce/zz-canary-primary', systemd_user: 'stev',
@@ -24,32 +28,66 @@ test('requires explicit apply authority and retains ambiguous and legacy proposa
   for (const args of [['--aplicar'], ['--empresa', 'other'], ['--revision', '-1'], ['--aplicar', '--simular'], ['--wat']]) {
     assert.throws(() => parseArguments(args));
   }
-  const multiple = proposePrimary({ ...agent, bindings: [...agent.bindings, { account_id: 'zz-canary-other', eligible: true }] }, 0);
+  const multiple = propose({ ...agent, bindings: [...agent.bindings, { account_id: 'zz-canary-other', provider: 'codex', eligible: true }] });
   assert.equal(multiple.status, 'decide el dueño');
   assert.equal(multiple.request, undefined);
-  const legacy = proposePrimary({ ...agent, host_id: null, runtime_key: null }, 0);
+  const legacy = propose({ ...agent, host_id: null, runtime_key: null });
   assert.equal(legacy.proposed_account_id, 'zz-canary-account');
   assert.deepEqual(legacy.missing, ['runtime_key', 'host_id']);
   assert.equal(legacy.request, undefined);
-  assert.equal(proposePrimary({ ...agent, system_delivery_source: true }, 0).request, undefined);
-  const disabled = proposePrimary({ ...agent, enabled: false }, 0);
+  assert.equal(propose({ ...agent, system_delivery_source: true }).request, undefined);
+  const disabled = propose({ ...agent, enabled: false });
   assert.equal(disabled.proposed_account_id, 'zz-canary-account');
   assert.equal(disabled.request, undefined);
-  assert.equal(proposePrimary({ ...agent, lifecycle_state: 'draft' }, 0).request, undefined);
-  const first = proposePrimary(agent, 0).request;
-  assert.equal(first.idempotency_key, proposePrimary(agent, 42).request.idempotency_key);
+  assert.equal(propose({ ...agent, lifecycle_state: 'draft' }).request, undefined);
+  const first = propose(agent).request;
+  assert.equal(first.idempotency_key, propose(agent, 42).request.idempotency_key);
   assert.equal(first.parameters.model_id, agent.model_id);
   assert.equal(first.parameters.reasoning_effort, agent.reasoning_effort);
   assert.deepEqual(first.parameters.memberships, agent.memberships);
 });
 
+test('filters incompatible provider bindings using the packaged native harness catalog before deciding ambiguity', () => {
+  assert.deepEqual(compatibility.single_provider_harnesses, { claude: 'claude', codex: 'codex', grok: 'grok', muse: 'muse' });
+  for (const harness of Object.keys(compatibility.single_provider_harnesses)) {
+    const bindings = Object.keys(compatibility.single_provider_harnesses).map(provider => ({
+      account_id: `zz-canary-${provider}`, provider, eligible: true,
+    }));
+    const result = propose({ ...agent, harness_id: harness, bindings });
+    assert.equal(result.selection_applicable, true);
+    assert.equal(result.proposed_account_id, `zz-canary-${harness}`);
+    assert.equal(result.request.parameters.primary_account_id, `zz-canary-${harness}`);
+    assert.equal(result.compatible_bindings.length, 1);
+    assert.equal(result.excluded_bindings.length, 3);
+    assert.equal(propose({ ...agent, harness_id: harness, bindings: bindings.filter(value => value.provider !== harness) }).proposed_account_id, null);
+  }
+  for (const harness of ['openclaw', 'hermes', 'opencode', 'unknown']) {
+    const result = propose({ ...agent, harness_id: harness });
+    assert.equal(result.status, 'decide el dueño');
+    assert.equal(result.selection_applicable, false);
+    assert.equal(result.request, undefined);
+    assert.equal(result.proposed_account_id, null);
+  }
+  assert.equal(proposePrimary(agent, 0, { single_provider_harnesses: {} }).request, undefined);
+  assert.equal(propose({ ...agent, enabled: false }).selection_applicable, true);
+  assert.equal(propose({ ...agent, bindings: [{ ...agent.bindings[0], eligible: false }] }).selection_applicable, false);
+});
+
 test('can execute the identical script sent through stdin without requiring repository-relative imports', () => {
-  const result = spawnSync(process.execPath, ['--input-type=module', '-', '--help'], {
-    input: readFileSync(script, 'utf8'), encoding: 'utf8', env: { PATH: process.env.PATH },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /READ ONLY/u);
-  assert.match(result.stdout, /detener y volver a autenticar/u);
+  const directory = mkdtempSync(join(tmpdir(), 'zz-canary-primary-stdin-'));
+  try {
+    mkdirSync(join(directory, 'packages/adapter-sdk'), { recursive: true });
+    symlinkSync(fileURLToPath(new URL('../../packages/adapter-sdk/dist/', import.meta.url)), join(directory, 'packages/adapter-sdk/dist'), 'dir');
+    symlinkSync(fileURLToPath(new URL('../../packages/protocol/', import.meta.url)), join(directory, 'packages/protocol'), 'dir');
+    const result = spawnSync(process.execPath, ['--input-type=module', '-', '--help'], {
+      input: `${readFileSync(script, 'utf8')}\nconsole.log(JSON.stringify(await loadHarnessCompatibility()));\n`,
+      encoding: 'utf8', cwd: directory, env: { PATH: process.env.PATH },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /READ ONLY/u);
+    assert.match(result.stdout, /detener y volver a autenticar/u);
+    assert.deepEqual(JSON.parse(result.stdout.trim().split('\n').at(-1)).single_provider_harnesses, compatibility.single_provider_harnesses);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('PostgreSQL: default is read-only; enqueue persists, preserves parameters, deduplicates and enforces authority and CAS', { timeout: 180_000 }, async () => {
@@ -74,7 +112,8 @@ test('PostgreSQL: default is read-only; enqueue persists, preserves parameters, 
     await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,
       credential_ref_kind,credential_ref,enabled) VALUES('zz-canary-account','codex','zz-canary-identity','Steven',
       'env_path','CAUCE_CANARY_ACCOUNT_PATH',true),('zz-canary-other','codex','zz-canary-other','Steven',
-      'env_path','CAUCE_CANARY_OTHER_PATH',true)`);
+      'env_path','CAUCE_CANARY_OTHER_PATH',true),('zz-canary-incompatible','claude','zz-canary-incompatible','Steven',
+      'env_path','CAUCE_CANARY_INCOMPATIBLE_PATH',true)`);
     await pool.query(`INSERT INTO fleet_hosts(host_id,company_id,display_name) VALUES('zz-canary-host','humanizar','Canary')`);
     await pool.query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','zz-canary-room','zz-canary-primary','agent'),
       ('Steven','zz-canary-room','zz-canary-secondary','agent')`);
@@ -93,6 +132,10 @@ test('PostgreSQL: default is read-only; enqueue persists, preserves parameters, 
       ('Steven','zz-canary-primary','zz-canary-account',100,true),('Steven','zz-canary-ambiguous','zz-canary-account',100,true),
       ('Steven','zz-canary-secondary','zz-canary-account',100,true),
       ('Steven','zz-canary-ambiguous','zz-canary-other',101,true)`);
+    await pool.query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
+      VALUES('Steven','zz-canary-primary','zz-canary-incompatible','Steven','Steven');
+      INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,priority,enabled)
+      VALUES('Steven','zz-canary-primary','zz-canary-incompatible',102,true)`);
     const counts = async () => (await pool.query(`SELECT (SELECT count(*) FROM fleet_operations)::int AS operations,
       (SELECT count(*) FROM config_revisions)::int AS revisions,(SELECT count(*) FROM audit_events)::int AS audits`)).rows[0];
     const before = await counts();
@@ -103,6 +146,10 @@ test('PostgreSQL: default is read-only; enqueue persists, preserves parameters, 
     assert.equal(simulated.proposals.find(item => item.alias === 'zz-canary-ambiguous').status, 'decide el dueño');
     assert.equal(simulated.proposals.find(item => item.alias === 'zz-canary-ambiguous').enabled, false);
     const proposed = simulated.proposals.find(item => item.alias === 'zz-canary-primary');
+    assert.equal(proposed.bindings.length, 2);
+    assert.equal(proposed.compatible_bindings.length, 1);
+    assert.equal(proposed.selection_applicable, true);
+    assert.equal(proposed.proposed_account_id, 'zz-canary-account');
     const options = { apply: true, companies: ['humanizar'], actor: subject.slice(8), revision: simulated.revisions.humanizar };
     await assert.rejects(runPrimary({ pool, store, options: { ...options, revision: 999999 } }), { code: 'conflict' });
     assert.deepEqual(await counts(), before);

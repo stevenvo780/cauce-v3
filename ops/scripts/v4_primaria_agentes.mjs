@@ -10,7 +10,9 @@ const HELP = `Uso: node ops/scripts/v4_primaria_agentes.mjs [--empresa humanizar
      node ops/scripts/v4_primaria_agentes.mjs --aplicar --empresa ID --actor UUID --revision N
 También admite: docker exec -i GATEWAY node --input-type=module - [opciones] < ops/scripts/v4_primaria_agentes.mjs
 Por defecto solo lee, con transacción REPEATABLE READ READ ONLY y ROLLBACK.
-Las propuestas salen de bindings habilitados; no demuestran identidad efectiva.
+Las propuestas filtran bindings habilitados por el proveedor del arnés publicado; no demuestran identidad efectiva.
+Los arneses multiproveedor o sin compatibilidad publicada quedan para decisión del dueño.
+selection_applicable indica cuenta compatible única; la ejecución física conserva sus prerrequisitos.
 --aplicar ENCOLA el update canónico: puede detener y volver a autenticar agentes.
 La primaria solo cambia al ejecutar el flujo físico; encolar no acredita admisión.
 Encola como máximo un agente; espera su cierre y vuelve a simular con revisión fresca.
@@ -72,18 +74,45 @@ async function readAgents(client, companies) {
     ORDER BY agent.company_id,agent.tenant_id,agent.alias`, [companies])).rows;
 }
 
-export function proposePrimary(agent, revision) {
+export async function loadHarnessCompatibility() {
+  const source = resolve('packages/adapter-sdk/src/context/harness-descriptor.ts');
+  const sdk = existsSync(source)
+    ? await (await import('tsx/esm/api')).tsImport(pathToFileURL(source).href, import.meta.url)
+    : await import(pathToFileURL(resolve('packages/adapter-sdk/dist/src/context/harness-descriptor.js')).href);
+  const { QuotaAccountProviderSchema } = await import(pathToFileURL(resolve('packages/protocol/dist/index.js')).href);
+  const singleProviderHarnesses = {};
+  const unavailableHarnesses = [];
+  for (const harness of await sdk.packagedHarnessIds()) {
+    try {
+      const descriptor = await sdk.packagedHarnessDescriptor(harness);
+      if (harness !== 'openclaw' && QuotaAccountProviderSchema.safeParse(harness).success && descriptor.operations.authenticate === 'provider-login'
+        && descriptor.provider?.authenticate_argv?.[0] === `/usr/local/bin/${harness}`) singleProviderHarnesses[harness] = harness;
+    } catch { unavailableHarnesses.push(harness); }
+  }
+  return { single_provider_harnesses: singleProviderHarnesses, unavailable_harnesses: unavailableHarnesses,
+    source: 'ops/cli/fleet_executor_templates.py:206-207,274-278; packaged harness descriptors; QuotaAccountProviderSchema',
+    catalog_only: true };
+}
+
+export function proposePrimary(agent, revision, compatibility) {
+  const provider = compatibility?.single_provider_harnesses?.[agent.harness_id] ?? null;
+  const bindings = provider === null ? null : agent.bindings.filter(binding => binding.provider === provider);
   const proposal = { company_id: agent.company_id, tenant_id: agent.tenant_id, alias: agent.alias,
-    enabled: agent.enabled, lifecycle_state: agent.lifecycle_state, primary_account_id: agent.primary_account_id,
-    bindings: agent.bindings, proposed_account_id: null, effective_identity: 'sin confirmar',
-    system_delivery_source: agent.system_delivery_source === true, status: 'sin bindings habilitados' };
+    harness_id: agent.harness_id, enabled: agent.enabled, lifecycle_state: agent.lifecycle_state, primary_account_id: agent.primary_account_id,
+    bindings: agent.bindings, compatible_provider: provider, compatible_bindings: bindings,
+    excluded_bindings: provider === null ? [] : agent.bindings.filter(binding => binding.provider !== provider),
+    proposed_account_id: null, selection_applicable: false, effective_identity: 'sin confirmar',
+    system_delivery_source: agent.system_delivery_source === true, status: 'sin bindings habilitados compatibles' };
   if (proposal.system_delivery_source) return { ...proposal, status: 'principal interno sin ejecución; no se modifica' };
-  if (agent.bindings.length > 1) proposal.status = 'decide el dueño';
+  if (bindings === null) return { ...proposal,
+    status: agent.primary_account_id === null ? 'decide el dueño' : 'primaria existente; se conserva; decide el dueño' };
+  if (bindings.length > 1) proposal.status = 'decide el dueño';
   if (agent.primary_account_id !== null) return { ...proposal,
-    status: agent.bindings.length > 1 ? 'primaria existente; se conserva; decide el dueño entre bindings' : 'primaria existente; se conserva' };
-  if (agent.bindings.length !== 1) return proposal;
-  proposal.proposed_account_id = agent.bindings[0].account_id;
-  if (!agent.bindings[0].eligible) return { ...proposal, status: 'cuenta deshabilitada o sin consentimiento del pagador' };
+    status: bindings.length > 1 ? 'primaria existente; se conserva; decide el dueño entre bindings compatibles' : 'primaria existente; se conserva' };
+  if (bindings.length !== 1) return proposal;
+  proposal.proposed_account_id = bindings[0].account_id;
+  if (!bindings[0].eligible) return { ...proposal, status: 'cuenta deshabilitada o sin consentimiento del pagador' };
+  proposal.selection_applicable = true;
   if (!agent.enabled || agent.lifecycle_state === 'draft') return { ...proposal,
     status: 'agente deshabilitado o borrador; requiere activación explícita del dueño' };
   const required = ['runtime_key', 'harness_id', 'primary_room_id', 'host_id', 'runtime_mode', 'container_name',
@@ -104,6 +133,7 @@ export function proposePrimary(agent, revision) {
 }
 
 export async function runPrimary({ pool, store, options }) {
+  const compatibility = await loadHarnessCompatibility();
   const client = await pool.connect();
   try {
     await client.query(options.apply ? 'BEGIN' : 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -123,8 +153,8 @@ export async function runPrimary({ pool, store, options }) {
     const revisions = {};
     for (const company of options.companies) revisions[company] = await store.companyRevision(client, company);
     const agents = await readAgents(client, options.companies);
-    const proposals = agents.map(agent => proposePrimary(agent, options.revision ?? revisions[agent.company_id]));
-    const report = { mode: options.apply ? 'aplicar' : 'simular', revisions, effective_identity: 'sin confirmar',
+    const proposals = agents.map(agent => proposePrimary(agent, options.revision ?? revisions[agent.company_id], compatibility));
+    const report = { mode: options.apply ? 'aplicar' : 'simular', revisions, compatibility, captured_at: new Date().toISOString(), effective_identity: 'sin confirmar',
       canonical_preview_executed: false, operations_enqueued: 0, proposals };
     if (options.apply) {
       const repository = new store.FleetOperationsRepository(pool, { transactionClient: client }).forCompany(options.companies[0]);
