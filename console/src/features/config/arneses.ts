@@ -28,8 +28,8 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     label: 'Claude Code',
     aporta: 'El agente ya corre Claude Code. Esta tarjeta no lo cambia: dice qué manual lee.',
     directiva: '<HOME>/.claude/CLAUDE.md',
-    detalle: 'Si el proceso lleva `CLAUDE_CONFIG_DIR`, el fichero se mueve con él — y ese ajuste '
-      + 'arrastra también el `.claude.json` de los MCP, no sólo el manual.',
+    detalle: 'Si el agente usa otra carpeta de configuración, el manual se lee desde esa carpeta '
+      + 'y no desde la personal.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente: los campos canónicos y el editor manual '
       + 'están juntos, y sólo escriben con hechos del runtime medidos.',
