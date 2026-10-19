@@ -46,7 +46,7 @@ describe('fleet host process configuration', () => {
     expect(config.projectRoot).toBe('/srv/cauce'); expect(config.databaseFile).toBe('/run/private/database-url');
     expect(config.host).toBe('isolated'); expect(config.worker).toBe('isolated-worker');
     expect(config.command).toEqual({ python: '/usr/bin/python3', executable: '/srv/cauce/ops/cli/fleet-executor.py',
-      policyFile: '/run/private/host-policy.json', timeoutMs: 60_000 });
+      policyFile: '/run/private/host-policy.json', timeoutMs: 150_000 });
     expect(config.pollMs).toBe(1000); expect(config.leaseMs).toBe(30_000);
     expect(JSON.stringify(config)).not.toContain('ignored-private-account');
   });

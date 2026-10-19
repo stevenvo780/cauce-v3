@@ -59,7 +59,7 @@ export function readFleetHostConfig(environment: NodeJS.ProcessEnv): FleetHostCo
       : { identityDirectory: path(identityDirectory) }),
     ...(enrolledAuthPolicyFile === undefined ? {} : { enrolledAuthPolicyFile: path(enrolledAuthPolicyFile) }),
     command: { python: path(environment.CAUCE_FLEET_PYTHON), executable: path(environment.CAUCE_FLEET_EXECUTABLE),
-      policyFile: path(environment.CAUCE_FLEET_POLICY_FILE), timeoutMs: integer(environment.CAUCE_FLEET_COMMAND_TIMEOUT_MS, 60_000, 1, 300_000) },
+      policyFile: path(environment.CAUCE_FLEET_POLICY_FILE), timeoutMs: integer(environment.CAUCE_FLEET_COMMAND_TIMEOUT_MS, 150_000, 1, 300_000) },
     pollMs: integer(environment.CAUCE_FLEET_POLL_MS, 1000, 25, 60_000), leaseMs: integer(environment.CAUCE_FLEET_LEASE_MS, 30_000, 1000, 300_000),
     ...(auth === undefined ? {} : { auth }),
     ...(environment.CAUCE_FLEET_CONTROLLER_FILE === undefined ? {} : { controllerFile: path(environment.CAUCE_FLEET_CONTROLLER_FILE) }) };
