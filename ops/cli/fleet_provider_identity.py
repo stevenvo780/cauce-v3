@@ -297,7 +297,8 @@ def codex_identity(packet: dict) -> str:
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     pending = b""
-    deadline = time.monotonic() + 15
+    # A cold start of the ~290 MB Codex binary and its state databases took 11 s inside a fleet container.
+    deadline = time.monotonic() + 45
 
     def send(value):
         process.stdin.write(json.dumps(value).encode() + b"\n")
@@ -384,7 +385,7 @@ def authenticated_identity(packet: dict) -> str | None:
         prompt = "Responde únicamente " + expected + ". No uses herramientas ni envíes mensajes."
         if provider == "codex":
             args = [command, "exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", prompt]
-            output = command_output(args, packet)
+            output = command_output(args, packet, 60)
             replies = [
                 event["item"]["text"]
                 for line in output.splitlines()
