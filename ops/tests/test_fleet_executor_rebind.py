@@ -20,7 +20,7 @@ import fleet_executor_view
 from fleet_executor_policy import SafeFailure, approve_agent
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
-OLD, NEW, FOREIGN = 'a' * 40, 'b' * 40, 'c' * 40
+OLD, NEW, FOREIGN = 'a' * 64, 'b' * 64, 'c' * 64
 IMAGE = 'sha256:' + 'd' * 64
 
 
@@ -128,7 +128,7 @@ class ReleaseFixture(unittest.TestCase):
             (self.base / release / 'adapter/worker.py').write_text('import time\ntime.sleep(60)\n')
         self.old, self.new = self.base / OLD, self.base / NEW
         self.user = pwd.getpwuid(os.geteuid()).pw_name
-        for patch in (mock.patch.object(rebind, 'OWNER', os.geteuid()), mock.patch.object(container, 'RELEASE_ROOT', self.new)):
+        for patch in (mock.patch.object(container, 'RELEASE_ROOT', self.new),):
             patch.start()
             self.addCleanup(patch.stop)
         self.name = 'cauce-fleet-rebind-' + uuid.uuid4().hex[:8]
@@ -159,6 +159,33 @@ class BoundReleaseTests(ReleaseFixture):
         self.assertIsNone(rebind.bound_release(self.observed(pathlib.Path('/opt/elsewhere') / OLD), self.new))
         self.assertIsNone(rebind.bound_release(self.observed(self.base / 'not-a-release'), self.new))
         self.assertIsNone(rebind.bound_release(self.observed(self.old), self.base / 'checkout'))
+
+    def test_git_revision_releases_remain_supported_alongside_artifact_digests(self):
+        previous = self.base / ('a' * 40)
+        for tree in rebind.TREES:
+            (previous / tree).mkdir(parents=True)
+        self.assertEqual(rebind.bound_release(self.observed(previous), self.new), previous)
+        for name in ('a' * 39, 'a' * 41, 'a' * 63, 'a' * 65, 'g' * 64):
+            with self.subTest(name=name):
+                self.assertIsNone(rebind.bound_release(self.observed(self.base / name), self.new))
+
+    def test_release_trust_accepts_only_root_or_the_executor_without_write_access_for_others(self):
+        with mock.patch.object(rebind.os, 'geteuid', return_value=1234):
+            for owner in (0, 1234, 5678):
+                for mode in (0o755, 0o775, 0o777):
+                    with self.subTest(owner=owner, mode=mode):
+                        self.assertEqual(rebind.trusted(mock.Mock(st_uid=owner, st_mode=mode)),
+                                         owner in {0, 1234} and mode == 0o755)
+
+    def test_previous_release_rejects_unsafe_permissions_and_symlink_entries(self):
+        helper = self.old / 'ops/container-runtime/cauce-container-runtime.py'
+        helper.chmod(0o666)
+        with self.assertRaisesRegex(SafeFailure, 'trusted'):
+            rebind.bound_release(self.observed(self.old), self.new)
+        helper.unlink()
+        helper.symlink_to(self.new / 'ops/container-runtime/cauce-container-runtime.py')
+        with self.assertRaisesRegex(SafeFailure, 'trusted'):
+            rebind.bound_release(self.observed(self.old), self.new)
 
 class RebindEffectTests(ReleaseFixture):
     def setUp(self):

@@ -1,16 +1,196 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
+import os
 import pathlib
+import select
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 import uuid
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_fleet_executor_container as container_fixtures
 import test_provider_login as pty_fixtures
+
+sys.path.insert(0, str(container_fixtures.fixtures.OPS / 'cli'))
+import provider_login_container as login
+
+
+class PreviousReleaseCleanupTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        container_fixtures.DisposableContainerExecutorTest.setUpClass.__func__(cls)
+
+    frame = pty_fixtures.ProviderLoginPtyTest.frame
+    wait_for = pty_fixtures.ProviderLoginPtyTest.wait_for
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='cauce-login-release-', dir='/var/tmp')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = pathlib.Path(self.temporary.name)
+        self.old, self.current = (self.root / 'release' / (character * 64) for character in ('a', 'b'))
+        for release in (self.old, self.current):
+            for tree in ('ops/cli', 'ops/container-runtime'):
+                (release / tree).mkdir(parents=True)
+        for filename in ('provider-login.py', 'provider_login_native.py', 'provider_login_state.py',
+                         'provider_login_container.py', 'fleet_executor_view.py'):
+            shutil.copyfile(container_fixtures.fixtures.OPS / 'cli' / filename, self.old / 'ops/cli' / filename)
+        for filename in ('cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py'):
+            shutil.copyfile(container_fixtures.fixtures.OPS / 'container-runtime' / filename,
+                            self.old / 'ops/container-runtime' / filename)
+        self.container = 'zz-canary-login-release-' + uuid.uuid4().hex[:12]
+        subprocess.run([login.DOCKER, 'run', '-d', '--name', self.container, '--read-only', '--network', 'none',
+            '--cap-drop', 'ALL', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'CHOWN',
+            '--cap-add', 'DAC_OVERRIDE', '--cap-add', 'SYS_PTRACE', '--cap-add', 'FOWNER',
+            '--security-opt', 'no-new-privileges', '--pids-limit', '128', '--tmpfs', '/run:rw,nosuid,noexec,size=16m',
+            '--mount', 'type=bind,src=' + str(self.old / 'ops/cli') + ',dst=/cauce/executor,readonly',
+            '--mount', 'type=bind,src=' + str(self.old / 'ops/container-runtime') + ',dst=/cauce/lifecycle,readonly',
+            '--entrypoint', '/bin/sleep', self.image, 'infinity'], check=True, capture_output=True, timeout=30)
+        self.addCleanup(subprocess.run, [login.DOCKER, 'rm', '-f', self.container], capture_output=True, timeout=30)
+        subprocess.run([login.DOCKER, 'exec', self.container, 'mkdir', '-m', '700', login.REMOTE_STATE],
+                       check=True, capture_output=True, timeout=10)
+        self.observed = json.loads(subprocess.run([login.DOCKER, 'inspect', self.container],
+            check=True, capture_output=True, timeout=10).stdout)[0]
+        self.binding = {'container_id': self.observed['Id'], 'image_digest': self.observed['Image'],
+            'generation': hashlib.sha256((self.observed['Id'] + '\0' + self.observed['State']['StartedAt']).encode()).hexdigest(),
+            'python': '/usr/local/bin/python3.12', 'helper': '/cauce/executor/provider-login.py'}
+        self.operation = str(uuid.uuid4())
+        self.addCleanup(login.release_reservation, self.operation)
+        self.state = self.root / 'state'
+        self.state.mkdir(mode=0o700)
+        self.process = None
+        self.frames = bytearray()
+        with mock.patch.object(login, '__file__', str(self.old / 'ops/cli/provider_login_container.py')):
+            login.reserve_runtime(self.binding, self.operation)
+        with subprocess.Popen(['/bin/sleep', '0.01']) as departed:
+            bridge = login.process_identity(departed.pid)
+        self.save_receipt(bridge)
+
+    def save_receipt(self, bridge):
+        root = login.private_state(str(self.state))
+        try:
+            login.write_metadata(root, self.operation, {'schemaVersion': 1, 'operation_id': self.operation,
+                'account_scope': 'fixture-account', 'backend': 'container', 'expires_at': 1,
+                'boot_id': login.boot_identity(), 'controller': login.process_identity(os.getpid()),
+                'bridge': bridge, 'container_binding': self.binding})
+        finally:
+            os.close(root)
+
+    def cleanup(self):
+        with mock.patch.object(login, '__file__', str(self.current / 'ops/cli/provider_login_container.py')):
+            return login.cleanup_container(self.operation, str(self.state))
+
+    def assert_receipt_preserved(self):
+        self.assertTrue((self.state / (self.operation + '.json')).is_file())
+        with self.assertRaises(login.LoginFailure):
+            login.assert_unreserved(self.binding['container_id'])
+
+    def test_old_helper_cleans_absent_session_and_releases_saved_receipt(self):
+        with mock.patch.object(login, '__file__', str(self.current / 'ops/cli/provider_login_container.py')):
+            with self.assertRaisesRegex(login.LoginFailure, 'helper mount differs'):
+                login.observe(self.binding)
+        self.assertEqual(self.cleanup(), {'stopped_verified': True})
+        self.assertFalse((self.state / (self.operation + '.json')).exists())
+        login.assert_unreserved(self.binding['container_id'])
+        self.assertEqual(subprocess.run([login.DOCKER, 'exec', self.container, 'test', '-e', '/proc/1'],
+                                       capture_output=True, timeout=10).returncode, 0)
+
+    def test_old_helper_cleans_missing_remote_state_only_after_proving_idle_container(self):
+        subprocess.run([login.DOCKER, 'exec', self.container, 'rmdir', login.REMOTE_STATE],
+                       check=True, capture_output=True, timeout=10)
+        self.assertEqual(self.cleanup(), {'stopped_verified': True})
+        self.assertFalse((self.state / (self.operation + '.json')).exists())
+        login.assert_unreserved(self.binding['container_id'])
+        self.assertNotEqual(subprocess.run([login.DOCKER, 'exec', self.container, 'test', '-e', login.REMOTE_STATE],
+                                          capture_output=True, timeout=10).returncode, 0)
+
+    def test_missing_remote_state_with_foreign_live_process_preserves_receipt_without_signaling(self):
+        subprocess.run([login.DOCKER, 'exec', self.container, 'rmdir', login.REMOTE_STATE],
+                       check=True, capture_output=True, timeout=10)
+        foreign = subprocess.Popen([login.DOCKER, 'exec', '--user', '65534:65534', self.container,
+            self.binding['python'], '-c', 'import time;print("ready",flush=True);time.sleep(60)'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(select.select([foreign.stdout], [], [], 5)[0])
+            self.assertEqual(foreign.stdout.readline(), b'ready\n')
+            with mock.patch.object(login, 'signal_pidfd') as signal_process:
+                with self.assertRaisesRegex(login.LoginFailure, 'remote login stop was not observed'):
+                    self.cleanup()
+                signal_process.assert_not_called()
+            self.assertIsNone(foreign.poll())
+            self.assert_receipt_preserved()
+        finally:
+            subprocess.run([login.DOCKER, 'rm', '-f', self.container], capture_output=True, timeout=30)
+            foreign.wait(timeout=10)
+            foreign.stdout.close()
+            foreign.stderr.close()
+
+    def test_old_helper_stops_its_exact_live_login_before_releasing_receipt(self):
+        plan = {'operation_id': self.operation, 'command': [self.binding['python'], '-c', 'import time;time.sleep(60)'],
+            'runtime_user': 'root', 'home': '/root', 'cwd': '/root', 'env': {'PATH': '/usr/bin:/bin'},
+            'backend': 'native', 'state_root': login.REMOTE_STATE, 'account_scope': 'fixture-account'}
+        self.process = subprocess.Popen(login.command(self.binding, '--container-child'),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.process.stdin.write(json.dumps(plan).encode() + b'\n')
+            self.process.stdin.flush()
+            started = self.wait_for('started')
+            self.save_receipt(login.process_identity(self.process.pid))
+            self.assertEqual(self.cleanup(), {'stopped_verified': True})
+            self.process.wait(timeout=10)
+            self.assertFalse((self.state / (self.operation + '.json')).exists())
+            self.assertNotEqual(subprocess.run([login.DOCKER, 'exec', self.container, 'test', '-e',
+                '/proc/' + str(started['pid'])], capture_output=True, timeout=10).returncode, 0)
+        finally:
+            if self.process.poll() is None:
+                self.process.kill()
+                self.process.wait(timeout=5)
+            for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
+                stream.close()
+
+    def test_previous_helper_refuses_foreign_remote_state_owner(self):
+        subprocess.run([login.DOCKER, 'exec', self.container, 'chown', '65534:65534', login.REMOTE_STATE],
+                       check=True, capture_output=True, timeout=10)
+        with self.assertRaisesRegex(login.LoginFailure, 'remote login stop was not observed'):
+            self.cleanup()
+        self.assert_receipt_preserved()
+
+    def test_invalid_old_mounts_are_rejected_without_signaling_or_discarding_receipt(self):
+        cases = []
+        for destination in ('/cauce/executor', '/cauce/lifecycle'):
+            for field, value in (('RW', True), ('Source', '/unrelated/release/' + 'a' * 64 + '/ops/cli'),
+                                 ('Type', 'volume')):
+                observed = copy.deepcopy(self.observed)
+                next(row for row in observed['Mounts'] if row['Destination'] == destination)[field] = value
+                cases.append(observed)
+        observed = copy.deepcopy(self.observed)
+        observed['Mounts'].append(copy.deepcopy(observed['Mounts'][0]))
+        cases.append(observed)
+        for observed in cases:
+            with self.subTest(mounts=observed['Mounts']), mock.patch.object(login.subprocess, 'run',
+                    return_value=subprocess.CompletedProcess([], 0, json.dumps([observed]).encode())) as run, \
+                    mock.patch.object(login, 'signal_pidfd') as signal_process:
+                with self.assertRaisesRegex(login.LoginFailure, 'helper mount differs'):
+                    self.cleanup()
+                self.assertEqual(run.call_count, 1)
+                signal_process.assert_not_called()
+            self.assert_receipt_preserved()
+
+    def test_unverified_previous_helper_stop_keeps_receipt_and_reservation(self):
+        results = [subprocess.CompletedProcess([], 0, json.dumps([self.observed]).encode()),
+                   subprocess.CompletedProcess([], 0, b'{"stopped_verified":false}')]
+        with mock.patch.object(login.subprocess, 'run', side_effect=results), \
+                mock.patch.object(login, 'signal_pidfd') as signal_process:
+            with self.assertRaisesRegex(login.LoginFailure, 'stop proof differs'):
+                self.cleanup()
+            signal_process.assert_not_called()
+        self.assert_receipt_preserved()
 
 
 class ContainerLoginPtyTest(unittest.TestCase):

@@ -22,14 +22,13 @@ from fleet_executor_policy import SafeFailure, approve_agent, open_absolute_dire
 from fleet_executor_runtime import lifecycle_arguments
 from secure_path import InvalidAbsolutePath
 
-RELEASE = re.compile(r'[0-9a-f]{40}')
+RELEASE = re.compile(r'(?:[0-9a-f]{40}|[0-9a-f]{64})')
 HELPER_TREE = '/ops/container-runtime'
 TREES = ('ops/cli', 'ops/container-runtime')
-OWNER = 0
 
 
 def trusted(details: os.stat_result) -> bool:
-    return details.st_uid == OWNER and not details.st_mode & 0o022
+    return details.st_uid in {0, os.geteuid()} and not details.st_mode & 0o022
 
 
 def raise_error(error: OSError):

@@ -228,6 +228,12 @@ class ImageRefreshTests(ReleaseFixture):
     def test_explicit_login_preparation_refreshes_before_binding_and_reserves_the_new_container(self):
         executor = entrypoint('fleet-executor.py')
         before = self.old_container()
+        volumes = copy.deepcopy(self.docker.volumes)
+        self.docker.live.add(self.name)
+        self.assertEqual(container.stop_container(self.policy, self.agent, login=True), {'stopped_verified': True})
+        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+        self.assertNotIn(self.name, self.docker.live)
+        self.assertFalse(any(call[0] in {'create', 'stop', 'rename', 'rm', 'start'} for call in self.docker.calls))
         context = {'operation_id': str(uuid.uuid4())}
         profile = {'path': '/tmp/cauce-state/provider-session'}
 
@@ -244,9 +250,39 @@ class ImageRefreshTests(ReleaseFixture):
         self.assertNotEqual(identity['container_id'], before['Id'])
         self.assertEqual(identity['image_digest'], IMAGE)
         self.assertEqual(receipt['profile_binding'], profile)
+        after = self.docker.containers[self.name]
+        container.validate_container(self.policy, self.agent, after)
+        self.assertEqual(self.docker.volumes, volumes)
+        self.assertEqual({row['Destination']: row['Source'] for row in after['Mounts'] if row['Type'] == 'bind'},
+                         container.runtime_mounts(self.policy, self.agent))
         with self.assertRaises(login.LoginFailure):
             login.assert_unreserved(identity['container_id'])
         self.assertIsNone(login.assert_unreserved(before['Id']))
+
+    def test_login_stop_rejects_real_drift_before_stopping_or_replacing_the_old_container(self):
+        drifts = {
+            'owner': lambda row: row['Config']['Labels'].update({'cauce.fleet.owner': 'foreign'}),
+            'host': lambda row: row['Config']['Labels'].update({'cauce.fleet.host': 'foreign'}),
+            'tenant': lambda row: row['Config']['Labels'].update({'cauce.fleet.tenant': 'ForeignTeam'}),
+            'capabilities': lambda row: row['HostConfig']['CapAdd'].append('SYS_ADMIN'),
+            'network': lambda row: row['NetworkSettings']['Networks'].update({'foreign': {}}),
+            'limits': lambda row: row['HostConfig'].update(Memory=64),
+            'writable_helper': lambda row: row['Mounts'][1].update(RW=True),
+            'foreign_mount': lambda row: row['Mounts'][2].update(Source='/foreign/ops/cli'),
+            'mixed_releases': lambda row: row['Mounts'][2].update(Source=str(self.new / 'ops/cli')),
+            'extra_mount': lambda row: row['Mounts'].append({'Type': 'bind', 'Source': '/foreign', 'Destination': '/foreign', 'RW': False}),
+        }
+        for name, drift in drifts.items():
+            with self.subTest(drift=name):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                before = self.old_container()
+                before['HostConfig']['CapAdd'] = list(container.BASE_CAPABILITIES)
+                drift(before)
+                with self.assertRaises(SafeFailure):
+                    container.stop_container(self.policy, self.agent, login=True)
+                self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                self.assertEqual(self.mutating_calls(), [])
 
     def test_binding_read_while_runtime_guard_is_active_does_not_prepare_or_reserve(self):
         executor = entrypoint('fleet-executor.py')

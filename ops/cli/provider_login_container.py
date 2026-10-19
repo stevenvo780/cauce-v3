@@ -98,6 +98,27 @@ def validate_binding(binding) -> dict:
     return binding
 
 
+def helper_mount(observed: dict, *, cleanup: bool = False) -> bool:
+    mounts = observed.get('Mounts') or []
+    source = pathlib.Path(__file__).resolve().parent
+    expected = [row for row in mounts if row.get('Destination') == '/cauce/executor']
+    if len(expected) != 1 or expected[0].get('Type') != 'bind' or expected[0].get('RW') is not False:
+        return False
+    if expected[0].get('Source') == str(source):
+        return True
+    if cleanup:
+        from fleet_executor_policy import SafeFailure
+        from fleet_executor_rebind import bound_release
+        try:
+            previous = bound_release(observed, source.parents[1])
+        except SafeFailure:
+            return False
+        lifecycle = [row for row in mounts if row.get('Destination') == '/cauce/lifecycle']
+        return previous is not None and expected[0].get('Source') == str(previous / 'ops/cli') \
+            and len(lifecycle) == 1 and lifecycle[0].get('Type') == 'bind' and lifecycle[0].get('RW') is False
+    return False
+
+
 def observe(binding: dict, *, absent: bool = False) -> bool:
     binding = validate_binding(binding)
     result = subprocess.run([DOCKER, 'inspect', binding['container_id']], capture_output=True, timeout=8,
@@ -121,9 +142,7 @@ def observe(binding: dict, *, absent: bool = False) -> bool:
         if absent and observed['State']['Pid'] == 0:
             return False
         raise LoginFailure('exact login container is not running')
-    mounts = observed.get('Mounts', [])
-    if not any(row.get('Destination') == '/cauce/executor' and row.get('Source') == str(pathlib.Path(__file__).resolve().parent)
-               and row.get('RW') is False for row in mounts):
+    if not helper_mount(observed, cleanup=absent):
         raise LoginFailure('container login helper mount differs')
     return True
 
@@ -138,6 +157,17 @@ def remote_cleanup(binding: dict, identity: str) -> dict:
         return {'stopped_verified': True}
     result = subprocess.run(command(binding, '--cleanup', identity, REMOTE_STATE),
         capture_output=True, timeout=12, env={'PATH': '/usr/bin:/bin'})
+    if result.returncode:
+        probe = ('import json,os\n'
+            'if os.path.lexists(' + repr(REMOTE_STATE) + '):\n    raise SystemExit(2)\n'
+            'if {name for name in os.listdir("/proc") if name.isdecimal()} != {"1", str(os.getpid())}:\n'
+            '    raise SystemExit(2)\n'
+            'with open("/proc/1/cmdline", "rb") as stream:\n'
+            '    if stream.read(4096) != b"/bin/sleep\\0infinity\\0":\n        raise SystemExit(2)\n'
+            'if os.path.lexists(' + repr(REMOTE_STATE) + '):\n    raise SystemExit(2)\n'
+            'print(json.dumps({"stopped_verified":True}))\n')
+        result = subprocess.run([*command(binding)[:-1], '-c', probe], capture_output=True,
+            timeout=8, env={'PATH': '/usr/bin:/bin'})
     if result.returncode or len(result.stdout) > 1024:
         raise LoginFailure('remote login stop was not observed')
     receipt = json.loads(result.stdout)
