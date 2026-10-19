@@ -91,7 +91,10 @@ export function deliveryHarnesses(options: HarnessAdapterOptions, headlessRunner
 } {
   const harness = new HarnessAdapter(options);
   const openClaw = options.definition.id === "openclaw";
-  if (options.definition.id !== "claude" && options.definition.id !== "codex" && !openClaw) return { harness };
+  // Muse (`muse-cauce exec`) and grok (`--prompt-file`) run headless unless a shared TUI is configured:
+  // a human then gets its own session namespace, exactly as with codex/claude.
+  const headlessNative = (options.definition.id === "muse" || options.definition.id === "grok") && options.sharedSession === undefined;
+  if (options.definition.id !== "claude" && options.definition.id !== "codex" && !openClaw && !headlessNative) return { harness };
   if (openClaw && options.commandOverride !== undefined) return { harness };
   const { sharedSession, fallbackSessionKey, ...headless } = options;
   void sharedSession;

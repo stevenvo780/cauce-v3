@@ -109,7 +109,7 @@ test("client HELLO follows the immutable factory capability for supported and un
   const { FakeConnection, waitUntil } = await import("./client-fixtures.js");
   const { AdapterClient } = await import("../src/sdk/client.js");
   const { deliveryHarnesses } = await import("../src/bin/shared.js");
-  for (const definition of [HARNESS_DEFINITIONS.claude, HARNESS_DEFINITIONS.codex, HARNESS_DEFINITIONS.fake]) {
+  for (const definition of [HARNESS_DEFINITIONS.claude, HARNESS_DEFINITIONS.codex, HARNESS_DEFINITIONS.muse, HARNESS_DEFINITIONS.grok, HARNESS_DEFINITIONS.fake]) {
     const context = await isolatedEngine(t);
     const connection = new FakeConnection(1);
     const adapters = deliveryHarnesses({ definition, runner: context.manual, store: context.store, sessionNamespace: "argos" }, context.headless);
