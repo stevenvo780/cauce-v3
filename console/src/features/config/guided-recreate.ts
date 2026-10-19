@@ -1,5 +1,5 @@
 import type { FleetOperation } from '@cauce/protocol/fleet-operation';
-import { GUIDED_RECREATE_LABEL, operationErrorHuman } from './fleet-operation-text';
+import { GUIDED_RECREATE_LABEL, isRuntimeDrift, operationErrorHuman } from './fleet-operation-text';
 
 export type GuidedStepId = 'cancel' | 'preview' | 'enqueue' | 'follow' | 'auth';
 
@@ -90,13 +90,10 @@ export function guidedProgressLine(state: GuidedState): string {
 
 /** A drifted operation that the guided flow can still cancel and recreate. */
 export function isGuidedDrift(operation: FleetOperation | undefined): operation is FleetOperation {
-  return !!operation && operation.error?.code === 'RUNTIME_DRIFT'
-    && operation.status !== 'cancelled' && operation.status !== 'succeeded';
+  return isRuntimeDrift(operation) && operation?.status !== 'cancelled' && operation?.status !== 'succeeded';
 }
 
-export function isRuntimeDrift(operation: FleetOperation | undefined): boolean {
-  return operation?.error?.code === 'RUNTIME_DRIFT';
-}
+export { isRuntimeDrift };
 
 /** Human failure text for an operation that failed while being followed. */
 export function guidedOperationFailure(operation: FleetOperation): string {

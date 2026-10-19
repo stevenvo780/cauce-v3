@@ -23,7 +23,7 @@ function operation(id: string, status: FleetOperation['status'], version: number
     created_at: '2026-10-07T12:00:00Z', updated_at: '2026-10-07T12:00:00Z',
   };
 }
-const drift = operation(driftId, 'awaiting_auth', 2, { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false });
+const drift = operation(driftId, 'failed', 2, { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false });
 const preview: FleetOperationPreview = {
   request_sha256: 'a'.repeat(64), expected_revision: 4, target, kind: 'update', steps: ['prepare', 'verify'], dependencies: [], can_apply: true, resources: [],
 };

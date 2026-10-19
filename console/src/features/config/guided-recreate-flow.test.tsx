@@ -36,7 +36,7 @@ const capability = {
   placements: [{ host_id: 'test-host', modes: ['container'], runtime_users: ['runner'], systemd_users: ['runner'], home_roots: ['/home/runner'], state_roots: ['/state'] }],
 };
 const drift: FleetOperation = {
-  id: driftId, kind: 'update', target, status: 'awaiting_auth', version: 2, request_sha256: 'a'.repeat(64),
+  id: driftId, kind: 'update', target, status: 'failed', version: 2, request_sha256: 'a'.repeat(64),
   actor: { tenant_id: 'A', alias: 'operator' }, expected_revision: 4, desired_revision: 5, applied_revision: null,
   steps: [{ name: 'authenticate', status: 'waiting' }], error: { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false },
   created_at: '2026-10-07T12:00:00Z', updated_at: '2026-10-07T12:00:00Z',

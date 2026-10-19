@@ -7,7 +7,7 @@ import {
 const base: FleetOperation = {
   id: '11111111-1111-4111-8111-111111111111', kind: 'update',
   target: { resource: 'agent', tenant_id: 'A', alias: 'zz-canary-worker' },
-  status: 'awaiting_auth', version: 2, request_sha256: 'a'.repeat(64),
+  status: 'failed', version: 2, request_sha256: 'a'.repeat(64),
   actor: { tenant_id: 'A', alias: 'operator' }, expected_revision: 4, desired_revision: 5,
   applied_revision: null, steps: [{ name: 'authenticate', status: 'waiting' }],
   error: { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false },
@@ -21,6 +21,8 @@ describe('guided recreate state machine', () => {
     expect(isGuidedDrift({ ...base, status: 'succeeded' })).toBe(false);
     expect(isGuidedDrift({ ...base, error: null })).toBe(false);
     expect(isGuidedDrift(undefined)).toBe(false);
+    // Signing in recreates the container, so a drifted login wait just needs the login.
+    expect(isGuidedDrift({ ...base, status: 'awaiting_auth' })).toBe(false);
   });
 
   it('starts on cancel and advances in order to awaiting_auth', () => {

@@ -43,9 +43,14 @@ export const OPERATION_STATUS_META: Record<FleetOperation['status'], OperationSt
   succeeded: { label: 'Terminada', tone: 'ok', attention: false, finished: true },
 };
 
+/** Signing in recreates a container left on an older image, so drift on a login wait only needs the login. */
+export function isRuntimeDrift(operation: FleetOperation | undefined): boolean {
+  return operation?.error?.code === 'RUNTIME_DRIFT' && operation.status !== 'awaiting_auth';
+}
+
 export function operationStatusMeta(operation: FleetOperation): OperationStatusMeta {
   const meta = OPERATION_STATUS_META[operation.status];
-  return operation.error?.code === 'RUNTIME_DRIFT' ? { ...meta, label: 'Requiere preparación', tone: 'danger' } : meta;
+  return isRuntimeDrift(operation) ? { ...meta, label: 'Requiere preparación', tone: 'danger' } : meta;
 }
 
 export function operationTargetName(operation: FleetOperation): string {
@@ -150,7 +155,7 @@ export function physicalResult(operation: FleetOperation): string | undefined {
 export function operationHeadline(operation: FleetOperation, hostId?: string): string {
   const title = operationTitle(operation, hostId);
   const progress = stepProgress(operation);
-  if (operation.error?.code === 'RUNTIME_DRIFT') {
+  if (operation.error && isRuntimeDrift(operation)) {
     const human = operationErrorHuman(operation.error);
     return `${human.message} ${human.next}`;
   }
@@ -198,7 +203,7 @@ export function partitionOperations(operations: readonly FleetOperation[]): { at
 export function operationSummary(operation: FleetOperation): string {
   const error = operation.error;
   return `${operationTitle(operation)} · ${OPERATION_STATUS_META[operation.status].label}`
-    + (error && (operation.status === 'failed' || error.code === 'RUNTIME_DRIFT') ? ` · ${operationErrorHuman(error).message}` : '');
+    + (error && (operation.status === 'failed' || isRuntimeDrift(operation)) ? ` · ${operationErrorHuman(error).message}` : '');
 }
 
 export function purgeEntries(preview: FleetOperationPreview, action: 'delete' | 'preserve' | 'blocked'): string[] {
@@ -276,6 +281,6 @@ export function cancellable(operation: FleetOperation): boolean {
   return ['queued', 'running', 'awaiting_auth', 'failed'].includes(operation.status);
 }
 export function resumable(operation: FleetOperation): boolean {
-  return operation.error?.code !== 'RUNTIME_DRIFT'
+  return !isRuntimeDrift(operation)
     && (operation.status === 'awaiting_auth' || (operation.status === 'failed' && operation.error?.retryable === true));
 }

@@ -33,19 +33,12 @@ async function authenticate() {
   fireEvent.click(await screen.findByRole('button', { name: 'Verificar conexión' }));
 }
 describe('operation-scoped provider authentication', () => {
-  it('requires preparation instead of authentication or resume for a drifted container', () => {
-    const control = vi.fn();
+  it('offers sign-in and resume for a login wait whose container drifted, since signing in recreates it', () => {
     renderWithApi(<AgentFleetOperation operation={{ ...operation, error: { code: 'RUNTIME_DRIFT', step: 'authenticate', retryable: false } }}
-      busy={false} current control={control} onAuthRefreshed={vi.fn()} />);
-    expect(screen.getByRole('alert')).toHaveTextContent('El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.');
-    expect(screen.getByText('Requiere preparación')).toBeInTheDocument();
-    expect(screen.getAllByRole('status')[0]).toHaveTextContent('Cancela esta operación y pulsa Preparar');
-    expect(screen.queryByLabelText('Autenticación de la operación')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Iniciar sesión' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reanudar' })).not.toBeInTheDocument();
-    const cancel = screen.getByRole('button', { name: 'Cancelar' });
-    expect(cancel).toBeEnabled(); expect(cancel).toHaveClass('text-danger-ink');
-    fireEvent.click(cancel); expect(control).toHaveBeenCalledWith('cancel');
+      busy={false} current control={vi.fn()} onAuthRefreshed={vi.fn()} />);
+    expect(screen.queryByText('Requiere preparación')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Autenticación de la operación')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reanudar' })).toBeEnabled();
   });
   it('uses the private server scope, hides its profile and rereads current version without automatically resuming', async () => {
     login(); const refreshed = vi.fn(); const resume = vi.fn(); let posted: unknown;
