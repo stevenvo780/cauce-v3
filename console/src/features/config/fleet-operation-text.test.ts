@@ -18,7 +18,7 @@ const base = {
 } as unknown as FleetOperation;
 
 function operation(steps: FleetOperation['steps'], status: FleetOperation['status'] = 'running'): FleetOperation {
-  return { ...base, status, steps } as FleetOperation;
+  return { ...base, status, steps };
 }
 
 describe('fleet operation step labels', () => {
