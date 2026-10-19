@@ -7,7 +7,9 @@ import { configFormDefinition } from './config-form-model';
 import { GroupEditor } from './GroupEditor';
 import type { ConfigWrites } from './use-config-writes';
 
-const TITLE: Record<string, string> = { create: 'Nuevo equipo', update: 'Editar equipo', delete: 'Eliminar equipo' };
+const TITLE: Record<string, string> = {
+  create: 'Nuevo equipo', update: 'Editar equipo', delete: 'Eliminar equipo', retire: 'Retirar equipo',
+};
 
 /**
  * The typed form of a team (room) or of one of its memberships, in a modal. It is the same form, runner and
@@ -35,7 +37,7 @@ export function TeamFormDialog({ ctx }: { ctx: ConfigWrites }) {
       <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
       <Dialog.Popup className={WIZARD_POPUP}>
         <WizardHeader title={title} busy={ctx.busy}
-          description="Se manda por el mismo endpoint versionado que «Espacios y salas», con vista previa antes de confirmar." />
+          description="Puedes previsualizar el cambio antes de confirmarlo." />
         {confirming ? <div className="shrink-0 border-b border-line px-5 py-3">
           <Notice tone="warn" role="alert" className="grid gap-2">
             <p><strong>Tenés cambios sin guardar.</strong> Si cerrás ahora, se descartan los borradores sin confirmar.</p>

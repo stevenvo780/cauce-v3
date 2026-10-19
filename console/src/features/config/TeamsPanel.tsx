@@ -82,7 +82,7 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
                   onClick={() => { open(edit); }}><Pencil size={12} aria-hidden="true" />Editar</Button>
                 {fleetTarget ? <Button size="sm" variant="danger" disabled={Boolean(retireBlock) || ctx.busy} title={retireBlock ?? 'Retirar el equipo: primer paso para borrarlo; después podrás purgarlo'}
                   aria-label={`Retirar equipo ${id}`}
-                  onClick={() => { ctx.setFormTarget(undefined); ctx.setRemoval({ target: fleetTarget, kind: 'retire' }); }}>
+                  onClick={() => { open(retire); }}>
                   <Trash2 size={12} aria-hidden="true" />Retirar equipo</Button> : null}
               </div>
             </li>;

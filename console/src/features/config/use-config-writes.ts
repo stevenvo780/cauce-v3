@@ -2,7 +2,7 @@ import { useMemo, useState, type SyntheticEvent } from 'react';
 import type { FleetTarget } from '@cauce/protocol/fleet-operation';
 import { configFormDefinition, type ConfigFormTarget } from './config-form-model';
 import { canUseConfigForm } from './config-form-access';
-import { groupOperationTarget } from './GroupMembershipModel';
+import { groupOperationTarget, roomHasAgents } from './GroupMembershipModel';
 import { useConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
 import type { ConfigAction, ConfigMutation, ConfigResource } from '../../api/types';
@@ -95,7 +95,9 @@ export function useConfigWrites() {
     canalAccion.clear();
     canalFormulario.clear();
     const fleetTarget = target.row ? groupOperationTarget(target.collection, target.row) : undefined;
-    if (fleetTarget && (target.action === 'retire' || target.action === 'restore')) {
+    const declarativeRetire = fleetTarget?.resource === 'room' && target.action === 'retire'
+      && !roomHasAgents(config.data, fleetTarget);
+    if (fleetTarget && (target.action === 'retire' || target.action === 'restore') && !declarativeRetire) {
       setFormTarget(undefined); setRemoval({ target: fleetTarget, kind: target.action }); return;
     }
     setFormModal(modal);

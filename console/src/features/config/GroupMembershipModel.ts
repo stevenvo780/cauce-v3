@@ -9,6 +9,16 @@ export function groupOperationTarget(collection: string, row: Record<string, unk
   const result = FleetTargetSchema.safeParse(value);
   return result.success ? result.data : undefined;
 }
+/** Room retire stays a configuration change only when no registered agent belongs to the room. */
+export function roomHasAgents(snapshot: ConfigurationSnapshot, target: FleetTarget): boolean {
+  if (target.resource !== 'room') return false;
+  return (snapshot.agents ?? []).some((agent) => agent.tenant_id === target.tenant_id && (
+    agent.primary_room_id === target.room_id
+    || (snapshot.memberships ?? []).some((member) => member.enabled !== false && member.tenant_id === target.tenant_id
+      && member.room_id === target.room_id && member.alias === agent.alias)
+  ));
+}
+
 export function groupHasRuntime(snapshot: ConfigurationSnapshot, target: FleetTarget): boolean {
   const memberships = [...(snapshot.memberships ?? []), ...(snapshot.retired?.memberships ?? [])];
   return [...(snapshot.agents ?? []), ...(snapshot.retired?.agents ?? [])].some((agent) =>

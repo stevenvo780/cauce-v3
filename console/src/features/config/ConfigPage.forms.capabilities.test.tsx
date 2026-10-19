@@ -57,6 +57,7 @@ it('previsualiza retiro y restauración por el contrato durable de flota', async
   const changes: FleetOperationRequest[] = [];
   servirConfig(() => ({
     ...snapshotDeConfig(1),
+    agents: [{ tenant_id: 'Miguel', alias: 'janus', primary_room_id: 'grp.miguel', runtime_key: null }],
     retired: { rooms: [{ tenant_id: 'Miguel', id: 'grp.retired', display_name: 'Retirada', enabled: false }], tenants: [], memberships: [], agents: [] },
     capabilities: { actor, resources: [{ ...roomCapability, actions: ['create', 'update', 'retire', 'restore'] }] },
   }));
@@ -76,7 +77,7 @@ it('previsualiza retiro y restauración por el contrato durable de flota', async
   await user.click(dialog.getByRole('button', { name: 'Previsualizar retiro' }));
   await dialog.findByLabelText('Previsualización operativa');
   expect(changes[0]).toMatchObject({ kind: 'retire', target: { resource: 'room', tenant_id: 'Miguel', room_id: 'grp.miguel' } });
-  await user.click(dialog.getByRole('button', { name: 'Cerrar retiro y recuperación' }));
+  await user.click(dialog.getByText('Cerrar'));
   await user.click(screen.getByRole('button', { name: 'Restaurar sala/grupo Miguel/grp.retired' }));
   dialog = within(await screen.findByRole('dialog'));
   await waitFor(() => { expect(dialog.getByRole('button', { name: 'Previsualizar restauración' })).toBeEnabled(); });

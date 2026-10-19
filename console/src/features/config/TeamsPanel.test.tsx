@@ -70,11 +70,14 @@ it('«Editar» opens the team editor with its members, and «Retirar equipo» th
   await user.click(dialog.getByRole('button', { name: 'Cancelar' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); });
 
+  server.use(http.get('http://localhost/v3/console/fleet/capability', () => HttpResponse.json({
+    available: false, actions: [], placements: [], reason: 'executor_unconfigured',
+  })));
   await user.click(screen.getByRole('button', { name: 'Retirar equipo Miguel/ops.miguel' }));
   dialog = within(await screen.findByRole('dialog'));
-  expect(dialog.getByRole('heading', { name: 'Retirar grupo' })).toBeInTheDocument();
-  expect(dialog.getByText(/terminan sus entregas pendientes/)).toBeInTheDocument();
-  expect(dialog.getByRole('button', { name: 'Encolar retiro' })).toBeDisabled();
+  expect(dialog.getByRole('heading', { name: 'Retirar equipo' })).toBeInTheDocument();
+  expect(dialog.getByRole('button', { name: 'Previsualizar cambio' })).toBeEnabled();
+  expect(dialog.queryByRole('button', { name: 'Encolar retiro' })).not.toBeInTheDocument();
 });
 
 it('«Retirar equipo» on a team with running agents goes through the retirement dialog, never a generic delete', async () => {
