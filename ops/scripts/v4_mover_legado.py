@@ -104,10 +104,11 @@ def shared_unit(action, alias, entry, pin, unit, run, inspect, extra=()):
 
     def processes():
         table = {}
-        for line in docker('exec', pin, 'ps', '-eo', 'pid=,ppid=,args=').decode().splitlines():
-            parts = line.split(None, 2)
-            if len(parts) >= 2:
-                table[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) == 3 else '')
+        # Zombies are already dead: a container whose PID 1 never reaps (sleep infinity) keeps them forever.
+        for line in docker('exec', pin, 'ps', '-eo', 'pid=,ppid=,stat=,args=').decode().splitlines():
+            parts = line.split(None, 3)
+            if len(parts) >= 3 and not parts[2].startswith('Z'):
+                table[int(parts[0])] = (int(parts[1]), parts[3] if len(parts) == 4 else '')
         return table
 
     def owned(table, roots):
