@@ -78,8 +78,8 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
       const parsed = definition.parse(result.stdout);
       if (parsed.output.reply !== `CAUCE_BOOTSTRAP_${probe.nonce}` || parsed.output.messages.length !== 0 || parsed.output.notify.length !== 0
           || parsed.output.status === 'failed' || (result.harnessStarted !== true && !parsed.nativeSessionId)) {
-        throw new Error(`bootstrap provider proof is unavailable (status=${String(parsed.output.status)} messages=${String(parsed.output.messages.length)} `
-          + `notify=${String(parsed.output.notify.length)} started=${String(result.harnessStarted)} reply=${sanitizeProcessOutput(String(parsed.output.reply ?? ''), 160)})`);
+        throw new Error(`bootstrap provider proof is unavailable (status=${parsed.output.status} messages=${String(parsed.output.messages.length)} `
+          + `notify=${String(parsed.output.notify.length)} started=${String(result.harnessStarted)} reply=${sanitizeProcessOutput(parsed.output.reply ?? '', 160)})`);
       }
       reply = parsed.output.reply; started = true;
       measure(profile, { apply: false, expected: documents });
