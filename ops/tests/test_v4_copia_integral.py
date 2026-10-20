@@ -110,6 +110,15 @@ class InventoryTests(unittest.TestCase):
                 self.assertIn({'path': 'data/escape', 'reason': 'external-symlink', 'kind': 'symlink',
                                'targetSha256': hashlib.sha256(target.encode()).hexdigest()}, omissions)
 
+    def test_worktree_git_pointer_is_copied_but_other_git_files_are_rejected(self):
+        other = self.root / 'worktree'
+        write(other / 'arbol' / '.git', 'gitdir: /home/dev/clawd/work/repo/.git/worktrees/arbol\n')
+        entries, _, _ = self.inventory(other, name='data')
+        self.assertIn('data/arbol/.git', {entry['path'] for entry in entries if entry['kind'] == 'file'})
+        write(other / 'arbol' / '.git', '[core]\n')
+        with self.assertRaisesRegex(integral.Failure, 'cannot form a self-contained snapshot'):
+            self.inventory(other, name='data')
+
     def test_singleton_name_outside_google_chrome_is_not_volatile(self):
         other = self.root / 'sin-chrome'
         write(other / 'keep.txt', 'benigno\n')

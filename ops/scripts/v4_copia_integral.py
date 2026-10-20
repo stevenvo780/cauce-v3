@@ -154,6 +154,14 @@ def verify_git(directory: int, source: int) -> bool:
     return True
 
 
+def worktree_pointer(parent: int, name: str) -> bool:
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    try:
+        return re.fullmatch(rb'gitdir: /[^\x00\n]{1,4000}\n?', os.read(descriptor, 4097)) is not None
+    finally:
+        os.close(descriptor)
+
+
 def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
     entries, omissions, identities = [], [], {}
 
@@ -169,7 +177,10 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
                 else 'symlink' if stat.S_ISLNK(info.st_mode) else 'socket' if stat.S_ISSOCK(info.st_mode) else 'special'
             omissions.append({'path': path, 'reason': CHROME_VOLATILE_REASON, 'kind': kind})
             return
-        if folded == '.git' and not stat.S_ISDIR(info.st_mode):
+        # A worktree's .git file is one 'gitdir: <path>' line; it is copied as data and `git worktree repair` fixes the
+        # path once restored. A .git symlink or any other .git file still cannot form a self-contained snapshot.
+        if folded == '.git' and not stat.S_ISDIR(info.st_mode) and not (stat.S_ISREG(info.st_mode) and info.st_size <= 4096
+                and worktree_pointer(parent, name)):
             raise Failure('a Git file or symlink cannot form a self-contained snapshot')
         entry = {'path': path, 'mode': stat.S_IMODE(info.st_mode)}
         if stat.S_ISDIR(info.st_mode):
