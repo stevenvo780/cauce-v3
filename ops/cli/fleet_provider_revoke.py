@@ -97,12 +97,13 @@ def revoke(packet: dict) -> dict:
         verify_absence(references, target, checked_reference)
     origin = packet["transport"]["gateway_url"]
     credentials = list(references["credentials"].items())
+    centrally_absent = len(credentials)  # only these come with a verified central absence of their mTLS and token records
     if legacy is not None:
         if legacy.get("tenant_id") != target["tenant_id"] or legacy.get("alias") != target["alias"] \
                 or legacy.get("expected_absent") != (not legacy.get("credentials")):
             raise ValueError("legacy Cauce inventory identity differs")
         credentials += [(credential["phase"], credential) for credential in legacy["credentials"]]
-    for phase, credential in credentials:
+    for index, (phase, credential) in enumerate(credentials):
         if phase not in {"bootstrap", "normal"}:
             raise ValueError("unknown credential namespace")
         context = pinned_context(packet["transport"]["ca_certificate"])
@@ -113,9 +114,9 @@ def revoke(packet: dict) -> dict:
             if fingerprint != credential["certificate_fingerprint"]:
                 raise ValueError("Cauce certificate reference changed")
             context.load_cert_chain(credential["certificate_path"], credential["key_path"])
-            if expired(credential["certificate_path"]):
-                # TLS refuses an expired client certificate before the gateway can answer 401; central absence was
-                # already verified above, so an expired credential is rejected by construction.
+            if "central" in references and index < centrally_absent and expired(credential["certificate_path"]):
+                # TLS refuses an expired client certificate before the gateway can answer 401. The signed authority
+                # already proved that both its mTLS and its token records are gone; legacy credentials never skip.
                 continue
             if not rejected(origin, context, phase):
                 raise ValueError("revoked Cauce certificate was not rejected")
