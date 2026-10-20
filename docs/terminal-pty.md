@@ -256,9 +256,20 @@ y no un enlace; si no, el launcher se niega a escribir. Sin la clave no cambia n
 Alta de un alias así (los pasos usados para `hades`, `zz-prueba-codex` y `gaia`):
 
 1. Declarar el alias en `ops/flota.json` con su contenedor V4 (placement `server2`) y regenerar los derivados con los scripts de `ops/scripts/`.
-2. Crear el `.env` del alias como en el [README del agente PTY](../ops/pty-agent/README.md), añadiendo `CONTAINER_RUNTIME_DIR`.
-3. Instalar la identidad del alias (§1.4) y arrancar el launcher; comprobar que el alias aparece en «PTY online».
-4. Añadir la fila de `grants.json` (Paso 4) o cubrirlo con `alias: "*"` del tenant.
+2. Identidad del alias (§1.4): la clave privada se genera en el host del agente y no sale de allí; el
+   certificado `CN=pty-<alias>` lo firma la CA del relay; la clave de alias se deriva con la clave maestra de
+   tickets. Su fila entra en `pty_agent_identities.json` por rename atómico. Si el alias ya tenía identidad
+   en el host anterior, se reutiliza su PKI y no se emite otra.
+3. En el host del agente: el PKI del alias en `~/.config/cauce-v3/pty-pki/<alias>/` (directorio `0700`,
+   ficheros `0600`, clave de alias `0400`) y el `.env` del alias como en el
+   [README del agente PTY](../ops/pty-agent/README.md), añadiendo `CONTAINER_RUNTIME_DIR`.
+4. Publicar una release PTY construida desde el `ops/` actual (lleva la guarda del launcher y el mapa de
+   contenedores) y apuntar a ella el drop-in `20-cauce-release.conf` de `cauce-v3-pty@<alias>`; habilitar y
+   arrancar la unidad. Comprobar en el journal «relay connected» y «relay accepted … modes=shell», y en la
+   consola que el alias deja de mostrar «Conexión sin comprobar».
+5. Si el alias tenía una unidad PTY en el host anterior, desactivarla: su contenedor ya no existe y quedaría
+   reiniciándose en bucle con el mismo certificado.
+6. Añadir la fila de `grants.json` (Paso 4) o cubrirlo con `alias: "*"` del tenant.
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 
