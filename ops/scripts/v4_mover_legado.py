@@ -136,10 +136,10 @@ def shared_unit(action, alias, entry, pin, unit, run, inspect, extra=()):
     elif action == 'stop':
         for name in reversed(units):
             run('stop', name)
-        table = processes()
-        roots = panes() + [pid for pid, (_, args) in table.items() if any(marker in args + ' ' for marker in extra)]
+        table, panes_now = processes(), panes()
+        roots = panes_now + [pid for pid, (_, args) in table.items() if any(marker in args + ' ' for marker in extra)]
         doomed = owned(table, roots)
-        if roots:
+        if panes_now:
             docker('exec', '--user', user, pin, 'tmux', '-L', 'cauce', 'kill-session', '-t', '=' + session)
         for signal in ('TERM', 'KILL'):
             alive = sorted(owned(processes(), roots) | (doomed & set(processes())))
