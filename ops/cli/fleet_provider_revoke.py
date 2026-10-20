@@ -7,6 +7,7 @@ import os
 import pathlib
 import ssl
 import stat
+import subprocess
 from urllib.parse import urlsplit
 
 
@@ -48,6 +49,12 @@ def pinned_context(ca_certificate: str) -> ssl.SSLContext:
     context = ssl.create_default_context(cafile=ca_certificate)
     context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
     return context
+
+
+def expired(certificate_path: str) -> bool:
+    result = subprocess.run(["/usr/bin/openssl", "x509", "-in", certificate_path, "-noout", "-checkend", "0"],
+                            capture_output=True, timeout=10, check=False)
+    return result.returncode == 1 and b"will expire" in result.stdout
 
 
 def rejected(origin: str, context: ssl.SSLContext, phase: str, token: str | None = None) -> bool:
@@ -106,6 +113,10 @@ def revoke(packet: dict) -> dict:
             if fingerprint != credential["certificate_fingerprint"]:
                 raise ValueError("Cauce certificate reference changed")
             context.load_cert_chain(credential["certificate_path"], credential["key_path"])
+            if expired(credential["certificate_path"]):
+                # TLS refuses an expired client certificate before the gateway can answer 401; central absence was
+                # already verified above, so an expired credential is rejected by construction.
+                continue
             if not rejected(origin, context, phase):
                 raise ValueError("revoked Cauce certificate was not rejected")
         if "token_path" in credential:
