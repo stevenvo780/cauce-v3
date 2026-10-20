@@ -452,6 +452,14 @@ def prepare_pair(policy: dict, scope: dict, agent: dict, principal: dict, pair: 
     configuration, key = policy['authority'], agent['runtime_key']
     certificate, private, csr_path = (pair / ('agent-' + key + suffix) for suffix in ('.crt', '.key', '.csr'))
     request_path, receipt_path = pair / '.authority-request.json', pair / '.authority-receipt.json'
+    if phase == 'bootstrap' and (receipt_path.exists() or receipt_path.is_symlink()) and certificate.is_file() \
+            and not certificate.is_symlink():
+        from fleet_executor_pki import expiry
+        # A bootstrap credential lives one day: an update made later issues a new pair instead of failing on the old one.
+        if expiry(certificate) <= datetime.datetime.now(datetime.UTC):
+            for stale in (certificate, private, csr_path, request_path, receipt_path, token_path):
+                if stale.is_file() and not stale.is_symlink():
+                    stale.unlink()
     if receipt_path.exists() or receipt_path.is_symlink():
         receipt = json.loads(checked_file(receipt_path, True))
         proof = validate_certificate(configuration, pair, key, checked_file(certificate).decode())

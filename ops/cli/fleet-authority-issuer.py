@@ -261,6 +261,13 @@ def issue_certificate(policy, packet):
             'expires_at': min(expiry, leaf_expiry).strftime('%Y-%m-%dT%H:%M:%SZ')}
 
 
+def expired(row) -> bool:
+    try:
+        return datetime.datetime.fromisoformat(row['expires_at'].replace('Z', '+00:00')) < datetime.datetime.now(datetime.UTC)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
 def issue(policy, packet, rows, journal, journal_path, journal_stat):
     if journal.get('revoked'):
         raise AuthorityError('revoked authority journal cannot issue credentials')
@@ -280,6 +287,14 @@ def issue(policy, packet, rows, journal, journal_path, journal_stat):
             continue
         field = 'certificate_sha256' if name.endswith('mtls') else 'token_sha256'
         record = {field: receipt[field], 'principal': selected, 'expires_at': receipt['expires_at']}
+        # A bootstrap credential lives one day: an agent updated later gets a new one, and the expired record of the
+        # same bootstrap principal is retired instead of making the registration ambiguous.
+        if packet['phase'] == 'bootstrap' and existing is None:
+            stale = [row for row in document['identities'] if row.get('principal') == selected and row != record and expired(row)]
+            if stale:
+                document = {**document, 'identities': [row for row in document['identities'] if row not in stale]}
+                publish(path(policy['registries'][name]), document, original)
+                original = read(path(policy['registries'][name]))[1]
         related = [row for row in document['identities'] if row.get('principal') == selected or row.get(field) == receipt[field]]
         if existing is not None and existing.get('registered') and related != [record]:
             raise AuthorityError('issued authority record was removed or replaced')
