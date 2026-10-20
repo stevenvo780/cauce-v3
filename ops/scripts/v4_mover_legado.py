@@ -126,7 +126,7 @@ def shared_unit(action, alias, entry, pin, unit, run, inspect, extra=()):
                                  '-F', '#{pane_pid}'], capture_output=True, text=True, check=False, timeout=30)
         if result.returncode == 0:
             return [int(pid) for pid in result.stdout.split()]
-        if re.search(r"can't find session|no server running|error connecting to", result.stderr):
+        if re.search(r"can't find (session|window)|no server running|error connecting to", result.stderr):
             return []
         raise ValueError('alias tmux session could not be inspected')
 
