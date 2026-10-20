@@ -184,7 +184,9 @@ export class AdapterClient {
               tenant_id: this.config.tenantId,
               alias: this.config.alias,
               instance_id: this.config.instanceId,
-              capabilities: helloCapabilityStrings(this.harness.definition.capabilities, this.humanHarness !== undefined),
+              // A canonical OpenClaw session admits its listed humans too, so it needs the durable initiator as well.
+              capabilities: helloCapabilityStrings(this.harness.definition.capabilities,
+                this.humanHarness !== undefined || this.harness.routesHumansToCanonicalOpenClaw),
             });
             await this.consume(generation, signal);
           } finally {
