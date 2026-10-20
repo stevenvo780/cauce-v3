@@ -101,7 +101,7 @@ load_config() {
     [[ -n $value ]] || die "PTY alias config value is empty: $key"
     [[ ! -v "CONFIG[$key]" ]] || die "PTY alias config key is duplicated: $key"
     case "$key" in
-      RELAY_HOST|RELAY_PORT|RELAY_SERVER_NAME|PKI_DIR|ALIAS_KEY_FILE|HARNESS_COMMAND|SHELL_CANDIDATES|OPENCLAW_DIST_DIR) ;;
+      RELAY_HOST|RELAY_PORT|RELAY_SERVER_NAME|PKI_DIR|ALIAS_KEY_FILE|HARNESS_COMMAND|SHELL_CANDIDATES|OPENCLAW_DIST_DIR|CONTAINER_RUNTIME_DIR) ;;
       *) die "PTY alias config key is not allowlisted: $key" ;;
     esac
     CONFIG[$key]=$value
@@ -117,6 +117,15 @@ load_config() {
   [[ ${CONFIG[PKI_DIR]} == "$PKI_ROOT/$alias_name" ]] || die 'PKI_DIR is outside its alias-scoped path'
   valid_absolute_path "${CONFIG[ALIAS_KEY_FILE]}" || die 'ALIAS_KEY_FILE path is invalid'
   [[ ${CONFIG[ALIAS_KEY_FILE]} == "${CONFIG[PKI_DIR]}/alias-key.hex" ]] || die 'ALIAS_KEY_FILE must live inside PKI_DIR'
+  if [[ -v 'CONFIG[CONTAINER_RUNTIME_DIR]' ]]; then
+    # V4 fleet containers run with a read-only root and no capabilities: /var/tmp cannot be written
+    # and `docker cp` cannot reach a tmpfs, so the agent and its bundle go to this root-owned tmpfs
+    # through `docker exec` instead.
+    valid_absolute_path "${CONFIG[CONTAINER_RUNTIME_DIR]}" || die 'CONTAINER_RUNTIME_DIR path is invalid'
+    agent_root="${CONFIG[CONTAINER_RUNTIME_DIR]}/cauce-pty-agent-$alias_name"
+    bundle_dir="${CONFIG[CONTAINER_RUNTIME_DIR]}/cauce-pty-$alias_name"
+    bundle_path="$bundle_dir/bundle.json"
+  fi
   if [[ -v 'CONFIG[OPENCLAW_DIST_DIR]' ]]; then
     valid_absolute_path "${CONFIG[OPENCLAW_DIST_DIR]}" || die 'OPENCLAW_DIST_DIR path is invalid'
     [[ ${CONFIG[OPENCLAW_DIST_DIR]} == "$container_home/"* ]] \
@@ -194,6 +203,7 @@ resolve_runtime_identity() {
 
 agent_root="/var/tmp/cauce-pty-agent-$alias_name"
 bundle_path="/var/tmp/.cauce-pty-bundle-$alias_name.json"
+bundle_dir=''
 local_bundle=''
 
 cleanup() {
@@ -203,6 +213,13 @@ cleanup() {
 trap cleanup EXIT
 
 publish_agent() {
+  if [[ -n ${bundle_dir:-} ]]; then
+    tar -C "$SCRIPT_ROOT" --exclude=__pycache__ --owner=0 --group=0 --numeric-owner -cf - cauce_pty_agent \
+      | docker_control exec -i --user 0 "$container_id" sh -c \
+        "rm -rf -- '$agent_root' && mkdir -p -- '$agent_root' && tar -x --no-same-owner -C '$agent_root' && chmod -R a=rX '$agent_root'" \
+      || die 'cannot publish the PTY agent into the container runtime directory'
+    return 0
+  fi
   # Replaced, never merged, and root-owned: a module dropped by a later release cannot survive in the container, nothing the runtime user planted under the shared /var/tmp root stays on PYTHONPATH, and the published tree is importable but not rewritable.
   docker_control exec --user 0 "$container_id" sh -c "rm -rf -- '$agent_root' && mkdir -p -- '$agent_root'" || die 'cannot recreate the PTY agent root'
   docker_control cp "$AGENT_SOURCE" "$container_id:$agent_root/" || die 'cannot publish the PTY agent'
@@ -711,6 +728,19 @@ if len(document["alias_key_hex"]) != 64:
 json.dump(document, sys.stdout, separators=(",", ":"), sort_keys=True)
 PYTHON
   [[ -s $local_bundle ]] || die 'PTY bundle could not be assembled'
+  if [[ -n ${bundle_dir:-} ]]; then
+    # Sticky and not listable: only the runtime user creates (and replaces) its own 0400 bundle.
+    docker_control exec --user 0 "$container_id" sh -c "mkdir -p -- '$bundle_dir' && chmod 1733 '$bundle_dir'" \
+      || die 'cannot prepare the PTY bundle directory'
+    docker_control exec -i --user "$runtime_uid:$runtime_gid" "$container_id" \
+      sh -c "rm -f -- '$bundle_path' && umask 0377 && cat > '$bundle_path'" < "$local_bundle" \
+      || die 'cannot publish the PTY bundle'
+    rm -f -- "$local_bundle"
+    local_bundle=''
+    printf 'cauce-pty-launcher: bundle published alias=%s path=%s owner=%s:%s mode=0400\n' \
+      "$alias_name" "$bundle_path" "$runtime_uid" "$runtime_gid" >&2
+    return 0
+  fi
   docker_control cp "$local_bundle" "$container_id:$bundle_path" || die 'cannot publish the PTY bundle'
   rm -f -- "$local_bundle"
   local_bundle=''
@@ -762,7 +792,10 @@ start_agent() {
   reap_orphan_agents
   printf 'cauce-pty-launcher: exec agent alias=%s container=%s generation=%s uid=%s\n' \
     "$alias_name" "${container_id:0:12}" "$container_generation" "$runtime_uid" >&2
-  exec docker exec -i --user "$runtime_uid:$runtime_gid" -e PYTHONPATH="$agent_root" "$container_id" /usr/bin/python3 -m cauce_pty_agent --bundle "$bundle_path"
+  local -a runtime_env=()
+  # Read-only root: the agent's TLS PEMs need a writable temporary directory, the same tmpfs.
+  [[ -z ${bundle_dir:-} ]] || runtime_env=(-e "TMPDIR=$bundle_dir")
+  exec docker exec -i --user "$runtime_uid:$runtime_gid" "${runtime_env[@]}" -e PYTHONPATH="$agent_root" "$container_id" /usr/bin/python3 -m cauce_pty_agent --bundle "$bundle_path"
 }
 
 start_agent

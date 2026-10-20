@@ -515,19 +515,23 @@ class PublishReplacesTheAgentRootInsteadOfMerging(unittest.TestCase):
     hubiera plantado antes del lanzamiento— dentro del PYTHONPATH del proceso que sostiene el
     certificado del alias. `docker cp` solo sobrescribe los ficheros que trae, nunca borra."""
 
-    def _docker_commands(self) -> list[str]:
+    def _docker_commands(self, runtime_dir: str = "") -> list[str]:
         with tempfile.TemporaryDirectory() as raw:
             tmp = pathlib.Path(raw)
             log = tmp / "docker.log"
             fake = tmp / "docker"
-            fake.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >>"$DOCKER_LOG"\n', encoding="utf-8")
+            fake.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >>"$DOCKER_LOG"\n'
+                            '[[ " $* " != *" -i "* ]] || cat >/dev/null\n', encoding="utf-8")
             fake.chmod(0o755)
             runner_script = f"""
 set -uo pipefail
 die() {{ printf '%s\n' "$1" >&2; exit "${{2:-2}}"; }}
 container_id=deadbeef
-agent_root=/var/tmp/cauce-pty-agent-zeus
+agent_root={runtime_dir or "/var/tmp"}/cauce-pty-agent-zeus
+bundle_dir={runtime_dir + "/cauce-pty-zeus" if runtime_dir else "''"}
 AGENT_SOURCE=/opt/cauce/pty-agent/cauce_pty_agent
+SCRIPT_ROOT={raw}
+mkdir -p "$SCRIPT_ROOT/cauce_pty_agent"
 DOCKER_CALL_TIMEOUT=30
 {_extract_docker_control_function()}
 {_extract_publish_function()}
@@ -559,6 +563,14 @@ publish_agent
         rest = commands[copy + 1:]
         self.assertTrue(any("chown -R 0:0" in line for line in rest), commands)
         self.assertTrue(any("chmod -R a=rX" in line for line in rest), commands)
+
+    def test_a_read_only_fleet_container_gets_the_package_through_exec_into_its_tmpfs(self) -> None:
+        commands = self._docker_commands("/run")
+        self.assertFalse(any(line.startswith("cp ") for line in commands), commands)
+        (publish,) = [line for line in commands if line.startswith("exec -i --user 0 ")]
+        self.assertIn("rm -rf -- '/run/cauce-pty-agent-zeus'", publish)
+        self.assertIn("tar -x --no-same-owner", publish)
+        self.assertIn("chmod -R a=rX", publish)
 
 
 if __name__ == "__main__":

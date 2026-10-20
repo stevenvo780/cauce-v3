@@ -173,7 +173,7 @@ class DeriveOpenClawTuiTest(unittest.TestCase):
 
     def test_an_explicit_dist_dir_is_allowlisted_and_wins_over_fallbacks(self) -> None:
         launcher = LAUNCHER.read_text(encoding="utf-8")
-        self.assertIn('SHELL_CANDIDATES|OPENCLAW_DIST_DIR)', launcher)
+        self.assertIn('SHELL_CANDIDATES|OPENCLAW_DIST_DIR|CONTAINER_RUNTIME_DIR)', launcher)
         function = _function_source("derive_openclaw_tui_command")
         self.assertIn('entry_candidates+=("${configured_dist%/}/index.js")', function)
 
