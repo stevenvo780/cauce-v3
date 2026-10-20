@@ -159,6 +159,12 @@ def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None
     if filename.is_symlink():
         raise SafeFailure('image refresh receipt is not a regular owned file')
     receipt = json.loads(filename.read_bytes())
+    if receipt.get('status') == 'succeeded' and receipt.get('container_name') != agent['container_name'] \
+            and receipt.get('runtime_key') == agent['runtime_key'] and receipt.get('tenant_id') == agent['tenant_id'] \
+            and inspect_container(str(receipt.get('container_name')) + '-image-rollback') is None:
+        # A finished refresh of the container a harness change replaced: nothing is left to recover.
+        filename.unlink()
+        return
     expected = {'host_id': policy['host_id'], 'tenant_id': agent['tenant_id'],
                 'runtime_key': agent['runtime_key'], 'container_name': agent['container_name']}
     if any(receipt.get(key) != value for key, value in expected.items()):
