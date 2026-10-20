@@ -299,7 +299,7 @@ def pack(args: argparse.Namespace) -> dict:
                     os.close(holder)
                 try:
                     if fingerprint(os.fstat(reader)) != before[2][entry['path']]:
-                        raise Failure('a file changed before the archive was written')
+                        raise Failure('a file changed before the archive was written: ' + entry['path'])
                     member = tarfile.TarInfo('files/' + entry['path'])
                     member.size, member.mode = entry['size'], 0o600
                     copied = Reader(reader)
