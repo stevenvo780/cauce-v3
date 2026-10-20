@@ -121,7 +121,8 @@ export class BootstrapRepository {
       }
       if (records.some(record => record.probe.phase === input.phase && this.pending(record, context))) throw conflict();
       if (input.phase === 'normal' && (input.action !== 'verify' || !records.some(record => record.probe.phase === 'bootstrap'
-          && record.probe.action === 'verify' && record.state === 'succeeded' && record.epoch === context.operation.epoch
+          // A resumed admission runs under a later claim epoch than the verify step that already succeeded.
+          && record.probe.action === 'verify' && record.state === 'succeeded' && record.epoch <= context.operation.epoch
           && record.probe.profile_revision === input.profile_revision))) throw conflict();
       const probe: BootstrapDescriptor = { ...input, probe_id: randomUUID(), tenant_id: identity.tenant_id, alias: identity.alias,
         runtime_key: context.agent.runtime_key, harness_id: context.agent.harness_id, model_id: context.agent.model_id,
