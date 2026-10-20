@@ -232,6 +232,27 @@
       "poll_lease_ms": 60000
     },
     {
+      "alias": "perseo",
+      "tenant_id": "Hospital",
+      "room_id": "grp.hospital",
+      "token_file": "/run/cauce-telegram/Hospital/perseo.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/perseo.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Hospital",
+          "alias": "perseo"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
       "alias": "salva",
       "tenant_id": "Isa",
       "room_id": "grp.isa",
@@ -268,6 +289,27 @@
         {
           "tenant_id": "Steven",
           "alias": "socrates"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
+    },
+    {
+      "alias": "teseo",
+      "tenant_id": "Hospital",
+      "room_id": "grp.hospital",
+      "token_file": "/run/cauce-telegram/Hospital/teseo.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/teseo.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Hospital",
+          "alias": "teseo"
         }
       ],
       "poll_timeout_seconds": 25,

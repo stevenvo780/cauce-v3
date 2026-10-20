@@ -110,6 +110,16 @@
       "tenant": "Miguel",
       "user": "dev"
     },
+    "perseo": {
+      "container": "cauce-muse-perseo",
+      "enabled": true,
+      "harness": "muse",
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.cauce/perseo",
+      "tenant": "Hospital",
+      "user": "node"
+    },
     "salva": {
       "container": "ws-isa",
       "enabled": true,
@@ -129,6 +139,16 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "tenant": "Steven",
       "user": "dev"
+    },
+    "teseo": {
+      "container": "cauce-muse-teseo",
+      "enabled": true,
+      "harness": "muse",
+      "home": "/home/node",
+      "room": "grp.hospital",
+      "stateDirectory": "/home/node/.cauce/teseo",
+      "tenant": "Hospital",
+      "user": "node"
     },
     "zeus": {
       "container": "ws-zeus",

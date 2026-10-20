@@ -120,6 +120,18 @@
       "harness": "claude",
       "membershipRole": "agent"
     },
+    "perseo": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "cauce-muse-perseo",
+      "dockerHost": "server2",
+      "systemdUser": "server",
+      "user": "node",
+      "home": "/home/node",
+      "stateDirectory": "/home/node/.cauce/perseo",
+      "harness": "muse",
+      "membershipRole": "agent"
+    },
     "salva": {
       "tenant": "Isa",
       "room": "grp.isa",
@@ -142,6 +154,18 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/socrates",
       "harness": "codex",
       "membershipRole": "agent_notify"
+    },
+    "teseo": {
+      "tenant": "Hospital",
+      "room": "grp.hospital",
+      "container": "cauce-muse-teseo",
+      "dockerHost": "server2",
+      "systemdUser": "server",
+      "user": "node",
+      "home": "/home/node",
+      "stateDirectory": "/home/node/.cauce/teseo",
+      "harness": "muse",
+      "membershipRole": "agent"
     },
     "zeus": {
       "tenant": "Steven",
