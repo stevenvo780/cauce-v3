@@ -26,7 +26,9 @@ export async function fenceFleetAgents(client: DatabaseClient, targets: FencedFl
   for (const target of targets) {
     const params = [target.tenant_id, target.alias];
     await client.query('UPDATE agents SET enabled=false,updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2', params);
-    await client.query(`UPDATE connection_leases SET lease_until=clock_timestamp(),epoch=epoch+1,
+    // now(), not clock_timestamp(): the lease-floor trigger (ops/runbooks/piso-de-arriendo.sql) stretches any lease set
+    // after the transaction start to 180 s, which made a purge block on the lease its own fence had just released.
+    await client.query(`UPDATE connection_leases SET lease_until=now(),epoch=epoch+1,
       connection_token=gen_random_uuid() WHERE tenant_id=$1 AND alias=$2`, params);
     await client.query(`UPDATE deliveries SET status='retry',available_at=clock_timestamp(),last_ack_rank=0,
       claim_token=NULL,claim_expires_at=NULL,ack_deadline_at=NULL,consumer_instance_id=NULL,consumer_epoch=NULL,
