@@ -129,6 +129,7 @@ function parseGrants(raw: string): TerminalGrant[] {
       (mode) => isTerminalMode(mode) && isWritableMode(mode))) {
       throw new Error('wildcard operator cannot hold a writable mode');
     }
+    if (grant.operator === '*' && grant.alias === '*') throw new Error('wildcard operator cannot hold a wildcard alias');
     return {
       operator: grant.operator,
       tenant_id: grant.tenant_id,
@@ -173,13 +174,18 @@ export class GrantStore {
     }
   }
 
-  /** A grant matches on the exact operator, or via '*' when the mode is read-only. */
+  /**
+   * A grant matches on the exact operator, or via '*' when the mode is read-only. Alias '*' covers every
+   * agent of that tenant (exact operator only), so agents created later from the console get a terminal
+   * without editing this file; the tenant still has to match exactly.
+   */
   async allows(
     operatorId: string, tenantId: string, alias: string, mode: TerminalMode, now: number = Date.now()
   ): Promise<boolean> {
     return (await this.grants(now)).some((grant) =>
       (grant.operator === operatorId || (grant.operator === '*' && !isWritableMode(mode))) &&
-      grant.tenant_id === tenantId && grant.alias === alias && grant.modes.includes(mode));
+      grant.tenant_id === tenantId && (grant.alias === alias || (grant.alias === '*' && grant.operator === operatorId))
+      && grant.modes.includes(mode));
   }
 
   /** Cohort form of `allows`: every alias sharing the container must be granted. */

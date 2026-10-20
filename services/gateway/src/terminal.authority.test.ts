@@ -352,6 +352,19 @@ describe('grants file', () => {
     expect(await store.allows('miguel', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
   });
 
+  it('alias "*" covers every agent of one tenant for the exact operator only', async () => {
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      grants: [{ operator: 'steven', tenant_id: 'Miguel', alias: '*', modes: ['shell', 'harness_rw'] }]
+    }));
+    const store = new GrantStore(path);
+    expect(await store.allows('steven', 'Miguel', 'zz-nuevo', 'harness_rw', 1_000)).toBe(true);
+    expect(await store.allows('steven', 'Steven', 'kant', 'shell', 1_000)).toBe(false);
+    expect(await store.allows('miguel', 'Miguel', 'zz-nuevo', 'shell', 1_000)).toBe(false);
+    await writeFile(path, JSON.stringify({ version: 1, grants: [{ operator: '*', tenant_id: 'Miguel', alias: '*', modes: ['harness'] }] }));
+    expect(await store.grants(10_000)).toEqual([]);
+  });
+
   it('SET RULE: a grant on iza alone does not open the ws-humanizar container', async () => {
     await writeFile(path, JSON.stringify({
       version: 1,
