@@ -334,13 +334,17 @@ export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown)
       if (!fleet.list) conflict('fleet history is unavailable');
       return { operations: await fleet.list(account.tenant_id, account.alias, target, subject) };
     }
-    const match = new RegExp(`^${operations}/([a-f0-9-]{36})(/cancel)?$`, 'u').exec(path);
+    const match = new RegExp(`^${operations}/([a-f0-9-]{36})(/cancel|/resume)?$`, 'u').exec(path);
     if (match?.[1]) {
       const operation = record(await fleet.get(account.tenant_id, account.alias, match[1], subject));
       selectedIdentity = identity(record(operation.target), packet.tenant);
       if (method === 'GET' && !match[2]) { await withTransaction(pool, source); return operation; }
-      if (method === 'POST' && match[2]) return fleet.cancel(account.tenant_id, account.alias, match[1],
-        z.number().int().nonnegative().parse(record(payload).expected_version), subject);
+      const expectedVersion = () => z.number().int().nonnegative().parse(record(payload).expected_version);
+      if (method === 'POST' && match[2] === '/cancel') return fleet.cancel(account.tenant_id, account.alias, match[1], expectedVersion(), subject);
+      if (method === 'POST' && match[2] === '/resume') {
+        if (!fleet.resume) conflict('fleet resume is unavailable');
+        return fleet.resume(account.tenant_id, account.alias, match[1], expectedVersion(), subject);
+      }
     }
   }
   const agentPath = /^\/v3\/console\/tenants\/([^/]+)\/agents\/([^/]+)\/perfil$/u.exec(path);
