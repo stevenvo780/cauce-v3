@@ -293,6 +293,27 @@
       ],
       "poll_timeout_seconds": 25,
       "poll_lease_ms": 60000
+    },
+    {
+      "alias": "zz-prueba-codex",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
+      "token_file": "/run/cauce-telegram/Miguel/zz-prueba-codex.token",
+      "v2_shutdown_marker_file": "/run/cauce-telegram/zz-prueba-codex.disabled",
+      "allowed_user_ids": [
+        "999999999999999999"
+      ],
+      "allowed_chat_ids": [
+        "-999999999999999999"
+      ],
+      "recipients": [
+        {
+          "tenant_id": "Miguel",
+          "alias": "zz-prueba-codex"
+        }
+      ],
+      "poll_timeout_seconds": 25,
+      "poll_lease_ms": 60000
     }
   ]
 }

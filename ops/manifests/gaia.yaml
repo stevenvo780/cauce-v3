@@ -7,7 +7,7 @@ spec:
   room: grp.miguel
   alias: gaia
   harness: openclaw
-  profile: {seedOnConnect: true, configScope: alias, workspace: /home/claw/clawd}
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/.cauce/gaia/workspace}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_GAIA_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

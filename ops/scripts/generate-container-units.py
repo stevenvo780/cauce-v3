@@ -261,11 +261,8 @@ def example(alias: str, entry: dict[str, str]) -> str:
             "EXPECTED_CLI_VERSION=REPLACE_WITH_EXACT_SEMVER",
         ))
     if entry["harness"] == "openclaw":
-        workspace = HARNESS_RULES["openclaw"]["workspace"].format(
-            alias=alias, home=entry["home"]
-        )
         lines.extend((
-            f"OPENCLAW_WORKSPACE={workspace}",
+            f"OPENCLAW_WORKSPACE={entry['workspace']}",
             "# Optional verified API mode (CLI is the default):",
             "# OPENCLAW_TRANSPORT=api",
             "# OPENCLAW_API_URL=http://127.0.0.1:18789/v1/chat/completions",

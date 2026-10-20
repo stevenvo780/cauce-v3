@@ -68,6 +68,11 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
             "host": HOST_STATE_DIRECTORY,
         },
         "workspace": "{home}/clawd",
+        # A V4 fleet container keeps the OpenClaw workspace inside its runtime state directory.
+        "workspaceWhenState": {
+            "stateDirectory": "{home}/.cauce/{alias}",
+            "workspace": "{home}/.cauce/{alias}/workspace",
+        },
     },
     "opencode": {
         "stateDirectory": {
@@ -123,7 +128,7 @@ def harness_workspace(alias: str, row: Mapping[str, Any]) -> str | None:
     rule = _harness_rule(row)
     template = rule.get("workspace")
     conditional = rule.get("workspaceWhenState")
-    if template is None and conditional is not None \
+    if conditional is not None \
             and row.get("runtimeStateDirectory") == _render(conditional["stateDirectory"], alias, row):
         template = conditional["workspace"]
     return None if template is None else _render(template, alias, row)

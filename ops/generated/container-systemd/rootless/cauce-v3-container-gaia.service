@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter gaia (agv2-miguel-finca-oc/openclaw)
+Description=Cauce V3 rootless container adapter gaia (cauce-openclaw-gaia/openclaw)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/gaia.env

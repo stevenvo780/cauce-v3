@@ -31,24 +31,24 @@
       "user": "dev"
     },
     "gaia": {
-      "container": "agv2-miguel-finca-oc",
+      "container": "cauce-openclaw-gaia",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/claw",
+      "home": "/home/node",
       "room": "grp.miguel",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "stateDirectory": "/home/node/.cauce/gaia",
       "tenant": "Miguel",
-      "user": "claw"
+      "user": "node"
     },
     "hades": {
-      "container": "agv2-steven-hades-oc",
+      "container": "cauce-grok-hades",
       "enabled": true,
       "harness": "grok",
-      "home": "/home/claw",
+      "home": "/home/node",
       "room": "grp.steven",
-      "stateDirectory": "/home/claw/.local/state/cauce-v3/hades",
+      "stateDirectory": "/home/node/.cauce/hades",
       "tenant": "Steven",
-      "user": "claw"
+      "user": "node"
     },
     "hegel": {
       "container": "ws-humanizar",
@@ -139,6 +139,16 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
       "tenant": "Steven",
       "user": "dev"
+    },
+    "zz-prueba-codex": {
+      "container": "cauce-codex-zz-prueba-codex",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/node",
+      "room": "grp.miguel",
+      "stateDirectory": "/home/node/.cauce/zz-prueba-codex",
+      "tenant": "Miguel",
+      "user": "node"
     }
   },
   "schemaVersion": 1

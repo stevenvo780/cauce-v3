@@ -1,0 +1,19 @@
+apiVersion: cauce.io/v3
+kind: AliasRuntime
+metadata:
+  name: zz-prueba-codex
+spec:
+  tenant: Miguel
+  room: grp.miguel
+  alias: zz-prueba-codex
+  harness: codex
+  profile: {seedOnConnect: true, configScope: alias}
+  origin: {transport: telegram}
+  relay: {urlPathEnv: CAUCE_ZZ_PRUEBA_CODEX_RELAY_URL, requiredScheme: wss}
+  secretPathEnv:
+    token: CAUCE_ZZ_PRUEBA_CODEX_TOKEN_PATH
+    clientCertificate: CAUCE_ZZ_PRUEBA_CODEX_CERT_PATH
+    clientKey: CAUCE_ZZ_PRUEBA_CODEX_KEY_PATH
+    certificateAuthority: CAUCE_ZZ_PRUEBA_CODEX_CA_PATH
+  process: {executablePathEnv: CAUCE_ZZ_PRUEBA_CODEX_EXEC_PATH}
+  stateDirectory: /var/lib/cauce-v3/aliases/zz-prueba-codex

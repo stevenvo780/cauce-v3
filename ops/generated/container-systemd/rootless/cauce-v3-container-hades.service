@@ -1,5 +1,5 @@
 [Unit]
-Description=Cauce V3 rootless container adapter hades (agv2-steven-hades-oc/grok)
+Description=Cauce V3 rootless container adapter hades (cauce-grok-hades/grok)
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.config/cauce-v3/container-aliases/hades.env

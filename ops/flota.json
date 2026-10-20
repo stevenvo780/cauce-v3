@@ -34,26 +34,26 @@
       "user": "dev"
     },
     "gaia": {
-      "container": "agv2-miguel-finca-oc",
+      "container": "cauce-openclaw-gaia",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/claw",
+      "home": "/home/node",
       "role": "agent",
       "room": "grp.miguel",
-      "runtimeStateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "runtimeStateDirectory": "/home/node/.cauce/gaia",
       "tenant": "Miguel",
-      "user": "claw"
+      "user": "node"
     },
     "hades": {
-      "container": "agv2-steven-hades-oc",
+      "container": "cauce-grok-hades",
       "enabled": true,
       "harness": "grok",
-      "home": "/home/claw",
+      "home": "/home/node",
       "role": "agent",
       "room": "grp.steven",
-      "runtimeStateDirectory": "/home/claw/.local/state/cauce-v3/hades",
+      "runtimeStateDirectory": "/home/node/.cauce/hades",
       "tenant": "Steven",
-      "user": "claw"
+      "user": "node"
     },
     "hegel": {
       "container": "ws-humanizar",
@@ -153,16 +153,39 @@
       "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
       "tenant": "Steven",
       "user": "dev"
+    },
+    "zz-prueba-codex": {
+      "container": "cauce-codex-zz-prueba-codex",
+      "enabled": true,
+      "harness": "codex",
+      "home": "/home/node",
+      "role": "agent",
+      "room": "grp.miguel",
+      "runtimeStateDirectory": "/home/node/.cauce/zz-prueba-codex",
+      "tenant": "Miguel",
+      "user": "node"
     }
   },
   "placement": {
     "astra": {
       "systemdUser": "ubuntu"
     },
+    "gaia": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "hades": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
     "kant": {
       "systemdUser": "server"
     },
     "salva": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "zz-prueba-codex": {
       "dockerHost": "server2",
       "systemdUser": "server"
     }

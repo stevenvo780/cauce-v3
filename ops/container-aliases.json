@@ -40,23 +40,25 @@
     "gaia": {
       "tenant": "Miguel",
       "room": "grp.miguel",
-      "container": "agv2-miguel-finca-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "workspace": "/home/claw/clawd",
-      "stateDirectory": "/home/claw/.openclaw/cauce-v3/gaia",
+      "container": "cauce-openclaw-gaia",
+      "dockerHost": "server2",
+      "systemdUser": "server",
+      "user": "node",
+      "home": "/home/node",
+      "workspace": "/home/node/.cauce/gaia/workspace",
+      "stateDirectory": "/home/node/.cauce/gaia",
       "harness": "openclaw",
       "membershipRole": "agent"
     },
     "hades": {
       "tenant": "Steven",
       "room": "grp.steven",
-      "container": "agv2-steven-hades-oc",
-      "systemdUser": "stev",
-      "user": "claw",
-      "home": "/home/claw",
-      "stateDirectory": "/home/claw/.local/state/cauce-v3/hades",
+      "container": "cauce-grok-hades",
+      "dockerHost": "server2",
+      "systemdUser": "server",
+      "user": "node",
+      "home": "/home/node",
+      "stateDirectory": "/home/node/.cauce/hades",
       "harness": "grok",
       "membershipRole": "agent"
     },
@@ -151,6 +153,18 @@
       "stateDirectory": "/home/dev/.local/state/cauce-v3/zeus",
       "harness": "claude",
       "membershipRole": "operator"
+    },
+    "zz-prueba-codex": {
+      "tenant": "Miguel",
+      "room": "grp.miguel",
+      "container": "cauce-codex-zz-prueba-codex",
+      "dockerHost": "server2",
+      "systemdUser": "server",
+      "user": "node",
+      "home": "/home/node",
+      "stateDirectory": "/home/node/.cauce/zz-prueba-codex",
+      "harness": "codex",
+      "membershipRole": "agent"
     }
   }
 }
