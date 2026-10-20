@@ -1,5 +1,5 @@
 import { MuseDriver, nativeLoginRecipe, nativeProviderCompatible, nativeProviderLogin } from './host-provider-native.js';
-import { OpenClawDriver, openClawCompatible, openClawLogin } from './host-provider-openclaw.js';
+import { OpenClawDriver, openClawCompatible, openClawLogin, openClawLoginRecipe } from './host-provider-openclaw.js';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -44,8 +44,7 @@ const Template = z.object({ provider: Provider, runtime_user: User, path_root: L
   const login = value.login; if (!login) return true;
   if (login.command.slice(1).some(arg => arg.startsWith('/') && login.files?.[arg] === undefined)) return false;
   return value.openclaw === undefined ? nativeLoginRecipe(value, login)
-    : login.command[0] === value.openclaw.node_command && login.sha256 === value.openclaw.node_command_sha256
-      && login.method === 'device' && isDeepStrictEqual(login.command.slice(1), [value.command, 'models', 'auth', 'login']) && login.files?.[value.command] === value.command_sha256;
+    : openClawLoginRecipe(value, value.openclaw, login) && (value.openclaw.method_id === 'cli' || login.method === 'device');
 });
 const Templates = z.array(Template).max(100).refine(value => new Set(value.map(row => JSON.stringify([
   row.provider, row.runtime_user, row.openclaw !== undefined, row.runtime_mode, row.container_name, row.container_prefix]))).size === value.length);

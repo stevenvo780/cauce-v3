@@ -63,6 +63,10 @@ def validate_login(row: dict, policy: dict | None = None):
         declared = descriptor_login_arguments(policy, row['provider']) if policy else None
         arguments = declared if declared is not None and login['method'] == 'device' else legacy
         valid = arguments is not None and command[0] == row['command'] and login['sha256'] == row['command_sha256'] and command[1:] == arguments
+    elif driver.get('method_id') == 'cli':
+        # Anthropic `cli`: the Claude Code login itself, isolated in the account profile by the gateway.
+        valid = command == [driver.get('claude_command'), 'auth', 'login'] and login['sha256'] == driver.get('claude_command_sha256') \
+            and login['method'] == 'terminal'
     else:
         valid = command[0] == driver['node_command'] and login['sha256'] == driver['node_command_sha256'] \
             and command[1:] == [row['command'], 'models', 'auth', 'login'] and login['method'] == 'device' \

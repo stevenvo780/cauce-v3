@@ -15,13 +15,16 @@ VERSION = '2026.7.1-2'
 AUTH_LIST_SHA256 = '3ef2fa38f32ce786f0bc499bae897aba68ad9c7595ef3064994b1634d13d1373'
 FIELDS = {'provider_id', 'method_id', 'version', 'auth_list_source', 'auth_list_sha256',
           'node_command', 'node_command_sha256', 'bridge', 'bridge_sha256'}
+# The Anthropic `cli` method runs OpenClaw through its claude-cli runtime with a Claude Code login kept
+# in the account's own profile (`<profile>/claude`); `claude auth status` exposes the paying email.
+CLI_FIELDS = {'claude_command', 'claude_command_sha256'}
 INSPECTION_ENV = {'OPENCLAW_AUTH_STORE_READONLY': '1'}
 # API-key profiles cannot prove the paying identity; only account flows with
 # an observed email and a model nonce may admit a runtime.
 PROVIDER_FLOWS = {
     'openai': {'binding_provider': 'codex', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
                'profile_types': {'oauth'}, 'expiry_required': True},
-    'anthropic': {'binding_provider': 'claude', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'setup-token'},
+    'anthropic': {'binding_provider': 'claude', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'setup-token', 'cli'},
                   'profile_types': {'token'}, 'expiry_required': False},
     'xai': {'binding_provider': 'grok', 'version': VERSION, 'auth_list_sha256': AUTH_LIST_SHA256, 'methods': {'oauth', 'device-code'},
             'profile_types': {'oauth'}, 'expiry_required': True},
@@ -52,14 +55,19 @@ def provider_flow(provider: str) -> tuple[str, dict]:
     return provider_id, flow
 
 
+def claude_cli(driver: dict) -> bool:
+    return driver.get('provider_id') == 'anthropic' and driver.get('method_id') == 'cli'
+
+
 def validate_definition(value: dict, provider: str) -> None:
     from fleet_policy_paths import path
     provider_id, flow = provider_flow(provider)
-    if not isinstance(value, dict) or set(value) != FIELDS \
+    if not isinstance(value, dict) or set(value) != FIELDS | (CLI_FIELDS if claude_cli(value) else set()) \
             or value['provider_id'] != provider_id or value['method_id'] not in flow['methods'] \
             or value['version'] != flow['version'] or value['auth_list_sha256'] != flow['auth_list_sha256']:
         raise ValueError('OpenClaw provider driver has no measured independent account flow')
-    for key, fingerprint in [('auth_list_source', 'auth_list_sha256'), ('node_command', 'node_command_sha256'), ('bridge', 'bridge_sha256')]:
+    pins = [('auth_list_source', 'auth_list_sha256'), ('node_command', 'node_command_sha256'), ('bridge', 'bridge_sha256')]
+    for key, fingerprint in pins + ([('claude_command', 'claude_command_sha256')] if claude_cli(value) else []):
         path(value[key])
         if not isinstance(value[fingerprint], str) or re.fullmatch(r'[0-9a-f]{64}', value[fingerprint]) is None:
             raise ValueError('OpenClaw driver command or source pin is invalid')
@@ -89,7 +97,8 @@ def environment(binding: dict, agent: dict) -> dict:
     return {'OPENCLAW_HOME': str(root), 'OPENCLAW_STATE_DIR': str(root), 'OPENCLAW_CONFIG_PATH': str(root / 'openclaw.json'),
             'OPENCLAW_AGENT_DIR': str(root / 'agents' / key / 'agent'), 'CAUCE_OPENCLAW_AGENT_ID': key,
             'CAUCE_OPENCLAW_WORKSPACE': str(pathlib.Path(agent['state_directory']) / 'workspace'), 'CAUCE_OPENCLAW_LOCAL': '1', 'CAUCE_OPENCLAW_DIST_DIR': str(pathlib.Path(binding['openclaw']['auth_list_source']).parent),
-            'CODEX_HOME': str(root / '.external-cli-disabled'), 'CLAUDE_CONFIG_DIR': str(root / '.external-cli-disabled'),
+            'CODEX_HOME': str(root / '.external-cli-disabled'),
+            'CLAUDE_CONFIG_DIR': str(root / ('claude' if claude_cli(binding['openclaw']) else '.external-cli-disabled')),
             'TMPDIR': str(root / 'tmp'), 'NODE_COMPILE_CACHE': str(root / 'tmp' / 'node-compile-cache')}
 
 
@@ -122,7 +131,7 @@ def owned_directory(value: pathlib.Path, *, create: bool = False) -> int:
     return descriptor
 
 
-def read_config(binding: dict, agent: dict) -> dict:
+def read_config(binding: dict, agent: dict, runtime: bool = True) -> dict:
     root = pathlib.Path(binding['path'])
     directory = owned_directory(root)
     try:
@@ -148,7 +157,17 @@ def read_config(binding: dict, agent: dict) -> dict:
             or any(rows[0].get(key) != value for key, value in entry.items()) or not isinstance(auth, dict) \
             or auth.get('order') != {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}:
         raise ValueError('OpenClaw configuration is outside the exact account and agent scope')
+    if runtime and agents.get('defaults') != runtime_defaults(binding, agent, env):
+        raise ValueError('OpenClaw configuration runtime differs from the approved login method')
     return config
+
+
+def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict | None:
+    driver = binding['openclaw']
+    if not claude_cli(driver):
+        return None
+    return {'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
+            'cliBackends': {'claude-cli': {'command': driver['claude_command'], 'env': {'CLAUDE_CONFIG_DIR': env['CLAUDE_CONFIG_DIR']}}}}
 
 
 def prepare(binding: dict, agent: dict) -> None:
@@ -156,14 +175,25 @@ def prepare(binding: dict, agent: dict) -> None:
     root = pathlib.Path(binding['path'])
     prepare_temporary(root)
     for directory in [root / 'agents', root / 'agents' / agent['runtime_key'], pathlib.Path(env['OPENCLAW_AGENT_DIR']),
-                      root / '.external-cli-disabled', pathlib.Path(env['CAUCE_OPENCLAW_WORKSPACE'])]:
+                      root / '.external-cli-disabled', pathlib.Path(env['CLAUDE_CONFIG_DIR']), pathlib.Path(env['CAUCE_OPENCLAW_WORKSPACE'])]:
         os.close(owned_directory(directory, create=True))
     descriptor = owned_directory(root)
     try:
         try:
             target = os.open('openclaw.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         except FileExistsError:
-            read_config(binding, agent)
+            config = read_config(binding, agent, runtime=False)
+            if config['agents'].get('defaults') != runtime_defaults(binding, agent, env):
+                # Switching the login method (setup-token <-> cli) rewrites only this Cauce-owned file, atomically.
+                staged = 'openclaw.json.cauce-new'
+                try:
+                    os.unlink(staged, dir_fd=descriptor)
+                except FileNotFoundError:
+                    pass
+                _write_openclaw(os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor),
+                                binding, agent, env)
+                os.replace(staged, 'openclaw.json', src_dir_fd=descriptor, dst_dir_fd=descriptor)
+                os.fsync(descriptor)
         else:
             _write_openclaw(target, binding, agent, env)
             os.fsync(descriptor)
@@ -183,6 +213,9 @@ def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
         config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
                                       'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
                   'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}
+        defaults = runtime_defaults(binding, agent, env)
+        if defaults is not None:
+            config['agents']['defaults'] = defaults
         body = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
         if os.write(target, body) != len(body):
             raise ValueError('OpenClaw public configuration write was incomplete')
@@ -204,6 +237,8 @@ def pinned_packet(packet: dict) -> dict:
     validate_definition(driver, binding['provider'])
     pins = {**binding.get('command_files', {}), driver['auth_list_source']: driver['auth_list_sha256'],
             driver['node_command']: driver['node_command_sha256'], driver['bridge']: driver['bridge_sha256']}
+    if claude_cli(driver):
+        pins[driver['claude_command']] = driver['claude_command_sha256']
     return {**packet, 'profile_binding': {**binding, 'command_files': pins}}
 
 
@@ -255,8 +290,50 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
             pass
 
 
-def authenticated_identity(packet: dict) -> str | None:
+def claude_identity(packet: dict) -> str | None:
     from fleet_provider_identity import command_output, provider_command, select_account_identity
+    driver = packet['profile_binding']['openclaw']
+    command = provider_command({'profile_binding': {'command': driver['claude_command'], 'command_sha256': driver['claude_command_sha256']}})
+    status = json.loads(command_output([command, 'auth', 'status', '--json'], packet))
+    if not isinstance(status, dict) or status.get('loggedIn') is not True:
+        return None
+    return select_account_identity(packet['identity'], [status.get('email')])
+
+
+def profile_identity(packet: dict, prefix: list) -> str | None:
+    from fleet_provider_identity import command_output, select_account_identity
+    binding, agent = packet['profile_binding'], packet['agent']
+    meta = json.loads(command_output([*prefix, 'models', 'auth', 'list', '--agent', agent['runtime_key'],
+                                      '--provider', binding['openclaw']['provider_id'], '--json'], packet))
+    if not isinstance(meta, dict):
+        return None
+    profiles = meta.get('profiles')
+    if meta.get('agentId') != agent['runtime_key'] or meta.get('provider') != binding['openclaw']['provider_id'] \
+            or not isinstance(profiles, list) or len(profiles) != 1:
+        return None
+    selected = profiles[0]
+    if not isinstance(selected, dict):
+        return None
+    _, flow = provider_flow(binding['provider'])
+    identity = select_account_identity(packet['identity'], [selected.get('email')])
+    if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
+            or selected.get('type') not in flow['profile_types'] or identity is None:
+        return None
+    for field in ('cooldownUntil', 'disabledUntil'):
+        until = selected.get(field)
+        if until and (not isinstance(until, str) or datetime.fromisoformat(until.replace('Z', '+00:00')) > datetime.now(UTC)):
+            return None
+    if 'expiresAt' in selected or flow['expiry_required']:
+        if not isinstance(selected.get('expiresAt'), str):
+            return None
+        expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
+        if expires <= datetime.now(UTC):
+            return None
+    return identity
+
+
+def authenticated_identity(packet: dict) -> str | None:
+    from fleet_provider_identity import command_output, provider_command
     try:
         binding, agent = packet['profile_binding'], packet['agent']
         if agent['harness_id'] != 'openclaw' or binding['identity'] != packet['identity'] or agent['primary_account_id'] != packet['account_id']:
@@ -273,32 +350,9 @@ def authenticated_identity(packet: dict) -> str | None:
         version = command_output([*prefix, '--version'], packet).decode().strip()
         if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}:
             return None
-        meta = json.loads(command_output([*prefix, 'models', 'auth', 'list', '--agent', agent['runtime_key'],
-                                          '--provider', binding['openclaw']['provider_id'], '--json'], packet))
-        if not isinstance(meta, dict):
+        identity = claude_identity(packet) if claude_cli(driver) else profile_identity(packet, prefix)
+        if identity is None:
             return None
-        profiles = meta.get('profiles')
-        if meta.get('agentId') != agent['runtime_key'] or meta.get('provider') != binding['openclaw']['provider_id'] \
-                or not isinstance(profiles, list) or len(profiles) != 1:
-            return None
-        selected = profiles[0]
-        if not isinstance(selected, dict):
-            return None
-        _, flow = provider_flow(binding['provider'])
-        identity = select_account_identity(packet['identity'], [selected.get('email')])
-        if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
-                or selected.get('type') not in flow['profile_types'] or identity is None:
-            return None
-        for field in ('cooldownUntil', 'disabledUntil'):
-            until = selected.get(field)
-            if until and (not isinstance(until, str) or datetime.fromisoformat(until.replace('Z', '+00:00')) > datetime.now(UTC)):
-                return None
-        if 'expiresAt' in selected or flow['expiry_required']:
-            if not isinstance(selected.get('expiresAt'), str):
-                return None
-            expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
-            if expires <= datetime.now(UTC):
-                return None
         model = canonical_model(agent.get('model_id'))
         if not model.startswith(driver['provider_id'] + '/'):
             return None

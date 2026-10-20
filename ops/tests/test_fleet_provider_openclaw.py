@@ -219,5 +219,62 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertEqual(env['CLAUDE_CONFIG_DIR'], str(self.profile / '.external-cli-disabled'))
         self.assertEqual(env['OPENCLAW_AUTH_STORE_READONLY'], '1')
 
+    def claude_cli(self, mode='logged-in'):
+        claude = self.root / 'claude'
+        claude.write_text('#!/bin/sh\n'
+            'env > "$CLAUDE_CONFIG_DIR/../claude-env"\n'
+            'case "$(cat "$CLAUDE_CONFIG_DIR/../claude-mode" 2>/dev/null)" in\n'
+            '  logged-out) echo \'{"loggedIn":false}\' ;;\n'
+            '  foreign) echo \'{"loggedIn":true,"email":"foreign@fixture.invalid"}\' ;;\n'
+            '  *) echo \'{"loggedIn":true,"email":"observed@fixture.invalid"}\' ;;\n'
+            'esac\n')
+        claude.chmod(0o700)
+        self.anthropic()
+        self.binding['openclaw'] = {**self.binding['openclaw'], 'method_id': 'cli',
+                                    'claude_command': str(claude), 'claude_command_sha256': self.hash(claude)}
+        driver.prepare(self.binding, self.agent)
+        (self.profile / 'mode').write_text('')
+        (self.profile / 'claude-mode').write_text(mode)
+
+    def test_anthropic_cli_proves_the_claude_login_email_and_runs_through_claude_cli(self):
+        self.claude_cli()
+        config = json.loads((self.profile / 'openclaw.json').read_bytes())
+        self.assertEqual(config['agents']['defaults'], {
+            'models': {'anthropic/claude-opus-5': {'agentRuntime': {'id': 'claude-cli'}}},
+            'cliBackends': {'claude-cli': {'command': self.binding['openclaw']['claude_command'],
+                                           'env': {'CLAUDE_CONFIG_DIR': str(self.profile / 'claude')}}}})
+        self.assertEqual(oct((self.profile / 'claude').stat().st_mode & 0o777), '0o700')
+        self.assertEqual(identity.authenticated_identity(self.packet), 'observed@fixture.invalid')
+        observed = dict(line.split('=', 1) for line in (self.profile / 'claude-env').read_text().splitlines() if '=' in line)
+        self.assertEqual(observed['CLAUDE_CONFIG_DIR'], str(self.profile / 'claude'))
+        argv = json.loads((self.profile / 'observed-args').read_bytes())
+        self.assertEqual(argv[argv.index('--model') + 1], 'anthropic/claude-opus-5')
+
+    def test_anthropic_cli_refuses_a_missing_or_foreign_claude_login(self):
+        self.claude_cli()
+        for mode in ('logged-out', 'foreign'):
+            with self.subTest(mode=mode):
+                (self.profile / 'claude-mode').write_text(mode)
+                self.assertIsNone(identity.authenticated_identity(self.packet))
+
+    def test_switching_back_to_setup_token_rewrites_the_runtime_and_keeps_scope(self):
+        self.claude_cli()
+        self.binding['openclaw'] = {key: value for key, value in self.binding['openclaw'].items() if not key.startswith('claude_')}
+        self.binding['openclaw']['method_id'] = 'setup-token'
+        driver.prepare(self.binding, self.agent)
+        config = json.loads((self.profile / 'openclaw.json').read_bytes())
+        self.assertNotIn('defaults', config['agents'])
+        self.assertEqual(config['auth']['order'], {'anthropic': ['cauce:account-one']})
+        self.assertFalse((self.profile / 'openclaw.json.cauce-new').exists())
+
+    def test_cli_driver_requires_its_pinned_claude_command(self):
+        self.claude_cli()
+        broken = {key: value for key, value in self.binding['openclaw'].items() if key != 'claude_command_sha256'}
+        with self.assertRaises(ValueError):
+            driver.validate_definition(broken, 'claude')
+        with self.assertRaises(ValueError):
+            driver.validate_definition({**self.binding['openclaw'], 'method_id': 'setup-token'}, 'claude')
+
+
 if __name__ == '__main__':
     unittest.main()

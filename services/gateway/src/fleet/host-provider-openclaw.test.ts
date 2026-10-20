@@ -52,4 +52,20 @@ describe('measured OpenClaw provider login', () => {
     }
     expect(OpenClawDriver.safeParse({ ...anthropic, provider_id: 'google' }).success).toBe(false);
   });
+  it('runs the Anthropic cli method as a Claude Code login kept inside the account profile', () => {
+    const cli = { ...driver, provider_id: 'anthropic', method_id: 'cli', claude_command: '/usr/lib/claude/claude.exe', claude_command_sha256: 'e'.repeat(64) } as const;
+    expect(OpenClawDriver.safeParse(cli).success).toBe(true);
+    const { claude_command_sha256: _pin, ...unpinned } = cli;
+    expect(OpenClawDriver.safeParse(unpinned).success).toBe(false);
+    const claudeProfile = { ...profile, provider: 'claude', openclaw: cli };
+    const claudeLogin = { method: 'terminal', command: [cli.claude_command, 'auth', 'login'], sha256: cli.claude_command_sha256 };
+    const projection = openClawLogin(claudeProfile, agent, claudeLogin);
+    expect(projection.command).toEqual(claudeLogin.command);
+    expect(projection.env).toEqual({ CLAUDE_CONFIG_DIR: `${profile.path}/claude`, TMPDIR: `${profile.path}/tmp` });
+    expect(projection.files[cli.claude_command]).toBe(cli.claude_command_sha256);
+    expect(() => openClawLogin(claudeProfile, agent, login)).toThrow();
+    expect(() => openClawLogin(claudeProfile, agent, { ...claudeLogin, method: 'device' })).toThrow();
+    expect(() => openClawLogin(claudeProfile, agent, { ...claudeLogin, sha256: 'd'.repeat(64) })).toThrow();
+    expect(() => openClawLogin(claudeProfile, agent, { ...claudeLogin, command: [...claudeLogin.command, '--console'] })).toThrow();
+  });
 });

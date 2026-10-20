@@ -95,6 +95,8 @@ def provider_environment(policy: dict, agent: dict) -> dict:
         driver = binding['openclaw']
         files = {**binding.get('command_files', {}), binding['command']: binding['command_sha256'],
             driver['auth_list_source']: driver['auth_list_sha256'], driver['bridge']: driver['bridge_sha256']}
+        if module.claude_cli(driver):
+            files[driver['claude_command']] = driver['claude_command_sha256']
         if agent['runtime_mode'] == 'native' and (digest(path(driver['node_command'])) != driver['node_command_sha256']
                 or any(digest(path(filename)) != value for filename, value in files.items())):
             raise SafeFailure('OpenClaw runtime command or bridge pin changed')
