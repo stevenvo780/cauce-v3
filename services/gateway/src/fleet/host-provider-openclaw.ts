@@ -19,7 +19,7 @@ export const OpenClawDriver = z.union([
   z.object({ provider_id: z.literal('xai'), method_id: z.enum(['oauth', 'device-code']), ...Pinned }).strict(),
 ]);
 type Driver = z.infer<typeof OpenClawDriver>;
-type Login = { method?: string; command: string[]; sha256: string; files?: Record<string, string> | undefined };
+interface Login { method?: string; command: string[]; sha256: string; files?: Record<string, string> | undefined }
 /** The approved login recipe for a driver: OpenClaw's own `models auth login`, or `claude auth login` for the `cli` method. */
 export function openClawLoginRecipe(profile: { command?: string | undefined; command_sha256?: string | undefined }, driver: Driver, login: Login): boolean {
   if (driver.method_id === 'cli') {
