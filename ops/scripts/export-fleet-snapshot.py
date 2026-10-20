@@ -39,6 +39,8 @@ COMPANY_TENANTS_QUERY = (
     "ORDER BY t.id;\n"
 )
 
+# `tenant:uuid` of a human who may share an OpenClaw agent's canonical session (adapter SHARED_HUMAN_ENTRY).
+SHARED_HUMAN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 AGENT_FIELDS = frozenset(
     {
         "tenant_id",
@@ -52,7 +54,8 @@ AGENT_FIELDS = frozenset(
     }
 )
 AGENT_OPTIONAL_FIELDS = frozenset({"runtime_key", "primary_room_id", "lifecycle_state", "host_id",
-                                   "runtime_mode", "systemd_user", "primary_account_id", "model_id", "reasoning_effort", "extensions"})
+                                   "runtime_mode", "systemd_user", "primary_account_id", "model_id", "reasoning_effort", "extensions",
+                                   "shared_human_ids"})
 BOOTSTRAP_LIFECYCLES = frozenset({"draft", "provisioning", "auth_pending", "verifying"})
 LIFECYCLES = BOOTSTRAP_LIFECYCLES | {"ready", "failed", "retiring", "retired"}
 MEMBERSHIP_FIELDS = frozenset(
@@ -259,6 +262,11 @@ def _agents(
         effort = _optional_text(agent.get("reasoning_effort"), f"{label}.reasoning_effort")
         if effort is not None and effort not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
             raise SnapshotError(f"{label}.reasoning_effort is invalid")
+        shared_humans = agent.get("shared_human_ids")
+        if shared_humans is not None and (not isinstance(shared_humans, list) or not 1 <= len(shared_humans) <= 32
+                or len(set(shared_humans)) != len(shared_humans)
+                or any(not isinstance(entry, str) or SHARED_HUMAN_PATTERN.fullmatch(entry) is None for entry in shared_humans)):
+            raise SnapshotError(f"{label}.shared_human_ids is invalid")
         if account is not None and ALIAS_PATTERN.fullmatch(account) is None:
             raise SnapshotError(f"{label}.primary_account_id is invalid")
         if model is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}", model) is None:
@@ -291,6 +299,7 @@ def _agents(
             "primaryAccountId": account,
             "modelId": model,
             "reasoningEffort": effort,
+            "sharedHumanIds": sorted(shared_humans) if shared_humans is not None else None,
             "tenant": tenant,
             "harness": harness,
             "enabled": enabled,
@@ -332,7 +341,7 @@ def _runtime_row(agent: dict[str, Any], membership: dict[str, Any]) -> dict[str,
     row.update(room=membership["room"], role=membership["role"])
     if agent["alias"] != agent["runtimeKey"]:
         row["alias"] = agent["alias"]
-    for field in ("hostId", "runtimeMode", "systemdUser", "primaryAccountId", "modelId", "reasoningEffort"):
+    for field in ("hostId", "runtimeMode", "systemdUser", "primaryAccountId", "modelId", "reasoningEffort", "sharedHumanIds"):
         if agent[field] is not None:
             row[field] = agent[field]
     return row

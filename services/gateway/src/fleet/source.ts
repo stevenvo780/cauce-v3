@@ -3,7 +3,7 @@ import { RuntimeKeySchema } from '@cauce/protocol';
 import { FleetOperationsRepository, lockFleetClaim, lockFleetRevision, preparedState, publicFleetOperation, withTransaction,
   type DatabasePool, type FleetOperationClaim, type FleetExecutionState } from '@cauce/store';
 import { readFleetProviderAccounts, scopedFleetProviderAgents, type FleetProviderAccounts } from './accounts.js';
-import { desiredFleetExtensions, trustedFleetBaseline } from './baseline.js';
+import { desiredFleetExtensions, fleetSharedHumans, trustedFleetBaseline } from './baseline.js';
 
 const SnapshotSchema = z.object({
   agents: z.array(z.record(z.string(), z.unknown())),
@@ -43,7 +43,8 @@ export class FleetHostSource extends FleetOperationsRepository {
       if (prepared.previous_agents.some(agent=>!tenants.has(String(agent.tenant_id)))||prepared.fenced_targets.some(target=>!tenants.has(target.tenant_id))) {
         throw new Error('Fleet prepared scope is outside the company');
       }
-      snapshot.agents = await desiredFleetExtensions(client, await trustedFleetBaseline(client, snapshot.agents));
+      snapshot.agents = await fleetSharedHumans(client, row.company_id,
+        await desiredFleetExtensions(client, await trustedFleetBaseline(client, snapshot.agents)));
       prepared.previous_agents = await trustedFleetBaseline(client, prepared.previous_agents);
       const trusted_accounts = await readFleetProviderAccounts(client, scopedFleetProviderAgents(
         row.request, prepared.fenced_targets, prepared.previous_agents, snapshot.agents));

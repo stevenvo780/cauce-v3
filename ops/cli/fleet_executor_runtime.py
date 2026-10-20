@@ -152,6 +152,9 @@ def namespace_proof(environment: dict, bootstrap: bool, operation_id: str | None
         raise NamespaceMismatch('running runtime has another credential namespace')
 
 
+SHARED_HUMAN = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+
+
 def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: str | None) -> dict:
     from fleet_executor_pki import checked_file
     from fleet_runtime_materialization import load_desired_fleet
@@ -188,6 +191,12 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         if effort not in compatible or row.get('reasoningEffort') != effort:
             raise SafeFailure('reasoning effort is not approved')
         values['CAUCE_REASONING_EFFORT'] = effort
+    shared = row.get('sharedHumanIds')
+    if shared is not None:
+        if agent['harness_id'] != 'openclaw' or not isinstance(shared, list) or not 1 <= len(shared) <= 32 \
+                or any(not isinstance(entry, str) or SHARED_HUMAN.fullmatch(entry) is None for entry in shared):
+            raise SafeFailure('shared human session list is not approved')
+        values['CAUCE_SHARED_HUMAN_IDS'] = ','.join(shared)
     return values
 
 
@@ -223,7 +232,8 @@ def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, boo
                 raw = pathlib.Path(f'/proc/{document["pid"]}/environ').read_bytes()
             environment = {item.split(b'=', 1)[0].decode(): item.split(b'=', 1)[1].decode()
                            for item in raw.split(b'\0') if item.startswith((b'CAUCE_BOOTSTRAP=', b'CAUCE_FLEET_OPERATION_ID=',
-                               b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT='))}
+                               b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT=',
+                               b'CAUCE_SHARED_HUMAN_IDS='))}
             namespace_proof(environment, bootstrap, operation_id)
             sdk_environment_proof(policy, agent, environment, bootstrap, operation_id)
         return document

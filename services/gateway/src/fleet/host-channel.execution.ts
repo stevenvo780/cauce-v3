@@ -2,7 +2,7 @@ import { FleetOperationError, lockFleetClaim, lockFleetRevision, loadFleetHostSc
   type DatabaseClient, type FleetOperationClaim } from '@cauce/store';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
-import { trustedFleetBaseline } from './baseline.js';
+import { fleetSharedHumans, trustedFleetBaseline } from './baseline.js';
 import { fleetHostInputs, fleetHostPacket } from './coordinator.js';
 
 interface Identity { host_id:string;company_id:string }
@@ -30,7 +30,8 @@ export async function hostFleetExecution(client:DatabaseClient,identity:Identity
     throw new FleetOperationError('forbidden','prepared fleet scope is outside the authenticated company');
   }
   const roles=(await client.query<{role:string}>('SELECT role FROM role_policies ORDER BY role')).rows;
-  const snapshot={agents:await trustedFleetBaseline(client,agents),memberships,rolePolicies:roles,purgedRuntimeKeys:purged};
+  const snapshot={agents:await fleetSharedHumans(client,identity.company_id,await trustedFleetBaseline(client,agents)),
+    memberships,rolePolicies:roles,purgedRuntimeKeys:purged};
   const previous=prepared.previous_agents.filter(agent=>agent.host_id===identity.host_id);
   const execution:FleetExecution={operation:publicFleetOperation(row),request:row.request,...prepared,
     previous_agents:await trustedFleetBaseline(client,previous),snapshot};
