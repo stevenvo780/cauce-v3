@@ -38,7 +38,9 @@ image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16
 # with a cold cache keeps the portable config digest pinned from docker save; otherwise npm/apt mtimes change every layer.
 docker build -q --provenance=false --build-context "musebridge=ops/container-runtime" \
   --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
-  --output "type=docker,rewrite-timestamp=true,name=$image" ops/agent-runtime >/dev/null
+  --output "type=docker,rewrite-timestamp=true,name=$image,dest=$work/agent-image.oci.tar" ops/agent-runtime >/dev/null
+# The containerd image store refuses rewrite-timestamp with its default unpack, so export to a tar and load it.
+docker load -q -i "$work/agent-image.oci.tar" >/dev/null && rm -f "$work/agent-image.oci.tar"
 agy_version=$(sed -n 's/^ARG AGY_VERSION=//p' ops/cuotas/Dockerfile)
 agy_sha=$(sed -n 's/^ARG AGY_X86_64_SHA256=//p' ops/cuotas/Dockerfile)
 agy_filename="agy-${agy_version}-linux-x86-64"
@@ -55,7 +57,8 @@ fi
 quota_image="cauce-quota-runtime:$(sha256sum ops/cuotas/Dockerfile | cut -c1-16)-$(find "$work/agybin" -type f | wc -l)"
 docker build -q --provenance=false --build-context "agybin=$work/agybin" \
   --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/cuotas/Dockerfile)" \
-  --output "type=docker,rewrite-timestamp=true,name=$quota_image" ops/cuotas >/dev/null
+  --output "type=docker,rewrite-timestamp=true,name=$quota_image,dest=$work/quota-image.oci.tar" ops/cuotas >/dev/null
+docker load -q -i "$work/quota-image.oci.tar" >/dev/null && rm -f "$work/quota-image.oci.tar"
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \
   /cauce/lifecycle/cauce-container-runtime.py bundle-digest /cauce/lifecycle >/dev/null
 # `codex` on PATH is a Node launcher; the provider login pins its argv[0] with O_NOFOLLOW, so the pin names the native binary.
