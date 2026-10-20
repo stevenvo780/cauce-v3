@@ -38,7 +38,8 @@ def legacy_unit(request, action):
                 and item.get('dockerHost', 'local') == entry.get('dockerHost', 'local')]
     if not re.fullmatch(r'[0-9a-f]{64}', pin) or info['Id'] != pin:
         raise ValueError('legacy container differs from its pinned original')
-    if siblings and (source.get('shared_container') != entry['container'] or source.get('container_must_remain_running') is not True
+    keep = bool(siblings) or source.get('container_must_remain_running') is True
+    if keep and (source.get('shared_container') != entry['container'] or source.get('container_must_remain_running') is not True
                      or sorted(source.get('siblings_must_remain_running') or []) != sorted(siblings)):
         raise ValueError('legacy container is shared; stopping it requires an alias-only consistency plan')
     if scope == 'system':
@@ -66,8 +67,11 @@ def legacy_unit(request, action):
 
     if scope == 'system' and run('show', '--property=User', '--value', unit) not in {'', 'root'}:
         raise ValueError('legacy system unit does not run as root')
-    if siblings:
-        return shared_unit(action, alias, entry, pin, unit, run, inspect)
+    if keep:
+        extra = source.get('alias_process_markers', [])
+        if not isinstance(extra, list) or not all(isinstance(item, str) and len(item) >= 8 for item in extra):
+            raise ValueError('invalid alias process markers')
+        return shared_unit(action, alias, entry, pin, unit, run, inspect, extra)
     if action == 'start':
         if info['State']['Running'] is not True:
             docker('start', pin)
@@ -88,14 +92,15 @@ def legacy_unit(request, action):
             'container_running': running, 'container_exclusive': True}
 
 
-def shared_unit(action, alias, entry, pin, unit, run, inspect):
-    """Quiesce one alias inside a container its siblings keep using: its adapter and PTY units, and its tmux session."""
+def shared_unit(action, alias, entry, pin, unit, run, inspect, extra=()):
+    """Quiesce one alias inside a container that must keep running: its adapter and PTY units, its tmux session and
+    the processes the plan declares as its own (an OpenClaw gateway, for example), with their descendants."""
     from v4_mover_host import docker
     units = [unit] + [name for name in ('cauce-v3-pty@' + alias + '.service',)
                       if run('show', '--property=LoadState', '--value', name) == 'loaded']
     session, user = 'cauce-' + alias, entry.get('user', 'dev')
     markers = ('/opt/cauce-v3-adapter/' + alias + '/', '--alias ' + alias + ' ', '.cauce-pty-bundle-' + alias + '.json',
-               '-t ' + session + ':', '/cauce-v3/' + alias + ' ')
+               '-t ' + session + ':', '/cauce-v3/' + alias + ' ', *extra)
 
     def processes():
         table = {}
@@ -124,14 +129,16 @@ def shared_unit(action, alias, entry, pin, unit, run, inspect):
             return []
         raise ValueError('alias tmux session could not be inspected')
 
+    doomed = set()
     if action == 'start':
         for name in units:
             run('start', name)
     elif action == 'stop':
         for name in reversed(units):
             run('stop', name)
-        roots = panes()
-        doomed = owned(processes(), roots)
+        table = processes()
+        roots = panes() + [pid for pid, (_, args) in table.items() if any(marker in args + ' ' for marker in extra)]
+        doomed = owned(table, roots)
         if roots:
             docker('exec', '--user', user, pin, 'tmux', '-L', 'cauce', 'kill-session', '-t', '=' + session)
         for signal in ('TERM', 'KILL'):
@@ -145,7 +152,8 @@ def shared_unit(action, alias, entry, pin, unit, run, inspect):
     expected = 'inactive' if action in {'stop', 'stopped'} else 'active'
     if any(state != expected for state in states.values()):
         raise ValueError('legacy unit did not reach ' + expected)
-    remaining = owned(processes(), panes())
+    table = processes()
+    remaining = owned(table, panes()) | (doomed & set(table))
     if expected == 'inactive' and (remaining or panes()):
         raise ValueError('alias processes remain in the shared container')
     if inspect()['State']['Running'] is not True:

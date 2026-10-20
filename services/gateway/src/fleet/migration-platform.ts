@@ -341,10 +341,7 @@ export async function migrationPlatformRequest(pool: DatabasePool, raw: unknown)
       if (method === 'GET' && !match[2]) { await withTransaction(pool, source); return operation; }
       const expectedVersion = () => z.number().int().nonnegative().parse(record(payload).expected_version);
       if (method === 'POST' && match[2] === '/cancel') return fleet.cancel(account.tenant_id, account.alias, match[1], expectedVersion(), subject);
-      if (method === 'POST' && match[2] === '/resume') {
-        if (!fleet.resume) conflict('fleet resume is unavailable');
-        return fleet.resume(account.tenant_id, account.alias, match[1], expectedVersion(), subject);
-      }
+      if (method === 'POST' && match[2] === '/resume') return fleet.resume(account.tenant_id, account.alias, match[1], expectedVersion(), subject);
     }
   }
   const agentPath = /^\/v3\/console\/tenants\/([^/]+)\/agents\/([^/]+)\/perfil$/u.exec(path);
