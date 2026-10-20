@@ -142,13 +142,14 @@ def restore_container(request):
              for flag in ('-u', '-g')]
     inner = {**request, 'action': 'unpack', 'owner': owner, 'bundle': bundle(),
              'directory': '/restore/' + request['runtime_key'] + '/space'}
-    with tempfile.TemporaryFile() as incoming:
+    # A full copy runs to many GB: spool it on disk, never in a /tmp tmpfs with a per-user quota or in RAM.
+    with tempfile.TemporaryFile(dir=str(pathlib.Path.home())) as incoming:
         incoming.write((json.dumps(inner) + '\n').encode())
         shutil.copyfileobj(sys.stdin.buffer, incoming)
         incoming.seek(0)
         checked(['docker', 'run', '--rm', '-i', '--user', '0:0', '--network', 'none', '--read-only',
             '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777',
-            '--mount', 'type=volume,source=' + name + ',destination=/restore',
+            '--mount', 'type=volume,source=' + name + ',destination=/restore', '--env', 'TMPDIR=/restore',
             '--entrypoint', request.get('python', '/usr/bin/python3'), request['image'], '-I', '-B', '-c', BOOTSTRAP],
             stdin=incoming, stdout=sys.stdout.buffer, timeout=3600)
 
@@ -293,7 +294,8 @@ class Remote:
             command = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15',
                        '-o', 'ServerAliveCountMax=3', self.route.removeprefix('ssh:'), shlex.join(command)]
         request = {**payload, 'action': action, 'bundle': bundle()}
-        with tempfile.TemporaryFile() as incoming:
+        # A full copy runs to many GB: spool it on disk, never in a /tmp tmpfs with a per-user quota or in RAM.
+        with tempfile.TemporaryFile(dir=str(pathlib.Path.home())) as incoming:
             incoming.write((json.dumps(request) + '\n').encode())
             if source:
                 with open(source, 'rb') as reader:
