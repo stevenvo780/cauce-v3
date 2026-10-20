@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -56,6 +57,9 @@ BROWSER_PLUGIN_TARGETS = (
     '/usr/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
     '/usr/local/lib/node_modules/openclaw/dist/extensions/browser/skills/browser-automation',
 )
+
+
+EXTERNAL_SYMLINK = 'external-symlink'
 
 
 class SensitiveContent(Failure):
@@ -208,7 +212,10 @@ def inventory(roots: dict[str, int]) -> tuple[list[dict], list[dict], dict]:
                                   'targetSha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
                 return
             if target.startswith('/') or not under(os.path.realpath(os.path.join(os.readlink(f'/proc/self/fd/{parent}'), target)), os.readlink(f'/proc/self/fd/{source}')):
-                raise Failure('a symlink leaves its source root')
+                # Never followed nor recreated: restoring it would point outside the destination space.
+                omissions.append({'path': path, 'reason': EXTERNAL_SYMLINK, 'kind': 'symlink',
+                                  'targetSha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
+                return
             entries.append({**entry, 'kind': 'symlink', 'target': target, 'sha256': hashlib.sha256(os.fsencode(target)).hexdigest()})
         elif stat.S_ISSOCK(info.st_mode):
             omissions.append({'path': path, 'reason': 'regenerable-socket', 'kind': 'socket'})
@@ -367,7 +374,7 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
                         pending.extendleft(reversed(linked['target'].split('/')))
     if any(root not in entries for root in roots):
         raise Failure('missing manifest root')
-    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'sensitive-content', 'regenerable', 'regenerable-socket', CHROME_VOLATILE_REASON, 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
+    if not isinstance(manifest.get('omissions'), list) or any(relative(item['path']).split('/')[0] not in roots or item['path'] in entries or item.get('reason') not in ('credential', 'sensitive-content', 'regenerable', 'regenerable-socket', CHROME_VOLATILE_REASON, EXTERNAL_SYMLINK, 'git-metadata', 'git-sensitive-history', 'git-state-not-exported', 'git-no-clean-refs', 'git-without-commits') for item in manifest['omissions']):
         raise Failure('invalid manifest omissions')
     if not legacy:
         for item in manifest['omissions']:
@@ -384,6 +391,11 @@ def validate(manifest: dict, args: argparse.Namespace) -> dict[str, dict]:
                     and path.split('/')[1:] == ['plugin-skills', 'browser-automation'] \
                     and item.get('targetSha256') in {hashlib.sha256(os.fsencode(target)).hexdigest() for target in BROWSER_PLUGIN_TARGETS} \
                     and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory':
+                continue
+            if item['reason'] == EXTERNAL_SYMLINK and item.get('kind') == 'symlink' \
+                    and re.fullmatch(r'[0-9a-f]{64}', str(item.get('targetSha256'))) is not None \
+                    and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory' \
+                    and not any(under(entry_path, path) for entry_path in entries):
                 continue
             if item['reason'] == 'git-sensitive-history' and fold_text(path.split('/')[-1]) == '.git' \
                     and entries.get(path.rsplit('/', 1)[0], {}).get('kind') == 'directory' \

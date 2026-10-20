@@ -7,6 +7,7 @@ import os
 import pathlib
 import socket
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest import mock
@@ -98,21 +99,23 @@ class InventoryTests(unittest.TestCase):
         reasons = {item['path']: (item['reason'], item.get('kind')) for item in omissions}
         self.assertEqual(reasons['muse/.config/google-chrome/SingletonSocket'], ('chrome-volatile', 'socket'))
 
-    def test_generic_symlink_leaving_tree_is_rejected_and_never_copied(self):
+    def test_generic_symlink_leaving_tree_is_omitted_and_never_copied(self):
         for name, target in (('escape-abs', str(self.outside)), ('escape-rel', '../fuera.txt')):
             with self.subTest(name=name):
                 other = self.root / name
                 write(other / 'keep.txt', 'benigno\n')
                 os.symlink(target, other / 'escape')
-                with self.assertRaisesRegex(integral.Failure, 'a symlink leaves its source root'):
-                    self.inventory(other, name='data')
+                entries, omissions, _ = self.inventory(other, name='data')
+                self.assertNotIn('data/escape', {entry['path'] for entry in entries})
+                self.assertIn({'path': 'data/escape', 'reason': 'external-symlink', 'kind': 'symlink',
+                               'targetSha256': hashlib.sha256(target.encode()).hexdigest()}, omissions)
 
     def test_singleton_name_outside_google_chrome_is_not_volatile(self):
         other = self.root / 'sin-chrome'
         write(other / 'keep.txt', 'benigno\n')
         os.symlink(str(self.outside), other / 'SingletonSocket')
-        with self.assertRaisesRegex(integral.Failure, 'a symlink leaves its source root'):
-            self.inventory(other, name='data')
+        _, omissions, _ = self.inventory(other, name='data')
+        self.assertEqual([item['reason'] for item in omissions if item['path'] == 'data/SingletonSocket'], ['external-symlink'])
         internal = self.root / 'interno'
         write(internal / 'keep.txt', 'benigno\n')
         os.symlink('keep.txt', internal / 'SingletonSocket')
@@ -189,16 +192,17 @@ class PackUnpackTests(unittest.TestCase):
         with self.assertRaisesRegex(integral.Failure, 'may omit only'):
             integral.validate(forged, argparse.Namespace(alias='hegel', empresa='Miguel'))
 
-    def test_pack_with_generic_external_symlink_fails_and_creates_no_archive(self):
+    def test_pack_with_generic_external_symlink_omits_it_and_stores_no_target(self):
         other = self.host_config / 'hegel-mal'
         write(other / 'keep.txt', 'benigno\n')
         os.symlink(str(self.outside), other / 'escape')
         args = self.pack_args(other)
         args.origen = [f'muse={other}']
         with mock.patch.object(integral, 'host_containers', return_value=self.containers):
-            with self.assertRaisesRegex(integral.Failure, 'a symlink leaves its source root'):
-                integral.pack(args)
-        self.assertFalse(self.archive.exists())
+            integral.pack(args)
+        with tarfile.open(self.archive) as archive:
+            self.assertFalse(any(member.issym() for member in archive.getmembers()))
+            self.assertNotIn(str(self.outside).encode(), b''.join(archive.extractfile(m).read() for m in archive.getmembers() if m.isfile()))
 
 
 if __name__ == '__main__':
