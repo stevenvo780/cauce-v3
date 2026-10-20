@@ -34,10 +34,11 @@ ops/scripts/build-adapter-release.sh "$stage/adapter" ${approvals:+"$approvals"}
 chmod -R u+w "$stage/adapter"
 find "$stage/adapter" \( -name .modules.yaml -o -path '*/node_modules/.bin' \) -prune -exec rm -rf {} +
 image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16)"
-# Without attestations and with a fixed creation time, cached rebuilds preserve the portable config digest pinned from docker save.
+# Without attestations, with a fixed creation time and layer file mtimes clamped to it (rewrite-timestamp), a rebuild
+# with a cold cache keeps the portable config digest pinned from docker save; otherwise npm/apt mtimes change every layer.
 docker build -q --provenance=false --build-context "musebridge=ops/container-runtime" \
   --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
-  -t "$image" ops/agent-runtime >/dev/null
+  --output "type=docker,rewrite-timestamp=true,name=$image" ops/agent-runtime >/dev/null
 agy_version=$(sed -n 's/^ARG AGY_VERSION=//p' ops/cuotas/Dockerfile)
 agy_sha=$(sed -n 's/^ARG AGY_X86_64_SHA256=//p' ops/cuotas/Dockerfile)
 agy_filename="agy-${agy_version}-linux-x86-64"
@@ -53,7 +54,8 @@ else
 fi
 quota_image="cauce-quota-runtime:$(sha256sum ops/cuotas/Dockerfile | cut -c1-16)-$(find "$work/agybin" -type f | wc -l)"
 docker build -q --provenance=false --build-context "agybin=$work/agybin" \
-  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/cuotas/Dockerfile)" -t "$quota_image" ops/cuotas >/dev/null
+  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/cuotas/Dockerfile)" \
+  --output "type=docker,rewrite-timestamp=true,name=$quota_image" ops/cuotas >/dev/null
 docker run --rm --network none -v "$stage/ops/container-runtime:/cauce/lifecycle:ro" --entrypoint python3 "$image" \
   /cauce/lifecycle/cauce-container-runtime.py bundle-digest /cauce/lifecycle >/dev/null
 # `codex` on PATH is a Node launcher; the provider login pins its argv[0] with O_NOFOLLOW, so the pin names the native binary.
