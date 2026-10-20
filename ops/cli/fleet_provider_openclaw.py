@@ -357,13 +357,14 @@ def authenticated_identity(packet: dict) -> str | None:
         if not model.startswith(driver['provider_id'] + '/'):
             return None
         # A cold Claude Code turn behind OpenClaw writes ~50k tokens of cache; 25 s left a valid login pending.
+        # Grok 4.7 behind OpenClaw answered this probe in 36-50 s and once over 120 s; 60 s rejected valid logins.
         expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
         args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
-                'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '55',
+                'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '110',
                 '--message', 'Responde únicamente ' + expected + '. No uses herramientas ni envíes mensajes.']
         if agent.get('reasoning_effort') is not None:
             args += ['--thinking', agent['reasoning_effort']]
-        reply = json.loads(command_output(args, packet, timeout=60))
+        reply = json.loads(command_output(args, packet, timeout=115))
         if not isinstance(reply, dict):
             return None
         result = reply.get('result', reply)
