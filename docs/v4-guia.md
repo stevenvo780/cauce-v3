@@ -39,6 +39,20 @@ Las ventanas, porcentajes disponibles y reinicios vienen del CLI del proveedor; 
 
 El saldo se consulta en **Mis cuotas**. **Cuentas** mantiene **Inventario** y **Asignaciones**, para administrar pagadores y ruteo; la antigua pestaña **Consumo** está retirada. Para mantener el CLI o retirar su contenedor, usa **Actualizar CLI** o **Eliminar entorno**. Si **Actualizar CLI** falla, el aviso nombra la operación y su causa; vuelve a intentarlo y, si se repite, el diario del ejecutor en ese ordenador trae el motivo. Eliminar una cuenta exige retirar antes sus entornos y asignaciones. Capacidades y límites: [cuotas](v4-cuotas.md).
 
+### Claude para un agente OpenClaw
+
+Un agente OpenClaw que usa Claude entra con el método `cli`: el login de Claude Code queda aislado por cuenta, dentro del perfil de esa cuenta, y OpenClaw lo ejecuta con su runtime `claude-cli` y ese mismo directorio de configuración. Cauce comprueba la identidad con `claude auth status`, que devuelve el correo de la cuenta. El método `setup-token` sigue disponible, pero no expone el correo: no puede demostrar la identidad.
+
+1. En la tarjeta de la cuenta, pulsa **Iniciar sesión**.
+2. Abre el enlace que muestra el terminal web y autoriza la cuenta en la página de Claude.
+3. Pega el código en el terminal y pulsa **Verificar conexión**.
+
+Cambiar de método reescribe solo el `openclaw.json` del agente, de forma atómica.
+
+### Quién puede hablar con un agente OpenClaw
+
+OpenClaw no tiene sesión humana aislada: un mensaje de la consola solo llega a su sesión canónica si quien lo escribe figura en la lista de humanos compartidos. Esa lista son los dueños y admins activos de la empresa del propio agente, nunca de otra empresa. Al añadir o quitar un admin la lista cambia y el contenedor del agente se recrea en la siguiente admisión. Los demás arneses (codex, claude, grok, muse) usan sesiones humanas aisladas y no dependen de esta lista.
+
 ## Compartir una cuenta entre agentes
 
 En la ficha del agente, abre **Registro → Cuentas de cuota**, elige la cuenta, pulsa **Previsualizar cuenta** y después **Guardar cuenta de cuota**. Puedes vincular la misma cuenta a varios agentes: comparten la suscripción y el saldo. La ficha y la oficina muestran sus datos; **Mis cuotas** permite seguirla incluso sin agentes. Una cuenta sin sesión verificada requiere primero **Iniciar sesión** en su tarjeta. Para cambiar la cuenta de ejecución, usa **Operar agente** y comprueba su autenticación.

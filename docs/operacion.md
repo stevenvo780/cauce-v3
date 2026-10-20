@@ -144,6 +144,10 @@ docker compose --env-file /etc/cauce-v3/prod.env -f <PREV_RELEASE>/deploy/compos
 ```
 Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por defecto (`cauce-v3-prod`); con otro proyecto cambian en consecuencia.
 
+### Imágenes reproducibles de agentes y cuotas
+
+`build-host-release.sh` construye las imágenes de agentes y de cuotas con `SOURCE_DATE_EPOCH` (fecha del último commit de su Dockerfile) y `rewrite-timestamp=true`, que ajusta las fechas de los ficheros de cada capa a ese valor. Con la caché fría, npm y apt dejaban fechas nuevas y cambiaba el digest. El almacén containerd rechaza `rewrite-timestamp` con `unpack`, así que cada imagen se exporta a un tar y se carga con `docker load`. Las mismas entradas dan el mismo digest: un despliegue sin cambios en esas imágenes no recrea contenedores ni vuelve a descargar la imagen en los hosts.
+
 ### Desplegar V4
 
 V4 ya está desplegado según `deploy/HISTORIAL.md`. Las actualizaciones usan `deploy/deploy.sh` con recibo de tres pasos, overlay de flota y paquete de ordenadores del mismo candidato. La configuración inicial de proxy, red, controlador y autoridad se conserva entre releases; no se deduce del árbol de trabajo.
@@ -433,6 +437,24 @@ done
 
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
 `role=platform_admin` para el administrador de plataforma y `role=company_owner`, `scope=company` para el dueño de la empresa.
+
+### Humanos de un agente OpenClaw de flota
+
+El gateway añade a cada fila OpenClaw del snapshot de flota los dueños y admins activos de la empresa del agente (`tenant:uuid`, hasta 32; nunca de otra empresa). `export-fleet-snapshot.py` los valida y los escribe en `sharedHumanIds` de `flota.json`; el ejecutor los publica como `CAUCE_SHARED_HUMAN_IDS` en el contenedor y los incluye en la prueba de entorno (`sdk_environment_proof`). La lista debe coincidir también cuando no se espera ninguna: si se retira al último admin la lista queda vacía y el contenedor con la lista vieja deja de ser admitido, así que se recrea. Para una sesión canónica de OpenClaw el adaptador anuncia `human_message_initiator_v1`; sin eso el gateway no envía el iniciador y la lista nunca casa. Los otros arneses usan sesiones humanas aisladas.
+
+### Detener e iniciar desde la web
+
+- Un adaptador nuevo que recibe `TAKEOVER_REJECTED` porque el arriendo de la instancia detenida sigue vigente reintenta con espera creciente hasta `lease_expires_at`, en lugar de salir. El gateway sigue admitiendo un solo dueño.
+- El `stop` previo a un `start` lleva la confianza de cuentas de la operación. Tras un despliegue la imagen cambia, el `stop` recrea el contenedor y resuelve el perfil del proveedor; sin esa confianza el arranque fallaba con `provider account has no current authorized durable binding`.
+
+### Cambiar la identidad de una cuenta de proveedor
+
+Cuando un dueño retira un correo y entra con otro, no se escribe el correo nuevo en `provider_accounts.external_account_id`. El camino admitido es:
+
+1. Restablecer `external_account_id` a `unverified:<account_id>`, con un evento de auditoría.
+2. Hacer un login verificado desde la consola (**Iniciar sesión** y **Verificar conexión**): la verificación enlaza la identidad nueva.
+
+Si se aplicó un parche en caliente a un release del host, reinicia el ejecutor del host: fija (pins) los ficheros medidos y, sin reinicio, los logins fallan con un desajuste de identidad engañoso.
 
 ## 3. Diagnóstico y recuperación de un adaptador caído
 

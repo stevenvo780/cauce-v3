@@ -156,11 +156,17 @@ vacíos, y `modes` como **array de cadenas**. Escribir `tenant` o `mode` en sing
 poner un nombre de usuario en lugar del correo repite el fallo de atribución ya documentado ahí:
 la sesión es válida y todos los destinos contestan `authorized:false`.
 
-**El comodín `"*"` sólo abre lo que se mira, nunca lo que se teclea.** Sigue siendo el único
-comodín y sólo en `operator`, pero ahora únicamente con `harness`, el modo de sólo lectura. Una
+**El comodín `"*"` en `operator` sólo abre lo que se mira, nunca lo que se teclea.** Sólo
+vale con `harness`, el modo de sólo lectura. Una
 fila `"*"` que lleve `shell` o `harness_rw` levanta `wildcard operator cannot hold a writable
 mode` y, como cualquier otro error de este fichero, deja el archivo ENTERO en `grants: []`: para
 escribir dentro del contenedor la fila tiene que **nombrar** al operador.
+
+**`alias: "*"` cubre todos los agentes de un tenant para un operador exacto.** Los agentes creados
+desde la consola no tienen fila propia en `grants.json` y su terminal salía «Sin autoridad»; una fila
+con `"alias":"*"` los cubre, también los creados después. Exige `tenant_id` y `operator` exactos: una
+fila con `operator` y `alias` ambos `"*"` levanta `wildcard operator cannot hold a wildcard alias` y
+deja el archivo entero en `grants: []`.
 
 **Un error tipográfico cierra la puerta a todos.** Cualquier excepción dentro de `parseGrants`
 deja el archivo ENTERO en `grants: []` y se registra una sola vez por minuto
@@ -237,6 +243,22 @@ rename atómico de §1.4. No reinicia el gateway ni toca el bus. Al terminar, el
 relay tiene que ver al agente conectado y la consola tiene que mostrar el alias
 en "PTY online" con los destinos sin presencia observada en "Conexión sin comprobar". Ese estado no
 confirma si el paquete está instalado.
+
+#### Contenedores de flota V4 de solo lectura
+
+Estos contenedores corren con raíz de solo lectura y sin capacidades: `/var/tmp` no se puede escribir y
+`docker cp` no llega a un tmpfs. Con `CONTAINER_RUNTIME_DIR=<directorio tmpfs>` en el `.env` del alias, el
+launcher publica el agente con `docker exec` y `tar` en `<dir>/cauce-pty-agent-<alias>`, el usuario runtime
+escribe su bundle (0400) en `<dir>/cauce-pty-<alias>` (sticky, `1733`) y el agente recibe ese directorio como
+`TMPDIR` para los PEM de TLS. La guarda exige que `CONTAINER_RUNTIME_DIR` sea un directorio `root:root` `0755`
+y no un enlace; si no, el launcher se niega a escribir. Sin la clave no cambia nada.
+
+Alta de un alias así (los pasos usados para `hades`, `zz-prueba-codex` y `gaia`):
+
+1. Declarar el alias en `ops/flota.json` con su contenedor V4 (placement `server2`) y regenerar los derivados con los scripts de `ops/scripts/`.
+2. Crear el `.env` del alias como en el [README del agente PTY](../ops/pty-agent/README.md), añadiendo `CONTAINER_RUNTIME_DIR`.
+3. Instalar la identidad del alias (§1.4) y arrancar el launcher; comprobar que el alias aparece en «PTY online».
+4. Añadir la fila de `grants.json` (Paso 4) o cubrirlo con `alias: "*"` del tenant.
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 

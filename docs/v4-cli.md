@@ -76,6 +76,8 @@ Este acceso necesita Node.js y el runtime Cauce con su dependencia `ws`. Reutili
 
 Sin una sesión guardada ni una configuración nominal explícita, sigue disponible el despacho anterior por inventario. La presencia de `CAUCE_CONSOLE_SESSION_FILE`, `CAUCE_GATEWAY_URL` o argumentos como `--session-file` selecciona el gateway; un fallo de autenticación en ese recorrido se devuelve al usuario. Los subcomandos existentes conservan su precedencia sobre los alias.
 
+El gateway concede el terminal si `grants.json` tiene una fila para el operador y el alias, o una fila `alias: "*"` del mismo tenant para ese operador exacto (ver [terminal-pty](terminal-pty.md)). Un operador `"*"` no puede usar el comodín de alias.
+
 ## Registro y operaciones de espacios
 
 ```sh
