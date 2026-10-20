@@ -212,11 +212,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Root only writes under CONTAINER_RUNTIME_DIR when the runtime user cannot plant entries there.
+runtime_dir_guard() {
+  printf '%s' "[ ! -L '${CONFIG[CONTAINER_RUNTIME_DIR]}' ] && [ \"\$(stat -c %u:%a -- '${CONFIG[CONTAINER_RUNTIME_DIR]}')\" = 0:755 ]"
+}
+
 publish_agent() {
   if [[ -n ${bundle_dir:-} ]]; then
     tar -C "$SCRIPT_ROOT" --exclude=__pycache__ --owner=0 --group=0 --numeric-owner -cf - cauce_pty_agent \
       | docker_control exec -i --user 0 "$container_id" sh -c \
-        "rm -rf -- '$agent_root' && mkdir -p -- '$agent_root' && tar -x --no-same-owner -C '$agent_root' && chmod -R a=rX '$agent_root'" \
+        "$(runtime_dir_guard) && rm -rf -- '$agent_root' && mkdir -m 0755 -- '$agent_root' && tar -x --no-same-owner -C '$agent_root' && chmod -R a=rX '$agent_root'" \
       || die 'cannot publish the PTY agent into the container runtime directory'
     return 0
   fi
@@ -730,7 +735,8 @@ PYTHON
   [[ -s $local_bundle ]] || die 'PTY bundle could not be assembled'
   if [[ -n ${bundle_dir:-} ]]; then
     # Sticky and not listable: only the runtime user creates (and replaces) its own 0400 bundle.
-    docker_control exec --user 0 "$container_id" sh -c "mkdir -p -- '$bundle_dir' && chmod 1733 '$bundle_dir'" \
+    # rm + mkdir without -p: a path planted between the two makes mkdir fail instead of being followed.
+    docker_control exec --user 0 "$container_id" sh -c "$(runtime_dir_guard) && rm -rf -- '$bundle_dir' && mkdir -m 1733 -- '$bundle_dir'" \
       || die 'cannot prepare the PTY bundle directory'
     docker_control exec -i --user "$runtime_uid:$runtime_gid" "$container_id" \
       sh -c "rm -f -- '$bundle_path' && umask 0377 && cat > '$bundle_path'" < "$local_bundle" \
