@@ -308,7 +308,14 @@ def pack(args: argparse.Namespace) -> dict:
                         raise Failure('a file changed while the archive was written')
                 finally:
                     os.close(reader)
-        if inventory(handles) != before:
+        after = inventory(handles)
+        if after != before:
+            changed = sorted({*(x['path'] for x in before[0]), *(x['path'] for x in after[0])} - {
+                x['path'] for x in before[0] if x in after[0]} | {p for p in {*before[2], *after[2]} if before[2].get(p) != after[2].get(p)})
+            # Paths only, root-owned and private, for the operator: the receipt redacts them.
+            descriptor = os.open('/run/cauce-copia-cambios.json', os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'w') as report:
+                json.dump({'changed': changed[:200], 'omissions_equal': before[1] == after[1]}, report)
             raise Failure('source inventory changed; the archive was rejected')
         for name, path in roots.items():
             current = directory(path)
