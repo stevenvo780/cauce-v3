@@ -71,6 +71,16 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
         with self.assertRaises(SafeFailure):
             self.environment('codex', {'sharedHumanIds': [self.ENTRY]})
 
+    def test_a_stale_shared_human_list_is_drift_even_when_none_is_expected(self):
+        from unittest import mock
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        expected = {'CAUCE_ROOM': 'grp.miguel'}
+        with mock.patch.object(runtime, 'sdk_environment', return_value=expected):
+            runtime.sdk_environment_proof({}, {}, dict(expected), False, 'op')
+            with self.assertRaises(runtime.NamespaceMismatch):
+                runtime.sdk_environment_proof({}, {}, {**expected, 'CAUCE_SHARED_HUMAN_IDS': self.ENTRY}, False, 'op')
+
 
 if __name__ == '__main__':
     unittest.main()

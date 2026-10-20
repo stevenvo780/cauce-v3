@@ -202,7 +202,9 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
 
 def sdk_environment_proof(policy: dict, agent: dict, observed: dict, bootstrap: bool, operation_id: str | None):
     expected = sdk_environment(policy, agent, bootstrap, operation_id)
-    if any(observed.get(key) != value for key, value in expected.items()):
+    # The shared human list must match even when it is absent: a removed admin cannot keep access
+    # through a container started with the previous list.
+    if any(observed.get(key) != expected.get(key) for key in {*expected, 'CAUCE_SHARED_HUMAN_IDS'}):
         raise NamespaceMismatch('running runtime has another SDK identity or transport')
 
 
