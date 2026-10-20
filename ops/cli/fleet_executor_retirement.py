@@ -47,7 +47,10 @@ def scoped_agents(policy: dict, context: dict) -> list[dict]:
                        and member.get('room_id') == target['room_id'] for member in members):
                 raise SafeFailure('placement has no membership in the fenced room')
         identities.add(identity)
-        agent = approve_agent(policy, row)
+        # Like target_agent: stopping a container whose image drifted recreates it and resolves the provider
+        # profile, which needs the durable account trust of this operation.
+        agent = approve_agent(policy, {**row, '_trusted_accounts': context.get('trusted_accounts', []),
+                                       '_trusted_accounts_present': 'trusted_accounts' in context})
         if context['request']['kind'] == 'purge':
             assert_purge_supported(agent)
         approved.append(agent)

@@ -23,8 +23,16 @@ class ScopedAgentsDraftTest(unittest.TestCase):
         placement = {'tenant_id': 'Steven', 'alias': 'drafted', 'runtime_key': 'drafted'}
         with mock.patch('fleet_executor_policy.target_agent', return_value=placement), \
                 mock.patch.object(retirement, 'approve_agent', side_effect=lambda _policy, row: row) as approve:
-            self.assertEqual(retirement.scoped_agents({}, context('create', [DRAFT])), [placement])
-        approve.assert_called_once_with({}, placement)
+            trusted = {**placement, '_trusted_accounts': [], '_trusted_accounts_present': False}
+            self.assertEqual(retirement.scoped_agents({}, context('create', [DRAFT])), [trusted])
+        approve.assert_called_once_with({}, trusted)
+
+    def test_previous_rows_carry_the_operation_account_trust(self):
+        row = {'tenant_id': 'Steven', 'alias': 'drafted', 'runtime_key': 'drafted', 'primary_account_id': 'acct'}
+        accounts = [{'id': 'acct', 'payer_tenant_id': 'Steven', 'shared_with_pool': False}]
+        with mock.patch.object(retirement, 'approve_agent', side_effect=lambda _policy, value: value):
+            (agent,) = retirement.scoped_agents({}, {**context('start', [row]), 'trusted_accounts': accounts})
+        self.assertEqual((agent['_trusted_accounts'], agent['_trusted_accounts_present']), (accounts, True))
 
     def test_other_kinds_still_approve_every_previous_agent(self):
         with mock.patch.object(retirement, 'approve_agent', side_effect=SafeFailure('no runtime')):
