@@ -262,7 +262,10 @@ export class AdapterClient {
           continue;
         }
         if (frame.type === 'takeover_rejected') {
-          throw new AdapterError('TAKEOVER_REJECTED', frame.reason, false);
+          // A stopped instance's lease outlives it until lease_expires_at; retry with backoff instead of
+          // exiting, so a restart right after a stop takes over once the old lease lapses. The gateway still
+          // admits a single owner.
+          throw new AdapterError('TAKEOVER_REJECTED', frame.reason, true);
         }
         if (!welcomed) throw new Error('Gateway sent traffic before hello_ack');
         await this.handleFrame(frame, generation, liveness);
