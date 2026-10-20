@@ -26,6 +26,9 @@ with tempfile.TemporaryDirectory(prefix='cauce-move-') as work:
 '''
 
 
+# A full copy of a large agent (Argos: 10 GB, 207 000 files) takes over an hour to unpack and hash on the destination.
+TRANSFER_SECONDS = 4 * 3600
+
 def filtered_stderr(raw):
     from v4_copia_migracion import fold_text, sensitive_bytes
     value = raw.decode('utf-8', 'replace')
@@ -151,7 +154,7 @@ def restore_container(request):
             '--security-opt', 'no-new-privileges', '--tmpfs', '/tmp:rw,nosuid,nodev,mode=1777',
             '--mount', 'type=volume,source=' + name + ',destination=/restore', '--env', 'TMPDIR=/restore',
             '--entrypoint', request.get('python', '/usr/bin/python3'), request['image'], '-I', '-B', '-c', BOOTSTRAP],
-            stdin=incoming, stdout=sys.stdout.buffer, timeout=3600)
+            stdin=incoming, stdout=sys.stdout.buffer, timeout=TRANSFER_SECONDS)
 
 
 def excluded_roots(request, scope, roots):
@@ -302,7 +305,7 @@ class Remote:
                     shutil.copyfileobj(reader, incoming)
             incoming.seek(0)
             result = subprocess.run(command, stdin=incoming, stdout=destination or subprocess.PIPE,
-                                    stderr=subprocess.PIPE, check=False, timeout=3600)
+                                    stderr=subprocess.PIPE, check=False, timeout=TRANSFER_SECONDS)
             if result.returncode:
                 raise RemoteFailure(action, result.returncode, result.stderr)
             return json.loads(result.stdout) if result.stdout else None
