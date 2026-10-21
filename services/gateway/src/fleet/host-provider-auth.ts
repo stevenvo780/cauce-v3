@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
-import { assertFleetOperationAuthority, loadFleetHostScope, lockFleetRevision, preparedState, providerAccountConsentSql, publicFleetOperation, withTransaction,
+import { assertFleetOperationAuthority, loadFleetHostScope, lockFleetRevision, lockPreparedFleetRevision, preparedState, providerAccountConsentSql, publicFleetOperation, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { assertProviderAuthSealedScope, createProviderAuthDependencies, resolveProviderAuthRequest,
@@ -155,7 +155,8 @@ async function operation(client: DatabaseClient, scope: ProviderAuthPhysicalScop
 async function activeExecution(client: DatabaseClient, scope: ProviderAuthPhysicalScope, snapshotQuery: string): Promise<FleetExecution> {
   await lockFleetRevision(client);
   const row = await operation(client, scope, true);
-  await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
+  if (row.desired_revision === null) await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
+  else await lockPreparedFleetRevision(client, row);
   await assertFleetOperationAuthority(client, row);
   // This computer logs in accounts only for operations of the company that owns it.
   if (!(await client.query(`SELECT 1 FROM fleet_hosts host JOIN fleet_operations operation ON operation.company_id=host.company_id

@@ -4,6 +4,7 @@ import { lockFleetRevision } from './fleet-operation-authority.js';
 import { FleetOperationClaims } from './fleet-operation-claims.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow, type FleetExecutionState } from './fleet-operation-contracts.js';
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
+import { fleetTargetSliceDigest, lockPreparedFleetRevision } from './fleet-operation-slice.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
@@ -77,10 +78,11 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   async prepare(claim: FleetOperationClaim): Promise<Omit<FleetExecutionState, 'request'>> {
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim);
-      await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
       if (row.desired_revision !== null) {
+        await lockPreparedFleetRevision(client, row);
         return { operation: publicFleetOperation(row), ...await preparedState(client, row.id) };
       }
+      await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
       const previous = await previousFleetAgents(client, row);
       const intent = await fleetMembershipIntent(client, row);
       const targets = await prepareFleetDesired(client, row, this.controllerHost, this.coordinatorEnabled, this.coordinatorHosts);
@@ -92,7 +94,8 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if (name !== 'prepare' && name !== 'fence') throw new FleetOperationError('conflict', 'operation has no durable preparation step');
       fleetStep(row, name).status = 'succeeded';
       const next = await saveFleetState(client, row, claim, 'step_completed', { step: name, fenced_targets: targets,
-        previous_agents: previous, desired_memberships: intent, host_slices: slices, prepared_revision: Number(row.desired_revision) });
+        previous_agents: previous, desired_memberships: intent, host_slices: slices, prepared_revision: Number(row.desired_revision),
+        target_slice_sha256: await fleetTargetSliceDigest(client, row, targets, previous) });
       return { operation: publicFleetOperation(next), fenced_targets: targets, previous_agents: previous, desired_memberships: intent };
     });
   }
@@ -222,8 +225,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
 
   private async current(client: DatabaseClient, claim: FleetOperationClaim): Promise<FleetOperationRow> {
     const row = await lockFleetClaim(client, claim);
-    if (row.desired_revision === null) throw new FleetOperationError('conflict', 'fleet operation has not been prepared');
-    await lockFleetRevision(client, Number(row.desired_revision), row.company_id);
+    await lockPreparedFleetRevision(client, row);
     return row;
   }
 }

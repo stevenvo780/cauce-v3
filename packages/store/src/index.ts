@@ -29,6 +29,7 @@ export * from './fleet-adoption.js';
 export * from './repository/fleet-operations.js';
 export * from './repository/fleet-hosts.js';
 export { lockFleetRevision } from './repository/fleet-operation-authority.js';
+export { lockPreparedFleetRevision } from './repository/fleet-operation-slice.js';
 export { providerAccountConsentSql } from './configuration/company-scope.js';
 export { hubStarRouteSql } from './repository/acl-edges.js';
 export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';

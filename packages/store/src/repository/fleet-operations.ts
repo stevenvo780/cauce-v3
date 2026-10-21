@@ -6,6 +6,7 @@ import { FleetOperationError, publicFleetOperation, type FleetOperationRow } fro
 import { FleetOperationExecution } from './fleet-operation-execution.js';
 import { assertFleetHumanAuthority, assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
 import { assertFleetSealedHostBarrier, loadFleetHostSlices } from './fleet-operation-hosts.js';
+import { lockPreparedFleetRevision } from './fleet-operation-slice.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
 
 export class FleetOperationsRepository extends FleetOperationExecution {
@@ -144,7 +145,8 @@ export class FleetOperationsRepository extends FleetOperationExecution {
             await assertFleetSealedHostBarrier(client, row, step.name, step.evidence ?? {});
           }
         } else await validateFleetTarget(client, row.request, this.options.controllerHost, row.desired_revision !== null, this.coordinatorEnabled, this.coordinatorHosts);
-        await lockFleetRevision(client, Number(row.desired_revision ?? row.expected_revision), row.company_id);
+        if (row.desired_revision === null) await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
+        else await lockPreparedFleetRevision(client, row);
         status = 'queued';
       } else status = row.status === 'queued' && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';
       const next = (await client.query<FleetOperationRow>(

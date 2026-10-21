@@ -108,6 +108,18 @@ async function finishRemoval(repo: Repository, claim: FleetOperationClaim): Prom
   }
   await repo.settle(claim);
 }
+const FOREIGN_REVISION = "INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary) VALUES('Steven','fleet_operator','{}','{}','foreign change')";
+async function waitForLogin(repo: Repository, name: string): Promise<FleetOperation> {
+  await pool.query("INSERT INTO fleet_hosts(host_id,display_name,company_id) SELECT $1,'Destino',company_id FROM tenants WHERE id='Steven'",
+    [`${name.replaceAll('_', '-')}-host`]);
+  const claim = await claimFor(repo, name); await repo.prepare(claim);
+  for (const [step, proof] of [['artifacts', { artifact_sha256: 'a'.repeat(64) }],
+    ['credentials', { certificate_fingerprint: 'b'.repeat(64) }], ['runtime', { runtime_digest: 'c'.repeat(64) }]] as [FleetStepName, FleetEvidence][]) {
+    await repo.startStep(claim, step); await repo.completeStep(claim, step, proof);
+  }
+  await repo.startStep(claim, 'authenticate');
+  return repo.awaitAuth(claim);
+}
 async function completeProof(repo: Repository, claim: FleetOperationClaim, name: FleetStepName, proof: FleetEvidence): Promise<void> {
   if (claim.request.target.resource === 'agent') { await repo.completeStep(claim, name, proof); return; }
   for (const slice of await repo.hostSlices(claim)) {
@@ -260,6 +272,31 @@ describe('durable fleet operations', () => {
     expect((await pool.query("SELECT 1 FROM agents WHERE alias='auth_wait'")).rowCount).toBe(1);
     await repo.startStep(next, 'authenticate'); await repo.completeStep(next, 'authenticate', { provider_verified: true });
   });
+  it('resumes a login wait and admits it after company writes that leave its targets untouched', async () => {
+    const repo = repository(); const waiting = await waitForLogin(repo, 'foreign_wait');
+    await pool.query("UPDATE agents SET display_name='Otro',max_concurrent_deliveries=7 WHERE alias='fleet_operator'");
+    await pool.query("INSERT INTO fleet_hosts(host_id,display_name,company_id) SELECT 'other-host','Otro',company_id FROM tenants WHERE id='Steven'");
+    await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
+      VALUES('other-account','codex','other-test-account','Steven','env_path','CAUCE_OTHER_TEST_ACCOUNT_PATH',true)`);
+    await pool.query(FOREIGN_REVISION);
+    await repo.resume('Steven', 'fleet_operator', waiting.id, waiting.version);
+    const next = await repo.claim('foreign-worker', 'foreign-wait-host'); if (!next) throw new Error('claim absent');
+    expect((await repo.prepare(next)).operation.desired_revision).toBe(1);
+    await pool.query(FOREIGN_REVISION);
+    await verifyCreation(repo, next);
+    expect((await repo.settle(next)).status).toBe('succeeded');
+  });
+  it.each([
+    ['its agent', "UPDATE agents SET max_concurrent_deliveries=7 WHERE alias='touched_wait'"],
+    ['its membership', "UPDATE memberships SET role='operator' WHERE alias='touched_wait'"],
+    ['its provider account', "UPDATE provider_accounts SET label='Otra' WHERE id='fleet-test-account'"],
+    ['its destination host', "UPDATE fleet_hosts SET enabled=false WHERE host_id='touched-wait-host'"],
+  ])('refuses to resume a login wait after a write to %s', async (_label, write) => {
+    const repo = repository(); const waiting = await waitForLogin(repo, 'touched_wait');
+    await pool.query(write); await pool.query(FOREIGN_REVISION);
+    await expect(repo.resume('Steven', 'fleet_operator', waiting.id, waiting.version)).rejects.toMatchObject({ code: 'conflict' });
+    expect((await repo.get('Steven', 'fleet_operator', waiting.id)).status).toBe('awaiting_auth');
+  });
   it('releases an expired cohort so another host can claim independent queued work', async () => {
     const repo = repository(); const old = await claimFor(repo, 'expired_cohort');
     await repo.enqueue('Steven', 'fleet_operator', create('second_cohort', 'second-host'));
@@ -401,9 +438,9 @@ describe('durable fleet operations', () => {
     expect((await repo.get('Steven', 'fleet_operator', next.operation.id)).version).toBe(before);
     await expect(repo.completeStep(next, 'artifacts', { artifact_sha256: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'conflict' });
   });
-  it('rejects an intervening configuration change before admission and keeps desired routing disabled', async () => {
+  it('rejects an intervening change of its agent before admission and keeps desired routing disabled', async () => {
     const repo = repository(); const claim = await claimFor(repo, 'revision_race'); await repo.prepare(claim); await verifyCreation(repo, claim);
-    await pool.query("INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary) VALUES('Steven','fleet_operator','{}','{}','new operator change')");
+    await pool.query("UPDATE agents SET max_concurrent_deliveries=7 WHERE alias='revision_race'"); await pool.query(FOREIGN_REVISION);
     await expect(repo.settle(claim)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE alias='revision_race'")).rows[0]?.enabled).toBe(false);
   });
