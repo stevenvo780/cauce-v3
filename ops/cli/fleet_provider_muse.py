@@ -74,19 +74,17 @@ def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
             *(['--reasoning-effort', agent['reasoning_effort']] if agent.get('reasoning_effort') is not None else [])]
 
 
-def fallback_arguments(model: str, effort: str | None, session_id: str | None, workspace: str) -> list[str]:
-    """One text-only fallback turn for `muse-cauce`, which adds the prompt file itself.
+def fallback_arguments(model: str, effort: str | None, workspace: str) -> list[str]:
+    """One fresh text-only fallback turn for `muse-cauce`, which adds the prompt file itself.
 
-    A single model step means no tool result ever reaches the answer, whatever tools Muse still registers; the
-    workspace is the bridge's own empty directory. Sessions persist so the bridge can resume the ones it created.
+    Muse's read tool reaches outside `--workspace` and a retained session would keep its result for a later turn:
+    a single model step, no retained log and never `--session-id` (Muse refuses it without retained logging).
     """
     from fleet_policy_paths import path
-    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None or effort is not None and effort not in EFFORTS \
-            or session_id is not None and str(uuid.UUID(session_id)) != session_id:
-        raise ValueError('Muse fallback model, reasoning effort or session is not supported')
-    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--max-model-steps', '1',
-            '--workspace', str(path(workspace)), '--model', model,
-            *(['--reasoning-effort', effort] if effort is not None else []), *(['--session-id', session_id] if session_id is not None else [])]
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None or effort is not None and effort not in EFFORTS:
+        raise ValueError('Muse fallback model or reasoning effort is not supported')
+    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--no-session-log', '--max-model-steps', '1',
+            '--workspace', str(path(workspace)), '--model', model, *(['--reasoning-effort', effort] if effort is not None else [])]
 
 
 def authentication_supported() -> bool:

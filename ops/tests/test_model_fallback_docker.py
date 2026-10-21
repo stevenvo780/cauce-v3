@@ -21,7 +21,7 @@ FAKE_MUSE_CAUCE = '''#!/usr/local/bin/python3
 import json, sys
 args = sys.argv[1:]
 prompt = sys.stdin.read()
-session = args[args.index('--session-id') + 1] if '--session-id' in args else 'SESSION'
+session = 'SESSION'
 def out(payload):
     print(json.dumps({'schema_version': 1, 'stream': {'kind': 'session', 'id': session}, 'payload': payload}), flush=True)
 run = {'command_id': 'TURN', 'run_stream': {'kind': 'run', 'id': 'TURN'}}
@@ -82,14 +82,16 @@ class ModelFallbackDockerTest(unittest.TestCase):
                          {'Type': 'volume', 'Name': self.volume, 'RW': False})
         code, records = self.ask('1000:1000', '--reasoning-effort', 'high')
         self.assertEqual(code, 0, records)
-        self.assertEqual(records[0], {'type': 'system', 'session_id': SESSION})
         self.assertTrue(records[-1]['result'].startswith('Muse: hola exec --json --provider meta'))
-        self.assertIn('--max-model-steps 1', records[-1]['result'])
-        code, records = self.ask('1000:1000', '--session-id', SESSION)
-        self.assertEqual((code, records[-1]['type']), (0, 'result'))
+        self.assertIn('--no-session-log --max-model-steps 1', records[-1]['result'])
+        self.assertNotIn('--session-id', records[-1]['result'])
         self.assertEqual(self.ask('1001:1001'), (1, [{'type': 'error', 'code': 'MUSE_BRIDGE_UNAVAILABLE',
                                                        'error': 'Muse fallback bridge is unavailable'}]))
         self.assertNotEqual(docker('exec', '-u', '1000:1000', self.client, 'touch', '/cauce/model-fallback/planted', check=False).returncode, 0)
+        docker('exec', '-u', '1000:1000', self.server, 'ln', '-s', '/cauce/model-fallback/muse.sock', '/cauce/model-fallback/planted.sock')
+        planted = docker('exec', '-i', '-u', '1000:1000', self.client, 'python3', '-I', '-B', '/cauce/executor/model_fallback.py', 'client',
+                         '--socket', '/cauce/model-fallback/planted.sock', check=False, input_data=b'hola')
+        self.assertEqual(json.loads(planted.stdout)['code'], 'MUSE_BRIDGE_UNAVAILABLE')
         listing = docker('exec', '-u', '0', self.server, 'stat', '-c', '%a %u %n', '/cauce/model-fallback', '/cauce/model-fallback/muse.sock')
         self.assertEqual(listing.stdout.decode().split('\n')[:2], ['700 1000 /cauce/model-fallback', '600 1000 /cauce/model-fallback/muse.sock'])
 

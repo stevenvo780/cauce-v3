@@ -174,8 +174,8 @@ class OpenClawProviderTest(unittest.TestCase):
             'cliBackends': {'muse-cli': {'command': '/usr/bin/python3', 'output': 'jsonl', 'input': 'stdin',
                 'args': ['-I', '-B', '/cauce/executor/model_fallback.py', 'client', '--socket', '/cauce/model-fallback/muse.sock',
                          '--reasoning-effort', 'high'],
-                'sessionArg': '--session-id', 'sessionMode': 'existing', 'sessionIdFields': ['session_id'],
-                'systemPromptArg': '--system-prompt', 'systemPromptMode': 'append', 'systemPromptWhen': 'always', 'serialize': True}}})
+                'sessionMode': 'none', 'systemPromptFileArg': '--system-prompt-file', 'systemPromptMode': 'append',
+                'systemPromptWhen': 'always', 'serialize': True}}})
         self.assertEqual(driver.read_config(self.binding, paired), written)
         with self.assertRaises(ValueError):
             driver.read_config(self.binding, self.agent)

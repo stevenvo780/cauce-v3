@@ -19,6 +19,7 @@ BACKEND = 'muse-cli'
 VOLUME_KIND = 'model-fallback'
 ROLES = {'openclaw': 'client', 'muse': 'server'}
 SERVER_EXTENSIONS = {'model_fallback', 'resources'}
+CLIENT_FORBIDDEN = {'docker', 'full_control'}
 ALIAS = re.compile(r'[a-z][a-z0-9_-]{0,63}')
 TENANT = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}')
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}')
@@ -54,9 +55,13 @@ def pairing(agent: dict) -> dict | None:
     if not isinstance(tenant, str) or TENANT.fullmatch(tenant) is None or not isinstance(alias, str) or ALIAS.fullmatch(alias) is None:
         raise SafeFailure('model fallback requires the exact agent identity')
     server = agent['harness_id'] == 'muse'
+    kinds = {row.get('type') for row in agent.get('extensions') or [] if isinstance(row, dict)}
     # Anything a single model step could still trigger (MCP, tools, SSH, Docker, browser, host mounts) stays off the server.
-    if server and {row.get('type') for row in agent.get('extensions') or [] if isinstance(row, dict)} - SERVER_EXTENSIONS:
+    if server and kinds - SERVER_EXTENSIONS:
         raise SafeFailure('a model fallback server only admits the resources extension beside it')
+    # Docker on the same daemon (or full control) would let the client mount the server's profile volume.
+    if not server and kinds & CLIENT_FORBIDDEN:
+        raise SafeFailure('a model fallback client cannot also hold docker or full_control')
     client, served_by = (row['agent'], alias) if server else (alias, row['agent'])
     digest = hashlib.sha256('\0'.join((tenant, client, served_by)).encode()).hexdigest()
     return {'server': server, 'model': row['model'], 'client': client, 'server_alias': served_by,
@@ -82,7 +87,7 @@ def client_arguments(agent: dict) -> list[str]:
 
 
 def openclaw_backend(agent: dict) -> dict:
-    """The measured muse-cli contract: prompt on stdin, `--system-prompt`, `--session-id`, JSONL out, one turn at a time."""
-    return {'command': CLIENT_PYTHON, 'args': client_arguments(agent), 'output': 'jsonl', 'input': 'stdin',
-            'sessionArg': '--session-id', 'sessionMode': 'existing', 'sessionIdFields': ['session_id'],
-            'systemPromptArg': '--system-prompt', 'systemPromptMode': 'append', 'systemPromptWhen': 'always', 'serialize': True}
+    """Prompt on stdin, system prompt in a file (never argv), JSONL out, one turn at a time and never a CLI session:
+    each fallback turn is fresh and OpenClaw keeps the conversation."""
+    return {'command': CLIENT_PYTHON, 'args': client_arguments(agent), 'output': 'jsonl', 'input': 'stdin', 'sessionMode': 'none',
+            'systemPromptFileArg': '--system-prompt-file', 'systemPromptMode': 'append', 'systemPromptWhen': 'always', 'serialize': True}

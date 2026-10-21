@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Single-purpose Unix-socket bridge between an OpenClaw `muse-cli` backend and an isolated Muse agent.
 
-`client` runs in the OpenClaw container under the muse-cli-backend contract (prompt on stdin, `--system-prompt`,
-`--session-id`, JSONL on stdout) and only forwards over the socket: no Muse binary, profile or credential there.
-`serve` runs as a child of the paired Muse adapter, with that agent's own profile, and executes one bounded turn
-per request with the safe Muse flags; the client cannot pass argv, only the fixed request fields.
+`client` runs in the OpenClaw container as its `muse-cli` backend (prompt on stdin, `--system-prompt-file`, JSONL on
+stdout) and only forwards over the socket: no Muse binary, profile or credential there. `serve` runs as a child of
+the paired Muse adapter, with that agent's own profile, and executes one fresh text-only turn per request with the
+safe Muse flags; the client cannot pass argv, only the fixed request fields.
+
+Muse's read tool reaches files outside `--workspace` even with write, shell and web disabled, and a retained
+session keeps a tool result for the next turn. So no turn ever retains or resumes a session, and a turn that shows
+any tool activity fails without forwarding anything but the error.
 """
 from __future__ import annotations
 
@@ -35,11 +39,10 @@ CONNECT_SECONDS = 10.0
 REQUEST_SECONDS = 30.0
 MAX_PROMPT_BYTES = 16 * 1024 * 1024
 MAX_SYSTEM_PROMPT_BYTES = 512 * 1024
-MAX_HEADER_BYTES = 4 * 1024 * 1024
+MAX_HEADER_BYTES = 600 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 MAX_STREAM_BYTES = 64 * 1024 * 1024
-MAX_SESSIONS = 1024
 FRAME_NONCE_BYTES = 16
 FRAME_NONCE_ATTEMPTS = 8
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}')
@@ -55,7 +58,8 @@ ERROR_MESSAGES = {
     'MUSE_OUTPUT_INVALID': 'Muse CLI returned invalid output',
     'MUSE_OUTPUT_LIMIT': 'Muse CLI output exceeded the bounded limit',
     'MUSE_SESSION_INVALID': 'Muse CLI did not provide a valid session identity',
-    'MUSE_SESSION_CHANGED': 'Muse CLI changed the requested session identity',
+    'MUSE_SESSION_CHANGED': 'Muse CLI changed the session identity',
+    'MUSE_TOOL_REFUSED': 'Muse CLI used a tool, which the fallback bridge never forwards',
     'MUSE_RUN_CHANGED': 'Muse CLI returned inconsistent run identity',
     'MUSE_TERMINAL_FAILED': 'Muse CLI reported a failed or interrupted turn',
     'MUSE_RESULT_INCOMPLETE': 'Muse CLI did not confirm a complete result',
@@ -91,9 +95,16 @@ def session_uuid(value) -> str:
     return canonical
 
 
+def tool_activity(event: dict, payload: dict) -> bool:
+    """Any tool call, tool result or task output chunk (where Muse echoes what a tool read)."""
+    kind, payload_type = payload.get('kind'), event.get('payload_type')
+    return isinstance(payload_type, str) and (payload_type.startswith('tool.') or payload_type == 'task.lifecycle.output') \
+        or isinstance(kind, str) and 'tool' in kind \
+        or kind == 'task_lifecycle' and isinstance(payload.get('event'), dict) and payload['event'].get('kind') == 'output'
+
+
 @dataclass
 class RunState:
-    requested_session: str | None
     emit: Callable[[dict], None]
     session_id: str | None = None
     accepted_turn_id: str | None = None
@@ -114,13 +125,12 @@ class RunState:
         if not isinstance(stream.get('id'), str):
             raise BackendError('MUSE_SESSION_INVALID')
         identity = session_uuid(stream['id'])
-        if self.session_id is not None and identity != self.session_id \
-                or self.requested_session is not None and identity != self.requested_session:
+        if self.session_id is not None and identity != self.session_id:
             raise BackendError('MUSE_SESSION_CHANGED')
-        if self.session_id is None:
-            self.session_id = identity
-            self.emit({'type': 'system', 'session_id': identity})
+        self.session_id = identity
         payload = event.get('payload')
+        if tool_activity(event, payload if isinstance(payload, dict) else {}):
+            raise BackendError('MUSE_TOOL_REFUSED')
         if not isinstance(payload, dict):
             return
         kind = payload.get('kind')
@@ -180,8 +190,7 @@ class RunState:
             raise BackendError('MUSE_SESSION_INVALID')
         if self.accepted_turn_id is None or self.run_id is None or self.completed_text is None or not self.completed_text.strip():
             raise BackendError('MUSE_RESULT_INCOMPLETE')
-        return {'type': 'result', 'result': self.completed_text, 'session_id': self.session_id,
-                'item': {'type': 'assistant_message', 'text': self.completed_text}}
+        return {'type': 'result', 'result': self.completed_text, 'item': {'type': 'assistant_message', 'text': self.completed_text}}
 
 
 def frame_prompt(prompt: str, system_prompt: str | None, nonce_factory: Callable[[int], str] = secrets.token_hex) -> str:
@@ -208,7 +217,7 @@ def validate_request(header: object, prompt: bytes) -> dict:
     from fleet_provider_muse import EFFORTS
     if not isinstance(header, dict) or header.get('v') != PROTOCOL:
         raise BackendError('MUSE_INPUT_INVALID')
-    system_prompt, session_id, effort = header.get('system_prompt'), header.get('session_id'), header.get('reasoning_effort')
+    system_prompt, effort = header.get('system_prompt'), header.get('reasoning_effort')
     if system_prompt is not None and (not isinstance(system_prompt, str) or len(system_prompt.encode('utf-8')) > MAX_SYSTEM_PROMPT_BYTES) \
             or effort is not None and (not isinstance(effort, str) or effort not in EFFORTS):
         raise BackendError('MUSE_INPUT_INVALID')
@@ -219,7 +228,7 @@ def validate_request(header: object, prompt: bytes) -> dict:
     if not text.strip():
         raise BackendError('MUSE_INPUT_INVALID')
     return {'prompt': text, 'system_prompt': system_prompt or None,
-            'session_id': None if session_id is None else session_uuid(session_id), 'reasoning_effort': effort}
+            'reasoning_effort': effort}
 
 
 def muse_environment() -> dict:
@@ -254,17 +263,13 @@ def private_directory(path: str) -> str:
 
 
 class Bridge:
-    """The bridge's own state beside the Muse profile: an empty workspace and the sessions it created.
-
-    Only those sessions can be resumed through the socket, never the Muse agent's own conversations.
-    """
+    """The bridge's own empty workspace beside the Muse profile: never chosen by a request."""
 
     def __init__(self, root: str) -> None:
         if not os.path.isabs(root) or os.path.normpath(root) != root:
             raise BackendError('MUSE_EXECUTION_FAILED')
         self.root = private_directory(root)
         self.workspace = private_directory(os.path.join(root, 'workspace'))
-        self.registry = os.path.join(root, 'sessions.json')
 
     @classmethod
     def beside_profile(cls) -> Bridge:
@@ -273,47 +278,16 @@ class Bridge:
             raise BackendError('MUSE_EXECUTION_FAILED')
         return cls(os.path.join(os.path.dirname(data), 'model-fallback'))
 
-    def sessions(self) -> list[str]:
-        try:
-            descriptor = os.open(self.registry, os.O_RDONLY | os.O_NOFOLLOW)
-        except FileNotFoundError:
-            return []
-        with os.fdopen(descriptor, 'rb') as stream:
-            details = os.fstat(stream.fileno())
-            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid() or details.st_mode & 0o077:
-                raise BackendError('MUSE_EXECUTION_FAILED')
-            rows = json.loads(stream.read(MAX_SESSIONS * 64 + 1024))
-        if not isinstance(rows, list) or any(not isinstance(row, str) for row in rows):
-            raise BackendError('MUSE_EXECUTION_FAILED')
-        return rows
-
-    def remember(self, session_id: str) -> None:
-        rows = [row for row in self.sessions() if row != session_id][-(MAX_SESSIONS - 1):] + [session_id]
-        staged = self.registry + '.new'
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(staged)
-        descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(descriptor, 'w') as stream:
-            json.dump(rows, stream)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(staged, self.registry)
-
-    def admit(self, session_id: str | None) -> None:
-        if session_id is not None and session_id not in self.sessions():
-            raise BackendError('MUSE_SESSION_INVALID')
-
 
 def run_turn(request: dict, model: str, emit: Callable[[dict], None], cancelled: threading.Event, *,
              command: Sequence[str], bridge: Bridge, timeout_seconds: float = TIMEOUT_SECONDS,
              kill_grace_seconds: float = KILL_GRACE_SECONDS) -> dict:
     from fleet_provider_muse import fallback_arguments
-    bridge.admit(request['session_id'])
     encoded = frame_prompt(request['prompt'], request['system_prompt']).encode('utf-8')
-    state = RunState(request['session_id'], emit)
+    state = RunState(emit)
     deadline = time.monotonic() + timeout_seconds
     workspace = bridge.workspace
-    arguments = fallback_arguments(model, request['reasoning_effort'], request['session_id'], workspace)
+    arguments = fallback_arguments(model, request['reasoning_effort'], workspace)
     if cancelled.is_set():
         raise BackendError('MUSE_CANCELLED')
     try:
@@ -335,9 +309,7 @@ def run_turn(request: dict, model: str, emit: Callable[[dict], None], cancelled:
             raise BackendError('MUSE_CANCELLED')
         if process.returncode != 0:
             raise BackendError('MUSE_PROCESS_FAILED')
-        result = state.result()
-        bridge.remember(result['session_id'])
-        return result
+        return state.result()
     finally:
         kill_group(process, signal.SIGTERM)
         try:
@@ -437,7 +409,7 @@ def read_request(connection: socket.socket) -> dict:
     pending = bytearray()
     try:
         header = json.loads(receive_line(connection, MAX_HEADER_BYTES, deadline, pending))
-    except (ValueError, UnicodeDecodeError) as error:
+    except (ValueError, UnicodeDecodeError, RecursionError) as error:
         raise BackendError('MUSE_INPUT_INVALID') from error
     size = header.get('prompt_bytes') if isinstance(header, dict) else None
     if type(size) is not int or not 1 <= size <= MAX_PROMPT_BYTES or len(pending) > size:
@@ -491,7 +463,7 @@ def handle(connection: socket.socket, model: str, command: Sequence[str], stop: 
     except BackendError as error:
         with contextlib.suppress(BackendError):
             emit(error_record(error.code))
-    except (OSError, ValueError):
+    except Exception:
         with contextlib.suppress(BackendError):
             emit(error_record('MUSE_EXECUTION_FAILED'))
     finally:
@@ -542,8 +514,13 @@ def serve(path: str, model: str, *, command: Sequence[str], stop: threading.Even
             ready_sockets, _, _ = select.select([server], [], [], 0.5)
             if not ready_sockets:
                 continue
-            connection, _ = server.accept()
-            handle(connection, model, command, stop, bridge, timeout_seconds)
+            try:
+                connection, _ = server.accept()
+            except OSError:
+                continue
+            # One request never takes the server down; handle already answers what it can.
+            with contextlib.suppress(Exception):
+                handle(connection, model, command, stop, bridge, timeout_seconds)
     finally:
         server.close()
         with contextlib.suppress(OSError):
@@ -612,7 +589,7 @@ def relay(connection: socket.socket, cancelled: threading.Event, deadline: float
                 record = json.loads(line)
             except (ValueError, UnicodeDecodeError) as error:
                 raise BackendError('MUSE_BRIDGE_INVALID') from error
-            if not isinstance(record, dict) or record.get('type') not in {'system', 'progress', 'result', 'error'} or last is not None:
+            if not isinstance(record, dict) or record.get('type') not in {'progress', 'result', 'error'} or last is not None:
                 raise BackendError('MUSE_BRIDGE_INVALID')
             sys.stdout.write(json.dumps(record, ensure_ascii=False) + '\n')
             sys.stdout.flush()
@@ -620,6 +597,48 @@ def relay(connection: socket.socket, cancelled: threading.Event, deadline: float
                 last = record
         if len(pending) > MAX_RECORD_BYTES + 4096:
             raise BackendError('MUSE_OUTPUT_LIMIT')
+
+
+def read_system_prompt(path: str) -> str:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise BackendError('MUSE_INPUT_INVALID') from error
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise BackendError('MUSE_INPUT_INVALID')
+    with os.fdopen(descriptor, 'rb') as stream:
+        body = stream.read(MAX_SYSTEM_PROMPT_BYTES + 1)
+    if len(body) > MAX_SYSTEM_PROMPT_BYTES:
+        raise BackendError('MUSE_INPUT_INVALID')
+    try:
+        return body.decode('utf-8')
+    except UnicodeDecodeError as error:
+        raise BackendError('MUSE_INPUT_INVALID') from error
+
+
+def connect(path: str) -> socket.socket:
+    """Only this user's own socket at that exact path: a planted link never redirects the prompt elsewhere."""
+    try:
+        descriptor = os.open(path, os.O_PATH | os.O_NOFOLLOW)
+    except OSError as error:
+        raise BackendError('MUSE_BRIDGE_UNAVAILABLE') from error
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISSOCK(details.st_mode) or details.st_uid != os.geteuid():
+            raise BackendError('MUSE_BRIDGE_UNAVAILABLE')
+        connection.settimeout(CONNECT_SECONDS)
+        connection.connect(f'/proc/self/fd/{descriptor}')
+    except OSError as error:
+        connection.close()
+        raise BackendError('MUSE_BRIDGE_UNAVAILABLE') from error
+    except BaseException:
+        connection.close()
+        raise
+    finally:
+        os.close(descriptor)
+    return connection
 
 
 def client_main(argv: Sequence[str]) -> int:
@@ -631,19 +650,16 @@ def client_main(argv: Sequence[str]) -> int:
         parser = ArgumentParser(prog='model_fallback.py client')
         parser.add_argument('--socket', required=True)
         parser.add_argument('--reasoning-effort')
-        parser.add_argument('--system-prompt')
-        parser.add_argument('--session-id')
+        parser.add_argument('--system-prompt-file')
         options = parser.parse_args(argv)
+        system_prompt = read_system_prompt(options.system_prompt_file) if options.system_prompt_file else None
         prompt = read_stdin(cancelled, deadline)
-        header = {'v': PROTOCOL, 'prompt_bytes': len(prompt), 'system_prompt': options.system_prompt,
-                  'session_id': options.session_id, 'reasoning_effort': options.reasoning_effort}
+        header = {'v': PROTOCOL, 'prompt_bytes': len(prompt), 'system_prompt': system_prompt, 'reasoning_effort': options.reasoning_effort}
         if not prompt:
             raise BackendError('MUSE_INPUT_INVALID')
-        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection = connect(options.socket)
         try:
             try:
-                connection.settimeout(CONNECT_SECONDS)
-                connection.connect(options.socket)
                 connection.sendall(json.dumps(header, ensure_ascii=False).encode('utf-8') + b'\n' + prompt)
             except OSError as error:
                 raise BackendError('MUSE_BRIDGE_UNAVAILABLE') from error
