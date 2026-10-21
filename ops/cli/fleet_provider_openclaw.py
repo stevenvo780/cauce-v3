@@ -157,17 +157,32 @@ def read_config(binding: dict, agent: dict, runtime: bool = True) -> dict:
             or any(rows[0].get(key) != value for key, value in entry.items()) or not isinstance(auth, dict) \
             or auth.get('order') != {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}:
         raise ValueError('OpenClaw configuration is outside the exact account and agent scope')
-    if runtime and agents.get('defaults') != runtime_defaults(binding, agent, env):
+    if runtime and (agents.get('defaults') != runtime_defaults(binding, agent, env) or ('model' in rows[0]) != (agent_model(agent) is not None)):
         raise ValueError('OpenClaw configuration runtime differs from the approved login method')
     return config
 
 
 def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict | None:
+    from fleet_model_fallback import BACKEND, openclaw_backend, pairing
     driver = binding['openclaw']
-    if not claude_cli(driver):
+    defaults = {'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
+                'cliBackends': {'claude-cli': {'command': driver['claude_command'], 'env': {'CLAUDE_CONFIG_DIR': env['CLAUDE_CONFIG_DIR']}}}} \
+        if claude_cli(driver) else {}
+    paired = pairing(agent)
+    if paired is not None:
+        if paired['server']:
+            raise ValueError('OpenClaw can only be the client of a model fallback')
+        # An agent's own model is strict in OpenClaw 2026.7.1-2: the chain lives on the configured default only.
+        defaults['model'] = {'primary': canonical_model(agent.get('model_id')), 'fallbacks': [BACKEND + '/' + paired['model']]}
+        defaults.setdefault('cliBackends', {})[BACKEND] = openclaw_backend(agent)
+    return defaults or None
+
+
+def agent_model(agent: dict) -> str | None:
+    from fleet_model_fallback import pairing
+    if agent.get('model_id') is None or pairing(agent) is not None:
         return None
-    return {'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
-            'cliBackends': {'claude-cli': {'command': driver['claude_command'], 'env': {'CLAUDE_CONFIG_DIR': env['CLAUDE_CONFIG_DIR']}}}}
+    return canonical_model(agent['model_id'])
 
 
 def prepare(binding: dict, agent: dict) -> None:
@@ -183,8 +198,9 @@ def prepare(binding: dict, agent: dict) -> None:
             target = os.open('openclaw.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
         except FileExistsError:
             config = read_config(binding, agent, runtime=False)
-            if config['agents'].get('defaults') != runtime_defaults(binding, agent, env):
-                # Switching the login method (setup-token <-> cli) rewrites only this Cauce-owned file, atomically.
+            if config['agents'].get('defaults') != runtime_defaults(binding, agent, env) \
+                    or ('model' in config['agents']['list'][0]) != (agent_model(agent) is not None):
+                # Switching the login method (setup-token <-> cli) or the model fallback rewrites only this Cauce-owned file, atomically.
                 staged = 'openclaw.json.cauce-new'
                 try:
                     os.unlink(staged, dir_fd=descriptor)
@@ -209,7 +225,7 @@ def prepare_temporary(root: pathlib.Path) -> None:
 
 def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
     try:
-        model = canonical_model(agent['model_id']) if agent.get('model_id') is not None else None
+        model = agent_model(agent)
         config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
                                       'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
                   'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}

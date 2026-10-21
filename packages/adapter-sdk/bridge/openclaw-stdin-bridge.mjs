@@ -106,12 +106,27 @@ function watchProgress(home, sessionKey, emit) {
   return () => { clearInterval(timer); };
 }
 
-function gatewayPort() {
+function openClawConfig() {
   const path = process.env.OPENCLAW_CONFIG_PATH ?? join(process.env.HOME ?? "", ".openclaw", "openclaw.json");
-  try {
-    const port = JSON.parse(readFileSync(path, "utf8"))?.gateway?.port;
-    return Number.isSafeInteger(port) && port > 0 ? port : 18789;
-  } catch { return 18789; }
+  try { return JSON.parse(readFileSync(path, "utf8")); } catch { return undefined; }
+}
+
+function gatewayPort() {
+  const port = openClawConfig()?.gateway?.port;
+  return Number.isSafeInteger(port) && port > 0 ? port : 18789;
+}
+
+// A run model is strict in OpenClaw: when it is exactly the configured default that carries the fallback chain,
+// and the agent pins no model of its own, the configured default selects it and its fallbacks stay reachable.
+function withConfiguredFallbacks(options) {
+  const config = openClawConfig();
+  const chain = config?.agents?.defaults?.model;
+  const entry = Array.isArray(config?.agents?.list) ? config.agents.list.find(row => row?.id === options.agent) : undefined;
+  if (options.model === undefined || typeof chain?.primary !== "string" || chain.primary !== options.model
+    || !Array.isArray(chain.fallbacks) || chain.fallbacks.length === 0 || entry === undefined || Object.hasOwn(entry, "model")) return options;
+  const { model: _model, ...configured } = options;
+  void _model;
+  return configured;
 }
 
 function gatewayListening(port) {
@@ -318,7 +333,7 @@ async function main() {
   phase("bridge_enter");
   const message = await readPrompt();
   const nativeSessionKey = sessionKey(process.argv.slice(2));
-  const selected = executionOptions(process.argv.slice(2));
+  const selected = withConfiguredFallbacks(executionOptions(process.argv.slice(2)));
   const chunks = [];
   const originalWrite = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk, encoding, callback) => {

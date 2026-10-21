@@ -162,6 +162,38 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertFalse((self.profile / 'auth.json').exists())
         self.assertEqual(list((self.profile / '.external-cli-disabled').iterdir()), [])
 
+    def test_model_fallback_moves_the_model_to_the_configured_chain_and_back(self):
+        config = self.profile / 'openclaw.json'
+        paired = {**self.agent, 'tenant_id': 'Praxis', 'alias': 'operador',
+                  'extensions': [{'type': 'model_fallback', 'agent': 'operador-respaldo', 'model': 'muse-spark-1.3'}]}
+        driver.prepare(self.binding, paired)
+        written = json.loads(config.read_bytes())
+        self.assertNotIn('model', written['agents']['list'][0])
+        self.assertEqual(written['agents']['defaults'], {
+            'model': {'primary': 'openai/gpt-5.5', 'fallbacks': ['muse-cli/muse-spark-1.3']},
+            'cliBackends': {'muse-cli': {'command': '/usr/bin/python3', 'output': 'jsonl', 'input': 'stdin',
+                'args': ['-I', '-B', '/cauce/executor/model_fallback.py', 'client', '--socket', '/cauce/model-fallback/muse.sock',
+                         '--reasoning-effort', 'high'],
+                'sessionArg': '--session-id', 'sessionMode': 'existing', 'sessionIdFields': ['session_id'],
+                'systemPromptArg': '--system-prompt', 'systemPromptMode': 'append', 'systemPromptWhen': 'always', 'serialize': True}}})
+        self.assertEqual(driver.read_config(self.binding, paired), written)
+        with self.assertRaises(ValueError):
+            driver.read_config(self.binding, self.agent)
+        pinned = json.loads(json.dumps(written))
+        pinned['agents']['list'][0]['model'] = 'openai/gpt-5.5'
+        config.write_text(json.dumps(pinned))
+        config.chmod(0o600)
+        with self.assertRaises(ValueError):
+            driver.read_config(self.binding, paired)
+        driver.prepare(self.binding, paired)
+        self.assertEqual(json.loads(config.read_bytes()), written)
+        driver.prepare(self.binding, self.agent)
+        restored = json.loads(config.read_bytes())
+        self.assertEqual(restored['agents']['list'][0]['model'], 'openai/gpt-5.5')
+        self.assertNotIn('defaults', restored['agents'])
+        with self.assertRaises(ValueError):
+            driver.prepare(self.binding, {**paired, 'extensions': [{**paired['extensions'][0], 'agent': 'operador'}]})
+
     def test_container_preparation_sends_bounded_public_packet_to_exact_runtime_user_over_stdin(self):
         import fleet_executor_container
         import fleet_executor_policy

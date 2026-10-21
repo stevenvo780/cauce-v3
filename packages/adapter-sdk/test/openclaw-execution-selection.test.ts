@@ -40,6 +40,34 @@ test('OpenClaw selected model and effort reach the native bridge request and exa
     assert.equal(result.invocationWitness.reasoningEffort, selection.reasoningEffort);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+test('OpenClaw leaves the selected model to its configured default only when that default carries the fallback chain', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openclaw-selection-fallback-'));
+  try {
+    await modules(directory);
+    const selection = { modelId: 'xai/grok-4.7', reasoningEffort: 'high' };
+    const chain = { primary: 'xai/grok-4.7', fallbacks: ['muse-cli/muse-spark-1.3'] };
+    const cases: [Record<string, unknown>, string | undefined][] = [
+      [{ agents: { defaults: { model: chain }, list: [{ id: 'test-agent' }] } }, undefined],
+      [{ agents: { defaults: { model: chain }, list: [{ id: 'test-agent', model: 'xai/grok-4.7' }] } }, selection.modelId],
+      [{ agents: { defaults: { model: { ...chain, primary: 'xai/other' } }, list: [{ id: 'test-agent' }] } }, selection.modelId],
+      [{ agents: { defaults: { model: { ...chain, fallbacks: [] } }, list: [{ id: 'test-agent' }] } }, selection.modelId],
+    ];
+    for (const [config, model] of cases) {
+      await writeFile(join(directory, 'openclaw.json'), JSON.stringify(config));
+      const result = await new SpawnCommandRunner().run({ command: process.execPath,
+        args: [bridge, '--session-key', 'agent:test-agent:isolated', ...selectionArguments('openclaw', selection)],
+        executionSelection: selection, harness: 'openclaw', stdin: 'private prompt', timeoutMs: 5000,
+        signal: new AbortController().signal, env: { CAUCE_OPENCLAW_DIST_DIR: directory, CAUCE_OPENCLAW_AGENT_ID: 'test-agent',
+          CAUCE_OPENCLAW_LOCAL: '1', OPENCLAW_CONFIG_PATH: join(directory, 'openclaw.json') } });
+      assert.equal(result.exitCode, 0, result.stderr);
+      const envelope = JSON.parse(result.stdout) as { result: { result: { payloads: { text: string }[] } } };
+      const reply = JSON.parse((JSON.parse(envelope.result.result.payloads[0]?.text ?? '{}') as { reply: string }).reply) as { model?: string; thinking?: string };
+      assert.equal(reply.model, model);
+      assert.equal(reply.thinking, selection.reasoningEffort);
+      assert.equal(result.invocationWitness?.modelId, selection.modelId);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 test('OpenClaw model and thinking cannot be duplicated or silently projected into another flag', () => {
   assert.deepEqual(selectionArguments('openclaw', { modelId: 'test/model', reasoningEffort: 'xhigh' }),
     ['--model', 'test/model', '--thinking', 'xhigh']);

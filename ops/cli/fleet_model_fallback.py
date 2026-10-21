@@ -75,3 +75,10 @@ def adapter_environment(agent: dict) -> dict:
 def client_arguments(agent: dict) -> list[str]:
     effort = agent.get('reasoning_effort')
     return ['-I', '-B', BRIDGE, 'client', '--socket', SOCKET, *(['--reasoning-effort', effort] if effort is not None else [])]
+
+
+def openclaw_backend(agent: dict) -> dict:
+    """The measured muse-cli contract: prompt on stdin, `--system-prompt`, `--session-id`, JSONL out, one turn at a time."""
+    return {'command': CLIENT_PYTHON, 'args': client_arguments(agent), 'output': 'jsonl', 'input': 'stdin',
+            'sessionArg': '--session-id', 'sessionMode': 'existing', 'sessionIdFields': ['session_id'],
+            'systemPromptArg': '--system-prompt', 'systemPromptMode': 'append', 'systemPromptWhen': 'always', 'serialize': True}
