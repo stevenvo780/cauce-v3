@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'printf "runtime packaging smoke: exit %s at line %s: %s\n" "$?" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 runtime_image=${CAUCE_RUNTIME_SMOKE_IMAGE:-cauce-v3-runtime-smoke:local}
@@ -55,13 +56,17 @@ docker run -d --name "$postgres" --network "$network" --network-alias postgres \
   -e POSTGRES_HOST_AUTH_METHOD=trust \
   "$postgres_image" >/dev/null
 
+# TCP on purpose: the image's temporary init server listens only on the unix socket, so a socket check passed and the
+# next command hit the restart gap (pg_isready exit 2, silent).
+ready=0
 for _ in $(seq 1 60); do
-  if docker exec "$postgres" pg_isready -U cauce_smoke -d cauce_smoke >/dev/null 2>&1; then
+  if docker exec "$postgres" pg_isready -h 127.0.0.1 -U cauce_smoke -d cauce_smoke >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 1
 done
-docker exec "$postgres" pg_isready -U cauce_smoke -d cauce_smoke >/dev/null
+[[ $ready == 1 ]] || { printf 'runtime packaging smoke: postgres not ready after 60 s\n' >&2; docker logs "$postgres" >&2 || true; exit 1; }
 
 # shellcheck disable=SC2054
 runtime_flags=(
