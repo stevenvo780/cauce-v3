@@ -55,6 +55,10 @@ function DraftFields({ type, fields, disabled, onChange }: {
   </div>;
   if (type === 'tools') return <label className="grid gap-1">Paquetes con versión fija (uno por línea)
     <textarea rows={3} value={fields.packages ?? ''} placeholder={'npm:paquete@1.2.3\npip:paquete==1.2.3'} disabled={disabled} onChange={set('packages')} /></label>;
+  if (type === 'model_fallback') return <div className="grid gap-3 sm:grid-cols-2">
+    <label>Alias del otro agente del par<input value={fields.agent ?? ''} placeholder="operador-respaldo" disabled={disabled} onChange={set('agent')} /></label>
+    <label>Modelo Muse<input value={fields.model ?? ''} placeholder="muse-spark-1.3" disabled={disabled} onChange={set('model')} /></label>
+  </div>;
   return null;
 }
 

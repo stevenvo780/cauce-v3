@@ -22,6 +22,8 @@ export interface AgentExtension {
   args?: string[];
   env?: string[];
   packages?: string[];
+  agent?: string;
+  model?: string;
 }
 
 export type HostExtensionsAllowed = ExtensionsAllowed;
@@ -58,6 +60,7 @@ export const EXTENSION_CATALOG: CatalogEntry[] = [
   { type: 'browser', label: 'Navegador', allows: 'Navegador Chromium propio o túnel SSH a un navegador remoto (CDP)', riskLabel: 'Medio', tone: 'warn' },
   { type: 'mcp', label: 'Servidor MCP', allows: 'Registrar un servidor MCP en la configuración del arnés, dentro del perfil', riskLabel: 'Según el MCP', tone: 'warn' },
   { type: 'tools', label: 'Herramientas', allows: 'Instalar paquetes npm o pip con versión fija, sin root, en el volumen de estado', riskLabel: 'Medio', tone: 'warn' },
+  { type: 'model_fallback', label: 'Respaldo Muse', allows: 'Un agente OpenClaw responde con un agente Muse propio, del mismo ordenador, si su modelo falla; los dos se declaran mutuamente y solo comparten un socket', riskLabel: 'Medio', tone: 'warn' },
   { type: 'full_control', label: 'Control total', allows: 'Raíz escribible y sin cap-drop. Salida de emergencia para agentes de infraestructura', riskLabel: 'Máximo', tone: 'danger' },
 ];
 
@@ -99,6 +102,7 @@ export function extensionSummary(ext: AgentExtension): string {
     case 'mcp': return [ext.name, ext.command, ...(ext.args ?? [])].filter(Boolean).join(' ') || 'Sin detalle';
     case 'tools': return (ext.packages ?? []).join(', ') || 'Sin paquetes';
     case 'full_control': return 'Raíz escribible, sin cap-drop';
+    case 'model_fallback': return `${text(ext.agent, '?')} · muse-cli/${text(ext.model, '?')}`;
   }
 }
 
@@ -209,5 +213,13 @@ export function validateDraft(type: ExtensionType, fields: Partial<Record<string
       return { extension: { type, packages } };
     }
     case 'full_control': return { extension: { type } };
+    case 'model_fallback': {
+      const agent = get('agent').trim();
+      const model = get('model').trim();
+      if (!/^[a-z][a-z0-9_-]{0,63}$/.test(agent) || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}$/.test(model)) {
+        return { error: 'Indica el alias del otro agente del par y el modelo Muse (p. ej. muse-spark-1.3).' };
+      }
+      return { extension: { type, agent, model } };
+    }
   }
 }

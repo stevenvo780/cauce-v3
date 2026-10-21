@@ -1,5 +1,5 @@
 import {
-  AgentExtensionsSchema, ExtensionsAllowedSchema, agentExtensionsPolicyViolation,
+  AgentExtensionsSchema, ExtensionsAllowedSchema, agentExtensionsHarnessViolation, agentExtensionsPolicyViolation,
   type AgentExtensions, type ConfigMutation, type ExtensionsAllowed,
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
@@ -11,8 +11,8 @@ export async function agentExtensionsMutation(
 ): Promise<{ inverse: ConfigMutation; summary: string }> {
   const parsed = AgentExtensionsSchema.safeParse(mutation.extensions);
   if (!parsed.success) throw new ConfigurationError('invalid_input', parsed.error.message);
-  const agent = (await client.query<{ host_id: string | null; extensions: AgentExtensions; retired_at: Date | null; runtime_mode: string | null }>(
-    `SELECT host_id,extensions,retired_at,runtime_mode FROM agents WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 AND purged_at IS NULL
+  const agent = (await client.query<{ host_id: string | null; harness_id: string; extensions: AgentExtensions; retired_at: Date | null; runtime_mode: string | null }>(
+    `SELECT host_id,harness_id,extensions,retired_at,runtime_mode FROM agents WHERE tenant_id=$1 AND alias=$2 AND company_id=$3 AND purged_at IS NULL
       AND ${runtimePrincipalScopeSql('agents.tenant_id', 'agents.alias')} FOR UPDATE`,
     [mutation.tenant_id, mutation.alias, company],
   )).rows[0];
@@ -21,6 +21,8 @@ export async function agentExtensionsMutation(
   if (parsed.data.length > 0 && agent.runtime_mode !== 'container') {
     throw new ConfigurationError('conflict', 'Las ampliaciones requieren un agente en contenedor.');
   }
+  const harnessViolation = agentExtensionsHarnessViolation(parsed.data, agent.harness_id);
+  if (harnessViolation) throw new ConfigurationError('conflict', harnessViolation);
   const host = agent.host_id === null ? undefined : (await client.query<{ extensions_allowed: ExtensionsAllowed }>(
     'SELECT extensions_allowed FROM fleet_hosts WHERE host_id=$1 AND company_id=$2 FOR SHARE', [agent.host_id, company],
   )).rows[0];

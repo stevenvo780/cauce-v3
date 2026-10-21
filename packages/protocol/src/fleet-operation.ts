@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { RESERVED_ALIAS_MESSAGE, isReservedAlias } from './patterns.js';
 import { AliasSchema, TenantSchema, Sha256HexSchema } from './schemas/core.js';
 import { ConfigurationDependencySchema } from './configuration-identity.js';
-import { AgentExtensionsSchema, ExtensionPreparationReceiptSchema, ExtensionsAllowedSchema } from './agent-extensions.js';
+import {
+  AgentExtensionsSchema, ExtensionPreparationReceiptSchema, ExtensionsAllowedSchema, agentExtensionsHarnessViolation,
+} from './agent-extensions.js';
 
 export const RuntimeKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const IdentifierSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
@@ -45,7 +47,8 @@ const AgentParametersSchema = z.object({
   const rooms = value.memberships.map((membership) => membership.room_id);
   return new Set(rooms).size === rooms.length && rooms.includes(value.primary_room_id)
     && supportsReasoningEffort(value.harness_id, value.reasoning_effort)
-    && (value.placement.mode === 'container' || (value.extensions?.length ?? 0) === 0);
+    && (value.placement.mode === 'container' || (value.extensions?.length ?? 0) === 0)
+    && agentExtensionsHarnessViolation(value.extensions ?? [], value.harness_id) === undefined;
 });
 const RequestBase = {
   expected_revision: z.number().int().nonnegative(),

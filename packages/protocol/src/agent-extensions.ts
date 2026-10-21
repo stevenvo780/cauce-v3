@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { Sha256HexSchema } from './schemas/core.js';
+import { AliasSchema, Sha256HexSchema } from './schemas/core.js';
 
-export const EXTENSION_TYPES = ['mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control'] as const;
+export const EXTENSION_TYPES = ['mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control', 'model_fallback'] as const;
 export const ExtensionTypeSchema = z.enum(EXTENSION_TYPES);
 export type ExtensionType = z.infer<typeof ExtensionTypeSchema>;
 
@@ -52,6 +52,8 @@ const ResourcesExtensionSchema = z.object({
   pids: z.number().int().min(1).max(4096).optional(),
 }).strict().refine(value => value.memory !== undefined || value.cpus !== undefined || value.pids !== undefined,
   'Declare at least one resource limit');
+/** The Muse model id OpenClaw names as `muse-cli/<model>`: no provider prefix. */
+const FallbackModelSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}$/u);
 const BrowserExtensionSchema = z.discriminatedUnion('mode', [
   z.object({ type: z.literal('browser'), mode: z.literal('sidecar') }).strict(),
   z.object({ type: z.literal('browser'), mode: z.literal('ssh_tunnel'), host: HostSchema, port: PortSchema }).strict(),
@@ -73,6 +75,7 @@ export const ExtensionSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({ type: z.literal('tools'), packages: z.array(FixedToolPackageSchema).min(1).max(100) }).strict(),
   z.object({ type: z.literal('full_control') }).strict(),
+  z.object({ type: z.literal('model_fallback'), agent: AliasSchema, model: FallbackModelSchema }).strict(),
 ]);
 export type Extension = z.infer<typeof ExtensionSchema>;
 
@@ -94,6 +97,13 @@ export const AgentExtensionsSchema = z.array(ExtensionSchema).max(100).superRefi
   }
 });
 export const ExtensionsSchema = AgentExtensionsSchema;
+
+/** `model_fallback` pairs an OpenClaw client with the Muse agent that serves it; both declare each other. */
+export const MODEL_FALLBACK_HARNESSES: readonly string[] = ['openclaw', 'muse'];
+export function agentExtensionsHarnessViolation(extensions: AgentExtensions, harness: string): string | undefined {
+  return extensions.some(extension => extension.type === 'model_fallback') && !MODEL_FALLBACK_HARNESSES.includes(harness)
+    ? 'La ampliación model_fallback solo existe en un agente OpenClaw (cliente) o Muse (servidor).' : undefined;
+}
 export type AgentExtensions = z.infer<typeof AgentExtensionsSchema>;
 
 export const ExtensionsAllowedSchema = z.object({
