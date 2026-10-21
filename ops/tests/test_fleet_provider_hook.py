@@ -139,6 +139,82 @@ class ProviderHookTests(unittest.TestCase):
         status = pathlib.Path("/proc") / pid_file.read_text() / "stat"
         self.assertTrue(not status.exists() or status.read_text().split(") ", 1)[1].startswith("Z "))
 
+    def test_identity_probe_reasons_are_bounded_and_name_the_failing_check(self):
+        with self.assertRaises(identity.ProbeFailure) as timeout:
+            identity.command_output(["/usr/bin/sleep", "5"], self.packet, timeout=1)
+        self.assertEqual(timeout.exception.reason, "probe_timeout after 1s")
+        with self.assertRaises(identity.ProbeFailure) as exited:
+            identity.command_output(["/usr/bin/python3", "-c", "raise SystemExit(3)"], self.packet)
+        self.assertEqual(exited.exception.reason, "probe_exit_3")
+        with self.assertRaises(identity.ProbeFailure) as signalled:
+            identity.command_output(["/usr/bin/python3", "-c", "import os,signal; os.kill(os.getpid(), signal.SIGKILL)"], self.packet)
+        self.assertEqual(signalled.exception.reason, "probe_exit_signal")
+        self.assertEqual(identity.probe_failure_reason(json.JSONDecodeError("x", "", 0)), "probe_bad_json")
+        self.assertEqual(identity.probe_failure_reason(subprocess.TimeoutExpired(["x"], 60.2)), "probe_timeout after 60s")
+        self.assertEqual(identity.probe_failure_reason(OSError("token=secret")), "probe_unavailable")
+
+        with patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}):
+            self.packet["identity"] = self.packet["profile_binding"]["identity"] = "different@test.invalid"
+            self.assertIsNone(identity.authenticated_identity(self.packet))
+            self.assertEqual(identity.last_probe_failure(), "identity_mismatch")
+            self.packet["identity"] = self.packet["profile_binding"]["identity"] = "approved@test.invalid"
+            with patch.object(identity, "command_output", side_effect=identity.probe_timeout(61.4)):
+                self.assertIsNone(identity.authenticated_identity(self.packet))
+            self.assertEqual(identity.last_probe_failure(), "probe_timeout after 61s")
+            self.assertEqual(identity.authenticated_identity(self.packet), "approved@test.invalid")
+            self.assertIsNone(identity.last_probe_failure())
+
+    def test_only_the_allowlisted_probe_line_crosses_a_process_boundary(self):
+        stderr = (b"node: token=sk-secret leaked\n"
+                  b"fleet identity probe failed: probe_timeout after 115s\n"
+                  b"fleet identity probe failed: probe_timeout after 61s secret\n"
+                  b"fleet identity probe failed: something_else\n")
+        self.assertEqual(identity.probe_failure_line(stderr), "fleet identity probe failed: probe_timeout after 115s")
+        self.assertIsNone(identity.probe_failure_line(b"fleet identity probe failed: identity_mismatch user@example.invalid\n"))
+        self.assertIsNone(identity.probe_failure_line(None))
+        for reason in ("probe_exit_255", "probe_exit_signal", "probe_bad_json", "probe_nonce_mismatch", "probe_output_limit",
+                       "probe_unavailable", "identity_mismatch", "identity_unavailable", "profile_unusable", "version_mismatch",
+                       "config_scope", "container_exec_failed"):
+            self.assertEqual(identity.probe_failure_line(identity.PROBE_FAILURE_PREFIX + reason), identity.PROBE_FAILURE_PREFIX + reason)
+        identity.reset_probe_failure()
+        identity.probe_failed("identity_mismatch user@example.invalid")
+        self.assertIsNone(identity.last_probe_failure())
+        identity.probe_failed("version_mismatch")
+        identity.probe_failed("probe_unavailable")
+        self.assertEqual(identity.last_probe_failure(), "version_mismatch")
+
+    def test_hook_reports_the_probe_reason_when_authentication_fails(self):
+        packet = {**self.packet, "agent": {**self.packet["agent"], "runtime_user": "fixture"}}
+        with patch.object(hook, "authenticated_identity", side_effect=lambda _packet: identity.probe_failed("probe_nonce_mismatch")), \
+                patch("pwd.getpwnam", return_value=Mock(pw_uid=4242)), patch("os.geteuid", return_value=4242), \
+                patch("sys.stderr") as stderr:
+            identity.reset_probe_failure()
+            receipt = hook.execute(packet)
+        self.assertIs(receipt["authenticated"], False)
+        stderr.write.assert_any_call("fleet identity probe failed: probe_nonce_mismatch")
+
+    def test_container_hop_forwards_the_inner_reason_or_names_its_own_failure(self):
+        packet = {**self.packet, "agent": {**self.packet["agent"], "runtime_mode": "container"},
+                  "runtime_binding": {"container_id": "c" * 64, "image_digest": "sha256:" + "d" * 64, "python": "/usr/bin/python3"}}
+        observed = [{"Id": "c" * 64, "Image": "sha256:" + "d" * 64, "State": {"Running": True, "StartedAt": "t"},
+                     "Config": {"Labels": {"cauce.fleet.runtime_key": "proof", "cauce.fleet.tenant": "Steven", "cauce.fleet.alias": "proof"}}}]
+        packet["runtime_binding"]["generation"] = hashlib.sha256(("c" * 64 + "\0t").encode()).hexdigest()
+        inner = b"secret noise\nfleet identity probe failed: version_mismatch\n"
+        cases = [(subprocess.CompletedProcess([], 0, b'{"authenticated":false}', inner), "fleet identity probe failed: version_mismatch"),
+                 (subprocess.CompletedProcess([], 1, b"", b"docker: boom"), "fleet identity probe failed: container_exec_failed"),
+                 (subprocess.TimeoutExpired(["docker"], 140), "fleet identity probe failed: probe_timeout after 140s")]
+        for outcome, line in cases:
+            with self.subTest(line=line), patch.object(hook.subprocess, "check_output", return_value=json.dumps(observed).encode()), \
+                    patch.object(hook.subprocess, "run", side_effect=[outcome]), patch("sys.stderr") as stderr:
+                try:
+                    hook.container(packet)
+                except ValueError:
+                    pass
+                printed = "".join(call.args[0] for call in stderr.write.call_args_list)
+                self.assertIn(line, printed)
+                self.assertNotIn("secret", printed)
+                self.assertNotIn("boom", printed)
+
     def test_profile_ack_is_bound_to_exact_descriptor_and_measured_documents(self):
         self.packet["step"] = "profile"
         self.packet["transport"] = {

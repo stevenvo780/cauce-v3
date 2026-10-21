@@ -5,6 +5,7 @@ import os
 import pwd
 import secrets
 import subprocess
+import sys
 
 from fleet_executor_policy import SafeFailure, approve_agent, digest, open_absolute_directory, path
 
@@ -146,8 +147,18 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
         if os.geteuid() != 0:
             raise SafeFailure('executor cannot use the exact functional hook user')
         command = ['/usr/sbin/runuser', '-u', hook['user'], '--', *command]
-    result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=115,
-                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
+    from fleet_provider_identity import probe_failure_line, probe_timeout, report_probe_failure
+    try:
+        result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=115,
+                                env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
+    except subprocess.TimeoutExpired as error:
+        if step == 'authenticate':
+            report_probe_failure(probe_timeout(error.timeout).reason)
+        raise SafeFailure('functional hook timed out') from None
+    # The hook's only forwarded diagnostic is its allowlisted, secret-free identity probe reason.
+    forwarded = probe_failure_line(result.stderr)
+    if forwarded is not None:
+        print(forwarded, file=sys.stderr, flush=True)
     if result.returncode or len(result.stdout) > 8192:
         raise SafeFailure('functional hook has not demonstrated its effect')
     try:

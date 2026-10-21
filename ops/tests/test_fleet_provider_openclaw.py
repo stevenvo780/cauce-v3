@@ -46,6 +46,8 @@ else if(argv.includes('list')) {
  fs.writeFileSync(root+'/observed-args',JSON.stringify(argv));
  let text=argv[argv.indexOf('--message')+1].split('únicamente ')[1].split('.')[0];
  if(mode==='nonce') text='wrong';
+ if(mode==='exit') process.exit(3);
+ if(mode==='garbage') { console.log('not json'); process.exit(0); }
  console.log(JSON.stringify({payloads:[{text}]}));
 }
 '''
@@ -105,6 +107,33 @@ class OpenClawProviderTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 (self.profile / 'mode').write_text(mode)
                 self.assertFalse(identity.authenticated_provider(self.packet))
+
+    def test_each_failed_probe_names_one_bounded_reason(self):
+        expected = {'identity': 'identity_mismatch', 'account': 'identity_unavailable', 'provider': 'identity_unavailable',
+                    'agent': 'identity_unavailable', 'expiry': 'profile_unusable', 'cooldown': 'profile_unusable',
+                    'ambiguous': 'identity_unavailable', 'type': 'identity_unavailable', 'shape': 'probe_bad_json',
+                    'profile-shape': 'identity_unavailable', 'nonce': 'probe_nonce_mismatch', 'version': 'version_mismatch',
+                    'exit': 'probe_exit_3', 'garbage': 'probe_bad_json'}
+        for mode, reason in expected.items():
+            with self.subTest(mode=mode):
+                (self.profile / 'mode').write_text(mode)
+                self.assertIsNone(identity.authenticated_identity(self.packet))
+                self.assertEqual(identity.last_probe_failure(), reason)
+        (self.profile / 'mode').write_text('')
+        calls = []
+
+        def slow_turn(command, packet, timeout=30):
+            calls.append(timeout)
+            if 'agent' in command:
+                raise identity.probe_timeout(timeout)
+            return original(command, packet, timeout)
+        original = identity.command_output
+        with mock.patch.object(identity, 'command_output', side_effect=slow_turn):
+            self.assertIsNone(identity.authenticated_identity(self.packet))
+        self.assertEqual(identity.last_probe_failure(), 'probe_timeout after 115s')
+        self.packet['agent'] = {**self.agent, 'model_id': 'anthropic/claude-x'}
+        self.assertIsNone(identity.authenticated_identity(self.packet))
+        self.assertEqual(identity.last_probe_failure(), 'config_scope')
 
     def test_an_expired_cooldown_no_longer_blocks_the_identity(self):
         (self.profile / 'mode').write_text('cooldown-expired')

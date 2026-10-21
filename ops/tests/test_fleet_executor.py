@@ -206,6 +206,20 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('provider_verified', result.stdout)
 
+    def test_executor_forwards_only_the_allowlisted_identity_probe_reason(self):
+        self.configure_hooks()
+        driver = self.root / 'driver.py'
+        driver.write_text(driver.read_text().replace('authenticated=True', 'authenticated=False')
+            + 'sys.stderr.write("token=fixture-secret\\nfleet identity probe failed: probe_timeout after 61s\\n")\n')
+        for hook in self.policy['hooks'].values():
+            hook['files'][str(driver)] = hashlib.sha256(driver.read_bytes()).hexdigest()
+        self.save_policy()
+        result = self.run_step('authenticate')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('fleet identity probe failed: probe_timeout after 61s', result.stderr)
+        self.assertNotIn('fixture-secret', result.stderr + result.stdout)
+        self.assertNotIn('provider_verified', result.stdout)
+
     def test_hook_imports_release_modules_without_bytecode_with_shared_umask(self):
         self.configure_hooks()
         (self.root / 'release_dependency.py').write_text('VALUE=1\n')

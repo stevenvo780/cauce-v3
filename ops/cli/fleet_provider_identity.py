@@ -4,6 +4,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import pathlib
 import re
@@ -17,6 +18,76 @@ import time
 
 class ProviderProofError(ValueError):
     pass
+
+
+# A failed identity probe leaves one bounded, secret-free reason. The hook writes it on stderr as
+# PROBE_FAILURE_PREFIX + reason; the executor, the in-container hop and the gateway forward only lines that match
+# PROBE_FAILURE_LINE (services/gateway/src/fleet/provider-login.ts parses the same allowlist).
+PROBE_FAILURE_PREFIX = 'fleet identity probe failed: '
+PROBE_FAILURE_LINE = re.compile(
+    r'fleet identity probe failed: (probe_timeout after [0-9]{1,4}s|probe_exit_(?:[0-9]{1,3}|signal)|probe_bad_json'
+    r'|probe_nonce_mismatch|probe_output_limit|probe_unavailable|identity_mismatch|identity_unavailable'
+    r'|profile_unusable|version_mismatch|config_scope|container_exec_failed)')
+_probe_failure: list[str] = []
+
+
+class ProbeFailure(ProviderProofError):
+    """A provider proof error whose bounded reason the hook may report; str() keeps the human message."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+def probe_timeout(elapsed: float, message: str = 'provider command timed out') -> ProbeFailure:
+    return ProbeFailure(f'probe_timeout after {min(9999, max(0, math.floor(elapsed)))}s', message)
+
+
+def probe_exit(code: int) -> ProbeFailure:
+    return ProbeFailure(f'probe_exit_{code}' if 0 <= code <= 255 else 'probe_exit_signal', 'provider command failed')
+
+
+def reset_probe_failure() -> None:
+    _probe_failure.clear()
+
+
+def probe_failed(reason: str) -> None:
+    """Records the first, most specific reason; later fallbacks never overwrite it."""
+    if not _probe_failure and PROBE_FAILURE_LINE.fullmatch(PROBE_FAILURE_PREFIX + reason):
+        _probe_failure.append(reason)
+
+
+def probe_failure_reason(error: BaseException) -> str:
+    if isinstance(error, ProbeFailure):
+        return error.reason
+    if isinstance(error, subprocess.TimeoutExpired):
+        return probe_timeout(error.timeout).reason
+    if isinstance(error, json.JSONDecodeError | UnicodeDecodeError):
+        return 'probe_bad_json'
+    return 'probe_unavailable'
+
+
+def note_probe_exception(error: BaseException) -> None:
+    probe_failed(probe_failure_reason(error))
+
+
+def last_probe_failure() -> str | None:
+    return _probe_failure[0] if _probe_failure else None
+
+
+def probe_failure_line(stderr: bytes | str | None) -> str | None:
+    """The last allowlisted probe line a child wrote, or None. Anything else on its stderr is dropped."""
+    if not stderr:
+        return None
+    text = stderr[-8192:].decode('utf-8', 'replace') if isinstance(stderr, bytes) else stderr[-8192:]
+    lines = [line for line in text.splitlines() if PROBE_FAILURE_LINE.fullmatch(line)]
+    return lines[-1] if lines else None
+
+
+def report_probe_failure(reason: str | None) -> None:
+    line = PROBE_FAILURE_PREFIX + (reason or 'probe_unavailable')
+    if PROBE_FAILURE_LINE.fullmatch(line):
+        print(line, file=sys.stderr, flush=True)
 
 
 # Grok spends ~10 s starting (memory_init) before it reasons. The in-container hook's docker exec waits 110 s
@@ -114,7 +185,10 @@ def nonce_roundtrip(packet: dict, arguments, extract) -> bool:
         with os.fdopen(descriptor, 'w') as stream:
             stream.write(f'Responde únicamente {expected}.')
         output = command_output([provider_command(packet), *arguments(str(prompt))], packet, ROUNDTRIP_TIMEOUT)
-        return extract(output) == expected
+        if extract(output) != expected:
+            probe_failed('probe_nonce_mismatch')
+            return False
+        return True
     finally:
         try:
             prompt.unlink()
@@ -251,14 +325,15 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, True)
     selector.register(process.stderr, selectors.EVENT_READ, False)
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     output = bytearray()
     total = 0
     try:
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise ProviderProofError("provider command timed out")
+                raise probe_timeout(time.monotonic() - started)
             for key, _ in selector.select(remaining):
                 chunk = os.read(key.fd, 65536)
                 if not chunk:
@@ -266,11 +341,15 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
                     continue
                 total += len(chunk)
                 if total > 262144:
-                    raise ProviderProofError("provider command output exceeded limit")
+                    raise ProbeFailure('probe_output_limit', 'provider command output exceeded limit')
                 if key.data:
                     output.extend(chunk)
-        if process.wait(timeout=max(0.01, deadline - time.monotonic())) != 0:
-            raise ProviderProofError("provider command failed")
+        try:
+            code = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            raise probe_timeout(time.monotonic() - started) from None
+        if code != 0:
+            raise probe_exit(code)
         return bytes(output)
     finally:
         selector.close()
@@ -320,7 +399,7 @@ def codex_identity(packet: dict) -> str:
             if not body or len(pending) + len(body) > 262144:
                 break
             pending += body
-        raise ProviderProofError("provider identity query timed out")
+        raise probe_timeout(45, "provider identity query timed out")
 
     try:
         send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "cauce-fleet", "version": "3.5"}}})
@@ -357,14 +436,35 @@ def select_account_identity(expected: str, identities) -> str | None:
     return None
 
 
+def matching_identity(expected: str, identities) -> str | None:
+    """select_account_identity that records why nothing matched: no observed identity, or a different one."""
+    identities = list(identities)
+    identity = select_account_identity(expected, identities)
+    if identity is None:
+        probe_failed('identity_mismatch' if any(valid_account_identity(value) for value in identities) else 'identity_unavailable')
+    return identity
+
+
 def authenticated_identity(packet: dict) -> str | None:
+    """The proven provider identity, or None with last_probe_failure() naming the bounded reason."""
+    reset_probe_failure()
+    identity = _authenticated_identity(packet)
+    if identity is None:
+        probe_failed('probe_unavailable')
+    else:
+        reset_probe_failure()
+    return identity
+
+
+def _authenticated_identity(packet: dict) -> str | None:
     module_name = packet_fleet_module(packet)
     if module_name:
         try:
             from importlib import import_module
             identity = import_module(module_name).authenticated_identity(packet)
-            return select_account_identity(packet['identity'], [identity])
-        except (ImportError, OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError):
+            return None if identity is None else matching_identity(packet['identity'], [identity])
+        except (ImportError, OSError, ValueError, KeyError, subprocess.SubprocessError, AttributeError) as error:
+            note_probe_exception(error)
             return None
     provider = packet["profile_binding"]["provider"]
     try:
@@ -374,11 +474,12 @@ def authenticated_identity(packet: dict) -> str | None:
         elif provider == "claude":
             result = json.loads(command_output([command, "auth", "status", "--json"], packet))
             if result.get("loggedIn") is not True or not isinstance(result.get("email"), str):
+                probe_failed('identity_unavailable')
                 return None
             identity = result["email"]
         else:
             raise ProviderProofError("provider has no approved account inspection")
-        identity = select_account_identity(packet['identity'], [identity])
+        identity = matching_identity(packet['identity'], [identity])
         if identity is None:
             return None
         expected = "CAUCE_BOOTSTRAP_" + packet["nonce"]
@@ -392,14 +493,21 @@ def authenticated_identity(packet: dict) -> str | None:
                 if (event := json.loads(line)).get("type") == "item.completed"
                 and event.get("item", {}).get("type") == "agent_message"
             ]
-            return identity if replies == [expected] else None
+            if replies != [expected]:
+                probe_failed('probe_nonce_mismatch')
+                return None
+            return identity
         output = json.loads(
             command_output(
                 [command, "-p", prompt, "--output-format", "json", "--tools", "", "--max-turns", "1"], packet
             )
         )
-        return identity if output.get("is_error") is False and output.get("result") == expected else None
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        if output.get("is_error") is not False or output.get("result") != expected:
+            probe_failed('probe_nonce_mismatch')
+            return None
+        return identity
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        note_probe_exception(error)
         return None
 
 

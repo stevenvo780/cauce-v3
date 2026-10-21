@@ -13,10 +13,12 @@ import urllib.request
 import uuid
 
 from fleet_provider_identity import (
+    matching_identity,
     nonce_roundtrip,
+    note_probe_exception,
+    probe_failed,
     profile_jwt_candidates,
     read_profile_json,
-    select_account_identity,
     validate_provider_binding,
     validate_provider_selection,
 )
@@ -268,11 +270,16 @@ def authenticated_identity(packet: dict) -> str | None:
     try:
         env = environment(packet['profile_binding'], packet['agent'])
         config = env['XDG_CONFIG_HOME']
+    except Exception:
+        probe_failed('config_scope')
+        return None
+    try:
         os.makedirs(env['TMPDIR'], mode=0o700, exist_ok=True)
         if not nonce_roundtrip(packet, lambda prompt: execution_arguments(packet['agent'], prompt), reply_text):
             return None
-        return select_account_identity(packet['identity'], verified_identities(config))
-    except Exception:
+        return matching_identity(packet['identity'], verified_identities(config))
+    except Exception as error:
+        note_probe_exception(error)
         return None
 
 

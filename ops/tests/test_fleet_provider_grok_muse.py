@@ -168,15 +168,24 @@ else:
         for provider in ('grok', 'muse'):
             with self.subTest(provider=provider, case='identity'):
                 self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'ok', 'foreign')))
+                self.assertEqual(identity.last_probe_failure(), 'identity_mismatch')
             with self.subTest(provider=provider, case='nonce'):
                 self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'wrong')))
+                self.assertEqual(identity.last_probe_failure(), 'probe_nonce_mismatch')
             with self.subTest(provider=provider, case='exit'):
                 self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'fail')))
+                self.assertEqual(identity.last_probe_failure(), 'probe_exit_3')
             with self.subTest(provider=provider, case='timeout'):
                 started = time.monotonic()
                 with mock.patch.object(identity, 'ROUNDTRIP_TIMEOUT', 1):
                     self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'hang')))
                 self.assertLess(time.monotonic() - started, 8)
+                self.assertEqual(identity.last_probe_failure(), 'probe_timeout after 1s')
+            with self.subTest(provider=provider, case='scope'):
+                packet = self.install_fake_cli(provider, 'ok')
+                packet = {**packet, 'profile_binding': {**packet['profile_binding'], 'runtime_user': 'other'}}
+                self.assertFalse(identity.authenticated_provider(packet))
+                self.assertEqual(identity.last_probe_failure(), 'config_scope')
                 self.assertEqual(list(self.state.glob('.cauce-auth-prompt-*')), [])
 
     def test_muse_without_id_token_uses_the_email_of_its_meta_token(self):

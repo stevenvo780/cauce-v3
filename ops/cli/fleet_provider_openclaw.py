@@ -307,89 +307,113 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
 
 
 def claude_identity(packet: dict) -> str | None:
-    from fleet_provider_identity import command_output, provider_command, select_account_identity
+    from fleet_provider_identity import command_output, matching_identity, probe_failed, provider_command
     driver = packet['profile_binding']['openclaw']
     command = provider_command({'profile_binding': {'command': driver['claude_command'], 'command_sha256': driver['claude_command_sha256']}})
     status = json.loads(command_output([command, 'auth', 'status', '--json'], packet))
     if not isinstance(status, dict) or status.get('loggedIn') is not True:
+        probe_failed('identity_unavailable')
         return None
-    return select_account_identity(packet['identity'], [status.get('email')])
+    return matching_identity(packet['identity'], [status.get('email')])
 
 
 def profile_identity(packet: dict, prefix: list) -> str | None:
-    from fleet_provider_identity import command_output, select_account_identity
+    from fleet_provider_identity import command_output, matching_identity, probe_failed
     binding, agent = packet['profile_binding'], packet['agent']
     meta = json.loads(command_output([*prefix, 'models', 'auth', 'list', '--agent', agent['runtime_key'],
                                       '--provider', binding['openclaw']['provider_id'], '--json'], packet))
     if not isinstance(meta, dict):
+        probe_failed('probe_bad_json')
         return None
     profiles = meta.get('profiles')
     if meta.get('agentId') != agent['runtime_key'] or meta.get('provider') != binding['openclaw']['provider_id'] \
             or not isinstance(profiles, list) or len(profiles) != 1:
+        probe_failed('identity_unavailable')
         return None
     selected = profiles[0]
     if not isinstance(selected, dict):
+        probe_failed('identity_unavailable')
         return None
     _, flow = provider_flow(binding['provider'])
-    identity = select_account_identity(packet['identity'], [selected.get('email')])
     if selected.get('id') != profile_id(packet['account_id']) or selected.get('provider') != binding['openclaw']['provider_id'] \
-            or selected.get('type') not in flow['profile_types'] or identity is None:
+            or selected.get('type') not in flow['profile_types']:
+        probe_failed('identity_unavailable')
+        return None
+    identity = matching_identity(packet['identity'], [selected.get('email')])
+    if identity is None:
         return None
     for field in ('cooldownUntil', 'disabledUntil'):
         until = selected.get(field)
         if until and (not isinstance(until, str) or datetime.fromisoformat(until.replace('Z', '+00:00')) > datetime.now(UTC)):
+            probe_failed('profile_unusable')
             return None
     if 'expiresAt' in selected or flow['expiry_required']:
         if not isinstance(selected.get('expiresAt'), str):
+            probe_failed('profile_unusable')
             return None
         expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
         if expires <= datetime.now(UTC):
+            probe_failed('profile_unusable')
             return None
     return identity
 
 
 def authenticated_identity(packet: dict) -> str | None:
-    from fleet_provider_identity import command_output, provider_command
+    """The proven identity, or None after recording one bounded reason (fleet_provider_identity.last_probe_failure)."""
+    from fleet_provider_identity import note_probe_exception
     try:
-        binding, agent = packet['profile_binding'], packet['agent']
+        return _authenticated_identity(packet)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        note_probe_exception(error)
+        return None
+
+
+def _authenticated_identity(packet: dict) -> str | None:
+    from fleet_provider_identity import command_output, probe_failed, provider_command
+    binding, agent = packet['profile_binding'], packet['agent']
+    try:
         if agent['harness_id'] != 'openclaw' or binding['identity'] != packet['identity'] or agent['primary_account_id'] != packet['account_id']:
-            return None
+            raise ValueError('OpenClaw probe packet is outside its account scope')
         if not isinstance(packet['nonce'], str) or re.fullmatch(r'[0-9a-f]{64}', packet['nonce']) is None \
                 or agent.get('reasoning_effort') not in {None, 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}:
-            return None
+            raise ValueError('OpenClaw probe packet is invalid')
         validate_execution_selection(agent)
         validate_definition(binding['openclaw'], binding['provider'])
         read_config(binding, agent)
         driver = binding['openclaw']
-        command = provider_command(pinned_packet(packet))
-        prefix = [driver['node_command'], command]
-        version = command_output([*prefix, '--version'], packet).decode().strip()
-        if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}:
-            return None
-        identity = claude_identity(packet) if claude_cli(driver) else profile_identity(packet, prefix)
-        if identity is None:
-            return None
         model = canonical_model(agent.get('model_id'))
         if not model.startswith(driver['provider_id'] + '/'):
-            return None
-        # A cold Claude Code turn behind OpenClaw writes ~50k tokens of cache; 25 s left a valid login pending.
-        # Grok 4.7 behind OpenClaw answered this probe in 36-50 s and once over 120 s; 60 s rejected valid logins.
-        expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
-        args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
-                'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '110',
-                '--message', 'Responde únicamente ' + expected + '. No uses herramientas ni envíes mensajes.']
-        if agent.get('reasoning_effort') is not None:
-            args += ['--thinking', agent['reasoning_effort']]
-        reply = json.loads(command_output(args, packet, timeout=115))
-        if not isinstance(reply, dict):
-            return None
-        result = reply.get('result', reply)
-        if not isinstance(result, dict) or not isinstance(result.get('payloads'), list):
-            return None
-        texts = [value.get('text') for value in result.get('payloads', []) if isinstance(value, dict)]
-        return identity if reply.get('status', 'ok') == 'ok' and texts == [expected] else None
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            raise ValueError('OpenClaw model provider differs from its driver')
+    except (OSError, ValueError, KeyError, TypeError):
+        probe_failed('config_scope')
         return None
+    command = provider_command(pinned_packet(packet))
+    prefix = [driver['node_command'], command]
+    version = command_output([*prefix, '--version'], packet).decode().strip()
+    if version not in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}:
+        probe_failed('version_mismatch')
+        return None
+    identity = claude_identity(packet) if claude_cli(driver) else profile_identity(packet, prefix)
+    if identity is None:
+        return None
+    # A cold Claude Code turn behind OpenClaw writes ~50k tokens of cache; 25 s left a valid login pending.
+    # Grok 4.7 behind OpenClaw answered this probe in 36-50 s and once over 120 s; 60 s rejected valid logins.
+    expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
+    args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
+            'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '110',
+            '--message', 'Responde únicamente ' + expected + '. No uses herramientas ni envíes mensajes.']
+    if agent.get('reasoning_effort') is not None:
+        args += ['--thinking', agent['reasoning_effort']]
+    reply = json.loads(command_output(args, packet, timeout=115))
+    result = reply.get('result', reply) if isinstance(reply, dict) else None
+    if not isinstance(result, dict) or not isinstance(result.get('payloads'), list):
+        probe_failed('probe_bad_json')
+        return None
+    texts = [value.get('text') for value in result.get('payloads', []) if isinstance(value, dict)]
+    if reply.get('status', 'ok') != 'ok' or texts != [expected]:
+        probe_failed('probe_nonce_mismatch')
+        return None
+    return identity
 
 
 def authenticated_openclaw(packet: dict) -> bool:

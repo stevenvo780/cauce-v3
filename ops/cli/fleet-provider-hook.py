@@ -32,7 +32,6 @@ def validate(packet: dict):
 
 
 def container(packet: dict) -> dict:
-    from fleet_executor_container import isolated_python
     binding = packet["runtime_binding"]
     observed = json.loads(subprocess.check_output(["/usr/bin/docker", "inspect", binding["container_id"]], timeout=10))[
         0
@@ -60,7 +59,27 @@ def container(packet: dict) -> dict:
     if generation != binding["generation"]:
         raise ValueError("container identity changed")
     script = "/cauce/executor/fleet-provider-hook.py"
-    result = subprocess.run(
+    from fleet_provider_identity import probe_failure_line, probe_timeout, report_probe_failure
+    try:
+        result = _exec_inside(packet, binding, agent, interpreter, script)
+    except subprocess.TimeoutExpired as error:
+        if packet["step"] == "authenticate":
+            report_probe_failure(probe_timeout(error.timeout).reason)
+        raise ValueError("container did not return a bounded proof") from None
+    # The in-container hook names why its probe failed; only that allowlisted line crosses the boundary.
+    forwarded = probe_failure_line(result.stderr)
+    if forwarded is not None:
+        print(forwarded, file=sys.stderr, flush=True)
+    if result.returncode != 0 or len(result.stdout) > 8192:
+        if forwarded is None and packet["step"] == "authenticate":
+            report_probe_failure("container_exec_failed")
+        raise ValueError("container did not return a bounded proof")
+    return json.loads(result.stdout)
+
+
+def _exec_inside(packet: dict, binding: dict, agent: dict, interpreter: str, script: str) -> subprocess.CompletedProcess:
+    from fleet_executor_container import isolated_python
+    return subprocess.run(
         [
             "/usr/bin/docker",
             "exec",
@@ -78,9 +97,6 @@ def container(packet: dict) -> dict:
         capture_output=True,
         timeout=140,
     )
-    if result.returncode != 0 or len(result.stdout) > 8192:
-        raise ValueError("container did not return a bounded proof")
-    return json.loads(result.stdout)
 
 
 def shared_container_identity(packet: dict, observed: dict):
@@ -128,6 +144,9 @@ def execute(packet: dict) -> dict:
             result = {'authenticated': account_identity is not None}
             if account_identity is not None:
                 result['account_identity'] = account_identity
+            else:
+                from fleet_provider_identity import last_probe_failure, report_probe_failure
+                report_probe_failure(last_probe_failure())
         else:
             result = probe(packet)
     identity = {key: packet["agent"][key] for key in ("tenant_id", "alias", "runtime_key")}
