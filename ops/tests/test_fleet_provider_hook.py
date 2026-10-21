@@ -71,6 +71,20 @@ class ProviderHookTests(unittest.TestCase):
             },
         }
 
+    def test_openclaw_authentication_retires_a_seeded_bootstrap_before_the_identity_probe(self):
+        import os
+
+        import fleet_provider_openclaw
+        packet = {**self.packet, "agent": {**self.packet["agent"], "harness_id": "openclaw"}}
+        calls = []
+        with patch.object(hook, "validate"), patch("pwd.getpwnam", return_value=Mock(pw_uid=os.geteuid())), \
+                patch.object(fleet_provider_openclaw, "restore_after_login", side_effect=lambda *_: calls.append("restore")), \
+                patch.object(fleet_provider_openclaw, "retire_seeded_bootstrap", side_effect=lambda *_: calls.append("retire")), \
+                patch.object(hook, "authenticated_identity", side_effect=lambda _packet: calls.append("probe") or "approved@test.invalid"):
+            result = hook.execute(packet)
+        self.assertEqual(calls, ["restore", "retire", "probe"])
+        self.assertTrue(result["authenticated"])
+
     def test_global_bundle_digest_rejects_changed_fleet_module_without_individual_pin(self):
         from fleet_executor_runtime import bundle_digest
         bundle = self.root / "bundle"

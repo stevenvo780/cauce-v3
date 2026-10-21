@@ -191,6 +191,51 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertFalse((self.profile / 'auth.json').exists())
         self.assertEqual(list((self.profile / '.external-cli-disabled').iterdir()), [])
 
+    def test_openclaw_never_bootstraps_the_cauce_workspace_and_older_configs_converge(self):
+        config = self.profile / 'openclaw.json'
+        written = json.loads(config.read_bytes())
+        self.assertEqual(written['agents']['defaults'], {'skipBootstrap': True})
+        self.assertEqual(driver.read_config(self.binding, self.agent), written)
+        older = json.loads(json.dumps(written))
+        del older['agents']['defaults']
+        for converge in (driver.prepare, driver.restore_after_login):
+            with self.subTest(converge=converge.__name__):
+                config.write_text(json.dumps(older))
+                config.chmod(0o600)
+                with self.assertRaises(ValueError):
+                    driver.read_config(self.binding, self.agent)
+                converge(self.binding, self.agent)
+                self.assertEqual(json.loads(config.read_bytes()), written)
+
+    def test_only_a_pending_bootstrap_seeded_by_openclaw_is_retired_before_the_probe(self):
+        workspace = pathlib.Path(driver.environment(self.binding, self.agent)['CAUCE_OPENCLAW_WORKSPACE'])
+        bootstrap, state = workspace / 'BOOTSTRAP.md', workspace / 'openclaw-workspace-state.json'
+        identity_document = workspace / 'IDENTITY.md'
+        identity_document.write_text('# IDENTITY.md\n- **Name:** Argos\n')
+        cases = [({'version': 1, 'bootstrapSeededAt': '2026-10-21T04:15:20.681Z'}, True),
+                 ({'version': 1, 'bootstrapSeededAt': '2026-10-21T04:15:20.681Z', 'setupCompletedAt': '2026-10-21T05:51:27Z'}, False),
+                 ({'version': 1}, False), (None, False), ('not json', False)]
+        for value, retired in cases:
+            with self.subTest(state=value):
+                bootstrap.write_text('# BOOTSTRAP.md - Hello, World\n')
+                state.unlink(missing_ok=True)
+                if value is not None:
+                    state.write_text(value if isinstance(value, str) else json.dumps(value))
+                self.assertEqual(driver.retire_seeded_bootstrap(self.binding, self.agent), retired)
+                self.assertEqual(bootstrap.exists(), not retired)
+                self.assertTrue(identity_document.exists())
+        bootstrap.unlink()
+        state.write_text(json.dumps({'bootstrapSeededAt': '2026-10-21T04:15:20.681Z'}))
+        outside = self.root / 'outside.md'
+        outside.write_text('foreign')
+        bootstrap.symlink_to(outside)
+        self.assertFalse(driver.retire_seeded_bootstrap(self.binding, self.agent))
+        self.assertTrue(bootstrap.is_symlink() and outside.exists())
+        bootstrap.unlink()
+        bootstrap.write_text('# BOOTSTRAP.md - Hello, World\n')
+        driver.prepare(self.binding, self.agent)
+        self.assertFalse(bootstrap.exists())
+
     def test_chatgpt_model_gets_its_catalog_and_login_additions_are_reverted(self):
         config = self.profile / 'openclaw.json'
         self.agent['model_id'] = 'openai/gpt-6.1-sol'
@@ -223,7 +268,7 @@ class OpenClawProviderTest(unittest.TestCase):
         written = json.loads(config.read_bytes())
         self.assertNotIn('model', written['agents']['list'][0])
         self.assertEqual(written['agents']['defaults'], {
-            'model': {'primary': 'openai/gpt-5.5', 'fallbacks': ['muse-cli/muse-spark-1.3']},
+            'skipBootstrap': True, 'model': {'primary': 'openai/gpt-5.5', 'fallbacks': ['muse-cli/muse-spark-1.3']},
             'cliBackends': {'muse-cli': {'command': '/usr/bin/python3', 'output': 'jsonl', 'input': 'stdin',
                 'args': ['-I', '-B', '/cauce/executor/model_fallback.py', 'client', '--socket', '/cauce/model-fallback/muse.sock',
                          '--reasoning-effort', 'high'],
@@ -243,7 +288,7 @@ class OpenClawProviderTest(unittest.TestCase):
         driver.prepare(self.binding, self.agent)
         restored = json.loads(config.read_bytes())
         self.assertEqual(restored['agents']['list'][0]['model'], 'openai/gpt-5.5')
-        self.assertNotIn('defaults', restored['agents'])
+        self.assertEqual(restored['agents']['defaults'], {'skipBootstrap': True})
         with self.assertRaises(ValueError):
             driver.prepare(self.binding, {**paired, 'extensions': [{**paired['extensions'][0], 'agent': 'operador'}]})
 
@@ -325,7 +370,7 @@ class OpenClawProviderTest(unittest.TestCase):
         self.claude_cli()
         config = json.loads((self.profile / 'openclaw.json').read_bytes())
         self.assertEqual(config['agents']['defaults'], {
-            'models': {'anthropic/claude-opus-5': {'agentRuntime': {'id': 'claude-cli'}}},
+            'skipBootstrap': True, 'models': {'anthropic/claude-opus-5': {'agentRuntime': {'id': 'claude-cli'}}},
             'cliBackends': {'claude-cli': {'command': self.binding['openclaw']['claude_command'],
                                            'env': {'CLAUDE_CONFIG_DIR': str(self.profile / 'claude')}}}})
         self.assertEqual(oct((self.profile / 'claude').stat().st_mode & 0o777), '0o700')
@@ -348,7 +393,7 @@ class OpenClawProviderTest(unittest.TestCase):
         self.binding['openclaw']['method_id'] = 'setup-token'
         driver.prepare(self.binding, self.agent)
         config = json.loads((self.profile / 'openclaw.json').read_bytes())
-        self.assertNotIn('defaults', config['agents'])
+        self.assertEqual(config['agents']['defaults'], {'skipBootstrap': True})
         self.assertEqual(config['auth']['order'], {'anthropic': ['cauce:account-one']})
         self.assertFalse((self.profile / 'openclaw.json.cauce-new').exists())
 

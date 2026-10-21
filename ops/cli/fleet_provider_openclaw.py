@@ -201,10 +201,7 @@ def restore_after_login(binding: dict, agent: dict) -> bool:
     catalog = model_catalog(binding, agent)
     if config['agents'].get('defaults') == defaults and config.get('models') == catalog and 'meta' not in config:
         return False
-    if defaults is None:
-        config['agents'].pop('defaults', None)
-    else:
-        config['agents']['defaults'] = defaults
+    config['agents']['defaults'] = defaults
     for key in LOGIN_ADDED_KEYS:
         config.pop(key, None)
     if catalog is not None:
@@ -231,12 +228,18 @@ def restore_after_login(binding: dict, agent: dict) -> bool:
     return True
 
 
-def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict | None:
+def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict:
     from fleet_model_fallback import BACKEND, openclaw_backend, pairing
     driver = binding['openclaw']
-    defaults = {'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
-                'cliBackends': {'claude-cli': {'command': driver['claude_command'], 'env': {'CLAUDE_CONFIG_DIR': env['CLAUDE_CONFIG_DIR']}}}} \
-        if claude_cli(driver) else {}
+    # Cauce owns the workspace documents (the adapter writes the alias profile there; a move brings the legacy
+    # ones). Without skipBootstrap the first `openclaw agent` —the identity probe itself— seeds OpenClaw's
+    # templates and BOOTSTRAP.md into an empty workspace, and the model answers with its first-run onboarding
+    # instead of the nonce (Argos, 21-oct).
+    defaults = {'skipBootstrap': True}
+    if claude_cli(driver):
+        defaults.update({'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
+                         'cliBackends': {'claude-cli': {'command': driver['claude_command'],
+                                                        'env': {'CLAUDE_CONFIG_DIR': env['CLAUDE_CONFIG_DIR']}}}})
     paired = pairing(agent)
     if paired is not None:
         if paired['server']:
@@ -244,7 +247,7 @@ def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict | None:
         # An agent's own model is strict in OpenClaw 2026.7.1-2: the chain lives on the configured default only.
         defaults['model'] = {'primary': canonical_model(agent.get('model_id')), 'fallbacks': [BACKEND + '/' + paired['model']]}
         defaults.setdefault('cliBackends', {})[BACKEND] = openclaw_backend(agent)
-    return defaults or None
+    return defaults
 
 
 def agent_model(agent: dict) -> str | None:
@@ -285,6 +288,52 @@ def prepare(binding: dict, agent: dict) -> None:
             os.fsync(descriptor)
     finally:
         os.close(descriptor)
+    retire_seeded_bootstrap(binding, agent)
+
+
+WORKSPACE_STATE = 'openclaw-workspace-state.json'
+BOOTSTRAP_DOCUMENT = 'BOOTSTRAP.md'
+
+
+def retire_seeded_bootstrap(binding: dict, agent: dict) -> bool:
+    """Remove the BOOTSTRAP.md OpenClaw seeded while its first-run setup is still pending.
+
+    That file drives OpenClaw's onboarding («¿Cómo quieres llamarme?»): with it the identity probe gets a greeting
+    instead of the nonce and the agent forgets who it is. OpenClaw records a file it seeded as `bootstrapSeededAt`
+    and its completion as `setupCompletedAt`; only that pending pair is retired, so a document the agent's owner put
+    there by hand, or an already finished setup, stays as it is. OpenClaw itself marks the setup complete once the
+    seeded file is gone.
+    """
+    descriptor = owned_directory(pathlib.Path(environment(binding, agent)['CAUCE_OPENCLAW_WORKSPACE']))
+    try:
+        try:
+            source = os.open(WORKSPACE_STATE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        except OSError:
+            return False
+        try:
+            body = os.read(source, 65537) if stat.S_ISREG(os.fstat(source).st_mode) else b''
+        finally:
+            os.close(source)
+        try:
+            state = json.loads(body) if 0 < len(body) <= 65536 else None
+        except ValueError:
+            return False
+        if not isinstance(state, dict):
+            return False
+        seeded, completed = state.get('bootstrapSeededAt'), state.get('setupCompletedAt')
+        if not (isinstance(seeded, str) and seeded.strip()) or isinstance(completed, str) and completed.strip():
+            return False
+        try:
+            details = os.stat(BOOTSTRAP_DOCUMENT, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if not stat.S_ISREG(details.st_mode):
+            return False
+        os.unlink(BOOTSTRAP_DOCUMENT, dir_fd=descriptor)
+        os.fsync(descriptor)
+        return True
+    finally:
+        os.close(descriptor)
 
 
 def prepare_temporary(root: pathlib.Path) -> None:
@@ -299,9 +348,7 @@ def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
         config = {'agents': {'list': [{'id': agent['runtime_key'], 'default': True, 'workspace': env['CAUCE_OPENCLAW_WORKSPACE'],
                                       'agentDir': env['OPENCLAW_AGENT_DIR'], **({'model': model} if model is not None else {})}]},
                   'auth': {'order': {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}}}
-        defaults = runtime_defaults(binding, agent, env)
-        if defaults is not None:
-            config['agents']['defaults'] = defaults
+        config['agents']['defaults'] = runtime_defaults(binding, agent, env)
         catalog = model_catalog(binding, agent)
         if catalog is not None:
             config['models'] = catalog

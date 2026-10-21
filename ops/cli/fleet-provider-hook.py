@@ -141,10 +141,12 @@ def execute(packet: dict) -> dict:
             raise ValueError("functional check is not running under the approved user")
         if packet['step'] == 'authenticate':
             if packet['agent'].get('harness_id') == 'openclaw':
-                from fleet_provider_openclaw import restore_after_login
+                from fleet_provider_openclaw import restore_after_login, retire_seeded_bootstrap
 
                 try:
                     restore_after_login(packet['profile_binding'], packet['agent'])
+                    # A pending first-run BOOTSTRAP.md would answer the nonce with OpenClaw's onboarding.
+                    retire_seeded_bootstrap(packet['profile_binding'], packet['agent'])
                 except (OSError, ValueError, KeyError, TypeError):
                     pass  # The probe below names the out-of-scope configuration (config_scope).
             account_identity = authenticated_identity(packet)
