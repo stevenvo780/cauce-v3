@@ -79,11 +79,12 @@ def fallback_arguments(model: str, effort: str | None, workspace: str) -> list[s
 
     Muse's read tool reaches outside `--workspace` and a retained session would keep its result for a later turn:
     a single model step, no retained log and never `--session-id` (Muse refuses it without retained logging).
+    An empty toolset registers no tool at all; measured on server2 with the Meta provider (no tool event, text reply).
     """
     from fleet_policy_paths import path
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None or effort is not None and effort not in EFFORTS:
         raise ValueError('Muse fallback model or reasoning effort is not supported')
-    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--no-session-log', '--max-model-steps', '1',
+    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '-c', 'run.toolset=[]', '--no-session-log', '--max-model-steps', '1',
             '--workspace', str(path(workspace)), '--model', model, *(['--reasoning-effort', effort] if effort is not None else [])]
 
 

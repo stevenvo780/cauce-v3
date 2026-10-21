@@ -97,8 +97,8 @@ class ModelFallbackBridgeTest(unittest.TestCase):
         self.assertTrue(all(record['type'] in {'progress', 'result'} for record in self.records(result)))
         argv = json.loads((self.root / 'argv.json').read_text())
         self.assertEqual(argv, ['exec', '--json', '--provider', 'meta', '--disable-web-tools', '--disable-reminders',
-            '--no-foreign-personal-context', '--disable-write', '--disable-shell', '--no-session-log', '--max-model-steps', '1',
-            '--workspace', self.bridge.workspace, '--model', 'muse-spark-1.3', '--reasoning-effort', 'high'])
+            '--no-foreign-personal-context', '--disable-write', '--disable-shell', '-c', 'run.toolset=[]', '--no-session-log',
+            '--max-model-steps', '1', '--workspace', self.bridge.workspace, '--model', 'muse-spark-1.3', '--reasoning-effort', 'high'])
         self.assertEqual((self.root / 'cwd').read_text(), self.bridge.workspace)
         self.assertEqual(os.stat(self.bridge.workspace).st_mode & 0o777, 0o700)
         prompt = (self.root / 'prompt.txt').read_text()
