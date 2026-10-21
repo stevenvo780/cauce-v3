@@ -202,7 +202,8 @@ class OpenClawProviderTest(unittest.TestCase):
         login = dict(written, meta={'lastTouchedVersion': driver.VERSION},
                      models={'mode': 'merge', 'providers': {'openai': {'models': []}}}, mcp={'servers': {'x': {'command': 'sh'}}})
         login['agents'] = dict(written['agents'], defaults={'models': {'openai/gpt-5.6-sol': {}}})
-        config.write_text(json.dumps(login)); config.chmod(0o600)
+        config.write_text(json.dumps(login))
+        config.chmod(0o600)
         with self.assertRaises(ValueError):
             driver.read_config(self.binding, self.agent)
         self.assertTrue(driver.restore_after_login(self.binding, self.agent))
