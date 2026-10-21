@@ -244,7 +244,9 @@ export class ProviderAuthManager {
     try { await session.closing; } finally { session.closing = undefined; }
   }
   private async cleanup(session: Session, status: ProviderAuthStatus, error: ProviderAuthCode | null): Promise<void> {
-    session.snapshot.status = status;
+    // The console resumes the operation as soon as it reads «authenticated»; releasing the reservation advances the
+    // operation version, so the login reads as verifying until the release has committed.
+    if (status !== 'authenticated') session.snapshot.status = status;
     session.snapshot.error = error;
     session.abort.abort();
     clearTimeout(session.timer);
@@ -262,6 +264,7 @@ export class ProviderAuthManager {
       if (!stopped.stopped) throw new ProviderAuthError('STOP_UNCONFIRMED');
       await session.reservation?.release();
       this.cohorts.delete(session.cohort);
+      session.snapshot.status = status;
       session.snapshot.cleanup_pending = false;
       session.connected = false;
       for (const [key, ticket] of this.tickets) if (ticket.sessionId === session.snapshot.session_id) this.tickets.delete(key);

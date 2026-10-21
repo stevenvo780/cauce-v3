@@ -131,6 +131,22 @@ describe('sensitive provider bootstrap', () => {
     expect(await f.manager.verify(actor, session.session_id)).toMatchObject({ status: 'authenticated', cleanup_pending: false, error: null });
     expect(f.state()).toMatchObject({ closeCount: 1, released: true });
   });
+  it('reads as verifying until the reservation release that advances the operation version has committed', async () => {
+    const f = fixture(); const reserve = f.deps.reserve.bind(f.deps);
+    let releasing: (() => void) | undefined; let commit: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { releasing = resolve; });
+    f.deps.reserve = async (...args) => ({ ...await reserve(...args),
+      release: () => new Promise<void>(resolve => { commit = resolve; releasing?.(); }) });
+    const session = await f.manager.start(actor, input);
+    const channel = await f.manager.attach(actor, session.session_id, () => undefined);
+    const verified = f.manager.verify(actor, session.session_id);
+    await started;
+    expect(await f.manager.get(actor, session.session_id)).toMatchObject({ status: 'verifying', cleanup_pending: false, error: null });
+    const closed = channel.close();
+    commit?.(); await closed;
+    expect(await verified).toMatchObject({ status: 'authenticated', cleanup_pending: false, error: null });
+    expect(await f.manager.get(actor, session.session_id)).toMatchObject({ status: 'authenticated' });
+  });
   it('expires a live channel and refuses further input without extending the deadline', async () => {
     vi.useFakeTimers(); const f = fixture(); const session = await f.manager.start(actor, input);
     const channel = await f.manager.attach(actor, session.session_id, () => undefined);
