@@ -190,6 +190,11 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
             {'low', 'medium', 'high', 'xhigh', 'max'} if agent['harness_id'] == 'claude' else EFFORTS if agent['harness_id'] == 'muse' else set()
         if effort not in compatible or row.get('reasoningEffort') != effort:
             raise SafeFailure('reasoning effort is not approved')
+        if agent['harness_id'] == 'openclaw':
+            from fleet_executor_templates import resolve_profile
+            from fleet_provider_openclaw import thinking_level
+            binding = resolve_profile(policy, agent)
+            effort = thinking_level(binding, agent) if isinstance(binding, dict) and 'openclaw' in binding else effort
         values['CAUCE_REASONING_EFFORT'] = effort
     shared = row.get('sharedHumanIds')
     if shared is not None:

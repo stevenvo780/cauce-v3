@@ -210,8 +210,12 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertEqual(json.loads(config.read_bytes()), dict(written, mcp={'servers': {'x': {'command': 'sh'}}}))
         self.assertEqual(config.stat().st_mode & 0o777, 0o600)
         self.assertFalse(driver.restore_after_login(self.binding, self.agent))
+        self.assertEqual(written['models']['providers']['openai']['models'][0]['thinkingLevelMap']['xhigh'], 'xhigh')
+        self.agent['reasoning_effort'] = 'max'
+        self.assertEqual(driver.thinking_level(self.binding, self.agent), 'xhigh')
         self.agent['model_id'] = 'openai/gpt-5.4'
         self.assertIsNone(driver.model_catalog(self.binding, self.agent))
+        self.assertEqual(driver.thinking_level(self.binding, self.agent), 'max')
 
     def test_model_fallback_moves_the_model_to_the_configured_chain_and_back(self):
         config = self.profile / 'openclaw.json'

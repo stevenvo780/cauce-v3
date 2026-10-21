@@ -170,6 +170,9 @@ CHATGPT_MODELS = {'gpt-6.1-sol': ('GPT-6.1 Sol', 872000), 'gpt-6-sol': ('GPT-6 S
                   'gpt-6-luna': ('GPT-6 Luna', 1050000), 'gpt-6-astra': ('GPT-6 Astra', 1050000)}
 
 
+CHATGPT_THINKING = {'off': 'none', 'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high', 'xhigh': 'xhigh'}
+
+
 def model_catalog(binding: dict, agent: dict) -> dict | None:
     if binding['openclaw']['provider_id'] != 'openai' or agent.get('model_id') is None:
         return None
@@ -178,7 +181,15 @@ def model_catalog(binding: dict, agent: dict) -> dict | None:
         return None
     label, window = CHATGPT_MODELS[name]
     return {'mode': 'merge', 'providers': {'openai': {'api': 'openai-chatgpt-responses', 'models': [
-        {'id': name, 'name': label, 'reasoning': True, 'input': ['text', 'image'], 'contextWindow': window, 'maxTokens': 128000}]}}}
+        {'id': name, 'name': label, 'reasoning': True, 'input': ['text', 'image'], 'contextWindow': window, 'maxTokens': 128000,
+         'thinkingLevelMap': CHATGPT_THINKING, 'compat': {'supportsReasoningEffort': True,
+                                                          'supportedReasoningEfforts': ['minimal', 'low', 'medium', 'high', 'xhigh']}}]}}}
+
+
+def thinking_level(binding: dict, agent: dict) -> str | None:
+    """OpenClaw has no `max` level for a catalog model: the highest a ChatGPT model takes is `xhigh` (measured on server2)."""
+    effort = agent.get('reasoning_effort')
+    return 'xhigh' if effort == 'max' and model_catalog(binding, agent) is not None else effort
 
 
 # `openclaw models auth login` rewrites the Cauce-owned file: it adds its own agents.defaults (default model), a
@@ -469,7 +480,7 @@ def _authenticated_identity(packet: dict) -> str | None:
             'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '105',
             '--message', 'Responde únicamente ' + expected + '. No uses herramientas ni envíes mensajes.']
     if agent.get('reasoning_effort') is not None:
-        args += ['--thinking', agent['reasoning_effort']]
+        args += ['--thinking', thinking_level(binding, agent)]
     reply = json.loads(command_output(args, packet, timeout=110))
     result = reply.get('result', reply) if isinstance(reply, dict) else None
     if not isinstance(result, dict) or not isinstance(result.get('payloads'), list):
