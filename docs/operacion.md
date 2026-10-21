@@ -146,7 +146,7 @@ Los nombres de contenedor del ejemplo derivan del `COMPOSE_PROJECT_NAME` por def
 
 ### Imágenes reproducibles de agentes y cuotas
 
-`build-host-release.sh` construye las imágenes de agentes y de cuotas con `SOURCE_DATE_EPOCH` (fecha del último commit de su Dockerfile) y `rewrite-timestamp=true`, que ajusta las fechas de los ficheros de cada capa a ese valor. Con la caché fría, npm y apt dejaban fechas nuevas y cambiaba el digest. El almacén containerd rechaza `rewrite-timestamp` con `unpack`, así que cada imagen se exporta a un tar y se carga con `docker load`. Las mismas entradas dan el mismo digest: un despliegue sin cambios en esas imágenes no recrea contenedores ni vuelve a descargar la imagen en los hosts.
+`build-host-release.sh` construye las imágenes de agentes y de cuotas con `SOURCE_DATE_EPOCH` (fecha del último commit de su Dockerfile) y `rewrite-timestamp=true`, que ajusta las fechas de los ficheros de cada capa a ese valor. Con la caché fría, npm y apt dejaban fechas nuevas y cambiaba el digest. El almacén containerd rechaza `rewrite-timestamp` con `unpack`, así que cada imagen se exporta a un tar y se carga con `docker load`. Las mismas entradas dan el mismo digest: un despliegue sin cambios en esas imágenes no recrea contenedores ni vuelve a descargar la imagen en los hosts. El contexto `musebridge` de la imagen de agentes lleva solo `muse-cauce` del commit: con el directorio del checkout entraban sus `__pycache__`, que guardan la fecha de cada fuente, y el Id de la imagen cambiaba en cada build aunque nada hubiera cambiado.
 
 ### Desplegar V4
 

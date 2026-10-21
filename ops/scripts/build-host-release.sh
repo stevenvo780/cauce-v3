@@ -36,7 +36,11 @@ find "$stage/adapter" \( -name .modules.yaml -o -path '*/node_modules/.bin' \) -
 image="cauce-agent-runtime:$(sha256sum ops/agent-runtime/Dockerfile | cut -c1-16)"
 # Without attestations, with a fixed creation time and layer file mtimes clamped to it (rewrite-timestamp), a rebuild
 # with a cold cache keeps the portable config digest pinned from docker save; otherwise npm/apt mtimes change every layer.
-docker build -q --provenance=false --build-context "musebridge=ops/container-runtime" \
+# The bridge context holds only the committed bridge: the checkout's ops/container-runtime also carried __pycache__,
+# whose embedded source mtimes changed that layer and the image Id on every build of unchanged sources.
+mkdir "$work/musebridge"
+install -m 0755 "$stage/ops/container-runtime/muse-cauce" "$work/musebridge/muse-cauce"
+docker build -q --provenance=false --build-context "musebridge=$work/musebridge" \
   --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile)" \
   --output "type=docker,rewrite-timestamp=true,name=$image,dest=$work/agent-image.oci.tar" ops/agent-runtime >/dev/null
 # The containerd image store refuses rewrite-timestamp with its default unpack, so export to a tar and load it.
