@@ -420,7 +420,10 @@ class Executor:
         self.ensure_runtime(agent)
         account, binding = binding_for(self.policy, agent)
         if not self.authenticated_binding_matches(account, binding):
-            raise SafeFailure('provider profile has no current authenticated identity proof')
+            # A deploy that pinned a new image changes the binding's command pins after the login: the stored credential
+            # is proven again against the current binaries (the same probe as «Verificar conexión») instead of failing.
+            if self.authenticate().get('awaiting_auth') is True or not self.authenticated_binding_matches(account, binding):
+                raise SafeFailure('provider profile has no current authenticated identity proof')
         observed = invoke(self.policy, self.context, agent, 'profile')
         if observed.get('profile_verified') is not True:
             raise SafeFailure('provider profile was not acknowledged')

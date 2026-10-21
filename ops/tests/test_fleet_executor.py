@@ -266,6 +266,21 @@ class PhysicalExecutorTest(unittest.TestCase):
         self.assertNotIn('login_stopped', json.loads(journal.read_bytes()))
         self.require_verified_stop = True
 
+    def test_profile_proves_identity_again_when_the_binding_pins_changed_after_the_login(self):
+        self.configure_hooks()
+        self.configure_signer()
+        for step in ('artifacts', 'credentials', 'runtime', 'authenticate'):
+            result = self.run_step(step)
+            self.assertEqual(result.returncode, 0, f'{step}: {result.stderr}')
+        journal_path = next(self.roots['state'].glob('operations/*/effects.json'))
+        journal = json.loads(journal_path.read_bytes())
+        stale = dict(journal['authenticated'], binding={**journal['authenticated']['binding'], 'path': '/stale/profile/pin'})
+        journal_path.write_text(json.dumps({**journal, 'authenticated': stale}))
+        profile = self.run_step('profile')
+        self.assertEqual(profile.returncode, 0, profile.stderr)
+        self.assertNotEqual(json.loads(journal_path.read_bytes())['authenticated']['binding']['path'], '/stale/profile/pin')
+        self.require_verified_stop = True
+
     def test_admission_requires_full_verify_and_keeps_normal_credentials_separate(self):
         self.configure_hooks()
         self.configure_signer()
