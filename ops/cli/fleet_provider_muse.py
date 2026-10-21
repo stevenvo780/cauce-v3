@@ -61,14 +61,29 @@ def login_command(binding: dict) -> list[str]:
     return [binding['command'], 'login']
 
 
+# No web, write or shell tools and no foreign personal context: the identity probe and the model fallback bridge.
+SAFE_FLAGS = ('--disable-web-tools', '--disable-reminders', '--no-foreign-personal-context', '--disable-write', '--disable-shell')
+FALLBACK_MODEL_STEPS = 8
+
+
 def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
     from fleet_policy_paths import path
     validate_provider_selection(agent, 'muse', EFFORTS)
-    return ['exec', '--json', '--provider', 'meta', '--prompt-file', str(path(prompt_file)),
-            '--disable-web-tools', '--disable-reminders', '--no-foreign-personal-context', '--no-session-log',
-            '--disable-write', '--disable-shell', '--max-model-steps', '1',
+    return ['exec', '--json', '--provider', 'meta', '--prompt-file', str(path(prompt_file)), *SAFE_FLAGS,
+            '--no-session-log', '--max-model-steps', '1',
             *(['--model', agent['model_id']] if agent.get('model_id') is not None else []),
             *(['--reasoning-effort', agent['reasoning_effort']] if agent.get('reasoning_effort') is not None else [])]
+
+
+def fallback_arguments(model: str, effort: str | None, session_id: str | None, workspace: str) -> list[str]:
+    """One bounded fallback turn for `muse-cauce`, which adds the prompt file itself. Sessions persist so OpenClaw can resume them."""
+    from fleet_policy_paths import path
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None or effort is not None and effort not in EFFORTS \
+            or session_id is not None and str(uuid.UUID(session_id)) != session_id:
+        raise ValueError('Muse fallback model, reasoning effort or session is not supported')
+    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--max-model-steps', str(FALLBACK_MODEL_STEPS),
+            '--workspace', str(path(workspace)), '--model', model,
+            *(['--reasoning-effort', effort] if effort is not None else []), *(['--session-id', session_id] if session_id is not None else [])]
 
 
 def authentication_supported() -> bool:

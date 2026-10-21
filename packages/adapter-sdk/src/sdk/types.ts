@@ -388,6 +388,8 @@ export interface AdapterLog {
     | 'versioned_context_degraded'
     /** Non-versionable files found inside the versioned context directories. */
     | 'versioned_context_ignored'
+    /** The model fallback bridge server this Muse adapter supervises exited and will be restarted. */
+    | 'model_fallback_server_exited'
     | 'internal_error'; // real cause of an INTERNAL
   phase_name?: OpenClawPhase;
   transport?: OpenClawPhaseObservation["transport"];

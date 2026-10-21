@@ -43,6 +43,7 @@ import { commandPinsFromEnvironment } from '../sdk/command-pins.js';
 import { selectionFromEnvironment } from '../sdk/execution-selection.js';
 import { definitionFromDescriptor, packagedHarnessDescriptor } from '../context/harness-descriptor.js';
 import { prepareSpaceLayout } from '../context/space-layout.js';
+import { modelFallbackCommand, superviseModelFallback } from '../sdk/model-fallback-server.js';
 
 function commandOverride(
   harnessId: HarnessId,
@@ -298,6 +299,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const commandPins = commandPinsFromEnvironment(); let selected = selectionFromEnvironment(harnessId);
   if (commandPins !== undefined && runtime.harnessCommand !== undefined && runtime.harnessCommand !== commandPins.command) throw new Error('configured harness command differs from its pinned binding');
   const tenantId = TenantSchema.parse(runtime.tenant);
+  const fallbackServer = harnessId === "muse" ? modelFallbackCommand() : undefined;
   if (harnessId === "muse" && runtime.muse !== undefined && !(await stat(runtime.muse.workspace).then((entry) => entry.isDirectory(), () => false))) {
     throw new Error("Muse workspace must be an existing directory");
   }
@@ -432,11 +434,13 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const stop = (): void => { shutdown.abort(new Error("shutdown")); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
+  const fallback = fallbackServer === undefined ? undefined : superviseModelFallback(fallbackServer, logger, shutdown.signal);
   try {
     await client.run(shutdown.signal);
   } finally {
     process.removeListener("SIGINT", stop);
     process.removeListener("SIGTERM", stop);
+    if (fallback !== undefined) { stop(); await fallback; }
     await emission.close();
   }
 }
