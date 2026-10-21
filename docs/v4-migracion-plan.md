@@ -462,7 +462,7 @@ Esqueleto del plan de Gaia, que el orquestador completa con las rutas y el diges
     "image": "sha256:DIGEST_DE_LA_IMAGEN_APROBADA"
   },
   "roots": [
-    {"name": "clawd", "path": "/datos/raiz-propia/clawd", "target": "projects/gaia-clawd"},
+    {"name": "clawd", "path": "/datos/raiz-propia/clawd", "target": "projects/gaia-clawd", "workspace": true},
     {"name": "openclaw", "path": "/datos/raiz-propia/.openclaw", "target": "data/openclaw"}
   ],
   "timeout": 300
@@ -476,7 +476,7 @@ El comando ejecuta y conserva un recibo privado por corte:
 1. Resuelve la colocación y conserva identidad, harness, cuenta, modelo, esfuerzo y membresías; comprueba destino, imagen y volúmenes. Compara identidades físicas para impedir trasladar los agentes reales al mismo ordenador.
 2. Mide la VPS con `v4-medicion-migracion.sh` y acredita primero nonce, contexto y terminal del origen, necesarios para verificar una reversión.
 3. Detiene únicamente el alias por V4 y realiza la copia integral antes de iniciar el destino. Conserva Git completo, índice, cambios locales, archivos ignorados, sesiones de trabajo y SQLite con sus acompañantes WAL/SHM. Compara inventarios y hashes antes y después: una escritura concurrente invalida la copia.
-4. Restaura en `state_directory/space`, con los siete directorios estándar y los mapas declarados. En Docker usa el volumen de estado con las mismas etiquetas que exige el ejecutor y el UID/GID del runtime. No escribe sobre un destino ocupado. Conserva un manifiesto de ruta antigua, ruta nueva y hash.
+4. Restaura en `state_directory/space`, con los siete directorios estándar y los mapas declarados. Un agente OpenClaw marca con `"workspace": true` exactamente una raíz, la de su espacio de trabajo heredado (`clawd`); otro arnés no marca ninguna. OpenClaw V4 lee `state_directory/workspace`, fuera del espacio copiado: sin esa marca arranca vacío y pierde su identidad (Argos, 21-oct). Tras verificar la restauración se copian ahí, como ficheros nuevos `0600`, los Markdown de primer nivel de esa raíz (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`… y los que citan), nunca el `BOOTSTRAP.md` de primer arranque; un `workspace` con contenido no se sobrescribe. En Docker usa el volumen de estado con las mismas etiquetas que exige el ejecutor y el UID/GID del runtime. No escribe sobre un destino ocupado. Conserva un manifiesto de ruta antigua, ruta nueva y hash.
 5. Envía `update` con la colocación nueva por la flota V4. Aplica los topes de §5 como ampliación `resources` declarada en el plan antes de crear el destino: Gaia 1 GiB/1,5 CPU, Hades 1 GiB/1 CPU, Argos 3 GiB/2 CPU y Hegel 2 GiB/2 CPU. Si la operación queda en `awaiting_auth` con la creación del entorno ya acreditada, el corte termina aquí como `moved_pending_login` (ver el párrafo del plan): el recibo conserva el destino pendiente, el origen retenido sin borrado automático y la orden exacta de reversión manual. Los pasos siguientes solo se exigen cuando el login ya se completó.
 6. Reaplica el contexto mediante la recarga existente si su contrato todavía pertenece a la generación anterior, sin cambiar su revisión; después exige nonce respondido por el agente a través de Cauce, contexto versionado aplicado, adopción viva del perfil, host/cuenta/harness visibles en el inventario y terminal WebSocket abierta por el CLI existente. En terminal de shell comprueba además un nonce escrito y leído en la sesión.
 7. Mide otra vez la VPS con el alcance sellado del «antes» y guarda la comparación. No elimina el origen, sus imágenes ni sus datos.

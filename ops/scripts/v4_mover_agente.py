@@ -111,6 +111,10 @@ def load_plan(path, alias, *, allow_legacy_limits=False):
         if any(item['target'] == other or item['target'].startswith(other + '/') or other.startswith(item['target'] + '/') for other in targets):
             raise ValueError('los mapas de destino se solapan')
         targets.append(item['target'])
+        if type(item.get('workspace', False)) is not bool:
+            raise ValueError('workspace debe ser booleano')
+    if sum(item.get('workspace') is True for item in plan['roots']) > 1:
+        raise ValueError('solo una raíz puede ser el espacio de trabajo heredado de OpenClaw')
     if not names:
         raise ValueError('el plan no declara datos para copiar')
     from v4_mover_repos import validate_repositories
@@ -193,6 +197,13 @@ def target_parameters(fleet, original, plan):
     if 'extensions' in plan:
         result['extensions'] = plan['extensions']
     return result
+
+
+def check_workspace_mark(plan, target):
+    """V4 OpenClaw reads a workspace outside the copied space: unmarked, the moved agent starts with no identity."""
+    marked = sum(item.get('workspace') is True for item in plan['roots'])
+    if marked != (1 if target.get('harness_id') == 'openclaw' else 0):
+        raise ValueError('un agente OpenClaw marca con workspace la raíz de su espacio de trabajo heredado; otro arnés no')
 
 
 class Cut:
@@ -341,6 +352,7 @@ class Cut:
         target = target_parameters(self.fleet, self.original, self.plan)
         self.receipt['target'] = target
         self.save()
+        check_workspace_mark(self.plan, target)
         common = {**self.plan['destination'], 'alias': alias, 'tenant': self.plan['tenant'], 'runtime_key': target['runtime_key'],
                   'placement': target['placement'], 'roots': self.plan['roots'],
                   'excluded_roots': self.plan.get('excluded_roots', []),

@@ -10,6 +10,7 @@ import pathlib
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,7 @@ def unpack(request, work):
             raise ValueError('restore did not verify')
     finally:
         sys.argv = previous
+    seed_workspace(request)
     if 'owner' in request:
         uid, gid = request['owner']
         root = pathlib.Path(request['directory']).parent
@@ -135,6 +137,52 @@ def unpack(request, work):
             os.chown(directory, uid, gid, follow_symlinks=False)
             for name in children + files:
                 os.chown(os.path.join(directory, name), uid, gid, follow_symlinks=False)
+
+
+def seed_workspace(request):
+    """Give a moved OpenClaw agent its own documents where V4 OpenClaw reads them.
+
+    V4 OpenClaw reads `<state_directory>/workspace` (fleet_provider_openclaw.environment), a sibling of the restored
+    space, while the copy puts the legacy workspace (`clawd`) under `space/<target>`. Without this step the new
+    workspace starts empty and the agent loses its identity (Argos, 21-oct). The root the plan marks `workspace`
+    lends its top-level Markdown documents —AGENTS, SOUL, IDENTITY, USER, MEMORY and the files they cite— as new
+    private copies; the restored space stays the verified copy. OpenClaw's first-run BOOTSTRAP.md is never carried.
+    """
+    roots = [item for item in request['roots'] if item.get('workspace') is True]
+    if not roots:
+        return []
+    from v4_copia_integral import descend, directory
+    from v4_copia_migracion import OPEN_FILE, OPEN_NEW
+    space = pathlib.Path(request['directory'])
+    parent = directory(str(space.parent))
+    try:
+        source = descend(parent, space.name + '/' + roots[0]['target'])
+        try:
+            target = descend(parent, 'workspace', create=True)
+            try:
+                if os.listdir(target):
+                    raise ValueError('destination OpenClaw workspace is not empty')
+                seeded = []
+                for name in sorted(os.listdir(source)):
+                    if name.startswith('.') or not name.endswith('.md') or name == 'BOOTSTRAP.md' \
+                            or not stat.S_ISREG(os.stat(name, dir_fd=source, follow_symlinks=False).st_mode):
+                        continue
+                    with os.fdopen(os.open(name, OPEN_FILE, dir_fd=source), 'rb') as incoming:
+                        if not stat.S_ISREG(os.fstat(incoming.fileno()).st_mode):
+                            raise ValueError('workspace document changed while seeding')
+                        with os.fdopen(os.open(name, OPEN_NEW, 0o600, dir_fd=target), 'wb') as outgoing:
+                            shutil.copyfileobj(incoming, outgoing)
+                            outgoing.flush()
+                            os.fsync(outgoing.fileno())
+                    seeded.append(name)
+                os.fsync(target)
+                return seeded
+            finally:
+                os.close(target)
+        finally:
+            os.close(source)
+    finally:
+        os.close(parent)
 
 
 def restore_container(request):
