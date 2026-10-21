@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ProviderAuthCode, ProviderAuthReason } from './provider-auth.types.js';
+import type { ProviderAuthCode, ProviderAuthProbeReason, ProviderAuthReason } from './provider-auth.types.js';
 
 const Identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
 export const ProviderAuthRequestSchema = z.object({
@@ -10,7 +10,13 @@ export const ProviderAuthRequestSchema = z.object({
   runtime_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/), profile_id: Identifier,
 }).strict();
 export const ProviderAuthSessionIdSchema = z.uuid();
-export const ProviderAuthReasonSchema = z.enum(['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT']);
+export const PROVIDER_AUTH_PROBE_REASONS = ['PROBE_TIMEOUT', 'PROBE_EXIT', 'PROBE_BAD_JSON', 'PROBE_NONCE_MISMATCH', 'PROBE_OUTPUT_LIMIT', 'PROBE_UNAVAILABLE',
+  'PROBE_IDENTITY_MISMATCH', 'PROBE_IDENTITY_UNAVAILABLE', 'PROBE_PROFILE_UNUSABLE', 'PROBE_VERSION_MISMATCH', 'PROBE_CONFIG_SCOPE', 'PROBE_CONTAINER_EXEC_FAILED'] as const satisfies readonly ProviderAuthProbeReason[];
+export const ProviderAuthReasonSchema = z.enum(['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT',
+  ...PROVIDER_AUTH_PROBE_REASONS]);
+export function isProviderAuthProbeReason(value: unknown): value is ProviderAuthProbeReason {
+  return PROVIDER_AUTH_PROBE_REASONS.some(reason => reason === value);
+}
 
 export class ProviderAuthError extends Error {
   constructor(readonly code: ProviderAuthCode, readonly reason?: ProviderAuthReason) { super('provider authentication could not be verified'); }

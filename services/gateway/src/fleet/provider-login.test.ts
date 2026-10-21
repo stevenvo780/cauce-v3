@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
-import { assertLoginPins, boundedProviderReceipt, createProviderLogin, cleanupProviderLogin, providerAuthFailureReason, providerRuntimeFailureReason, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
+import { assertLoginPins, boundedProviderReceipt, createProviderLogin, cleanupProviderLogin, providerAuthFailureReason, providerProbeFailure, providerRuntimeFailureReason, readPrivateJson, type ProviderLoginConfig } from './provider-login.js';
 
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof files>(); return { ...actual, open: vi.fn(actual.open) };
@@ -83,6 +83,28 @@ describe('private provider login transport', () => {
     'container process identity differs', 'container runtime executable hash differs'])('classifies an exact isolation failure: %s', text => {
     expect(providerRuntimeFailureReason(`fleet effect failed: ${text}\n`)).toBe('CONTAINER_ISOLATION_DRIFT');
     expect(providerRuntimeFailureReason(`fleet effect failed: ${text} SYNTHETIC_PRIVATE_FIXTURE\n`)).toBeUndefined();
+  });
+  it.each([
+    ['probe_timeout after 61s', 'PROBE_TIMEOUT'], ['probe_exit_3', 'PROBE_EXIT'], ['probe_exit_signal', 'PROBE_EXIT'],
+    ['probe_bad_json', 'PROBE_BAD_JSON'], ['probe_nonce_mismatch', 'PROBE_NONCE_MISMATCH'], ['probe_output_limit', 'PROBE_OUTPUT_LIMIT'],
+    ['probe_unavailable', 'PROBE_UNAVAILABLE'], ['identity_mismatch', 'PROBE_IDENTITY_MISMATCH'],
+    ['identity_unavailable', 'PROBE_IDENTITY_UNAVAILABLE'], ['profile_unusable', 'PROBE_PROFILE_UNUSABLE'],
+    ['version_mismatch', 'PROBE_VERSION_MISMATCH'], ['config_scope', 'PROBE_CONFIG_SCOPE'], ['container_exec_failed', 'PROBE_CONTAINER_EXEC_FAILED'],
+  ])('maps the allowlisted identity probe reason %s', (detail, reason) => {
+    const stderr = `SYNTHETIC_PRIVATE_FIXTURE token=private\nfleet identity probe failed: ${detail}\n`;
+    expect(providerProbeFailure(stderr)).toEqual({ reason, detail });
+    expect(providerRuntimeFailureReason(stderr)).toBe(reason);
+  });
+  it('ignores probe lines with extra text, unknown codes or beyond the stderr bound and keeps the last valid one', () => {
+    for (const line of ['fleet identity probe failed: identity_mismatch user@example.invalid', 'fleet identity probe failed: probe_timeout after 12345s',
+      'fleet identity probe failed: probe_exit_1234', 'fleet identity probe failed: SYNTHETIC_PRIVATE_FIXTURE', ' fleet identity probe failed: config_scope']) {
+      expect(providerProbeFailure(`${line}\n`)).toBeUndefined();
+    }
+    expect(providerProbeFailure('x'.repeat(4096) + '\nfleet identity probe failed: config_scope\n')).toBeUndefined();
+    expect(providerProbeFailure('fleet identity probe failed: config_scope\nfleet identity probe failed: probe_timeout after 115s\n'))
+      .toEqual({ reason: 'PROBE_TIMEOUT', detail: 'probe_timeout after 115s' });
+    expect(providerRuntimeFailureReason('fleet identity probe failed: config_scope\nfleet effect failed: container declared extensions differ\n'))
+      .toBe('CONTAINER_ISOLATION_DRIFT');
   });
   it.each(['normal', 'crash'])('runs actual native PTY and %s cleanup with exact runtime user', async mode => {
     const user = userInfo(); const root = await mkdtemp(join(user.homedir, 'provider-login-native-')); temporary.push(root);

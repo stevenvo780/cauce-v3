@@ -164,8 +164,8 @@ export class ProviderAuthManager {
     try {
       const evidence = await session.reservation?.verify(session.abort.signal);
       if (!verifying(session)) return this.snapshot(session);
-      if (evidence?.identity_matches !== true) throw new ProviderAuthError('IDENTITY_MISMATCH');
-      if (!evidence.functional_call_verified) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED');
+      if (evidence?.identity_matches !== true) throw new ProviderAuthError('IDENTITY_MISMATCH', evidence?.reason);
+      if (!evidence.functional_call_verified) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED', evidence.reason);
       await this.access(actor, session);
       if (!verifying(session)) return this.snapshot(session);
       await this.finish(session, 'authenticated', null);

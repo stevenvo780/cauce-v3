@@ -6,7 +6,7 @@ import { isAbsolute, normalize } from 'node:path';
 import { z } from 'zod';
 import { FleetOperationRequestSchema, isSignalAborted, readMutableBoolean } from '@cauce/protocol';
 import { ProviderAuthError, ProviderAuthReasonSchema } from '../console/provider-auth.contracts.js';
-import type { ProviderAuthLogin, ProviderAuthReason } from '../console/provider-auth.types.js';
+import type { ProviderAuthLogin, ProviderAuthProbeReason, ProviderAuthReason } from '../console/provider-auth.types.js';
 import type { FleetExecution } from './executor.js';
 import type { HostCommandConfig } from './host-command.js';
 
@@ -83,10 +83,37 @@ const PROVIDER_RUNTIME_FAILURES = new Map<string, ProviderAuthReason>([
     'container process identity differs', 'container runtime executable hash differs']
     .map(message => [`fleet effect failed: ${message}`, 'CONTAINER_ISOLATION_DRIFT'] as const),
 ]);
-export function providerRuntimeFailureReason(stderr: string): ProviderAuthReason | undefined {
+function boundedLines(stderr: string): string[] {
   const lines = stderr.slice(0, 4096).split('\n'); if (stderr.length > 4096) lines.pop();
-  for (const line of lines) { const reason = PROVIDER_RUNTIME_FAILURES.get(line); if (reason) return reason; }
-  return undefined;
+  return lines;
+}
+/** Same allowlist as PROBE_FAILURE_LINE in ops/cli/fleet_provider_identity.py: nothing else from the probe crosses. */
+const PROBE_FAILURE_LINE = new RegExp('^fleet identity probe failed: (probe_timeout after [0-9]{1,4}s|probe_exit_(?:[0-9]{1,3}|signal)|probe_bad_json'
+  + '|probe_nonce_mismatch|probe_output_limit|probe_unavailable|identity_mismatch|identity_unavailable'
+  + '|profile_unusable|version_mismatch|config_scope|container_exec_failed)$', 'u');
+const PROBE_REASONS = new Map<string, ProviderAuthProbeReason>([
+  ['probe_timeout', 'PROBE_TIMEOUT'], ['probe_exit', 'PROBE_EXIT'], ['probe_bad_json', 'PROBE_BAD_JSON'],
+  ['probe_nonce_mismatch', 'PROBE_NONCE_MISMATCH'], ['probe_output_limit', 'PROBE_OUTPUT_LIMIT'], ['probe_unavailable', 'PROBE_UNAVAILABLE'],
+  ['identity_mismatch', 'PROBE_IDENTITY_MISMATCH'], ['identity_unavailable', 'PROBE_IDENTITY_UNAVAILABLE'],
+  ['profile_unusable', 'PROBE_PROFILE_UNUSABLE'], ['version_mismatch', 'PROBE_VERSION_MISMATCH'], ['config_scope', 'PROBE_CONFIG_SCOPE'],
+  ['container_exec_failed', 'PROBE_CONTAINER_EXEC_FAILED'],
+]);
+export interface ProviderProbeFailure { reason: ProviderAuthProbeReason; detail: string }
+/** The last allowlisted identity probe reason in a host command's stderr; `detail` is the bounded journal text. */
+export function providerProbeFailure(stderr: string): ProviderProbeFailure | undefined {
+  let found: ProviderProbeFailure | undefined;
+  for (const line of boundedLines(stderr)) {
+    const detail = PROBE_FAILURE_LINE.exec(line)?.[1];
+    if (detail === undefined) continue;
+    const code = detail.startsWith('probe_timeout ') ? 'probe_timeout' : detail.startsWith('probe_exit_') ? 'probe_exit' : detail;
+    const reason = PROBE_REASONS.get(code);
+    if (reason) found = { reason, detail };
+  }
+  return found;
+}
+export function providerRuntimeFailureReason(stderr: string): ProviderAuthReason | undefined {
+  for (const line of boundedLines(stderr)) { const reason = PROVIDER_RUNTIME_FAILURES.get(line); if (reason) return reason; }
+  return providerProbeFailure(stderr)?.reason;
 }
 export function providerAuthFailureReason(error: unknown): string {
   if (error instanceof ProviderAuthError) {
@@ -158,7 +185,7 @@ export async function boundedProviderReceipt(python: string, argv: string[], bod
       const error = new ProviderAuthError(runtimeReason === 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' ? 'RUNTIME_DRIFT' : 'HOST_UNAVAILABLE', runtimeReason);
       const reason = quotaStepReason(stderrText);
       if (reason) Object.assign(error, { quotaStepReason: reason });
-      process.stderr.write(`provider auth helper failed: ${runtimeReason ?? reason ?? 'helper_failed'}\n`);
+      process.stderr.write(`provider auth helper failed: ${providerProbeFailure(stderrText)?.detail ?? runtimeReason ?? reason ?? 'helper_failed'}\n`);
       reject(error);
     };
     child.stdout.on('data', (bytes: Buffer) => { length += bytes.length; if (length > 32_768) stop(); else chunks.push(bytes); });

@@ -274,6 +274,7 @@ export async function createHostProviderAuthService(pool: DatabasePool, options:
         const result = await performHostCommand(options.hostConfig.command, 'authenticate', execution, signal);
         return { identity_matches: !result.awaiting_auth && result.evidence.provider_verified === true,
           functional_call_verified: !result.awaiting_auth && result.evidence.provider_verified === true,
+          ...(result.probe_failure === undefined ? {} : { reason: result.probe_failure }),
           ...(result.account_identity === undefined ? {} : { account_identity: result.account_identity }) };
       });
     },

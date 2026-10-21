@@ -8,7 +8,12 @@ export interface ProviderAuthRequest {
 export type ProviderAuthStatus = 'opening' | 'awaiting_login' | 'verifying' | 'authenticated' | 'cancelled' | 'expired' | 'failed';
 export type ProviderAuthCode = 'AUTHORITY_REVOKED' | 'SESSION_CONFLICT' | 'INVALID_REQUEST' | 'HOST_UNAVAILABLE' | 'RUNTIME_DRIFT'
   | 'STOP_UNCONFIRMED' | 'IDENTITY_MISMATCH' | 'FUNCTIONAL_CHECK_FAILED' | 'LOGIN_FAILED' | 'SESSION_EXPIRED';
-export type ProviderAuthReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
+export type ProviderAuthDriftReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
+/** Why the provider's identity probe failed (gateway provider-auth.types.ts); bounded and secret-free. */
+export type ProviderAuthProbeReason = 'PROBE_TIMEOUT' | 'PROBE_EXIT' | 'PROBE_BAD_JSON' | 'PROBE_NONCE_MISMATCH'
+  | 'PROBE_OUTPUT_LIMIT' | 'PROBE_UNAVAILABLE' | 'PROBE_IDENTITY_MISMATCH' | 'PROBE_IDENTITY_UNAVAILABLE'
+  | 'PROBE_PROFILE_UNUSABLE' | 'PROBE_VERSION_MISMATCH' | 'PROBE_CONFIG_SCOPE' | 'PROBE_CONTAINER_EXEC_FAILED';
+export type ProviderAuthReason = ProviderAuthDriftReason | ProviderAuthProbeReason;
 export interface ProviderAuthSnapshot {
   session_id: string; operation_id: string; provider_id: ProviderAuthRequest['provider_id']; account_id: string;
   harness_id: string; host_id: string; runtime_user: string; profile_id: string; method: 'device' | 'terminal';
@@ -28,7 +33,9 @@ const PROVIDERS = ['codex', 'claude', 'gemini', 'minimax', 'grok', 'feihoa', 'mu
 const STATUSES = ['opening', 'awaiting_login', 'verifying', 'authenticated', 'cancelled', 'expired', 'failed'];
 const CODES = ['AUTHORITY_REVOKED', 'SESSION_CONFLICT', 'INVALID_REQUEST', 'HOST_UNAVAILABLE', 'RUNTIME_DRIFT', 'STOP_UNCONFIRMED',
   'IDENTITY_MISMATCH', 'FUNCTIONAL_CHECK_FAILED', 'LOGIN_FAILED', 'SESSION_EXPIRED'];
-const REASONS = ['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT'];
+const REASONS = ['CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT', 'CONTAINER_RESOURCE_LIMITS_DRIFT', 'CONTAINER_ISOLATION_DRIFT',
+  'PROBE_TIMEOUT', 'PROBE_EXIT', 'PROBE_BAD_JSON', 'PROBE_NONCE_MISMATCH', 'PROBE_OUTPUT_LIMIT', 'PROBE_UNAVAILABLE',
+  'PROBE_IDENTITY_MISMATCH', 'PROBE_IDENTITY_UNAVAILABLE', 'PROBE_PROFILE_UNUSABLE', 'PROBE_VERSION_MISMATCH', 'PROBE_CONFIG_SCOPE', 'PROBE_CONTAINER_EXEC_FAILED'];
 const SNAPSHOT_KEYS = ['session_id', 'operation_id', 'provider_id', 'account_id', 'harness_id', 'host_id', 'runtime_user',
   'profile_id', 'method', 'status', 'expires_at', 'cleanup_pending', 'error'];
 function invalid(): never { throw new Error('El servidor no acreditó esta conexión.'); }

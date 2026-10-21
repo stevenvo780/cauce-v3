@@ -92,6 +92,16 @@ describe('provider auth panel', () => {
     expect(alert).toHaveTextContent('Revisa su recuperación y confirma la parada antes de volver a iniciar sesión.');
     expect(alert.textContent).not.toContain('reservado');
   });
+  it.each([
+    ['PROBE_TIMEOUT', 'El proveedor tardó más de lo permitido en responder la prueba de identidad.'],
+    ['PROBE_IDENTITY_MISMATCH', 'La cuenta conectada no es la esperada.'],
+    [undefined, 'La cuenta conectada no corresponde a la identidad autorizada.'],
+  ] as const)('explains the failed identity probe %s instead of a generic mismatch', async (reason, expected) => {
+    const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', error: 'IDENTITY_MISMATCH', ...(reason ? { reason } : {}) }) as T;
+    render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected);
+  });
   it('rejects an unknown cleanup reason without echoing it', async () => {
     const fetcher: RequestFn = async <T,>() => ({ ...session, status: 'failed', cleanup_pending: true,
       error: 'STOP_UNCONFIRMED', reason: 'SYNTHETIC_PRIVATE_REASON' }) as T;

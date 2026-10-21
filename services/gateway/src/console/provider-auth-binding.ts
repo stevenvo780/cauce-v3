@@ -2,7 +2,7 @@ import { StoreError, assertFleetRelocationSourceBarrier, bindProviderAccountIden
   type CompanyAuthority, type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { randomUUID } from 'node:crypto';
 import { ProviderAuthError, ProviderAuthRequestSchema } from './provider-auth.contracts.js';
-import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthRequest } from './provider-auth.types.js';
+import type { ProviderAuthActor, ProviderAuthDependencies, ProviderAuthLogin, ProviderAuthReason, ProviderAuthRequest } from './provider-auth.types.js';
 import { latestProviderAuthReservation as latest, recordProviderAuthReservation as event, releaseProviderAuthReservation,
   type ProviderAuthReservation as Reservation } from './provider-auth-reservation.js';
 
@@ -19,7 +19,8 @@ export interface ProviderAuthPhysicalScope extends ProviderAuthPolicyScope {
 export interface ProviderAuthPhysicalHooks {
   stopAdapter(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ stopped: boolean }>;
   openLogin(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<ProviderAuthLogin>;
-  verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean; account_identity?: string }>;
+  verify(scope: ProviderAuthPhysicalScope, signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean; account_identity?: string;
+    reason?: ProviderAuthReason }>;
   cleanup(scope: ProviderAuthPhysicalScope, sessionId: string, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');

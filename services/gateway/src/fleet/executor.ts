@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { FleetProviderAccounts } from './accounts.js';
 import { redactExecutorStderr } from './host-stderr.js';
+import type { ProviderAuthProbeReason } from '../console/provider-auth.types.js';
 
 interface FencedTarget { resource: 'agent'; tenant_id: string; alias: string }
 export interface FleetExecution {
@@ -30,7 +31,11 @@ export interface FleetExecutionRepository {
   compensate(claim: FleetOperationClaim, evidence?: FleetEvidence): Promise<FleetOperation>;
   settle(claim: FleetOperationClaim): Promise<FleetOperation>;
 }
-export interface FleetEffectResult { evidence: FleetEvidence; awaiting_auth?: boolean; account_identity?: string }
+export interface FleetEffectResult {
+  evidence: FleetEvidence; awaiting_auth?: boolean; account_identity?: string;
+  /** Why the authenticate step's identity probe failed, when the host named an allowlisted reason. */
+  probe_failure?: ProviderAuthProbeReason;
+}
 
 /** Only the fenced console login may bind a provisional provider identity. */
 export function providerIdentityPending(execution: FleetExecution): boolean {

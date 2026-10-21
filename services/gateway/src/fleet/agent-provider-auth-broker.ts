@@ -4,7 +4,7 @@ import { preparedState, publicFleetOperation, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { createProviderAuthDependencies, loadProviderAuthRoutingScope, resolveProviderAuthRequest,
   type ProviderAuthPhysicalScope, type ProviderAuthPolicyResolver } from '../console/provider-auth-binding.js';
-import { ProviderAuthError } from '../console/provider-auth.contracts.js';
+import { isProviderAuthProbeReason, ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthService } from '../console/provider-auth.types.js';
 import { AgentAuthBindingSchema, type AgentAuthBinding, type AgentAuthCommand, type AgentAuthEvent, type AgentAuthResult } from './agent-provider-auth-contracts.js';
@@ -51,6 +51,7 @@ export class AgentProviderAuthBroker {
         const response = await this.command(binding, { id: randomUUID(), type: 'verify' });
         return { identity_matches: response.ok && response.identity_matches === true,
           functional_call_verified: response.ok && response.functional_call_verified === true,
+          ...(isProviderAuthProbeReason(response.reason) ? { reason: response.reason } : {}),
           ...(response.account_identity === undefined ? {} : { account_identity: response.account_identity }) };
       },
       cleanup: async (physical, sessionId) => {

@@ -125,6 +125,15 @@ describe('sensitive provider bootstrap', () => {
     expect(await f.manager.verify(actor, session.session_id)).toMatchObject({ status: 'failed', error: options.code });
     expect(f.state().released).toBe(true);
   });
+  it('keeps the bounded identity probe reason on the failed snapshot and its audit', async () => {
+    const f = fixture(); const reserve = f.deps.reserve.bind(f.deps);
+    f.deps.reserve = async (...args) => ({ ...await reserve(...args),
+      verify: async () => ({ identity_matches: false, functional_call_verified: false, reason: 'PROBE_TIMEOUT' as const }) });
+    const session = await f.manager.start(actor, input);
+    await f.manager.attach(actor, session.session_id, () => undefined);
+    expect(await f.manager.verify(actor, session.session_id)).toMatchObject({ status: 'failed', error: 'IDENTITY_MISMATCH', reason: 'PROBE_TIMEOUT' });
+    expect(f.audits.at(-1)).toMatchObject({ error: 'IDENTITY_MISMATCH', reason: 'PROBE_TIMEOUT' });
+  });
   it('marks authenticated only after identity, a functional call and login process stop are demonstrated', async () => {
     const f = fixture(); const session = await f.manager.start(actor, input);
     await f.manager.attach(actor, session.session_id, () => undefined);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { assertProviderAuthTarget, type ProviderAuthClient, type ProviderAuthReason, type ProviderAuthRequest, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
+import { assertProviderAuthTarget, type ProviderAuthClient, type ProviderAuthDriftReason, type ProviderAuthReason, type ProviderAuthRequest, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
+import { probeFailureMessage } from './provider-probe-messages';
 import { ApiError } from '../../api/client/core';
 import { spanishWithReason } from '../../api/error-message';
 import { describeKnownOperationError } from './quota-messages';
@@ -14,19 +15,20 @@ interface Props {
 const active = (value: ProviderAuthSnapshot) => ['opening', 'awaiting_login', 'verifying'].includes(value.status);
 const runtimeDriftMessage = 'El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.';
 const hostUnavailableMessage = (hostId: string) => `El ordenador ${hostId} no está disponible. Revisa su estado y su conexión antes de volver a iniciar sesión.`;
-const stopReasons: Record<ProviderAuthReason, string> = {
+const stopReasons: Record<ProviderAuthDriftReason, string> = {
   CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT: 'La imagen o las etiquetas de propiedad del contenedor no coinciden con la configuración aprobada.',
   CONTAINER_RESOURCE_LIMITS_DRIFT: 'Los límites de recursos del contenedor no coinciden con la configuración aprobada.',
   CONTAINER_ISOLATION_DRIFT: 'El aislamiento del contenedor no coincide con la configuración aprobada.',
 };
-const stopUnconfirmedMessage = (reason?: ProviderAuthReason, cleanupPending = false) => `No se confirmó la parada. ${reason ? `${stopReasons[reason]} ` : ''}${cleanupPending ? 'El perfil sigue reservado; revisa' : 'Revisa'} su recuperación y confirma la parada antes de volver a iniciar sesión.`;
+const stopReason = (reason?: ProviderAuthReason) => reason !== undefined && Object.hasOwn(stopReasons, reason) ? `${stopReasons[reason as ProviderAuthDriftReason]} ` : '';
+const stopUnconfirmedMessage = (reason?: ProviderAuthReason, cleanupPending = false) => `No se confirmó la parada. ${stopReason(reason)}${cleanupPending ? 'El perfil sigue reservado; revisa' : 'Revisa'} su recuperación y confirma la parada antes de volver a iniciar sesión.`;
 const message = (value: ProviderAuthSnapshot) => value.cleanup_pending || value.error === 'STOP_UNCONFIRMED' ? stopUnconfirmedMessage(value.reason, value.cleanup_pending)
   : value.error === 'RUNTIME_DRIFT' ? runtimeDriftMessage
-    : value.error === 'HOST_UNAVAILABLE' ? hostUnavailableMessage(value.host_id)
+    : probeFailureMessage(value.reason) ?? (value.error === 'HOST_UNAVAILABLE' ? hostUnavailableMessage(value.host_id)
       : value.error === 'IDENTITY_MISMATCH' ? 'La cuenta conectada no corresponde a la identidad autorizada.'
         : value.error === 'FUNCTIONAL_CHECK_FAILED' ? 'La cuenta aún no pasó una llamada funcional.'
           : value.status === 'expired' ? 'La conexión caducó. Relee la operación antes de continuar.'
-            : 'La conexión no se pudo verificar. Relee la operación antes de continuar.';
+            : 'La conexión no se pudo verificar. Relee la operación antes de continuar.');
 
 function requestError(cause: unknown, hostId: string): string {
   const fallback = 'No se pudo verificar esta conexión. Relee el estado de la operación y vuelve a intentarlo.';

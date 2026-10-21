@@ -33,6 +33,22 @@ describe('host effect transport', () => {
     expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/SYNTHETIC_PRIVATE_FIXTURE|example\.invalid|code=private|\\u001b/u);
     await expect(performHostCommand(config, 'stop', execution, new AbortController().signal)).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE', reason });
   });
+  it('journals the identity probe reason of authenticate and carries it without any other stderr', async () => {
+    const journal = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const stderr = 'SYNTHETIC_PRIVATE_FIXTURE token=private\nfleet identity probe failed: probe_timeout after 61s\n';
+    const pending = await helper(`import json,sys\nsys.stdin.read()\nsys.stderr.write(${JSON.stringify(stderr)})\nprint(json.dumps({'evidence':{},'awaiting_auth':True}))\n`);
+    expect(await performHostCommand(pending, 'authenticate', execution, new AbortController().signal))
+      .toEqual({ evidence: {}, awaiting_auth: true, probe_failure: 'PROBE_TIMEOUT' });
+    const lines = journal.mock.calls.map(call => String(call[0]));
+    expect(lines).toContain(`provider auth helper failed: probe_timeout after 61s operation_id=${execution.operation.id}\n`);
+    expect(lines.join('')).not.toMatch(/SYNTHETIC_PRIVATE_FIXTURE|token=private/u);
+    const failed = await helper(`import sys\nsys.stdin.read()\nsys.stderr.write(${JSON.stringify(stderr)})\nsys.exit(2)\n`);
+    await expect(performHostCommand(failed, 'authenticate', execution, new AbortController().signal))
+      .rejects.toMatchObject({ code: 'HOST_UNAVAILABLE', reason: 'PROBE_TIMEOUT' });
+    const verified = await helper(`import json,sys\nsys.stdin.read()\nsys.stderr.write(${JSON.stringify(stderr)})\nprint(json.dumps({'evidence':{'provider_verified':True}}))\n`);
+    expect(await performHostCommand(verified, 'authenticate', execution, new AbortController().signal)).toEqual({ evidence: { provider_verified: true } });
+  });
   it('keeps unknown or truncated login-stop stderr private and rejects without a typed cause', async () => {
     const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const message = 'fleet effect failed: container resource limits differ from the approved shape';

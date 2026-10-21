@@ -13,7 +13,10 @@ export interface ProviderAuthRequest {
 export type ProviderAuthStatus = 'opening' | 'awaiting_login' | 'verifying' | 'authenticated' | 'cancelled' | 'expired' | 'failed';
 export type ProviderAuthCode = 'AUTHORITY_REVOKED' | 'SESSION_CONFLICT' | 'INVALID_REQUEST' | 'HOST_UNAVAILABLE'
   | 'RUNTIME_DRIFT' | 'STOP_UNCONFIRMED' | 'IDENTITY_MISMATCH' | 'FUNCTIONAL_CHECK_FAILED' | 'LOGIN_FAILED' | 'SESSION_EXPIRED';
-export type ProviderAuthReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
+export type ProviderAuthDriftReason = 'CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT' | 'CONTAINER_RESOURCE_LIMITS_DRIFT' | 'CONTAINER_ISOLATION_DRIFT';
+/** Why the identity probe of a provider login failed; bounded and secret-free (ops/cli/fleet_provider_identity.py). */
+export type ProviderAuthProbeReason = 'PROBE_TIMEOUT' | 'PROBE_EXIT' | 'PROBE_BAD_JSON' | 'PROBE_NONCE_MISMATCH' | 'PROBE_OUTPUT_LIMIT' | 'PROBE_UNAVAILABLE' | 'PROBE_IDENTITY_MISMATCH' | 'PROBE_IDENTITY_UNAVAILABLE' | 'PROBE_PROFILE_UNUSABLE' | 'PROBE_VERSION_MISMATCH' | 'PROBE_CONFIG_SCOPE' | 'PROBE_CONTAINER_EXEC_FAILED';
+export type ProviderAuthReason = ProviderAuthDriftReason | ProviderAuthProbeReason;
 export interface ProviderAuthSnapshot {
   session_id: string;
   operation_id: string;
@@ -41,7 +44,7 @@ export interface ProviderAuthLogin {
 export interface ProviderAuthReservation {
   stopAdapter(signal: AbortSignal): Promise<{ stopped: boolean }>;
   openLogin(signal: AbortSignal): Promise<ProviderAuthLogin>;
-  verify(signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean }>;
+  verify(signal: AbortSignal): Promise<{ identity_matches: boolean; functional_call_verified: boolean; reason?: ProviderAuthReason }>;
   release(): Promise<void>;
 }
 export interface ProviderAuthDependencies {

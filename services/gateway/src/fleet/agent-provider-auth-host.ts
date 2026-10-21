@@ -109,6 +109,7 @@ export class AgentProviderAuthHost {
               const proof = await performHostCommand(this.options.hostConfig.command, 'authenticate', context.execution, this.abort.signal);
               result.identity_matches = !proof.awaiting_auth && proof.evidence.provider_verified === true;
               result.functional_call_verified = result.identity_matches;
+              if (!result.identity_matches && proof.probe_failure !== undefined) result.reason = proof.probe_failure;
               if (result.identity_matches && proof.account_identity !== undefined) result.account_identity = proof.account_identity;
             }
             break;

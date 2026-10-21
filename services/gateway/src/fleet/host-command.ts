@@ -5,7 +5,7 @@ import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
 import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
-import { providerRuntimeFailureReason } from './provider-login.js';
+import { providerProbeFailure, providerRuntimeFailureReason } from './provider-login.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
@@ -92,10 +92,14 @@ async function runHostCommand(
       const diagnostic = step === 'login-stop' ? providerRuntimeFailureReason(runtimeStderr) ?? 'helper_failed' : stderr.text();
       if (code !== 0) logHostCommandFailure(step, code, diagnostic, execution.operation.id,
         execution.fleet_scope?.host_id ?? (hosts.size === 1 ? [...hosts][0] ?? null : null));
+      // The identity probe names why it failed in one allowlisted, secret-free line; journal it and carry its reason.
+      const probe = step === 'authenticate' ? providerProbeFailure(runtimeStderr) : undefined;
+      if (probe) process.stderr.write(`provider auth helper failed: ${probe.detail} operation_id=${execution.operation.id}\n`);
       if (code !== 0 || failed) { reject(failure()); return; }
       try {
         const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         resolve({ evidence: receipt.evidence,
+          ...(probe === undefined || !receipt.awaiting_auth ? {} : { probe_failure: probe.reason }),
           ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }),
           ...(receipt.account_identity === undefined ? {} : { account_identity: receipt.account_identity }) });
       }
