@@ -16,13 +16,12 @@ import re
 import secrets
 import select
 import selectors
-import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -40,8 +39,7 @@ MAX_HEADER_BYTES = 4 * 1024 * 1024
 MAX_RECORD_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 8 * 1024 * 1024
 MAX_STREAM_BYTES = 64 * 1024 * 1024
-WORKSPACE_PREFIX = 'muse-fallback-'
-STALE_WORKSPACE_SECONDS = TIMEOUT_SECONDS + 300.0
+MAX_SESSIONS = 1024
 FRAME_NONCE_BYTES = 16
 FRAME_NONCE_ATTEMPTS = 8
 MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}')
@@ -53,6 +51,7 @@ ERROR_MESSAGES = {
     'MUSE_INPUT_INVALID': 'Muse backend input is invalid or too large',
     'MUSE_BRIDGE_UNAVAILABLE': 'Muse fallback bridge is unavailable',
     'MUSE_BRIDGE_INVALID': 'Muse fallback bridge answered outside its contract',
+    'MUSE_PEER_DENIED': 'Muse fallback bridge only serves its paired runtime user',
     'MUSE_OUTPUT_INVALID': 'Muse CLI returned invalid output',
     'MUSE_OUTPUT_LIMIT': 'Muse CLI output exceeded the bounded limit',
     'MUSE_SESSION_INVALID': 'Muse CLI did not provide a valid session identity',
@@ -244,51 +243,113 @@ def parse_record(line: bytes | bytearray, state: RunState) -> None:
     state.record(event)
 
 
+def private_directory(path: str) -> str:
+    """A directory only this user can enter; never a link, never someone else's."""
+    with contextlib.suppress(FileExistsError):
+        os.mkdir(path, 0o700)
+    details = os.lstat(path)
+    if not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid() or details.st_mode & 0o077:
+        raise BackendError('MUSE_EXECUTION_FAILED')
+    return path
+
+
+class Bridge:
+    """The bridge's own state beside the Muse profile: an empty workspace and the sessions it created.
+
+    Only those sessions can be resumed through the socket, never the Muse agent's own conversations.
+    """
+
+    def __init__(self, root: str) -> None:
+        if not os.path.isabs(root) or os.path.normpath(root) != root:
+            raise BackendError('MUSE_EXECUTION_FAILED')
+        self.root = private_directory(root)
+        self.workspace = private_directory(os.path.join(root, 'workspace'))
+        self.registry = os.path.join(root, 'sessions.json')
+
+    @classmethod
+    def beside_profile(cls) -> Bridge:
+        data = os.environ.get('XDG_DATA_HOME', '')
+        if not os.path.isabs(data) or os.path.normpath(data) != data:
+            raise BackendError('MUSE_EXECUTION_FAILED')
+        return cls(os.path.join(os.path.dirname(data), 'model-fallback'))
+
+    def sessions(self) -> list[str]:
+        try:
+            descriptor = os.open(self.registry, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return []
+        with os.fdopen(descriptor, 'rb') as stream:
+            details = os.fstat(stream.fileno())
+            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid() or details.st_mode & 0o077:
+                raise BackendError('MUSE_EXECUTION_FAILED')
+            rows = json.loads(stream.read(MAX_SESSIONS * 64 + 1024))
+        if not isinstance(rows, list) or any(not isinstance(row, str) for row in rows):
+            raise BackendError('MUSE_EXECUTION_FAILED')
+        return rows
+
+    def remember(self, session_id: str) -> None:
+        rows = [row for row in self.sessions() if row != session_id][-(MAX_SESSIONS - 1):] + [session_id]
+        staged = self.registry + '.new'
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(staged)
+        descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w') as stream:
+            json.dump(rows, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged, self.registry)
+
+    def admit(self, session_id: str | None) -> None:
+        if session_id is not None and session_id not in self.sessions():
+            raise BackendError('MUSE_SESSION_INVALID')
+
+
 def run_turn(request: dict, model: str, emit: Callable[[dict], None], cancelled: threading.Event, *,
-             command: Sequence[str], timeout_seconds: float = TIMEOUT_SECONDS,
+             command: Sequence[str], bridge: Bridge, timeout_seconds: float = TIMEOUT_SECONDS,
              kill_grace_seconds: float = KILL_GRACE_SECONDS) -> dict:
     from fleet_provider_muse import fallback_arguments
+    bridge.admit(request['session_id'])
     encoded = frame_prompt(request['prompt'], request['system_prompt']).encode('utf-8')
     state = RunState(request['session_id'], emit)
     deadline = time.monotonic() + timeout_seconds
-    with tempfile.TemporaryDirectory(prefix=WORKSPACE_PREFIX) as directory:
-        workspace = os.path.join(directory, 'workspace')
-        os.mkdir(workspace, 0o700)
-        arguments = fallback_arguments(model, request['reasoning_effort'], request['session_id'], workspace)
-        if cancelled.is_set():
-            raise BackendError('MUSE_CANCELLED')
-        try:
-            process = subprocess.Popen([*command, *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE, cwd=workspace, env=muse_environment(), start_new_session=True)
-        except OSError as error:
-            raise BackendError('MUSE_EXECUTION_FAILED') from error
-        writer = threading.Thread(target=feed, args=(process, encoded), daemon=True)
-        writer.start()
-        try:
-            stream(process, state, cancelled, deadline, kill_grace_seconds)
-            while process.poll() is None:
-                if cancelled.is_set():
-                    raise BackendError('MUSE_CANCELLED')
-                if time.monotonic() >= deadline:
-                    raise BackendError('MUSE_TIMEOUT')
-                time.sleep(0.05)
+    workspace = bridge.workspace
+    arguments = fallback_arguments(model, request['reasoning_effort'], request['session_id'], workspace)
+    if cancelled.is_set():
+        raise BackendError('MUSE_CANCELLED')
+    try:
+        process = subprocess.Popen([*command, *arguments], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, cwd=workspace, env=muse_environment(), start_new_session=True)
+    except OSError as error:
+        raise BackendError('MUSE_EXECUTION_FAILED') from error
+    writer = threading.Thread(target=feed, args=(process, encoded), daemon=True)
+    writer.start()
+    try:
+        stream(process, state, cancelled, deadline, kill_grace_seconds)
+        while process.poll() is None:
             if cancelled.is_set():
                 raise BackendError('MUSE_CANCELLED')
-            if process.returncode != 0:
-                raise BackendError('MUSE_PROCESS_FAILED')
-            return state.result()
-        finally:
-            kill_group(process, signal.SIGTERM)
-            try:
-                process.wait(timeout=kill_grace_seconds)
-            except subprocess.TimeoutExpired:
-                pass
-            kill_group(process, signal.SIGKILL)
-            process.wait()
-            writer.join(timeout=kill_grace_seconds)
-            for pipe in (process.stdout, process.stderr):
-                if pipe is not None:
-                    pipe.close()
+            if time.monotonic() >= deadline:
+                raise BackendError('MUSE_TIMEOUT')
+            time.sleep(0.05)
+        if cancelled.is_set():
+            raise BackendError('MUSE_CANCELLED')
+        if process.returncode != 0:
+            raise BackendError('MUSE_PROCESS_FAILED')
+        result = state.result()
+        bridge.remember(result['session_id'])
+        return result
+    finally:
+        kill_group(process, signal.SIGTERM)
+        try:
+            process.wait(timeout=kill_grace_seconds)
+        except subprocess.TimeoutExpired:
+            pass
+        kill_group(process, signal.SIGKILL)
+        process.wait()
+        writer.join(timeout=kill_grace_seconds)
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
 def feed(process: subprocess.Popen, encoded: bytes) -> None:
@@ -401,7 +462,13 @@ def watch_disconnect(connection: socket.socket, cancelled: threading.Event, fini
             return
 
 
-def handle(connection: socket.socket, model: str, command: Sequence[str], stop: threading.Event,
+def peer_admitted(connection: socket.socket) -> bool:
+    """Kernel-attested peer: the paired client runs as this same runtime user (never root, never another uid)."""
+    _pid, uid, gid = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+    return uid == os.geteuid() and gid == os.getegid()
+
+
+def handle(connection: socket.socket, model: str, command: Sequence[str], stop: threading.Event, bridge: Bridge,
            timeout_seconds: float = TIMEOUT_SECONDS) -> None:
     cancelled, finished = threading.Event(), threading.Event()
 
@@ -415,10 +482,12 @@ def handle(connection: socket.socket, model: str, command: Sequence[str], stop: 
 
     watcher = None
     try:
+        if not peer_admitted(connection):
+            raise BackendError('MUSE_PEER_DENIED')
         request = read_request(connection)
         watcher = threading.Thread(target=watch_disconnect, args=(connection, cancelled, finished, stop), daemon=True)
         watcher.start()
-        emit(run_turn(request, model, emit, cancelled, command=command, timeout_seconds=timeout_seconds))
+        emit(run_turn(request, model, emit, cancelled, command=command, bridge=bridge, timeout_seconds=timeout_seconds))
     except BackendError as error:
         with contextlib.suppress(BackendError):
             emit(error_record(error.code))
@@ -433,32 +502,10 @@ def handle(connection: socket.socket, model: str, command: Sequence[str], stop: 
             connection.close()
 
 
-def sweep_stale_workspaces(directory: str | None = None, *, now: float | None = None) -> int:
-    """Remove this user's orphaned turn directories; never follows links nor touches other owners."""
-    root = tempfile.gettempdir() if directory is None else directory
-    current = time.time() if now is None else now
-    removed = 0
-    try:
-        entries = os.scandir(root)
-    except OSError:
-        return 0
-    with entries:
-        for entry in entries:
-            if not entry.name.startswith(WORKSPACE_PREFIX):
-                continue
-            try:
-                info = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or current - info.st_mtime < STALE_WORKSPACE_SECONDS:
-                continue
-            with contextlib.suppress(OSError):
-                shutil.rmtree(entry.path)
-                removed += 1
-    return removed
-
-
 def listen(path: str) -> socket.socket:
+    parent = os.lstat(os.path.dirname(path))
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+        raise SystemExit('model fallback socket directory must be private to this runtime user')
     with contextlib.suppress(FileNotFoundError):
         details = os.lstat(path)
         if not stat.S_ISSOCK(details.st_mode) or details.st_uid != os.geteuid():
@@ -482,12 +529,11 @@ def listen(path: str) -> socket.socket:
     return server
 
 
-def serve(path: str, model: str, *, command: Sequence[str], stop: threading.Event,
+def serve(path: str, model: str, *, command: Sequence[str], stop: threading.Event, bridge: Bridge | None = None,
           timeout_seconds: float = TIMEOUT_SECONDS, ready: Callable[[], None] | None = None) -> None:
     if MODEL.fullmatch(model) is None:
         raise SystemExit('model fallback model is invalid')
-    with contextlib.suppress(Exception):
-        sweep_stale_workspaces()
+    bridge = bridge or Bridge.beside_profile()
     server = listen(path)
     try:
         if ready is not None:
@@ -497,7 +543,7 @@ def serve(path: str, model: str, *, command: Sequence[str], stop: threading.Even
             if not ready_sockets:
                 continue
             connection, _ = server.accept()
-            handle(connection, model, command, stop, timeout_seconds)
+            handle(connection, model, command, stop, bridge, timeout_seconds)
     finally:
         server.close()
         with contextlib.suppress(OSError):

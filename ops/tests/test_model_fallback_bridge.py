@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 CLI = pathlib.Path(__file__).resolve().parents[1] / 'cli'
 sys.path.insert(0, str(CLI))
@@ -48,7 +49,9 @@ class ModelFallbackBridgeTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='cauce-model-fallback-')
         self.addCleanup(self.temporary.cleanup)
         self.root = pathlib.Path(self.temporary.name)
-        self.socket = str(self.root / 'muse.sock')
+        (self.root / 'run').mkdir(mode=0o700)
+        self.socket = str(self.root / 'run' / 'muse.sock')
+        self.bridge = bridge.Bridge(str(self.root / 'state'))
         fake = self.root / 'fake-muse.py'
         fake.write_text(FAKE_MUSE)
         (self.root / 'known.json').write_text(json.dumps({'session': SESSION, 'other': OTHER, 'turn': TURN}))
@@ -57,7 +60,7 @@ class ModelFallbackBridgeTest(unittest.TestCase):
         os.environ['META_SECRET_FOR_TEST'] = 'must-not-cross'
         self.addCleanup(os.environ.pop, 'META_SECRET_FOR_TEST', None)
         self.server = threading.Thread(target=bridge.serve, args=(self.socket, 'muse-spark-1.3'), daemon=True,
-            kwargs={'command': (sys.executable, str(fake), str(self.root)), 'stop': self.stop, 'ready': ready.set})
+            kwargs={'command': (sys.executable, str(fake), str(self.root)), 'stop': self.stop, 'bridge': self.bridge, 'ready': ready.set})
         self.server.start()
         self.assertTrue(ready.wait(5))
         self.addCleanup(self.server.join, 5)
@@ -81,17 +84,22 @@ class ModelFallbackBridgeTest(unittest.TestCase):
         argv = json.loads((self.root / 'argv.json').read_text())
         workspace = argv[argv.index('--workspace') + 1]
         self.assertEqual(argv, ['exec', '--json', '--provider', 'meta', '--disable-web-tools', '--disable-reminders',
-            '--no-foreign-personal-context', '--disable-write', '--disable-shell', '--max-model-steps', '8',
-            '--workspace', workspace, '--model', 'muse-spark-1.3', '--reasoning-effort', 'high'])
+            '--no-foreign-personal-context', '--disable-write', '--disable-shell', '--max-model-steps', '1',
+            '--workspace', self.bridge.workspace, '--model', 'muse-spark-1.3', '--reasoning-effort', 'high'])
         self.assertEqual((self.root / 'cwd').read_text(), workspace)
-        self.assertFalse(os.path.exists(workspace))
+        self.assertEqual(os.stat(workspace).st_mode & 0o777, 0o700)
         prompt = (self.root / 'prompt.txt').read_text()
         self.assertIn('OPENCLAW SYSTEM INSTRUCTIONS', prompt)
         self.assertIn('Eres el director.', prompt)
         self.assertIn('--- USER REQUEST', prompt)
         self.assertNotIn('META_SECRET_FOR_TEST', json.loads((self.root / 'env.json').read_text()))
 
-    def test_a_stored_session_resumes_and_a_changed_one_fails(self):
+    def test_only_sessions_this_bridge_created_resume_and_a_changed_one_fails(self):
+        refused = self.client('--session-id', SESSION)
+        self.assertEqual(self.records(refused), [bridge.error_record('MUSE_SESSION_INVALID')])
+        self.assertFalse((self.root / 'argv.json').exists())
+        self.assertEqual(self.client().returncode, 0)
+        self.assertEqual(self.bridge.sessions(), [SESSION])
         result = self.client('--session-id', SESSION)
         self.assertEqual(result.returncode, 0, result.stdout)
         argv = json.loads((self.root / 'argv.json').read_text())
@@ -107,8 +115,11 @@ class ModelFallbackBridgeTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertEqual(self.records(result)[-1]['code'], code)
         self.assertFalse((self.root / 'argv.json').exists())
-        self.assertEqual(self.raw(b'{"v":1,"prompt_bytes":4,"argv":["--yolo"],"command":"/bin/sh"}\nhola')[-1]['type'], 'result')
-        self.assertNotIn('--yolo', json.loads((self.root / 'argv.json').read_text()))
+        request = b'{"v":1,"prompt_bytes":4,"argv":["--yolo"],"command":"/bin/sh","model":"other","workspace":"/"}\nhola'
+        self.assertEqual(self.raw(request)[-1]['type'], 'result')
+        argv = json.loads((self.root / 'argv.json').read_text())
+        self.assertNotIn('--yolo', argv)
+        self.assertEqual((argv[argv.index('--model') + 1], argv[argv.index('--workspace') + 1]), ('muse-spark-1.3', self.bridge.workspace))
         for request in (b'not json\n', b'{"v":2,"prompt_bytes":4}\nhola', b'{"v":1,"prompt_bytes":0}\n',
                         b'{"v":1,"prompt_bytes":%d}\n' % (bridge.MAX_PROMPT_BYTES + 1), b'{"v":1,"prompt_bytes":2}\n\xff\xfe'):
             self.assertEqual(self.raw(request), [bridge.error_record('MUSE_INPUT_INVALID')], request[:40])
@@ -145,6 +156,16 @@ class ModelFallbackBridgeTest(unittest.TestCase):
             self.fail('the Muse turn survived its client')
         (self.root / 'mode').unlink()
         self.assertEqual(self.client().returncode, 0)
+
+    def test_only_the_same_runtime_user_is_served_on_a_private_directory(self):
+        with mock.patch.object(bridge.os, 'geteuid', return_value=os.geteuid() + 1):
+            self.assertEqual(self.raw(b''), [bridge.error_record('MUSE_PEER_DENIED')])
+        self.assertFalse((self.root / 'argv.json').exists())
+        public = self.root / 'public'
+        public.mkdir(mode=0o755)
+        public.chmod(0o755)
+        with self.assertRaises(SystemExit):
+            bridge.listen(str(public / 'muse.sock'))
 
     def test_the_client_fails_closed_without_a_server(self):
         self.stop.set()

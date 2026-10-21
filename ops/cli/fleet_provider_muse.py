@@ -63,7 +63,6 @@ def login_command(binding: dict) -> list[str]:
 
 # No web, write or shell tools and no foreign personal context: the identity probe and the model fallback bridge.
 SAFE_FLAGS = ('--disable-web-tools', '--disable-reminders', '--no-foreign-personal-context', '--disable-write', '--disable-shell')
-FALLBACK_MODEL_STEPS = 8
 
 
 def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
@@ -76,12 +75,16 @@ def execution_arguments(agent: dict, prompt_file: str) -> list[str]:
 
 
 def fallback_arguments(model: str, effort: str | None, session_id: str | None, workspace: str) -> list[str]:
-    """One bounded fallback turn for `muse-cauce`, which adds the prompt file itself. Sessions persist so OpenClaw can resume them."""
+    """One text-only fallback turn for `muse-cauce`, which adds the prompt file itself.
+
+    A single model step means no tool result ever reaches the answer, whatever tools Muse still registers; the
+    workspace is the bridge's own empty directory. Sessions persist so the bridge can resume the ones it created.
+    """
     from fleet_policy_paths import path
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,111}', model) is None or effort is not None and effort not in EFFORTS \
             or session_id is not None and str(uuid.UUID(session_id)) != session_id:
         raise ValueError('Muse fallback model, reasoning effort or session is not supported')
-    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--max-model-steps', str(FALLBACK_MODEL_STEPS),
+    return ['exec', '--json', '--provider', 'meta', *SAFE_FLAGS, '--max-model-steps', '1',
             '--workspace', str(path(workspace)), '--model', model,
             *(['--reasoning-effort', effort] if effort is not None else []), *(['--session-id', session_id] if session_id is not None else [])]
 

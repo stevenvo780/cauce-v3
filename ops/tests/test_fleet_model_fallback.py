@@ -41,6 +41,15 @@ class ModelFallbackPairingTest(unittest.TestCase):
                 fallback.pairing(agent(row=row))
         self.assertIsNone(fallback.pairing({**agent(), 'extensions': []}))
 
+    def test_the_server_carries_nothing_a_model_step_could_trigger(self):
+        server = agent('muse', 'operador-respaldo', {**ROW, 'agent': 'operador'})
+        self.assertTrue(fallback.pairing({**server, 'extensions': [*server['extensions'], {'type': 'resources', 'pids': 256}]})['server'])
+        for extra in ({'type': 'mcp', 'name': 'crm', 'command': '/bin/crm', 'args': [], 'env': []}, {'type': 'ssh', 'hosts': ['u@h']},
+                      {'type': 'docker', 'access': 'read'}, {'type': 'full_control'}):
+            with self.assertRaisesRegex(SafeFailure, 'only admits the resources'):
+                fallback.pairing({**server, 'extensions': [*server['extensions'], extra]})
+        self.assertFalse(fallback.pairing({**agent(), 'extensions': [ROW, {'type': 'ssh', 'hosts': ['u@h']}]})['server'])
+
     def test_only_the_server_runs_the_bridge_from_its_adapter(self):
         self.assertEqual(fallback.adapter_environment(agent()), {})
         served = fallback.adapter_environment(agent('muse', 'operador-respaldo', {**ROW, 'agent': 'operador'}))
