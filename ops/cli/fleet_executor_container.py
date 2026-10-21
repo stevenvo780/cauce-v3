@@ -28,6 +28,7 @@ from fleet_executor_runtime import (
 )
 from fleet_executor_view import environment as credential_environment
 from fleet_executor_view import payload_for
+from fleet_model_fallback import VOLUME_KIND, adapter_environment, pairing
 
 
 def sidecar_effect(action: str, policy: dict, agent: dict) -> dict:
@@ -176,8 +177,37 @@ def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = 
     base_network = policy.get('transport', {}).get('network', 'none')
     if networks and base_network in {'none', 'host'}:
         raise SafeFailure('network extensions require an isolated base Docker network')
+    fallback = pairing(agent)
+    if fallback is not None and any(path(fallback['destination']).is_relative_to(path(target)) or path(target).is_relative_to(path(fallback['destination']))
+                                    for target in mounts):
+        raise SafeFailure('mount extension overlaps the model fallback socket')
     return {'mounts': mounts, 'networks': {base_network, *networks}, 'memory': memory, 'cpus': cpus, 'pids': pids,
-            'full_control': any(row['type'] == 'full_control' for row in rows), 'gpu': any(row['type'] == 'gpu' for row in rows)}
+            'full_control': any(row['type'] == 'full_control' for row in rows), 'gpu': any(row['type'] == 'gpu' for row in rows),
+            'fallback': fallback}
+
+
+def fallback_labels(policy: dict, agent: dict) -> dict:
+    """The socket volume belongs to the Muse server; its client only checks who owns it."""
+    fallback = pairing(agent)
+    if fallback is None:
+        return {}
+    if fallback['server']:
+        return {**expected_labels(policy, {**agent, '_operation_id': None}), 'cauce.fleet.volume': VOLUME_KIND}
+    return {'cauce.fleet.tenant': agent['tenant_id'], 'cauce.fleet.alias': fallback['server_alias'], 'cauce.fleet.host': policy['host_id'],
+            'cauce.fleet.owner': policy['executor_user'], 'cauce.fleet.volume': VOLUME_KIND}
+
+
+def fallback_volume_ready(policy: dict, agent: dict) -> None:
+    """A client is never (re)created before its server's socket volume exists."""
+    fallback = pairing(agent)
+    if fallback is None or fallback['server']:
+        return
+    existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    if fallback['volume'] not in existing:
+        raise SafeFailure('model fallback socket volume is unavailable: create and start its Muse agent first')
+    labels = json.loads(docker('volume', 'inspect', fallback['volume']))[0].get('Labels') or {}
+    if any(labels.get(key) != value for key, value in fallback_labels(policy, agent).items()):
+        raise SafeFailure('existing runtime volume has another owner')
 
 
 def sidecar_shape(result: dict | None) -> tuple[set[str], dict]:
@@ -240,13 +270,18 @@ def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | 
     shape = extension_shape(policy, agent, binds, teardown=teardown)
     validate_isolation(policy, agent, observed, shape, teardown=teardown)
     mounts = {row['Destination']: row for row in observed['Mounts']}
+    fallback = shape['fallback']
+    socket = mounts.get(fallback['destination']) if fallback else None
+    if fallback and (not socket or socket.get('Type') != 'volume' or socket.get('Name') != fallback['volume']
+                     or socket.get('RW') is not fallback['server']):
+        raise SafeFailure('container runtime mounts differ')
     state = mounts.get(placement['state_root'])
     profile_root = placement.get('profile_root')
     profiles = mounts.get(profile_root) if profile_root else None
     if len(mounts) != len(observed['Mounts']) or not state or state.get('Type') != 'volume' or state.get('Name') != agent['container_name'] + '-state' or state.get('RW') is not True \
             or any(not mounts.get(destination) or mounts[destination].get('Type') != 'bind' or mounts[destination].get('Source') != source or mounts[destination].get('RW') is not False
                    for destination, source in binds.items()) \
-            or len(mounts) != len(binds) + len(shape['mounts']) + (2 if profile_root else 1) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
+            or len(mounts) != len(binds) + len(shape['mounts']) + (2 if profile_root else 1) + (1 if fallback else 0) or profile_root and (not profiles or profiles.get('Type') != 'volume' \
                 or profiles.get('Name') != agent['container_name'] + '-provider-profiles' or profiles.get('RW') is not True) \
             or any(not mounts.get(destination) or mounts[destination].get('Type') != 'bind' or mounts[destination].get('Source') != row['source']
                    or mounts[destination].get('RW') is not (row['mode'] == 'rw') or mounts[destination].get('Propagation') != 'rprivate'
@@ -259,6 +294,9 @@ def owned_volumes(policy: dict, agent: dict) -> tuple[dict, list]:
     volumes = {agent['container_name'] + '-state': labels}
     if agent['_placement'].get('profile_root'):
         volumes[agent['container_name'] + '-provider-profiles'] = {**labels, 'cauce.fleet.volume': 'provider-profiles'}
+    fallback = pairing(agent)
+    if fallback is not None and fallback['server']:
+        volumes[fallback['volume']] = fallback_labels(policy, agent)
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     for name, expected in volumes.items():
         if name in existing:
@@ -282,6 +320,7 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None, opera
     image = json.loads(docker('image', 'inspect', placement['image']))[0]
     if image['Id'] != placement['image']:
         raise SafeFailure('approved image digest is unavailable')
+    fallback_volume_ready(policy, agent)
     volumes, existing = owned_volumes(policy, agent)
     operation_labels = {OPERATION_LABEL: operation_id} if operation_id else {}
     for name, labels in volumes.items():
@@ -292,6 +331,10 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None, opera
     label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels, **extension_labels}.items() for value in ('--label', f'{key}={value}')]
     profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
         if placement.get('profile_root') else []
+    fallback = shape['fallback']
+    if fallback:
+        profile_arguments += ['--mount', f'type=volume,source={fallback["volume"]},destination={fallback["destination"]}'
+                              + ('' if fallback['server'] else ',readonly')]
     if any(not pathlib.Path(source).exists() for source in mounts.values()):
         raise SafeFailure('runtime bind source is unavailable')
     # Volume syntax with the shared relabel (never Z): several containers share one release tree.
@@ -350,6 +393,7 @@ def ensure_container(policy: dict, agent: dict, operation_id: str | None = None)
 def recreate_extensions(policy: dict, previous: dict, desired: dict) -> None:
     previous, desired = approve_agent(policy, previous), approve_agent(policy, desired)
     approve_extensions(policy, desired)
+    fallback_volume_ready(policy, desired)
     if previous.get('runtime_mode') != 'container' or desired.get('runtime_mode') != 'container' \
             or any(previous.get(field) != desired.get(field) for field in ('tenant_id', 'alias', 'runtime_key', 'container_name', 'host_id')) \
             or previous['_placement'].get('ownership') == 'shared':
@@ -441,6 +485,8 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     managed = agent['_placement'].get('ownership') != 'shared'
     if managed:
         helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', workspace, '--uid', uid, '--gid', gid)
+    if (fallback := pairing(agent)) is not None and fallback['server']:
+        helper(agent, identity, 'prepare-state', '--mount', fallback['destination'], '--state', fallback['destination'], '--uid', uid, '--gid', gid)
     from fleet_executor_profiles import prepare_profile
     prepare_profile(policy, agent, operation_id=operation_id)
     helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
@@ -457,6 +503,7 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     environment.update(sdk_environment(policy, agent, bootstrap, operation_id))
     environment.update(provider_environment(policy, agent))
     environment.update(sidecar_shape(validate_sidecars(policy, agent))[1])
+    environment.update(adapter_environment(agent))
     if operation_id is not None:
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
     arguments = [f'{key}={value}' for key, value in environment.items()]
@@ -544,8 +591,11 @@ def purge_container(policy: dict, raw_agent: dict) -> dict:
     sidecars = purge_sidecars(policy, agent) or {}
     removed.extend(sidecars.get('removed', []))
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
+    fallback = pairing(agent)
     for volume in owned_volumes(policy, agent)[0]:
-        if volume in existing:
+        # The socket volume stays while its client still mounts it; the client's next validation reports it.
+        if volume in existing and not (fallback and volume == fallback['volume']
+                                       and docker('ps', '-a', '-q', '--filter', 'volume=' + volume).strip()):
             docker('volume', 'rm', volume)
             removed.append({'type': 'volume', 'name': volume})
     if inspect_container(agent['container_name']) is not None:
@@ -564,7 +614,9 @@ def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:
         docker('rm', '-f', observed['Id'])
     purge_sidecars(policy, {**agent, '_operation_id': operation_id})
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
-    for name in (agent['container_name'] + '-state', agent['container_name'] + '-provider-profiles'):
+    fallback = pairing(agent)
+    for name in (agent['container_name'] + '-state', agent['container_name'] + '-provider-profiles',
+                 *([fallback['volume']] if fallback and fallback['server'] else [])):
         # A container recreated without this operation's label (older releases) still mounts the volume:
         # removing it fails forever ("volume is in use") and would drop a signed-in provider profile.
         if name in existing and docker('ps', '-a', '-q', '--filter', 'volume=' + name).strip():
