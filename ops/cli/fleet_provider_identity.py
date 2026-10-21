@@ -836,7 +836,24 @@ def prepare_ssh(profile: pathlib.Path, hosts: list[str]) -> dict:
     if len(listing) < 4 or not listing[1].startswith('SHA256:') or listing[-1] != '(ED25519)' \
             or not public_key.startswith('ssh-ed25519 '):
         raise ProviderProofError('ssh public key is not ed25519')
+    known_hosts = directory / 'known_hosts'
+    if known_hosts.is_symlink():
+        raise ProviderProofError('ssh known_hosts is not a regular file')
+    os.close(os.open(known_hosts, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600))
+    os.chmod(known_hosts, 0o600)
+    # The read-only container has no ~/.ssh: this file is the only thing that points ssh at the profile key.
+    config = ('Host *\n' f'  IdentityFile {private}\n' '  IdentitiesOnly yes\n'
+              f'  UserKnownHostsFile {known_hosts}\n' '  StrictHostKeyChecking accept-new\n')
+    write_private(directory / 'config', config.encode())
     return {'fingerprint': listing[1], 'public_key': public_key, 'hosts': hosts}
+
+
+def ssh_environment(agent: dict, profile) -> dict:
+    """Environment that makes the agent's ssh and git use the profile ssh extension. Empty without that extension."""
+    if one_extension(extension_rows(agent), 'ssh') is None:
+        return {}
+    config = str(pathlib.Path(str(profile)) / 'ssh' / 'config')
+    return {'CAUCE_SSH_CONFIG': config, 'GIT_SSH_COMMAND': f'ssh -F {config}'}
 
 
 def run_install(command: list[str], environment: dict, directory: pathlib.Path) -> None:

@@ -32,6 +32,9 @@ const SAFE_ENVIRONMENT = [
   "TEMP",
   "CODEX_HOME",
   "CLAUDE_CONFIG_DIR",
+  // Non-secret ssh extension pointers: the profile ssh config for the harness's own ssh and git.
+  "CAUCE_SSH_CONFIG",
+  "GIT_SSH_COMMAND",
   // Non-secret Hermes profile/model discovery only; Hermes resolves authentication from local storage.
   "HERMES_HOME",
   "HERMES_INFERENCE_MODEL",

@@ -131,6 +131,14 @@ test("GROK_HOME reaches only a grok child", () => {
   assert.equal(childEnvironment(undefined, undefined, inherited).GROK_HOME, undefined);
 });
 
+test("the ssh extension pointers reach the harness child", () => {
+  const inherited = { CAUCE_SSH_CONFIG: "/profiles/a/ssh/config", GIT_SSH_COMMAND: "ssh -F /profiles/a/ssh/config", GIT_ASKPASS: "/x" };
+  const env = childEnvironment(undefined, undefined, inherited, "openclaw");
+  assert.equal(env.CAUCE_SSH_CONFIG, "/profiles/a/ssh/config");
+  assert.equal(env.GIT_SSH_COMMAND, "ssh -F /profiles/a/ssh/config");
+  assert.equal(env.GIT_ASKPASS, undefined);
+});
+
 test("request.env rejects every secret-like key", async () => {
   const runner = new SpawnCommandRunner();
 

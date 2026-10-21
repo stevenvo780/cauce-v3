@@ -73,6 +73,16 @@ def lifecycle_arguments(agent: dict, identity: dict) -> list[str]:
 
 
 def provider_environment(policy: dict, agent: dict) -> dict:
+    values = provider_base_environment(policy, agent)
+    from fleet_executor_templates import resolve_profile
+    binding = resolve_profile(policy, agent)
+    if binding is not None:
+        from fleet_provider_identity import ssh_environment
+        values.update(ssh_environment(agent, path(binding['path'])))
+    return values
+
+
+def provider_base_environment(policy: dict, agent: dict) -> dict:
     from fleet_executor_templates import resolve_profile
     binding = resolve_profile(policy, agent)
     if binding is None:
