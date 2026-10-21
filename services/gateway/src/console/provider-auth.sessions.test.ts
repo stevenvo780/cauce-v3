@@ -142,10 +142,22 @@ describe('sensitive provider bootstrap', () => {
     const verified = f.manager.verify(actor, session.session_id);
     await started;
     expect(await f.manager.get(actor, session.session_id)).toMatchObject({ status: 'verifying', cleanup_pending: false, error: null });
-    const closed = channel.close();
+    const closed = channel.close(); const cancelled = f.manager.cancel(actor, session.session_id);
     commit?.(); await closed;
     expect(await verified).toMatchObject({ status: 'authenticated', cleanup_pending: false, error: null });
+    expect(await cancelled).toMatchObject({ status: 'authenticated' });
     expect(await f.manager.get(actor, session.session_id)).toMatchObject({ status: 'authenticated' });
+  });
+  it('fails a verified login whose reservation release never answers instead of verifying forever', async () => {
+    vi.useFakeTimers(); const f = fixture(); const reserve = f.deps.reserve.bind(f.deps);
+    f.deps.reserve = async (...args) => ({ ...await reserve(...args), release: () => new Promise<void>(() => undefined) });
+    const manager = new ProviderAuthManager(f.deps, { ttlMs: 1000, releaseTimeoutMs: 50 });
+    const session = await manager.start(actor, input);
+    await manager.attach(actor, session.session_id, () => undefined);
+    const verified = manager.verify(actor, session.session_id);
+    await vi.advanceTimersByTimeAsync(51);
+    expect(await verified).toMatchObject({ status: 'failed', error: 'STOP_UNCONFIRMED', cleanup_pending: true });
+    await expect(manager.start(actor, { ...input, request_id: 'after-hung-release' })).rejects.toMatchObject({ code: 'SESSION_CONFLICT' });
   });
   it('expires a live channel and refuses further input without extending the deadline', async () => {
     vi.useFakeTimers(); const f = fixture(); const session = await f.manager.start(actor, input);

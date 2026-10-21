@@ -24,6 +24,14 @@ interface Session {
 const aborted = (session: Session) => session.abort.signal.aborted;
 const verifying = (session: Session) => session.snapshot.status === 'verifying';
 const ACTIVE = new Set<ProviderAuthStatus>(['opening', 'awaiting_login', 'verifying']);
+function bounded(work: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { reject(new ProviderAuthError('STOP_UNCONFIRMED')); }, ms);
+    timer.unref();
+    work.then(() => { clearTimeout(timer); resolve(); },
+      (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new ProviderAuthError('STOP_UNCONFIRMED')); });
+  });
+}
 
 export class ProviderAuthManager {
   private readonly sessions = new Map<string, Session>();
@@ -31,9 +39,12 @@ export class ProviderAuthManager {
   private readonly requests = new Map<string, { fingerprint: string; result: Promise<ProviderAuthSnapshot> }>();
   private readonly tickets = new Map<string, { actor: ProviderAuthActor; sessionId: string; expires: number }>();
   private readonly ttlMs: number;
-  constructor(private readonly dependencies: ProviderAuthDependencies, options: { ttlMs?: number } = {}) {
+  private readonly releaseTimeoutMs: number;
+  constructor(private readonly dependencies: ProviderAuthDependencies, options: { ttlMs?: number; releaseTimeoutMs?: number } = {}) {
     // A person must open the provider page, sign in and type the device code: 15 minutes, the device-code lifetime.
     this.ttlMs = options.ttlMs ?? 900_000;
+    // Past the 360-second release claim of the reservation, a release that never answers leaves the profile reserved.
+    this.releaseTimeoutMs = options.releaseTimeoutMs ?? 420_000;
     if (!Number.isSafeInteger(this.ttlMs) || this.ttlMs < 1000 || this.ttlMs > 900_000) throw new ProviderAuthError('INVALID_REQUEST');
   }
 
@@ -245,7 +256,8 @@ export class ProviderAuthManager {
   }
   private async cleanup(session: Session, status: ProviderAuthStatus, error: ProviderAuthCode | null): Promise<void> {
     // The console resumes the operation as soon as it reads «authenticated»; releasing the reservation advances the
-    // operation version, so the login reads as verifying until the release has committed.
+    // operation version, so the login reads as verifying until the release has committed. A cancellation arriving
+    // meanwhile joins this cleanup: the verified identity is already bound and the release must finish anyway.
     if (status !== 'authenticated') session.snapshot.status = status;
     session.snapshot.error = error;
     session.abort.abort();
@@ -262,7 +274,7 @@ export class ProviderAuthManager {
       const stopped = session.login ? await (status === 'cancelled' && session.login.cancel
         ? session.login.cancel() : session.login.close()) : { stopped: true };
       if (!stopped.stopped) throw new ProviderAuthError('STOP_UNCONFIRMED');
-      await session.reservation?.release();
+      if (session.reservation) await bounded(session.reservation.release(), this.releaseTimeoutMs);
       this.cohorts.delete(session.cohort);
       session.snapshot.status = status;
       session.snapshot.cleanup_pending = false;
