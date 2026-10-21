@@ -202,7 +202,7 @@ class ProviderHookTests(unittest.TestCase):
         inner = b"secret noise\nfleet identity probe failed: version_mismatch\n"
         cases = [(subprocess.CompletedProcess([], 0, b'{"authenticated":false}', inner), "fleet identity probe failed: version_mismatch"),
                  (subprocess.CompletedProcess([], 1, b"", b"docker: boom"), "fleet identity probe failed: container_exec_failed"),
-                 (subprocess.TimeoutExpired(["docker"], 140), "fleet identity probe failed: probe_timeout after 140s")]
+                 (subprocess.TimeoutExpired(["docker"], 132), "fleet identity probe failed: probe_timeout after 132s")]
         for outcome, line in cases:
             with self.subTest(line=line), patch.object(hook.subprocess, "check_output", return_value=json.dumps(observed).encode()), \
                     patch.object(hook.subprocess, "run", side_effect=[outcome]), patch("sys.stderr") as stderr:

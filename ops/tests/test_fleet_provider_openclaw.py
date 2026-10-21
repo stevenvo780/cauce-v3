@@ -130,7 +130,7 @@ class OpenClawProviderTest(unittest.TestCase):
         original = identity.command_output
         with mock.patch.object(identity, 'command_output', side_effect=slow_turn):
             self.assertIsNone(identity.authenticated_identity(self.packet))
-        self.assertEqual(identity.last_probe_failure(), 'probe_timeout after 115s')
+        self.assertEqual(identity.last_probe_failure(), 'probe_timeout after 110s')
         self.packet['agent'] = {**self.agent, 'model_id': 'anthropic/claude-x'}
         self.assertIsNone(identity.authenticated_identity(self.packet))
         self.assertEqual(identity.last_probe_failure(), 'config_scope')

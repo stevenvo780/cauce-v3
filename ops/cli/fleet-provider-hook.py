@@ -95,7 +95,7 @@ def _exec_inside(packet: dict, binding: dict, agent: dict, interpreter: str, scr
         ],
         input=json.dumps(packet).encode(),
         capture_output=True,
-        timeout=140,
+        timeout=132,
     )
 
 

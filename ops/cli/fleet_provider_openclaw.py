@@ -397,14 +397,15 @@ def _authenticated_identity(packet: dict) -> str | None:
     if identity is None:
         return None
     # A cold Claude Code turn behind OpenClaw writes ~50k tokens of cache; 25 s left a valid login pending.
-    # Grok 4.7 behind OpenClaw answered this probe in 36-50 s and once over 120 s; 60 s rejected valid logins.
+    # Grok 4.7 behind OpenClaw answered this probe in 36-50 s and once over 120 s; 60 s rejected valid logins. The chain
+    # stays nested under the 150 s host step: probe 110 s < container exec 132 s < executor hook 140 s.
     expected = 'CAUCE_BOOTSTRAP_' + packet['nonce']
     args = [*prefix, 'agent', '--local', '--agent', agent['runtime_key'], '--model', model, '--session-key',
-            'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '110',
+            'agent:' + agent['runtime_key'] + ':cauce-auth-' + str(uuid.uuid4()), '--json', '--timeout', '105',
             '--message', 'Responde únicamente ' + expected + '. No uses herramientas ni envíes mensajes.']
     if agent.get('reasoning_effort') is not None:
         args += ['--thinking', agent['reasoning_effort']]
-    reply = json.loads(command_output(args, packet, timeout=115))
+    reply = json.loads(command_output(args, packet, timeout=110))
     result = reply.get('result', reply) if isinstance(reply, dict) else None
     if not isinstance(result, dict) or not isinstance(result.get('payloads'), list):
         probe_failed('probe_bad_json')

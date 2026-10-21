@@ -149,7 +149,7 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
         command = ['/usr/sbin/runuser', '-u', hook['user'], '--', *command]
     from fleet_provider_identity import probe_failure_line, probe_timeout, report_probe_failure
     try:
-        result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=115,
+        result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=140,
                                 env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
     except subprocess.TimeoutExpired as error:
         if step == 'authenticate':
