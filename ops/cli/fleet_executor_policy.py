@@ -18,7 +18,7 @@ from fleet_policy_paths import SafeFailure, path
 from fleet_runtime_materialization import external_directory
 from secure_path import open_absolute_directory, open_regular_at
 
-EXTENSION_TYPES = {'mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control'}
+EXTENSION_TYPES = {'mount', 'network', 'resources', 'gpu', 'ssh', 'docker', 'browser', 'mcp', 'tools', 'full_control', 'model_fallback'}
 EXTENSION_ALLOWED_FIELDS = {'types', 'mount_roots', 'networks', 'docker_access', 'docker_daemon_dedicated'}
 NETWORK_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}')
 
@@ -161,6 +161,9 @@ def agent_extensions(agent: dict) -> list[dict]:
             raise SafeFailure('invalid ' + kind + ' extension fields')
         elif kind in {'ssh', 'docker', 'browser', 'mcp', 'tools'}:
             validate_prepared_extension(row)
+        elif kind == 'model_fallback':
+            from fleet_model_fallback import validate_row
+            validate_row(row)
     if any(row['type'] == 'browser' and row['mode'] == 'ssh_tunnel' for row in rows) and not any(row['type'] == 'ssh' for row in rows):
         raise SafeFailure('browser SSH tunnel requires the ssh extension')
     return rows
@@ -189,6 +192,8 @@ def approve_extensions(policy: dict, agent: dict) -> list[dict]:
             raise SafeFailure('network extension is not in allowed host networks')
     if agent.get('runtime_mode') != 'container' or agent.get('_placement', {}).get('ownership') == 'shared':
         raise SafeFailure('extensions require a dedicated container')
+    from fleet_model_fallback import pairing
+    pairing(agent)
     docker_rows = [row for row in rows if row['type'] == 'docker']
     if docker_rows:
         from fleet_executor_sidecars import admit_docker_level, refuse_shared_daemon
