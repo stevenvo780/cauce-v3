@@ -415,6 +415,22 @@ def recreate_extensions(policy: dict, previous: dict, desired: dict) -> None:
     purge_sidecars(policy, previous)
     if inspect_container(previous['container_name']) is not None:
         raise SafeFailure('previous container removal was not observed')
+    before, after = pairing(previous), pairing(desired)
+    if before and before['server'] and not (after and after['server'] and after['volume'] == before['volume']):
+        retire_fallback_volume(policy, previous)
+
+
+def retire_fallback_volume(policy: dict, agent: dict) -> list[dict]:
+    """The server's socket volume goes with its extension or its agent, but never while a client still mounts it."""
+    fallback = pairing(agent)
+    if fallback is None or not fallback['server'] or fallback['volume'] not in docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines() \
+            or docker('ps', '-a', '-q', '--filter', 'volume=' + fallback['volume']).strip():
+        return []
+    labels = json.loads(docker('volume', 'inspect', fallback['volume']))[0].get('Labels') or {}
+    if any(labels.get(key) != value for key, value in fallback_labels(policy, agent).items()):
+        raise SafeFailure('existing runtime volume has another owner')
+    docker('volume', 'rm', fallback['volume'])
+    return [{'type': 'volume', 'name': fallback['volume']}]
 
 
 def identity_for(agent: dict, observed: dict) -> dict:
@@ -593,9 +609,9 @@ def purge_container(policy: dict, raw_agent: dict) -> dict:
     existing = docker('volume', 'ls', '--format', '{{.Name}}').decode().splitlines()
     fallback = pairing(agent)
     for volume in owned_volumes(policy, agent)[0]:
-        # The socket volume stays while its client still mounts it; the client's next validation reports it.
-        if volume in existing and not (fallback and volume == fallback['volume']
-                                       and docker('ps', '-a', '-q', '--filter', 'volume=' + volume).strip()):
+        if fallback and volume == fallback['volume']:
+            removed.extend(retire_fallback_volume(policy, agent))
+        elif volume in existing:
             docker('volume', 'rm', volume)
             removed.append({'type': 'volume', 'name': volume})
     if inspect_container(agent['container_name']) is not None:

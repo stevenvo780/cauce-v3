@@ -56,6 +56,11 @@ class ModelFallbackPairingTest(unittest.TestCase):
                 fallback.pairing({**server, 'extensions': [*server['extensions'], extra]})
         self.assertFalse(fallback.pairing({**agent(), 'extensions': [ROW, {'type': 'ssh', 'hosts': ['u@h']}]})['server'])
 
+    def test_the_client_cannot_reach_the_server_profile_through_docker(self):
+        for extra in ({'type': 'docker', 'access': 'read'}, {'type': 'docker', 'access': 'control'}, {'type': 'full_control'}):
+            with self.assertRaisesRegex(SafeFailure, 'docker or full_control'):
+                fallback.pairing({**agent(), 'extensions': [ROW, extra]})
+
     def test_only_the_server_runs_the_bridge_from_its_adapter(self):
         self.assertEqual(fallback.adapter_environment(agent()), {})
         served = fallback.adapter_environment(agent('muse', 'operador-respaldo', {**ROW, 'agent': 'operador'}))
@@ -151,6 +156,14 @@ class ModelFallbackContainerShapeTest(ReleaseFixture):
         for harness in ('openclaw', 'muse'):
             with self.subTest(harness=harness), self.assertRaisesRegex(SafeFailure, 'another owner'):
                 self.create(harness)
+
+    def test_removing_the_server_extension_retires_its_volume_once_no_client_mounts_it(self):
+        self.create('muse')
+        server = self.agents['muse']
+        plain = policy_module.approve_agent(self.policy, {**{key: value for key, value in server.items() if not key.startswith('_')}, 'extensions': []})
+        with mock.patch.object(container, 'stop_container'), mock.patch.object(container, 'purge_sidecars', return_value={}):
+            container.recreate_extensions(self.policy, server, plain)
+        self.assertNotIn(self.volume, self.docker.volumes)
 
     def test_purging_the_server_keeps_the_socket_volume_while_its_client_mounts_it(self):
         self.create('muse')
