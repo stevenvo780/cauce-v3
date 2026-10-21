@@ -25,7 +25,7 @@ pnpm lint
 pnpm qa:runtime-packaging
 ```
 
-`scripts/release-gates.sh` exige un checkout limpio y escribe un recibo ligado al SHA con los comandos y sus resultados. El empaquetado comprueba los artefactos del runtime y exige usuario normal. Las herramientas de lint, incluidos sus controles de calidad aún presentes en `package.json`, forman parte de `pnpm lint`.
+`scripts/release-gates.sh` exige un checkout limpio y escribe un recibo ligado al SHA con los comandos y sus resultados. El empaquetado comprueba los artefactos del runtime y exige usuario normal. Las herramientas de lint, incluidos sus controles de calidad aún presentes en `package.json`, forman parte de `pnpm lint`. `pnpm lint` lanza sus zonas a la vez con `scripts/lint-paralelo.mjs` e imprime la salida de cada una entera y en orden. Las zonas más lentas, `lint:core` y `lint:estricto:zonas`, se parten por directorio. Ninguna regla mira entre ficheros, así que partir no cambia el veredicto.
 
 El operador autorizado usa `.delegados/v4/corte.sh` para cortar el candidato y obtener su recibo en un clon limpio. Después, `deploy1-local.sh <sha-completo> <directorio-recibo>` comprueba ese recibo, publica las ramas y transfiere el bundle; `deploy1-vps.sh` separa las fases de comprobación, copia de seguridad, clon, enclave y despliegue. Estos auxiliares pertenecen al entorno privado de operación y no se distribuyen en el repositorio público. Consulta sus pasos y la verificación posterior en [Operación](operacion.md).
 
