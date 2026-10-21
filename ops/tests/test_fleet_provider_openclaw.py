@@ -191,6 +191,27 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertFalse((self.profile / 'auth.json').exists())
         self.assertEqual(list((self.profile / '.external-cli-disabled').iterdir()), [])
 
+    def test_chatgpt_model_gets_its_catalog_and_login_additions_are_reverted(self):
+        config = self.profile / 'openclaw.json'
+        self.agent['model_id'] = 'openai/gpt-6.1-sol'
+        driver.prepare(self.binding, self.agent)
+        written = json.loads(config.read_bytes())
+        self.assertEqual(written['models']['providers']['openai']['api'], 'openai-chatgpt-responses')
+        self.assertEqual([row['id'] for row in written['models']['providers']['openai']['models']], ['gpt-6.1-sol'])
+        self.assertEqual(driver.read_config(self.binding, self.agent), written)
+        login = dict(written, meta={'lastTouchedVersion': driver.VERSION},
+                     models={'mode': 'merge', 'providers': {'openai': {'models': []}}}, mcp={'servers': {'x': {'command': 'sh'}}})
+        login['agents'] = dict(written['agents'], defaults={'models': {'openai/gpt-5.6-sol': {}}})
+        config.write_text(json.dumps(login)); config.chmod(0o600)
+        with self.assertRaises(ValueError):
+            driver.read_config(self.binding, self.agent)
+        self.assertTrue(driver.restore_after_login(self.binding, self.agent))
+        self.assertEqual(json.loads(config.read_bytes()), dict(written, mcp={'servers': {'x': {'command': 'sh'}}}))
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+        self.assertFalse(driver.restore_after_login(self.binding, self.agent))
+        self.agent['model_id'] = 'openai/gpt-5.4'
+        self.assertIsNone(driver.model_catalog(self.binding, self.agent))
+
     def test_model_fallback_moves_the_model_to_the_configured_chain_and_back(self):
         config = self.profile / 'openclaw.json'
         paired = {**self.agent, 'tenant_id': 'Praxis', 'alias': 'operador',

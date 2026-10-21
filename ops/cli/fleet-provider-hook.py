@@ -140,6 +140,13 @@ def execute(packet: dict) -> dict:
         if os.geteuid() != pwd.getpwnam(packet["agent"]["runtime_user"]).pw_uid or os.geteuid() == 0:
             raise ValueError("functional check is not running under the approved user")
         if packet['step'] == 'authenticate':
+            if packet['agent'].get('harness_id') == 'openclaw':
+                from fleet_provider_openclaw import restore_after_login
+
+                try:
+                    restore_after_login(packet['profile_binding'], packet['agent'])
+                except (OSError, ValueError, KeyError, TypeError):
+                    pass  # The probe below names the out-of-scope configuration (config_scope).
             account_identity = authenticated_identity(packet)
             result = {'authenticated': account_identity is not None}
             if account_identity is not None:

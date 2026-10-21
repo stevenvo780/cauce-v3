@@ -157,9 +157,70 @@ def read_config(binding: dict, agent: dict, runtime: bool = True) -> dict:
             or any(rows[0].get(key) != value for key, value in entry.items()) or not isinstance(auth, dict) \
             or auth.get('order') != {binding['openclaw']['provider_id']: [profile_id(agent['primary_account_id'])]}:
         raise ValueError('OpenClaw configuration is outside the exact account and agent scope')
-    if runtime and (agents.get('defaults') != runtime_defaults(binding, agent, env) or ('model' in rows[0]) != (agent_model(agent) is not None)):
+    if runtime and (agents.get('defaults') != runtime_defaults(binding, agent, env) or ('model' in rows[0]) != (agent_model(agent) is not None)
+                    or config.get('models') != model_catalog(binding, agent)):
         raise ValueError('OpenClaw configuration runtime differs from the approved login method')
     return config
+
+
+# OpenClaw 2026.7.1-2 ships no catalog entry for these ChatGPT (Codex OAuth) models: without one the run fails with
+# "Unknown model". Limits measured from the legacy Argos catalog; the API is the one OpenClaw 2026.7.1-2 accepts for
+# an OAuth ChatGPT profile (an `openai-responses` catalog would demand an API key).
+CHATGPT_MODELS = {'gpt-6.1-sol': ('GPT-6.1 Sol', 872000), 'gpt-6-sol': ('GPT-6 Sol', 1050000),
+                  'gpt-6-luna': ('GPT-6 Luna', 1050000), 'gpt-6-astra': ('GPT-6 Astra', 1050000)}
+
+
+def model_catalog(binding: dict, agent: dict) -> dict | None:
+    if binding['openclaw']['provider_id'] != 'openai' or agent.get('model_id') is None:
+        return None
+    name = canonical_model(agent['model_id']).partition('/')[2]
+    if name not in CHATGPT_MODELS:
+        return None
+    label, window = CHATGPT_MODELS[name]
+    return {'mode': 'merge', 'providers': {'openai': {'api': 'openai-chatgpt-responses', 'models': [
+        {'id': name, 'name': label, 'reasoning': True, 'input': ['text', 'image'], 'contextWindow': window, 'maxTokens': 128000}]}}}
+
+
+# `openclaw models auth login` rewrites the Cauce-owned file: it adds its own agents.defaults (default model), a
+# top-level provider model catalog and `meta`. Those additions alone are reverted, atomically, before the identity
+# probe; anything Cauce wrote (agent entry, auth order, model catalog, extensions such as mcp) stays as it is.
+LOGIN_ADDED_KEYS = ('models', 'meta')
+
+
+def restore_after_login(binding: dict, agent: dict) -> bool:
+    config = read_config(binding, agent, runtime=False)
+    defaults = runtime_defaults(binding, agent, environment(binding, agent))
+    catalog = model_catalog(binding, agent)
+    if config['agents'].get('defaults') == defaults and config.get('models') == catalog and 'meta' not in config:
+        return False
+    if defaults is None:
+        config['agents'].pop('defaults', None)
+    else:
+        config['agents']['defaults'] = defaults
+    for key in LOGIN_ADDED_KEYS:
+        config.pop(key, None)
+    if catalog is not None:
+        config['models'] = catalog
+    descriptor = owned_directory(pathlib.Path(binding['path']))
+    try:
+        staged = 'openclaw.json.cauce-new'
+        try:
+            os.unlink(staged, dir_fd=descriptor)
+        except FileNotFoundError:
+            pass
+        target = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=descriptor)
+        try:
+            body = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
+            if os.write(target, body) != len(body):
+                raise ValueError('OpenClaw configuration restore was incomplete')
+            os.fsync(target)
+        finally:
+            os.close(target)
+        os.replace(staged, 'openclaw.json', src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return True
 
 
 def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict | None:
@@ -199,7 +260,8 @@ def prepare(binding: dict, agent: dict) -> None:
         except FileExistsError:
             config = read_config(binding, agent, runtime=False)
             if config['agents'].get('defaults') != runtime_defaults(binding, agent, env) \
-                    or ('model' in config['agents']['list'][0]) != (agent_model(agent) is not None):
+                    or ('model' in config['agents']['list'][0]) != (agent_model(agent) is not None) \
+                    or config.get('models') != model_catalog(binding, agent):
                 # Switching the login method (setup-token <-> cli) or the model fallback rewrites only this Cauce-owned file, atomically.
                 staged = 'openclaw.json.cauce-new'
                 try:
@@ -232,6 +294,9 @@ def _write_openclaw(target: int, binding: dict, agent: dict, env: dict) -> None:
         defaults = runtime_defaults(binding, agent, env)
         if defaults is not None:
             config['agents']['defaults'] = defaults
+        catalog = model_catalog(binding, agent)
+        if catalog is not None:
+            config['models'] = catalog
         body = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
         if os.write(target, body) != len(body):
             raise ValueError('OpenClaw public configuration write was incomplete')
