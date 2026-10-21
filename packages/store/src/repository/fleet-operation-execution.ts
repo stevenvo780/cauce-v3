@@ -4,7 +4,7 @@ import { lockFleetRevision } from './fleet-operation-authority.js';
 import { FleetOperationClaims } from './fleet-operation-claims.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow, type FleetExecutionState } from './fleet-operation-contracts.js';
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
-import { fleetTargetSliceDigest, lockPreparedFleetRevision } from './fleet-operation-slice.js';
+import { lockPreparedFleetRevision, sealFleetTargetSlice } from './fleet-operation-slice.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
@@ -95,7 +95,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       fleetStep(row, name).status = 'succeeded';
       const next = await saveFleetState(client, row, claim, 'step_completed', { step: name, fenced_targets: targets,
         previous_agents: previous, desired_memberships: intent, host_slices: slices, prepared_revision: Number(row.desired_revision),
-        target_slice_sha256: await fleetTargetSliceDigest(client, row, targets, previous) });
+        ...await sealFleetTargetSlice(client, row, targets, previous) });
       return { operation: publicFleetOperation(next), fenced_targets: targets, previous_agents: previous, desired_memberships: intent };
     });
   }
@@ -144,7 +144,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if (name === 'purge') await purgeFleetTarget(client, row);
       step.status = 'succeeded'; step.evidence = proof;
       return publicFleetOperation(await saveFleetState(client, row, claim, 'step_completed', { step: name,
-        host_barrier: { epoch: claim.epoch, claim_token: claim.claim_token, direct, receipts } }));
+        host_barrier: { epoch: claim.epoch, claim_token: claim.claim_token, direct, receipts }, ...await sealFleetTargetSlice(client, row) }));
     });
   }
 

@@ -291,11 +291,22 @@ describe('durable fleet operations', () => {
     ['its membership', "UPDATE memberships SET role='operator' WHERE alias='touched_wait'"],
     ['its provider account', "UPDATE provider_accounts SET label='Otra' WHERE id='fleet-test-account'"],
     ['its destination host', "UPDATE fleet_hosts SET enabled=false WHERE host_id='touched-wait-host'"],
+    ['the role policy of its membership', "UPDATE role_policies SET allow_control=NOT allow_control WHERE role='agent'"],
+    ['the verified identity of its account', "UPDATE provider_accounts SET external_account_id='replaced-identity' WHERE id='fleet-test-account'"],
   ])('refuses to resume a login wait after a write to %s', async (_label, write) => {
     const repo = repository(); const waiting = await waitForLogin(repo, 'touched_wait');
     await pool.query(write); await pool.query(FOREIGN_REVISION);
     await expect(repo.resume('Steven', 'fleet_operator', waiting.id, waiting.version)).rejects.toMatchObject({ code: 'conflict' });
     expect((await repo.get('Steven', 'fleet_operator', waiting.id)).status).toBe('awaiting_auth');
+  });
+  it('resumes a login wait after the login bound the unverified identity of its account', async () => {
+    await pool.query("UPDATE provider_accounts SET external_account_id='unverified:fleet-test' WHERE id='fleet-test-account'");
+    const repo = repository(); const waiting = await waitForLogin(repo, 'bound_wait');
+    await pool.query("UPDATE provider_accounts SET external_account_id='verified-login' WHERE id='fleet-test-account'"); await pool.query(FOREIGN_REVISION);
+    await repo.resume('Steven', 'fleet_operator', waiting.id, waiting.version);
+    const next = await repo.claim('bound-worker', 'bound-wait-host'); if (!next) throw new Error('claim absent');
+    await repo.prepare(next); await verifyCreation(repo, next);
+    expect((await repo.settle(next)).status).toBe('succeeded');
   });
   it('releases an expired cohort so another host can claim independent queued work', async () => {
     const repo = repository(); const old = await claimFor(repo, 'expired_cohort');
@@ -454,6 +465,25 @@ describe('durable fleet operations', () => {
       .toEqual({ enabled: false, purged: true });
     expect((await pool.query("SELECT 1 FROM fleet_runtime_identities WHERE alias='empty_agent' AND runtime_key='permanent-key'")).rowCount).toBe(1);
     await expect(repo.enqueue('Steven', 'fleet_operator', { ...create('empty_agent', 'empty-host'), expected_revision: 2 })).rejects.toMatchObject({ code: 'conflict' });
+  });
+  it('finishes a purge after an unrelated write without reading its own purge as a foreign change', async () => {
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'foreign-purge-host' }) as Repository;
+    await pool.query(`INSERT INTO agents(tenant_id,alias,runtime_key,host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,harness_id)
+      VALUES('Steven','foreign_purge','foreign-purge','foreign-purge-host','container','foreign-purge','dev','/home/dev','/home/dev/foreign-purge','stev','codex')`);
+    const purge = await transition(repo, 'purge', { resource: 'agent', tenant_id: 'Steven', alias: 'foreign_purge' }, 0, 'foreign-purge-host');
+    await repo.prepare(purge); await pool.query(FOREIGN_REVISION);
+    await finishRemoval(repo, purge);
+    expect((await pool.query("SELECT purged_at IS NOT NULL AS purged FROM agents WHERE alias='foreign_purge'")).rows[0]).toEqual({ purged: true });
+  });
+  it('refuses a tenant retirement after a write to a room of the tenant that holds no agent', async () => {
+    const repo = new HumanFleetRepository(pool, { controllerHost: 'empty-room-host' }) as Repository;
+    await pool.query("INSERT INTO tenants(id) VALUES('EmptyRoomTenant')");
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('empty-tenant-room','EmptyRoomTenant')");
+    const retire = await transition(repo, 'retire', { resource: 'tenant', tenant_id: 'EmptyRoomTenant' }, 0, 'empty-room-host');
+    await repo.prepare(retire); await pool.query(FOREIGN_REVISION);
+    await repo.startStep(retire, 'stop');
+    await pool.query("UPDATE rooms SET display_name='Renombrada' WHERE id='empty-tenant-room'"); await pool.query(FOREIGN_REVISION);
+    await expect(completeProof(repo, retire, 'stop', { stopped_verified: true })).rejects.toMatchObject({ code: 'conflict' });
   });
   it('restores a tenant without restoring a room that had already been retired independently', async () => {
     const repo = new HumanFleetRepository(pool, { controllerHost: 'tenant-host' }) as Repository;
