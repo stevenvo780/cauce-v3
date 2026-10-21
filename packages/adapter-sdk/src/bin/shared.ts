@@ -43,7 +43,7 @@ import { commandPinsFromEnvironment } from '../sdk/command-pins.js';
 import { selectionFromEnvironment } from '../sdk/execution-selection.js';
 import { definitionFromDescriptor, packagedHarnessDescriptor } from '../context/harness-descriptor.js';
 import { prepareSpaceLayout } from '../context/space-layout.js';
-import { modelFallbackCommand, superviseModelFallback } from '../sdk/model-fallback-server.js';
+import { fallbackServerDefinition, modelFallbackCommand, superviseModelFallback } from '../sdk/model-fallback-server.js';
 
 function commandOverride(
   harnessId: HarnessId,
@@ -309,11 +309,13 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     && runtime.harnessCommand !== runtime.muse.executable) {
     throw new Error("CAUCE_HARNESS_COMMAND conflicts with CAUCE_MUSE_EXECUTABLE");
   }
-  const definition = runtimeHarnessDefinition(
+  if (fallbackServer !== undefined && museMsp) throw new Error("a model fallback server runs Muse only through muse-cauce exec");
+  const packaged = runtimeHarnessDefinition(
     harnessId,
     museMsp ? (await import("../harnesses/muse-msp.js")).museMspDefinition : definitionFromDescriptor(descriptor),
     runtime.openClaw?.transport,
   );
+  const definition = fallbackServer === undefined ? packaged : fallbackServerDefinition(packaged);
   const canonicalOpenClawTerminalSession = harnessId === "openclaw";
   const store = await DurableStore.open(
     runtime.stateDirectory,
@@ -351,6 +353,9 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const shared = loadSharedSessionConfig(harnessId, runtime.alias, runtime.stateDirectory, { ...process.env,
     ...(selected.modelId === undefined ? {} : { CAUCE_MODEL_ID: selected.modelId }),
     ...(selected.reasoningEffort === undefined ? {} : { CAUCE_REASONING_EFFORT: selected.reasoningEffort }) });
+  if (fallbackServer !== undefined && shared !== undefined) {
+    throw new Error("a model fallback server cannot run a shared Muse TUI: its own turns must stay without shell or write tools");
+  }
   if (museMsp && shared !== undefined) {
     // The shared TUI replaces the runner: MSP would be configured and silently never used.
     throw new Error("Muse MSP (CAUCE_MUSE_EXECUTABLE) and SHARED_SESSION=1 are mutually exclusive");

@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { modelFallbackCommand, superviseModelFallback } from '../src/sdk/model-fallback-server.js';
+import { museDefinition } from '../src/harnesses/muse.js';
+import { fallbackServerDefinition, modelFallbackCommand, superviseModelFallback } from '../src/sdk/model-fallback-server.js';
 import type { AdapterLog } from '../src/sdk/types.js';
 
 const supervision = { initialMs: 20, maximumMs: 40, stableMs: 60_000, killMs: 500 };
@@ -15,6 +16,14 @@ async function until(check: () => Promise<boolean>): Promise<void> {
   }
   assert.fail('condition was not observed');
 }
+
+test('a fallback server agent never runs its own turns with shell, write or --yolo', () => {
+  const served = fallbackServerDefinition(museDefinition);
+  assert.equal(served.command, museDefinition.command);
+  for (const flag of ['--disable-write', '--disable-shell', '--disable-web-tools']) assert.ok(served.baseArgs.includes(flag));
+  assert.ok(!served.baseArgs.includes('--yolo'));
+  assert.throws(() => fallbackServerDefinition({ ...museDefinition, id: 'grok' }));
+});
 
 test('only the executor argv starts the Muse bridge server', () => {
   assert.equal(modelFallbackCommand({}), undefined);

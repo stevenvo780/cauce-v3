@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import type { AdapterLogger } from './types.js';
+import type { AdapterLogger, HarnessDefinition } from './types.js';
 
 /** Only the Muse profile crosses into the bridge server: never the adapter's Cauce credentials. */
 const SERVER_ENVIRONMENT = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
@@ -8,6 +8,16 @@ const SERVER_ENVIRONMENT = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL',
 
 export interface FallbackSupervision { readonly initialMs: number; readonly maximumMs: number; readonly stableMs: number; readonly killMs: number }
 const SUPERVISION: FallbackSupervision = { initialMs: 1_000, maximumMs: 60_000, stableMs: 300_000, killMs: 3_000 };
+
+/**
+ * The agent that serves a model fallback shares the socket directory's uid: its own turns never get shell or write
+ * tools (no `--yolo`), so they cannot stop the server, bind another listener or plant a link in its place.
+ */
+export function fallbackServerDefinition(definition: HarnessDefinition): HarnessDefinition {
+  if (definition.id !== 'muse') throw new Error('only a Muse agent serves a model fallback');
+  return { ...definition, baseArgs: ['exec', '--json', '--trust-workspace', '--disable-web-tools', '--disable-reminders',
+    '--no-foreign-personal-context', '--disable-write', '--disable-shell'] };
+}
 
 /** The executor's exact argv for the paired bridge server (`CAUCE_MODEL_FALLBACK_SERVE`), or none. */
 export function modelFallbackCommand(environment: NodeJS.ProcessEnv = process.env): readonly string[] | undefined {
