@@ -6,6 +6,7 @@ import { Badge, EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
+import { ConfigChangeReceipt } from './ConfigChangeReceipt';
 
 type SpaceStep = 'tenant' | 'room' | 'membership';
 type WizardStep = SpaceStep | 'review';
@@ -228,7 +229,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
         <Button variant="primary" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</Button>
         <Button size="sm" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Empezar de nuevo</Button>
       </div>
-      {preview ? <pre className={PREVIEW} aria-label="Dry-run del wizard">{preview}</pre> : null}
+      <ConfigChangeReceipt preview={preview} label="Dry-run del wizard" />
     </> : null}
 
     {invalid ? <Outcome tone="error">{invalid}</Outcome> : null}

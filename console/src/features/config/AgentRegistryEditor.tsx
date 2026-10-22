@@ -4,7 +4,8 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice, type ConfigMutationRunner } from './use-config-mutation';
-import { Button, Notice, PREVIEW } from '../../components/kit';
+import { Button, Notice } from '../../components/kit';
+import { ConfigChangeReceipt } from './ConfigChangeReceipt';
 import { BLOCK_TITLE, CHECK_LABEL, HINT } from './config-ui';
 import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
@@ -304,8 +305,8 @@ function AgentRegistryForm({
         </div>
       </div>
       {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
-      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+      <ConfigChangeReceipt notice={!deleting ? runner.notice : undefined} preview={!deleting ? runner.preview : undefined}
+        label="Preview del registro de agente" />
       <div className="flex flex-wrap items-center justify-end gap-2" title={`Revisión esperada: ${String(runner.expectedRevision ?? 'desconocida')}`}>
         <Button onClick={() => { void preview(); }} disabled={disabled || deleting}>
           Previsualizar cambio
@@ -315,7 +316,6 @@ function AgentRegistryForm({
           Aplicar cambio
         </Button>
       </div>
-      {runner.preview && !deleting ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
     </div>
     {quota}
     {canDelete ? <div className="grid gap-3 rounded-lg border border-danger/30 p-4">
@@ -332,7 +332,7 @@ function AgentRegistryForm({
           <Button disabled={runner.busy}
             onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</Button>
         </div>
-        {runner.preview ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
+        <ConfigChangeReceipt notice={runner.notice} preview={runner.preview} label="Preview del registro de agente" />
       </form> : <div><Button variant="danger" disabled={disabled || Boolean(deleteBlock)} title={deleteBlock}
         onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button></div>}
     </div> : <p className={HINT}>Este agente ya se puso en marcha: para quitarlo, usa «Retirar o eliminar» en la pestaña «Estado».</p>}

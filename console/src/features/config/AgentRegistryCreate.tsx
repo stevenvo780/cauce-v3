@@ -9,7 +9,8 @@ import {
   EMPTY_AGENT_REGISTRY_DRAFT, registryHarnessOptions, registryRoomOptions, registryTenantOptions,
   type AgentRegistryCreateDraft,
 } from './agent-registry-create';
-import { Button, Notice, PREVIEW } from '../../components/kit';
+import { Button, Notice } from '../../components/kit';
+import { ConfigChangeReceipt } from './ConfigChangeReceipt';
 import { ConflictNotice } from '../../components/ConflictNotice';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
@@ -182,8 +183,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
     </Notice> : null;
   const notices = <>
     {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
-    {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+    <ConfigChangeReceipt notice={runner.notice} preview={runner.preview} label="Preview del alta de agente" />
   </>;
 
   return <Dialog.Root open={open} onOpenChange={(next) => { if (!next && !busy) onOpenChange(false); }}>
@@ -199,8 +199,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
               <li>Computadora: {hostById(fleet.hosts, created.hostId)?.display_name ?? (created.hostId || 'sin asignar')}</li>
               {created.roomLabel ? <li>Grupo inicial: {created.roomLabel}, {ROOM_STATUS[roomStep?.stage ?? 'done']}.</li> : null}
             </ul>
-            {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-              role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+            <ConfigChangeReceipt notice={runner.notice} preview={runner.preview} label="Preview del alta de agente" />
             {created.hostId ? <div className="grid gap-2">
               <p className="m-0 text-xs text-muted">Siguiente paso: preparar el agente en su computadora. Así queda su entorno de ejecución listo para admitir entregas.</p>
               {fleetReason ? <Notice role="note">{fleetReason}</Notice> : null}
@@ -227,7 +226,6 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
                 <ReviewSummary draft={draft} tenantLabel={tenantLabel} hostLabel={hostLabel} roomLabel={roomLabel} />
                 {!draft.hostId ? <Notice tone="warn" role="note">Sin computadora, el agente quedará registrado pero no responderá: asígnale una en Editar registro y prepáralo para que admita entregas.</Notice> : null}
                 <p className="m-0 text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}. Previsualiza el alta para que el servidor la valide antes de crearla.</p>
-                {runner.preview ? <pre className={PREVIEW} aria-label="Preview del alta de agente">{runner.preview}</pre> : null}
                 {runner.conflicted ? <ConflictNotice busy={busy}
                   onRetry={() => { void preview(); }}
                   onDiscard={() => { setDraft(EMPTY_AGENT_REGISTRY_DRAFT); setStep('identidad'); runner.clear(); }} /> : null}

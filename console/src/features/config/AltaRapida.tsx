@@ -9,6 +9,7 @@ import {
 } from './alta-rapida';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
+import { ConfigChangeReceipt } from './ConfigChangeReceipt';
 
 /**
  * Onboarding for a resource via form. Replaces "type the mutation by hand in JSON" for the four
@@ -174,7 +175,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
         ? <Outcome tone="error">{invalido}</Outcome>
         : <p className="m-0 text-xs text-muted">Completá el formulario para habilitar el alta: {invalido}</p>
       : null}
-    {preview ? <pre className={PREVIEW} aria-label="Dry-run del alta">{preview}</pre> : null}
+    <ConfigChangeReceipt preview={preview} label="Dry-run del alta" />
     {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}
   </div>;
 }
