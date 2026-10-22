@@ -159,7 +159,7 @@ async function openRegistry(page: BrowserPage): Promise<Form> {
   const editor = page.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true }) as Form;
   if (!(await editor.count())) {
     await page.getByRole('button', { name: `Acciones de ${tenant}/${alias}`, exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Editar registro', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Cambiar ajustes', exact: true }).click();
   }
   await editor.waitFor({ state: 'visible', timeout: 20_000 });
   return editor;

@@ -93,7 +93,7 @@ it('sends a record create after an exact dry-run and closes with focus returned'
   const user = await openAndFill();
   expect(screen.getByText(/El servidor lo verifica al previsualizar/)).toBeInTheDocument();
   await nextStep(user);
-  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
+  expect(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' })).toHaveValue(2);
   await nextStep(user, 2);
   await user.click(screen.getByRole('button', { name: 'Previsualizar alta' }));
   expect(await screen.findByLabelText('Preview del alta de agente')).toHaveTextContent('"action": "create"');
@@ -254,7 +254,7 @@ it('reopens with an empty draft and uses the newer prop snapshot over an older r
   await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'other');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Other');
   await nextStep(user);
-  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(2);
+  expect(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' })).toHaveValue(2);
   expect(screen.getByRole('combobox', { name: 'Tipo de agente (opcional)' })).toHaveTextContent('gemini');
 });
 

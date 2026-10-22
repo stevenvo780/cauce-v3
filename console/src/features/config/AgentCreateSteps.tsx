@@ -93,7 +93,7 @@ export function PlacementStep({ draft, edit, disabled, harnesses, hosts, hostRea
       </select> : <input value={draft.harnessId} maxLength={64} placeholder="p. ej. codex"
         onChange={(event) => { edit({ harnessId: event.target.value }); }} disabled={disabled} />}
     </label>
-    <label>Máximo de entregas concurrentes
+    <label>Mensajes a la vez
       <input type="number" min={1} max={100} step={1} value={draft.capacity}
         onChange={(event) => { edit({ capacity: event.target.value }); }} disabled={disabled} />
     </label>

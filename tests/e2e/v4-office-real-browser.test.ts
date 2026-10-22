@@ -720,7 +720,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
 
     await step(page, 'pausing the agent removes it from plan and campus', async () => {
       const { editor } = await openRegistry(page, base(), hubA, cycleAlias);
-      await editor.getByRole('combobox', { name: 'Estado del registro', exact: true }).selectOption('false');
+      await editor.getByRole('combobox', { name: 'Recepción de mensajes', exact: true }).selectOption('false');
       await applyRegistryChange(page);
       await openPlan(page);
       await assertAgentNotInPlan(page, officeLabel, cycleAlias);

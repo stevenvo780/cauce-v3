@@ -40,11 +40,10 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
       ],
     };
   const disabled = !runner.canWrite || runner.busy || !available || !canAssign;
-  return <section className="mt-4 grid gap-3 rounded-lg border border-line bg-surface p-4" aria-label={`Cuentas de cuota de ${tenantId}/${alias}`}>
+  return <section className="grid gap-3 rounded-lg border border-line bg-surface p-4" aria-label={`Cuentas de cuota de ${tenantId}/${alias}`}>
     <h3 className="m-0 text-sm font-semibold">Cuentas de cuota</h3>
-    <p className="m-0 text-xs text-muted">Estas cuentas aportan las cuotas de la ficha y el cansancio de la oficina.
-      Con varias cuentas, la oficina muestra la mejor disponibilidad entre ellas.
-      La cuenta de ejecución se cambia desde «Operar agente» y requiere comprobar su autenticación.</p>
+    <p className="m-0 text-xs text-muted">De estas cuentas sale el saldo que ves en «Estado» y en la oficina; con varias, se muestra la que tenga más disponible.
+      La cuenta con la que trabaja el agente se cambia en «Ejecución».</p>
     {!available ? <p className="m-0 text-sm text-muted">No se publicaron las cuentas o sus asignaciones. Relee el inventario.</p> : null}
     {bindings.some(row => row.enabled) ? <ul className="m-0 grid gap-1 pl-4 text-sm">
       {bindings.filter(row => row.enabled).map(row => {

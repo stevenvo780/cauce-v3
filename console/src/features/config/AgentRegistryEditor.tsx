@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { useConfigMutation, useRevisionEncadenada, type ConfigMutationNotice, type ConfigMutationRunner } from './use-config-mutation';
 import { Button, Notice, PREVIEW } from '../../components/kit';
-import { CHECK_LABEL, HINT } from './config-ui';
+import { BLOCK_TITLE, CHECK_LABEL, HINT } from './config-ui';
 import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { agentHostIdOf, agentWriteBlock } from './agent-registry-create';
@@ -59,7 +59,7 @@ function buildMutation(agent: AgentRow, draft: Draft, baseline: Draft): { mutati
   }
 
   if (draft.enabled !== baseline.enabled && draft.enabled !== '' && draft.enabled !== String(agent.enabled)) {
-    if (draft.enabled !== 'false') return { error: 'La habilitación requiere una operación verificada desde «Operar agente».' };
+    if (draft.enabled !== 'false') return { error: 'Reanudar la recepción requiere una operación verificada desde «Ejecución».' };
     value.enabled = false;
   }
 
@@ -86,15 +86,15 @@ function buildMutation(agent: AgentRow, draft: Draft, baseline: Draft): { mutati
   };
 }
 
-export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted, initialOpen = false, hideTrigger = false, embedded = false, onDirtyChange, onClose }: {
+/** The agent's «Ajustes» tab: name, computer, message intake and capacity, plus the accounts its quota reads from. */
+export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReloaded, onDeleted, onDirtyChange }: {
   tenantId: string; alias: string; snapshot: ConfigurationSnapshot; hosts?: FleetHost[] | undefined;
   onReloaded: (snapshot: ConfigurationSnapshot) => void;
   onDeleted?: (notice: ConfigMutationNotice) => void;
-  initialOpen?: boolean; hideTrigger?: boolean; embedded?: boolean; onDirtyChange?: (dirty: boolean) => void; onClose?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const api = useApi();
   const access = useConsoleAccess();
-  const [open, setOpen] = useState(initialOpen);
   const [registryDirty, setRegistryDirty] = useState(false);
   const [quotaDirty, setQuotaDirty] = useState(false);
   useEffect(() => { onDirtyChange?.(registryDirty || quotaDirty); }, [onDirtyChange, registryDirty, quotaDirty]);
@@ -124,28 +124,19 @@ export function AgentRegistryEditor({ tenantId, alias, snapshot, hosts, onReload
   });
   const agent = current.agents?.find((row) => row.tenant_id === tenantId && row.alias === alias);
   if (!agent) return null;
-  return <div className="min-w-0" data-open={String(open)}>
-    {hideTrigger ? null : <Button
-      aria-label={`${open ? 'Cerrar' : 'Editar'} registro de ${tenantId}/${alias}`}
-      onClick={() => { setOpen((value) => !value); runner.clear(); }}
-    >{open ? 'Cerrar registro' : 'Editar registro'}</Button>}
-    {open ? <>
-      <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts} embedded={embedded} onDirtyChange={setRegistryDirty}
-        deleteBlock={deleteBlock} onClose={() => { setOpen(false); runner.clear(); onClose?.(); }} />
-      <AgentQuotaBinding key={`${tenantId}/${alias}`} tenantId={tenantId} alias={alias} snapshot={current}
-        onReloaded={onReloaded} onDirtyChange={setQuotaDirty} />
-    </> : null}
-  </div>;
+  return <AgentRegistryForm agent={agent as AgentRow} runner={runner} onDeleted={onDeleted} hosts={hosts} onDirtyChange={setRegistryDirty}
+    deleteBlock={deleteBlock} quota={<AgentQuotaBinding key={`${tenantId}/${alias}`} tenantId={tenantId} alias={alias} snapshot={current}
+      onReloaded={onReloaded} onDirtyChange={setQuotaDirty} />} />;
 }
 
 function AgentRegistryForm({
-  agent, runner, onClose, onDeleted, hosts, deleteBlock, embedded, onDirtyChange,
+  agent, runner, onDeleted, hosts, deleteBlock, onDirtyChange, quota,
 }: {
-  embedded: boolean;
   onDirtyChange: ((dirty: boolean) => void) | undefined;
   agent: AgentRow;
   runner: ConfigMutationRunner;
-  onClose: () => void;
+  /** The quota accounts block, placed between the settings and the deletion zone. */
+  quota: ReactNode;
   onDeleted?: ((notice: ConfigMutationNotice) => void) | undefined;
   hosts?: FleetHost[] | undefined;
   deleteBlock?: string | undefined;
@@ -202,8 +193,8 @@ function AgentRegistryForm({
         capacity: fresh.noCapacityLimit ? null : fresh.capacity,
       },
       {
-        display_name: 'Nombre visible', host_id: 'Computadora', enabled: 'Estado del registro',
-        capacity: 'Máximo de entregas concurrentes',
+        display_name: 'Nombre visible', host_id: 'Computadora', enabled: 'Recepción de mensajes',
+        capacity: 'Mensajes a la vez',
       },
     ));
   }, [agent, agentVersion]);
@@ -251,67 +242,71 @@ function AgentRegistryForm({
   }
 
   const originalName = typeof agent.display_name === 'string' ? agent.display_name : '';
-  return <section className={embedded ? 'grid min-w-0 grid-cols-1 gap-4' : 'mt-3 grid grid-cols-1 gap-3 rounded-lg border border-line bg-subtle p-4'}
-    aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
-    {embedded ? null : <div className="flex flex-wrap items-center justify-between gap-3">
-      <h3>Registro · {agent.tenant_id}/{agent.alias}</h3>
-      <Button onClick={onClose}>Cerrar editor</Button>
-    </div>}
-    <p className={HINT}>Identidad fija desde la fila seleccionada. Los permisos se vuelven a decidir en el servidor.</p>
-    {runner.canWrite ? null : <Notice role="note">Edición de registro en solo lectura: falta permiso acreditado de configuración.</Notice>}
-    {conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={runner.busy}
-      onRetry={() => { setConflictDiffs(undefined); void preview(); }}
-      onDiscard={() => {
-        const fresh = initialDraft(agent);
-        baseline.current = fresh;
-        setDraft(fresh);
-        setConflictDiffs(undefined);
-        runner.clear();
-      }} /> : null}
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label>Nombre visible
-        <input maxLength={128} value={draft.displayName}
-          onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
-      </label>
-      {hostEditable(agent)
-        ? <label>Computadora
-          <select value={draft.hostId} onChange={(event) => { update({ hostId: event.target.value }); }} disabled={editDisabled}>
-            {hasRuntime(agent) ? <option value="" disabled>Elige una computadora</option> : <option value="">Sin computadora</option>}
-            {hostOptions.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
-              {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
-            </option>)}
-          </select>
-          {hasRuntime(agent) ? <span className={HINT}>
-            Asigna la computadora donde ya corre este agente; después solo se cambia con una operación de flota.</span> : null}
-          {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId)) ? <span className={HINT}>
-            {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId))}</span> : null}
-        </label>
-        : <p className={HINT}>Computadora: {hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? currentHost}.
-          {hasRuntime(agent) ? ' La computadora se elige al crear; trasladar un agente no está soportado.' : ''}</p>}
-      <label>Estado del registro
-        <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>
-          <option value="">Sin cambios</option>
-          <option value="true" disabled>Habilitado (requiere operación verificada)</option>
-          <option value="false">Pausar admisión de entregas</option>
-        </select>
-      </label>
-      <label>Máximo de entregas concurrentes
-        <input type="number" min={1} max={100} step={1} value={draft.capacity}
-          onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={editDisabled} />
-      </label>
-      <label className={CHECK_LABEL}><input type="checkbox" checked={draft.noCapacityLimit}
-        onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={editDisabled} />
-        Sin límite (enviar null)
-      </label>
-      <p className={HINT}>La ubicación, el arnés y la cuenta principal se cambian en «Operar agente».
-        Habilitar la admisión requiere verificar el runtime; pausar este registro no detiene su proceso.</p>
-    </div>
-    {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
-    {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
-      role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-      <span className="text-xs text-muted">Revisión esperada: {String(runner.expectedRevision ?? 'desconocida')}</span>
-      <div className="flex flex-wrap items-center gap-2">
+  return <section className="grid min-w-0 grid-cols-1 gap-6" aria-label={`Registro de ${agent.tenant_id}/${agent.alias}`}>
+    <div className="grid min-w-0 grid-cols-1 gap-4">
+      <div className="grid gap-1">
+        <h3 className={BLOCK_TITLE}>Ajustes del agente</h3>
+        <p className={HINT}>Revisa el cambio con «Previsualizar cambio» y después pulsa «Aplicar cambio». La ubicación, el arnés y la cuenta principal se cambian en «Ejecución».</p>
+      </div>
+      {runner.canWrite ? null : <Notice role="note">Solo lectura: tu cuenta no tiene permiso para cambiar los ajustes.</Notice>}
+      {conflictDiffs ? <ConflictNotice diffs={conflictDiffs} busy={runner.busy}
+        onRetry={() => { setConflictDiffs(undefined); void preview(); }}
+        onDiscard={() => {
+          const fresh = initialDraft(agent);
+          baseline.current = fresh;
+          setDraft(fresh);
+          setConflictDiffs(undefined);
+          runner.clear();
+        }} /> : null}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="grid content-start gap-1">
+          <label>Nombre visible
+            <input maxLength={128} value={draft.displayName}
+              onChange={(event) => { update({ displayName: event.target.value }); }} disabled={editDisabled} />
+          </label>
+          {originalName && draft.displayName.trim() === '' ? <span className={HINT}>Nombre actual «{originalName}»; vacío lo quita.</span> : null}
+        </div>
+        {hostEditable(agent)
+          ? <label>Computadora
+            <select value={draft.hostId} onChange={(event) => { update({ hostId: event.target.value }); }} disabled={editDisabled}>
+              {hasRuntime(agent) ? <option value="" disabled>Elige una computadora</option> : <option value="">Sin computadora</option>}
+              {hostOptions.map((host) => <option key={host.host_id} value={host.host_id} disabled={!fleetHostUsable(host)}>
+                {host.display_name}{fleetHostUsable(host) ? '' : host.enabled ? ' · sin conexión' : ' · deshabilitada'}
+              </option>)}
+            </select>
+            {hasRuntime(agent) ? <span className={HINT}>
+              Asigna la computadora donde ya corre este agente; después solo se cambia con una operación de flota.</span> : null}
+            {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId)) ? <span className={HINT}>
+              {hostUnavailableReason(hostOptions.find((host) => host.host_id === draft.hostId))}</span> : null}
+          </label>
+          : <div className="grid content-start gap-1 text-[13px]"><span className="font-medium">Computadora</span>
+            <span>{hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? currentHost}</span>
+            {hasRuntime(agent) ? <span className={HINT}>Se elige al crear el agente; trasladarlo a otra computadora no está soportado.</span> : null}</div>}
+        <div className="grid content-start gap-1">
+          <label>Recepción de mensajes
+            <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>
+              <option value="">Sin cambios</option>
+              <option value="true" disabled>Activo: recibe mensajes</option>
+              <option value="false">Pausar: deja de recibir mensajes nuevos</option>
+            </select>
+          </label>
+          <span className={HINT}>Pausar no detiene el programa que ya está corriendo; reanudar se hace en «Ejecución».</span>
+        </div>
+        <div className="grid content-start gap-2">
+          <label>Mensajes a la vez
+            <input type="number" min={1} max={100} step={1} value={draft.capacity}
+              onChange={(event) => { update({ capacity: event.target.value, noCapacityLimit: false }); }} disabled={editDisabled} />
+          </label>
+          <label className={CHECK_LABEL}><input type="checkbox" checked={draft.noCapacityLimit}
+            onChange={(event) => { update({ noCapacityLimit: event.target.checked, ...(event.target.checked ? { capacity: '' } : {}) }); }} disabled={editDisabled} />
+            Sin límite
+          </label>
+        </div>
+      </div>
+      {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
+      {runner.notice ? <Notice tone={runner.notice.tone === 'error' ? 'danger' : 'info'}
+        role={runner.notice.tone === 'error' ? 'alert' : 'status'}>{runner.notice.text}</Notice> : null}
+      <div className="flex flex-wrap items-center justify-end gap-2" title={`Revisión esperada: ${String(runner.expectedRevision ?? 'desconocida')}`}>
         <Button onClick={() => { void preview(); }} disabled={disabled || deleting}>
           Previsualizar cambio
         </Button>
@@ -320,25 +315,26 @@ function AgentRegistryForm({
           Aplicar cambio
         </Button>
       </div>
+      {runner.preview && !deleting ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
     </div>
-    {canDelete ? <Button className="justify-self-start" disabled={disabled || deleting || Boolean(deleteBlock)} title={deleteBlock}
-      onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button>
-      : <p className={HINT}>Un agente con ejecución se retira con «Retirar agente» en la fila del agente.</p>}
-    {deleting && canDelete ? <form className="grid gap-3" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`}
-      onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
-      <p>Eliminar este registro requiere comprobar sus dependencias. Previsualiza antes de confirmar.</p>
-      <p className={HINT}>Como nunca tuvo ejecución, se borran con él su perfil, sus cuentas vinculadas, su apariencia y sus membresías
-        sin historial. Si no queda historial, el alias queda libre para otro agente. Si queda, se conserva su identidad y el alias
-        sigue reservado para no mezclar historiales. La eliminación definitiva no se puede deshacer.</p>
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" disabled={disabled}>Previsualizar eliminación</Button>
-        <Button variant="primary" disabled={disabled || !runner.isValidated(deletion)}
-          onClick={() => { void remove(false); }}>Confirmar eliminación del registro</Button>
-        <Button disabled={runner.busy}
-          onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</Button>
-      </div>
-    </form> : null}
-    {runner.preview ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
-    {originalName && draft.displayName.trim() === '' ? <p className={HINT}>Nombre actual «{originalName}»; vacío lo quita del registro.</p> : null}
+    {quota}
+    {canDelete ? <div className="grid gap-3 rounded-lg border border-danger/30 p-4">
+      <h3 className="m-0 text-sm font-semibold text-danger-ink">Eliminar este agente</h3>
+      <p className={HINT}>Como nunca se puso en marcha, se borran con él su perfil, sus cuentas vinculadas, su apariencia y sus membresías
+        sin historial. Si no queda historial, el alias queda libre para otro agente; si queda, el alias sigue reservado para no mezclar
+        historiales. No se puede deshacer.</p>
+      {deleting ? <form className="grid gap-3" aria-label={`Eliminar registro de ${agent.tenant_id}/${agent.alias}`} onSubmit={(event) => { event.preventDefault(); void remove(true); }}>
+        <p className="m-0 text-[13px]">Previsualiza la eliminación para comprobar sus dependencias y después confírmala.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" disabled={disabled}>Previsualizar eliminación</Button>
+          <Button variant="danger" disabled={disabled || !runner.isValidated(deletion)}
+            onClick={() => { void remove(false); }}>Confirmar eliminación del registro</Button>
+          <Button disabled={runner.busy}
+            onClick={() => { setDeleting(false); runner.clear(); }}>Cancelar eliminación</Button>
+        </div>
+        {runner.preview ? <pre className={PREVIEW} aria-label="Preview del registro de agente">{runner.preview}</pre> : null}
+      </form> : <div><Button variant="danger" disabled={disabled || Boolean(deleteBlock)} title={deleteBlock}
+        onClick={() => { setDeleting(true); runner.clear(); setFormError(undefined); }}>Eliminar registro</Button></div>}
+    </div> : <p className={HINT}>Este agente ya se puso en marcha: para quitarlo, usa «Retirar o eliminar» en la pestaña «Estado».</p>}
   </section>;
 }

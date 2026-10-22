@@ -65,12 +65,12 @@ it('validates the capacity and the all-or-nothing runtime fields before the grou
   await user.type(screen.getByRole('textbox', { name: 'Alias' }), 'worker');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible' }), 'Worker');
   await nextStep(user);
-  await user.clear(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' }));
-  await user.type(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' }), '500');
+  await user.clear(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' }));
+  await user.type(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' }), '500');
   await nextStep(user);
   expect(screen.getByRole('alert')).toHaveTextContent('La capacidad debe ser un entero entre 1 y 100');
-  await user.clear(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' }));
-  await user.type(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' }), '3');
+  await user.clear(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' }));
+  await user.type(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' }), '3');
   await user.click(screen.getByText('Entorno de ejecución (opcional)'));
   await user.type(screen.getByRole('textbox', { name: 'Nombre del contenedor' }), 'box');
   await nextStep(user);

@@ -77,7 +77,7 @@ async function login(page: BrowserPage, email: string, password: string): Promis
 async function openEditor(page: BrowserPage, tenant: string, alias: string): Promise<void> {
   await page.getByLabel('Buscar agente o grupo').fill(tenant === 'Steven' ? 'QA' : alias);
   await page.getByRole('button', { name: `Acciones de ${tenant}/${alias}`, exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Editar registro', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Cambiar ajustes', exact: true }).click();
   await page.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
 }
 async function closeEditor(page: BrowserPage): Promise<void> {
@@ -283,8 +283,8 @@ describe('V1 tipada de edición del registro de agentes', () => {
       for (const role of ['textbox', 'combobox', 'spinbutton']) expect(await registryEditor.getByRole(role, { name: label, exact: true }).count()).toBe(0);
     }
     await registryEditor.getByRole('textbox', { name: 'Nombre visible', exact: true }).fill(displayName);
-    await registryEditor.getByRole('combobox', { name: 'Estado del registro', exact: true }).selectOption('false');
-    await registryEditor.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes', exact: true }).fill('');
+    await registryEditor.getByRole('combobox', { name: 'Recepción de mensajes', exact: true }).selectOption('false');
+    await registryEditor.getByRole('spinbutton', { name: 'Mensajes a la vez', exact: true }).fill('');
     await registryEditor.getByRole('checkbox', { name: /Sin límite/ }).click();
     await assertAgentRegistryGeometry(hubPage, evidenceDirectory, 'desktop', `${identity.tenant}/${identity.alias}`);
     const mutation: ConfigMutation = {

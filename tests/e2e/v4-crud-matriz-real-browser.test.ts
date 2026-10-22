@@ -436,7 +436,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
       const sheet = page.getByRole('dialog');
       await sheet.waitFor({ timeout: 20_000 });
-      await sheet.getByRole('tab', { name: 'Registro', exact: true }).click();
+      await sheet.getByRole('tab', { name: 'Ajustes', exact: true }).click();
       const editor = sheet.getByRole('region', { name: `Registro de ${hubA}/${agentAlias}`, exact: true });
       await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
       const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });

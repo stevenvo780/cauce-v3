@@ -2108,7 +2108,7 @@
             {
               "file": "console/src/features/config/AgentRegistryEditor.tsx",
               "kind": "text",
-              "value": "Editar registro"
+              "value": "Aplicar cambio"
             }
           ],
           "tests": [
@@ -2188,7 +2188,7 @@
             {
               "file": "console/src/features/config/AgentLifecyclePanel.tsx",
               "kind": "text",
-              "value": "Encolar operación"
+              "value": "Confirmar operación"
             }
           ],
           "tests": [
@@ -4316,7 +4316,7 @@
             {
               "file": "console/src/features/config/AgentRegistryEditor.tsx",
               "kind": "text",
-              "value": "Previsualiza antes de confirmar"
+              "value": "Previsualiza la eliminación"
             }
           ],
           "tests": [

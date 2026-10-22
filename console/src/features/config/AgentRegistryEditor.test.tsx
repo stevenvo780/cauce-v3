@@ -61,8 +61,8 @@ it('previews the fixed row identity, invalidates a stale preview, applies its ex
   );
   const user = userEvent.setup();
   renderSettings();
-  await agentAction(user, 'A/one', 'Editar registro');
-  const capacity = screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' });
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
+  const capacity = screen.getByRole('spinbutton', { name: 'Mensajes a la vez' });
   await user.clear(capacity);
   await user.type(capacity, '2');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
@@ -94,10 +94,10 @@ it('routes runtime placement and harness changes through the operational assista
   server.use(registryAccess());
   const user = userEvent.setup();
   renderSettings();
-  await agentAction(user, 'A/one', 'Editar registro');
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
   expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
   expect(screen.queryByRole('textbox', { name: 'ID del arnés' })).not.toBeInTheDocument();
-  expect(screen.getByText(/La ubicación, el arnés y la cuenta principal se cambian en «Operar agente»/)).toBeInTheDocument();
+  expect(screen.getByText(/La ubicación, el arnés y la cuenta principal se cambian en «Ejecución»/)).toBeInTheDocument();
 });
 
 it('sends an explicit null cap without operational fields', async () => {
@@ -113,7 +113,7 @@ it('sends an explicit null cap without operational fields', async () => {
   );
   const user = userEvent.setup();
   renderSettings();
-  await agentAction(user, 'A/one', 'Editar registro');
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
   await user.click(screen.getByRole('checkbox', { name: /Sin límite/ }));
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');
@@ -141,8 +141,8 @@ it('reconciles a stale-revision conflict and does not retain its preview', async
   );
   const user = userEvent.setup();
   renderSettings();
-  await agentAction(user, 'A/one', 'Editar registro');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Recepción de mensajes' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   await screen.findByLabelText('Preview del registro de agente');
   current = {
@@ -158,8 +158,8 @@ it('reconciles a stale-revision conflict and does not retain its preview', async
   const conflicto = await screen.findByRole('group', { name: 'Conflicto de versión' });
   expect(conflicto).toHaveTextContent('Cambio concurrente');
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Agente uno');
-  expect(screen.getByRole('spinbutton', { name: 'Máximo de entregas concurrentes' })).toHaveValue(1);
-  expect(screen.getByRole('combobox', { name: 'Estado del registro' })).toHaveValue('false');
+  expect(screen.getByRole('spinbutton', { name: 'Mensajes a la vez' })).toHaveValue(1);
+  expect(screen.getByRole('combobox', { name: 'Recepción de mensajes' })).toHaveValue('false');
   expect(screen.queryByRole('textbox', { name: 'Nombre del contenedor' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Releer y reintentar con mis cambios' }));
   await screen.findByLabelText('Preview del registro de agente');
@@ -183,8 +183,8 @@ it('does not enable apply when the server preview omits the exact receipt', asyn
   );
   const user = userEvent.setup();
   renderSettings();
-  await agentAction(user, 'A/one', 'Editar registro');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Estado del registro' }), 'false');
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Recepción de mensajes' }), 'false');
   await user.click(screen.getByRole('button', { name: 'Previsualizar cambio' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/recibo exacto/);
   expect(screen.queryByLabelText('Preview del registro de agente')).not.toBeInTheDocument();
@@ -201,7 +201,7 @@ it('deletes an unmanaged registry row only after its exact preview and keeps the
         inverse_mutation: { resource: 'agent', action: 'create', tenant_id: 'A', alias: 'one', value: { display_name: 'Agente uno', enabled: false } },
       }, { status: body.dry_run ? 200 : 201 });
     }));
-  const user = userEvent.setup(); renderSettings(); await agentAction(user, 'A/one', 'Editar registro');
+  const user = userEvent.setup(); renderSettings(); await agentAction(user, 'A/one', 'Cambiar ajustes');
   await user.click(screen.getByRole('button', { name: 'Eliminar registro' }));
   const apply = screen.getByRole('button', { name: 'Confirmar eliminación del registro' }); expect(apply).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
@@ -233,7 +233,7 @@ it('lets a runtime agent without a host receive one and sends host_id', async ()
   );
   const user = userEvent.setup();
   renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one', host_id: null }] });
-  await agentAction(user, 'A/one', 'Editar registro');
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
   const select = await screen.findByRole('combobox', { name: /Computadora/ });
   expect(screen.queryByRole('option', { name: 'Sin computadora' })).not.toBeInTheDocument();
   expect(screen.getByText(/Asigna la computadora donde ya corre este agente/)).toBeInTheDocument();

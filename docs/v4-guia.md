@@ -60,7 +60,7 @@ En la ficha del agente, abre **Registro → Cuentas de cuota**, elige la cuenta,
 ## Crear y preparar un agente
 
 1. Abre **Ajustes → Agentes → Añadir agente** y elige **Registrar el agente**.
-2. Completa espacio de trabajo, alias y nombre visible; avanza por computadora y grupo inicial. Puedes registrarlo sin computadora y asignarla después desde **Editar registro**.
+2. Completa espacio de trabajo, alias y nombre visible; avanza por computadora y grupo inicial. Puedes registrarlo sin computadora y asignarla después desde la pestaña **Ajustes** de su ficha.
 3. En la revisión, pulsa **Previsualizar alta** y después **Crear registro**. El registro se crea deshabilitado; aún falta preparar su ejecución.
 4. Con una computadora asignada, pulsa **Preparar en la computadora**, revisa el plan y encola la operación. También puedes abrir la ficha, ir a **Operación** y elegir **Preparar agente**. Completa la autenticación del proveedor cuando se solicite.
 

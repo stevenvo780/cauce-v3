@@ -37,7 +37,7 @@ export async function openRegistry(page: V4Page, baseUrl: string, tenant: string
   await page.goto(`${baseUrl}/config?seccion=agentes&agente=${encodeURIComponent(`${tenant}/${alias}`)}`, { waitUntil: 'domcontentloaded' });
   const sheet = page.getByRole('dialog');
   await sheet.waitFor({ timeout: 20_000 });
-  await sheet.getByRole('tab', { name: 'Registro', exact: true }).click();
+  await sheet.getByRole('tab', { name: 'Ajustes', exact: true }).click();
   const editor = sheet.getByRole('region', { name: `Registro de ${tenant}/${alias}`, exact: true });
   await editor.waitFor({ timeout: 20_000 });
   return { sheet, editor };

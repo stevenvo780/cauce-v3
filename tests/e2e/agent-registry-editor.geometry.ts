@@ -102,7 +102,7 @@ export async function assertAgentRegistryGeometry(page: BrowserPage, evidenceDir
   const before = await page.evaluate((identity) => Array.from(document.querySelectorAll<HTMLInputElement>(
     `section[aria-label="Registro de ${identity}"] input[type="checkbox"]`,
   )).map((input) => input.checked), targetIdentity);
-  for (const [index, text] of ['Sin límite (enviar null)'].entries()) {
+  for (const [index, text] of ['Sin límite'].entries()) {
     const label = region.locator('label').filter({ hasText: text });
     await label.click();
     const changed = await page.evaluate((identity) => Array.from(document.querySelectorAll<HTMLInputElement>(
