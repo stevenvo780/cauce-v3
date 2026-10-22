@@ -467,14 +467,11 @@ def profile_identity(packet: dict, prefix: list) -> str | None:
         if until and (not isinstance(until, str) or datetime.fromisoformat(until.replace('Z', '+00:00')) > datetime.now(UTC)):
             probe_failed('profile_unusable')
             return None
-    if 'expiresAt' in selected or flow['expiry_required']:
-        if not isinstance(selected.get('expiresAt'), str):
-            probe_failed('profile_unusable')
-            return None
-        expires = datetime.fromisoformat(selected['expiresAt'].replace('Z', '+00:00'))
-        if expires <= datetime.now(UTC):
-            probe_failed('profile_unusable')
-            return None
+    # A past expiresAt is only the access token's: OpenClaw refreshes it on the next turn without persisting the new
+    # expiry, so the nonce turn below, not this timestamp, decides whether the login still works.
+    if ('expiresAt' in selected or flow['expiry_required']) and not isinstance(selected.get('expiresAt'), str):
+        probe_failed('profile_unusable')
+        return None
     return identity
 
 

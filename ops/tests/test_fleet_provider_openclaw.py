@@ -103,14 +103,18 @@ class OpenClawProviderTest(unittest.TestCase):
         self.assertNotEqual(env['CODEX_HOME'], env['HOME'])
 
     def test_wrong_process_observations_are_never_identity_or_effect(self):
-        for mode in ('identity', 'account', 'provider', 'agent', 'expiry', 'cooldown', 'ambiguous', 'type', 'shape', 'profile-shape', 'nonce', 'version'):
+        for mode in ('identity', 'account', 'provider', 'agent', 'cooldown', 'ambiguous', 'type', 'shape', 'profile-shape', 'nonce', 'version'):
             with self.subTest(mode=mode):
                 (self.profile / 'mode').write_text(mode)
                 self.assertFalse(identity.authenticated_provider(self.packet))
 
+    def test_past_access_token_expiry_is_decided_by_the_nonce_turn(self):
+        (self.profile / 'mode').write_text('expiry')
+        self.assertTrue(identity.authenticated_provider(self.packet))
+
     def test_each_failed_probe_names_one_bounded_reason(self):
         expected = {'identity': 'identity_mismatch', 'account': 'identity_unavailable', 'provider': 'identity_unavailable',
-                    'agent': 'identity_unavailable', 'expiry': 'profile_unusable', 'cooldown': 'profile_unusable',
+                    'agent': 'identity_unavailable', 'cooldown': 'profile_unusable',
                     'ambiguous': 'identity_unavailable', 'type': 'identity_unavailable', 'shape': 'probe_bad_json',
                     'profile-shape': 'identity_unavailable', 'nonce': 'probe_nonce_mismatch', 'version': 'version_mismatch',
                     'exit': 'probe_exit_3', 'garbage': 'probe_bad_json'}
