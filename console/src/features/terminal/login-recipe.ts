@@ -53,8 +53,10 @@ export function harnessLoginRecipe(harnessId: string | null | undefined): Harnes
   return recipeFor(BY_HARNESS.get(harnessId), harnessId);
 }
 
+/** Typed by program name: older agent containers install the CLI outside /usr/local/bin, and the shell's PATH finds it. */
 export function shellCommand(argv: readonly string[]): string {
-  return argv.join(' ');
+  const [program = '', ...rest] = argv;
+  return [program.slice(program.lastIndexOf('/') + 1), ...rest].join(' ');
 }
 
 export function argvFor(recipe: HarnessLoginRecipe, action: LoginAction): readonly string[] | null {
