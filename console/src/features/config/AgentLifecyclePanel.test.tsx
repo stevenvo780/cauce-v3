@@ -67,7 +67,7 @@ it('prepares an agent without an active runtime and binds exact memberships to a
   const user = await fill();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Huella exacta');
-  await user.click(screen.getByRole('button', { name: 'Encolar operación' }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
   expect(await screen.findByLabelText('Operación de flota')).toHaveTextContent(/En cola/);
   expect(screen.queryByText('Listo')).not.toBeInTheDocument();
   expect(captured).toMatchObject({ kind: 'create', target: { tenant_id: 'A', alias: 'new-worker' }, parameters: {
@@ -99,7 +99,7 @@ it('relee la revisión y reintenta la primera vista previa tras otra operación,
   expect(await screen.findByLabelText('Previsualización operativa')).toHaveTextContent('Huella exacta');
   expect(revisions).toEqual([4, 5]);
   expect(screen.getByRole('textbox', { name: 'Alias operativo' })).toHaveValue('new-worker');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   expect(screen.queryByText(/La configuración cambió desde que se lanzó/)).not.toBeInTheDocument();
 });
 it('invalidates preview on edits and keeps one idempotency key when a lost enqueue is retried', async () => {
@@ -116,12 +116,12 @@ it('invalidates preview on edits and keeps one idempotency key when a lost enque
   await screen.findByLabelText('Previsualización operativa');
   await user.type(screen.getByRole('textbox', { name: 'Nombre visible operativo' }), 'Worker');
   expect(screen.queryByLabelText('Previsualización operativa')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   await screen.findByLabelText('Previsualización operativa');
-  await user.click(screen.getByRole('button', { name: 'Encolar operación' }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('idempotent receipt delayed');
-  await user.click(screen.getByRole('button', { name: 'Encolar operación' }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
   await screen.findByLabelText('Operación de flota');
   expect(bodies[1]).toEqual(bodies[0]);
 });
@@ -210,7 +210,7 @@ it('rejects a mismatched preview receipt without enabling enqueue', async () => 
   const user = await fill();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/recibo.*no acredita/);
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
 });
 it('polls durable progress and refuses a changed request hash', async () => {
   renderPanel();
@@ -223,7 +223,7 @@ it('polls durable progress and refuses a changed request hash', async () => {
   const user = await fill();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   await screen.findByLabelText('Previsualización operativa');
-  await user.click(screen.getByRole('button', { name: 'Encolar operación' }));
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
   await screen.findByLabelText('Operación de flota');
   expect(await screen.findByRole('alert')).toHaveTextContent(/estado distinto del recibo/);
   expect(screen.getByLabelText('Operación de flota')).toHaveTextContent(/En cola/);

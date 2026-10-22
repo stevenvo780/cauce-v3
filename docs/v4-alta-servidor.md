@@ -141,7 +141,7 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
 1. **Ajustes → Agentes → Añadir agente → «Solo preparar, sin desplegar»**.
 2. Elige el espacio de trabajo, el alias, el nombre visible, la clave física de ejecución y sus grupos.
 3. En **Host operativo**, elige `<empresa>-<nombre>`; en **Plantilla de ejecución**, la que ofrece esa computadora; en **Cuenta principal de ejecución**, la cuenta del proveedor que pagará al agente.
-4. **Previsualizar operación** y, si el resumen es correcto, **Encolar operación**. La operación avanza paso a paso. La primera vez que un agente usa su cuenta en esta computadora se para en **«Esperando autenticación»**: su contenedor ya existe, pero el proveedor todavía no tiene sesión dentro.
+4. **Previsualizar operación** y, si el resumen es correcto, **Confirmar operación**. La operación avanza paso a paso. La primera vez que un agente usa su cuenta en esta computadora se para en **«Esperando autenticación»**: su contenedor ya existe, pero el proveedor todavía no tiene sesión dentro.
 5. **Autentica el proveedor del agente** desde la consola, en el mismo recibo de la operación o en la pestaña **Operación** de la ficha del agente:
    1. En **«Autenticar la cuenta principal»** comprueba el proveedor, la cuenta y la computadora, y pulsa **Iniciar sesión**.
    2. Se abre un terminal con el login del proveedor, que corre dentro del contenedor del agente en tu máquina. Sigue lo que pide: con Codex, abre en tu navegador la dirección que muestra y escribe el código; con Claude, abre la dirección y pega en el terminal el código que te devuelve. Entra con la cuenta que elegiste como «Cuenta principal de ejecución».

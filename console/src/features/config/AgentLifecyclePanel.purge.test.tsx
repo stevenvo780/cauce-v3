@@ -67,7 +67,7 @@ it('lists the server plan, keeps purge disabled until the exact alias is typed a
   expect(plan).toHaveTextContent('volumen ws-w-provider-profiles');
   expect(screen.getByLabelText('Previsualización operativa')).toHaveTextContent('Esto es el plan');
   expect(screen.getByRole('link', { name: 'Descargar copia' })).toHaveAttribute('href', '/messages/A/w?view=context');
-  const enqueue = screen.getByRole('button', { name: 'Encolar operación' });
+  const enqueue = screen.getByRole('button', { name: 'Confirmar operación' });
   await user.clear(screen.getByLabelText(/Escribe el alias/));
   expect(enqueue).toBeDisabled();
   await user.click(enqueue);
@@ -101,17 +101,17 @@ it('shows a shared container as kept and a native directory as deleted', async (
 
 it('requires a new preview after closing, reopening and confirming the same alias', async () => {
   const { user, requests } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }], false);
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   await user.click(screen.getByRole('button', { name: 'Cerrar operaciones' }));
   await user.click(screen.getByRole('button', { name: 'Operar agente A/w' }));
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   await screen.findByLabelText('Recursos físicos del plan');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   expect(requests).toHaveLength(2);
   expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
 });
@@ -119,29 +119,29 @@ it('requires a new preview after closing, reopening and confirming the same alia
 it('does not revive a preview when an edited confirmation returns to the original alias', async () => {
   const { user, requests } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
   await user.type(screen.getByLabelText(/Escribe el alias/), 'rong');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   await user.clear(screen.getByLabelText(/Escribe el alias/));
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   await screen.findByLabelText('Recursos físicos del plan');
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('w');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   expect(requests).toHaveLength(2);
   expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
 });
 
 it('does not reuse confirmation for the same alias in another tenant', async () => {
   const { user, changeTarget } = await preview([{ type: 'container', name: 'ws-w', action: 'delete', reason: 'Contenedor propio' }]);
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   changeTarget({ ...target, tenant_id: 'B' });
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   changeTarget(target);
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   expect(screen.queryByLabelText('Recursos físicos del plan')).not.toBeInTheDocument();
 });
 
@@ -178,12 +178,12 @@ it('clears confirmation and requires a new preview after the inventory revision 
   changeRevision(5);
   expect(screen.getByLabelText(/Escribe el alias/)).toHaveValue('');
   expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   await user.type(screen.getByLabelText(/Escribe el alias/), 'w');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   await screen.findByLabelText('Recursos físicos del plan');
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
   expect(requests[1]).toMatchObject({ expected_revision: 5, parameters: { confirm_alias: 'w' } });
   expect(requests[1]?.idempotency_key).not.toBe(requests[0]?.idempotency_key);
 });

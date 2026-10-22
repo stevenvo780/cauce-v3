@@ -60,7 +60,7 @@ it('asks to cancel a failed create before retiring, and lets the retire preview 
   expect(screen.queryByText(/sin terminar; cancélala/)).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
   expect(await screen.findByLabelText('Previsualización operativa')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Encolar operación' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeEnabled();
 });
 
 it('translates the server refusal of an unresolved operation when previewing', async () => {

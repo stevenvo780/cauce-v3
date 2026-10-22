@@ -153,7 +153,7 @@ describe('purga real de un contenedor desechable', () => {
     expect(await preview.isDisabled()).toBe(true);
     await typed.fill(alias);
     await preview.click();
-    const enqueue = current.getByRole('button', { name: 'Encolar operación', exact: true });
+    const enqueue = current.getByRole('button', { name: 'Confirmar operación', exact: true });
     const queuedAt = Date.now() + 20_000;
     while (await enqueue.isDisabled()) {
       if (Date.now() > queuedAt) {

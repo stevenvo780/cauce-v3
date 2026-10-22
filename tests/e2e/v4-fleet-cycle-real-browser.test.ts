@@ -245,7 +245,7 @@ async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<
   const preview = scope.getByRole('button', { name: 'Previsualizar operación', exact: true });
   await waitEnabled(preview, `${kind} preview`);
   await preview.click();
-  const button = scope.getByRole('button', { name: 'Encolar operación', exact: true });
+  const button = scope.getByRole('button', { name: 'Confirmar operación', exact: true });
   await waitEnabled(button, `${kind} enqueue`);
   await button.click();
   const deadline = Date.now() + 240_000;
@@ -268,7 +268,7 @@ async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<
 async function openOperationTab(): Promise<V4Locator> {
   const current = view(); const { baseUrl, tenantId } = cycle();
   await current.goto(`${baseUrl}/config?seccion=agentes&agente=${encodeURIComponent(`${tenantId}/${ALIAS}`)}`, { waitUntil: 'domcontentloaded' });
-  const tab = current.getByRole('tab', { name: 'Operación', exact: true });
+  const tab = current.getByRole('tab', { name: 'Ejecución', exact: true });
   await tab.waitFor({ timeout: 30_000 });
   await tab.click();
   const panel = current.getByRole('region', { name: `Operación de ${tenantId}/${ALIAS}`, exact: true });
@@ -377,7 +377,7 @@ async function walkthrough(): Promise<void> {
 
   // 2. Update: configuration (name, model, effort) and assignments (a second room) restart the runtime with them.
   let panel = await openOperationTab();
-  await panel.getByLabel('Acción operativa').selectOption('update');
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('update');
   await panel.getByLabel('Nombre visible operativo').fill(`Ciclo ${run} actualizado`);
   await panel.getByLabel('Modelo operativo').fill(MODEL);
   await panel.getByLabel('Esfuerzo de razonamiento').selectOption(EFFORT);
@@ -396,7 +396,7 @@ async function walkthrough(): Promise<void> {
 
   // 3. Stop: the runtime processes end; the container and its state stay.
   panel = await openOperationTab();
-  await panel.getByLabel('Acción operativa').selectOption('stop');
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('stop');
   const stopped = await enqueue(panel, 'stop');
   const afterStop = await observe();
   expect(afterStop).toMatchObject({ container: true, processes: [], volumes: [`${containerName}-provider-profiles`, `${containerName}-state`] });
@@ -414,7 +414,7 @@ async function walkthrough(): Promise<void> {
   await prepare.click();
   await current.getByText('Borrador sin guardar.', { exact: false }).waitFor({ state: 'hidden', timeout: 30_000 });
   panel = await openOperationTab();
-  await panel.getByLabel('Acción operativa').selectOption('start');
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('start');
   const started = await enqueue(panel, 'start');
   expect(started.steps.find(step => step.name === 'profile')?.evidence).toMatchObject({ profile_verified: true });
   const afterStart = await observe();
@@ -428,12 +428,12 @@ async function walkthrough(): Promise<void> {
   }
   evidence.context = { operation: started.id, marker: CONTEXT_MARKER, observed: afterStart };
   panel = await openOperationTab();
-  await panel.getByLabel('Acción operativa').selectOption('stop');
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('stop');
   evidence.stop_after_context = (await enqueue(panel, 'stop')).id;
 
   // 5. Retire: credentials are revoked and the delegated view leaves the container.
   panel = await openOperationTab();
-  await panel.getByLabel('Acción operativa').selectOption('retire');
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('retire');
   const retired = await enqueue(panel, 'retire', false);
   expect(retired.steps.find(step => step.name === 'revoke')?.evidence).toMatchObject({ revocation_verified: true });
   const afterRetire = await observe();

@@ -165,7 +165,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
           : busy ? 'Espera a que termine la operación en curso.'
             : !aliasConfirmed ? `Escribe el alias ${purgeAlias} para confirmar.` : undefined);
-  const enqueueBlock = previewBlock ?? (!samePreview ? 'Previsualiza la operación para poder encolarla.'
+  const enqueueBlock = previewBlock ?? (!samePreview ? 'Previsualiza la operación para poder confirmarla.'
     : !validated.receipt.can_apply ? 'La previsualización no permite aplicar esta operación. Revisa los motivos de la previsualización.' : undefined);
   return <div className="agent-lifecycle-panel" data-open={String(open)}>
     {hideTrigger ? null : <Button ref={trigger}
@@ -174,17 +174,17 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {triggerLabel ?? (target ? 'Operar agente' : 'Preparar agente')}
     </Button>}
     {open ? <section className="settings-context" aria-label={target?.resource === 'agent' ? `Operación de ${target.tenant_id}/${target.alias}` : 'Alta operativa de agente'}>
-      <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución y ciclo de vida' : 'Preparar nuevo agente'}</h3>
+      <div className="settings-context-heading"><h3 ref={heading} tabIndex={-1}>{target ? 'Ejecución del agente' : 'Preparar nuevo agente'}</h3>
         {embedded ? null : <Button onClick={() => { setOpen(false); trigger.current?.focus(); onClose?.(); }}>Cerrar operaciones</Button>}
       </div>
       {flow.operation && needsAttention(flow.operation) ? <div className="notice grid gap-1" role="status" aria-label="Operación en curso">
         <span className="flex flex-wrap items-center gap-2"><OperationStatusPill operation={flow.operation} /><strong className="text-sm">{operationTitle(flow.operation)}</strong></span>
         <span className="text-sm">{driftGuided ? guidedDriftHeadline() : operationHeadline(flow.operation)}</span>
       </div> : null}
-      {fixedKind ? null : <p>Preparar no exige una ejecución activa. La operación guarda su intención y acredita cada paso antes de admitir entregas.</p>}
+      {fixedKind ? null : <p className="m-0 text-[13px] text-fg-2">Elige qué hacer y pulsa «Previsualizar operación» para ver qué va a cambiar. Nada cambia hasta que pulses «Confirmar operación».</p>}
       {agent ? <p>{typeof agent.lifecycle_state === 'string'
         ? <span title={agent.lifecycle_state}>Estado del agente: {lifecycleLabel(agent.lifecycle_state)}.</span>
-        : 'Estado del agente sin publicar en esta lectura.'}</p> : null}
+        : 'Estado del agente: sin dato.'}</p> : null}
       {!canWrite ? <p className="notice">No se acreditó permiso para operar agentes desde esta cuenta.</p> : null}
       {sessionInvalid ? <Button onClick={() => { void revalidate(); }}>Revalidar sesión y cerrar borrador</Button> : null}
       {!flow.capability && !flow.capabilityError ? <p role="status">Leyendo capacidades de flota…</p> : null}
@@ -193,7 +193,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       {flow.capabilityError ? <p className="notice">{flow.capabilityError}</p> : null}
       {scopeGap ? <p className="notice" role="note">{scopeGap}</p> : null}
       {flow.capability && !available ? <p className="notice">Esta acción no está disponible en el ejecutor publicado: {fleetCapabilityReasonText(flow.capability.reason)}.</p> : null}
-      {target && !fixedKind ? <label>Acción operativa<select value={kind} disabled={busy || inProgress} onChange={(event) => {
+      {target && !fixedKind ? <label>¿Qué quieres hacer?<select value={kind} disabled={busy || inProgress} onChange={(event) => {
         setKind(event.target.value as Kind); setKey(newKey()); setValidated(undefined); setError(undefined); generation.current += 1;
       }}>{Object.entries(ACTION_LABELS).filter(([action]) => (action === 'create') === draftAgent).map(([action, label]) =>
         <option key={action} value={action}>{label}</option>)}</select></label> : null}
@@ -213,8 +213,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         <div className="flex flex-wrap items-center gap-2"><Button disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
           aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</Button>
           <Button variant="primary" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
-            onClick={() => { void enqueue(); }}>Encolar operación</Button></div>
-        {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder encolarla.</p> : null}
+            onClick={() => { void enqueue(); }}>Confirmar operación</Button></div>
+        {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder confirmarla.</p> : null}
       </>}
       {error ? (isPrimaryMembershipError(error)
         ? <p className="notice" role="alert"><Button onClick={() => { focusPrimaryMembershipCheckbox(); }}>{error} Ir a la casilla «Habilitar membresía».</Button></p>
