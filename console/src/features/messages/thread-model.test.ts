@@ -25,8 +25,8 @@ function reply(root: TranscriptItem, overrides: Partial<CanonicalReply> = {}): C
 
 describe('typingState', () => {
   it.each([
-    ['leased', 'thinking'], ['accepted', 'thinking'], ['started', 'thinking'],
-    ['pending', 'receiving'], ['retry', 'receiving'],
+    ['leased', 'receiving'], ['accepted', 'thinking'], ['started', 'thinking'],
+    ['pending', undefined], ['retry', undefined],
   ] as const)('una entrega %s sin respuesta se dibuja como %s', (status, expected) => {
     expect(typingState({ items: [input('m1', status)], live: 'idle' })).toBe(expected);
   });
@@ -52,9 +52,9 @@ describe('typingState', () => {
     expect(typingState({ items: [input('m1', 'pending')], live: 'blocked' })).toBeUndefined();
   });
 
-  it('sin estado de entrega sólo el estado vivo decide', () => {
-    expect(typingState({ items: [input('m1', null)], live: 'thinking' })).toBe('thinking');
-    expect(typingState({ items: [input('m1', null)], live: 'receiving' })).toBe('receiving');
+  it('sin estado de entrega el estado vivo no prueba procesamiento de este mensaje', () => {
+    expect(typingState({ items: [input('m1', null)], live: 'thinking' })).toBeUndefined();
+    expect(typingState({ items: [input('m1', null)], live: 'receiving' })).toBeUndefined();
     expect(typingState({ items: [input('m1', null)], live: 'idle' })).toBeUndefined();
   });
 

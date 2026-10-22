@@ -83,17 +83,22 @@ it('representa una respuesta final sólo con archivos sin burbuja vacía ni desc
 });
 
 it.each([
-  { status: 'pending', events: ['published'], label: 'Enviado · esperando aceptación del agente', checks: 1 },
+  { status: 'pending', events: ['published'], label: 'En cola: el agente aún no está listo', checks: 1 },
   { status: 'accepted', events: ['published', 'accepted'], label: 'Recibido por el agente · entrega aceptada', checks: 2 },
   { status: 'started', events: ['published', 'accepted', 'started'], label: 'Recibido por el agente · ejecución iniciada', checks: 2 },
   { status: 'done', events: ['published', 'done'], label: 'Recibido por el agente · ejecución terminada', checks: 2 },
 ] as const)('los checks de $status dependen de entrega durable y no afirman lectura', ({ status, events, label, checks }) => {
   const { message, delivery } = fixture();
-  thread({ items: [{ message, delivery: { ...delivery, status, timeline: events.map((event) => ({ status: event })) }, direction: 'input' }] });
+  thread({ items: [{ message, delivery: { ...delivery, status, attempt: status === 'pending' ? 0 : delivery.attempt,
+    timeline: events.map((event) => ({ status: event })) }, direction: 'input' }] });
   const check = screen.getByRole('status', { name: `Entrega: ${label}` });
   expect(check.querySelector(`[data-checks="${String(checks)}"]`)).toBeInTheDocument();
   expect(check).toHaveAttribute('title', `${label}. Lectura sin comprobar.`);
   expect(check).not.toHaveTextContent(/leído|leyó/);
+  if (status === 'pending') {
+    expect(check).toHaveTextContent('En cola: el agente aún no está listo');
+    expect(document.querySelector('[data-typing]')).toBeNull();
+  }
 });
 
 it.each([null, undefined, '', '   '])('no dibuja una respuesta vacía ni provisional (%s), incluso sin autor humano', (reply) => {

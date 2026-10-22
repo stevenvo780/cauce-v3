@@ -15,6 +15,7 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
   const received = ['accepted', 'started', 'done'].includes(status ?? '')
     || events.some((event) => ['accepted', 'started', 'done'].includes(event.status));
   const published = events.some((event) => event.status === 'published');
+  const queued = status === 'pending' && !received && (delivery.attempt ?? 0) === 0;
   const failed = !isMailbox && (status === 'failed' || status === 'dead');
   const read = !isMailbox && Number.isSafeInteger(delivery.attempt) && (delivery.attempt ?? 0) > 0
     && events.some((event) => event.applied === true && event.status === 'done'
@@ -22,6 +23,7 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     && HarnessConsumptionEvidenceSchema.safeParse(event.harness_consumption).success);
   const checks = isMailbox ? 1 : received ? 2 : published ? 1 : 0;
   const labels = new Map([
+    ['pending', queued ? 'En cola: el agente aún no está listo' : 'En cola: esperando al agente'],
     ['accepted', 'Recibido por el agente · entrega aceptada'],
     ['started', 'Recibido por el agente · ejecución iniciada'],
     ['done', 'Recibido por el agente · ejecución terminada'],
@@ -40,6 +42,6 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     <span aria-hidden="true" data-checks={checks || undefined} className={checks ? 'font-semibold tracking-[-0.15em] text-brand-ink' : undefined}>
       {checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}
     </span>
-    {failed || isMailbox ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
+    {failed || isMailbox || status === 'pending' ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
   </span>;
 }

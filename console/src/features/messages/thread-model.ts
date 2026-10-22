@@ -107,14 +107,7 @@ export function threadRows(items: readonly TranscriptItem[], reply: CanonicalRep
 }
 
 const CLAIMED = new Set(['leased', 'accepted', 'started']);
-const WAITING = new Set(['pending', 'retry']);
-
-/**
- * Whether the agent is visibly "typing": the newest row of the thread is a message TO the agent
- * that it has not answered yet and whose delivery is still in flight. Claimed or working reads as
- * thinking, queued as receiving; without a delivery status only the live state can tell. A down
- * or stuck agent never types: that would hide the fault.
- */
+/** Only a claimed delivery in this conversation proves activity; aggregate live state does not. */
 export function typingState({ items, reply, live }: {
   items: readonly TranscriptItem[];
   reply?: CanonicalReply | readonly CanonicalReply[];
@@ -124,8 +117,6 @@ export function typingState({ items, reply, live }: {
   if (last?.direction !== 'input' || !last.delivery || live === 'down' || live === 'blocked') return undefined;
   if (visibleReply(last, reply)) return undefined;
   const status = last.delivery.status;
-  if (status && CLAIMED.has(status)) return 'thinking';
-  if (status && WAITING.has(status)) return 'receiving';
-  if (status) return undefined;
-  return live === 'thinking' || live === 'receiving' ? live : undefined;
+  if (status === 'leased') return 'receiving';
+  return status && CLAIMED.has(status) ? 'thinking' : undefined;
 }
