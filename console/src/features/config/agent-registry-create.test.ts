@@ -53,7 +53,9 @@ describe('agent registry create draft', () => {
   it('uses only tenant and harness choices published in the snapshot', () => {
     const snapshot: ConfigurationSnapshot = {
       tenants: [{ id: 'Tenant', display_name: 'Visible tenant' }, { display_name: 'Missing id' }],
-      harness_definitions: [{ id: 'codex' }, { harness_id: 'claude-code' }],
+      harness_definitions: [{ id: 'codex' }, { harness_id: 'claude-code' },
+        { id: 'fake', display_name: 'Fake QA' }, { id: 'fake2', display_name: 'Fake QA 2' },
+        { id: 'demo-runner', label: 'Runner de QA' }, { harness_id: 'qa-runner' }],
     };
     expect(registryTenantOptions(snapshot)).toEqual([{ id: 'Tenant', label: 'Visible tenant' }]);
     expect(registryHarnessOptions(snapshot)).toEqual(['claude-code', 'codex']);

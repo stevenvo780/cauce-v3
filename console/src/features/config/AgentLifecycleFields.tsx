@@ -5,6 +5,7 @@ import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { estadoDeComputadora } from './fleet-host-model';
 import { PRIMARY_MEMBERSHIP_CHECKBOX_ID } from './fleet-operation-error-translations';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
+import { registryHarnessOptions } from './agent-registry-create';
 
 export function AgentLifecycleFields({ draft, snapshot, capability, target, disabled, edit }: {
   draft: AgentLifecycleDraft; snapshot: ConfigurationSnapshot; capability?: FleetCapability; target?: FleetTarget;
@@ -30,7 +31,9 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
       containerName: runtime.container_name ?? `${runtime.container_prefix ?? ''}${runtimeKey}` } : {};
   };
   const roles = membershipRoleOptions(snapshot);
+  const harnesses = registryHarnessOptions(snapshot);
   const options = (key: Parameters<typeof lifecycleOptions>[1]) => lifecycleOptions(snapshot, key, draft.tenantId)
+    .filter((option) => key !== 'harness_definitions' || harnesses.includes(option.id))
     .map((option) => <option key={option.id} value={option.id}>{option.label} · {JSON.stringify(option.id)}</option>);
   return <div className="agent-lifecycle-fields">
     <fieldset disabled={disabled}><legend>Identidad y contexto</legend>
@@ -102,9 +105,9 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
             containerName: runtime.container_name ?? `${runtime.container_prefix ?? ''}${draft.runtimeKey}` });
         }}>
         <option value={-1}>Elige una ubicación aprobada</option>
-        {host.runtimes.map((runtime, index) => <option key={index} value={index}>
+        {host.runtimes.map((runtime, index) => harnesses.includes(runtime.harness_id) ? <option key={index} value={index}>
           {runtime.harness_id} · {runtime.provider} · {runtime.mode} · {runtime.runtime_user} · {runtime.home_directory}
-        </option>)}
+        </option> : null)}
       </select></label> : null}
       <label>Modo de ejecución<select value={draft.mode} onChange={(event) => { edit({ mode: event.target.value as AgentLifecycleDraft['mode'] }); }}>
         {['native', 'container'].map((mode) => <option key={mode} value={mode} disabled={!host?.modes.includes(mode as AgentLifecycleDraft['mode'])}>

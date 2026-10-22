@@ -141,7 +141,9 @@ function registryTenantExists(snapshot: ConfigurationSnapshot, tenantId: string)
 export function registryHarnessOptions(snapshot: ConfigurationSnapshot): string[] {
   return [...new Set((snapshot.harness_definitions ?? []).flatMap((harness) => {
     const id = typeof harness.id === 'string' ? harness.id : harness.harness_id;
-    return typeof id === 'string' && id.trim() ? [id.trim()] : [];
+    if (typeof id !== 'string' || !id.trim()) return [];
+    const label = [harness.display_name, harness.label].filter((value) => typeof value === 'string').join(' ');
+    return /(?:^|[\s_-])(?:fake\d*|qa|test(?:ing)?)(?=$|[\s_-])/iu.test(`${id} ${label}`) ? [] : [id.trim()];
   }))].sort();
 }
 
