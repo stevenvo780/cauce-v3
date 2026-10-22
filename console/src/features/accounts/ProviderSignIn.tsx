@@ -11,7 +11,10 @@ const AgentPtyLogin = lazy(async () => ({ default: (await import('../terminal/Ag
 export function ProviderSignInDialog({ open, providerId, description, onClose, children }: {
   open: boolean; providerId: string | null | undefined; description?: string; onClose: () => void; children: ReactNode;
 }) {
-  return <FormDialog open={open} wide anchorTop title={providerSignInTitle(providerId)} description={description} onClose={onClose}>{open ? children : null}</FormDialog>;
+  return <FormDialog open={open} wide anchorTop title={providerSignInTitle(providerId)}
+    description={description ? <span className="wrap-anywhere">{description}</span> : undefined} onClose={onClose}>
+    {open ? <div className="grid min-w-0 gap-3 wrap-anywhere">{children}</div> : null}
+  </FormDialog>;
 }
 
 type Phase = { kind: 'reading' } | { kind: 'profile'; request: ProviderAuthRequest } | { kind: 'pty'; latest?: string } | { kind: 'error'; message: string };

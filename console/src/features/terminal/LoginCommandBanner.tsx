@@ -22,7 +22,7 @@ export function LoginCommandBanner({ action, harnessId, tenantId, alias, sent }:
   if (!argv) return <p className="m-0" role="status">{reason}</p>;
   const command = shellCommand(argv);
   return (
-    <p className="m-0" role="status">
+    <p className="m-0 min-w-0 wrap-anywhere" role="status">
       {sent
         ? <>Se ejecutó <code className="font-mono">{command}</code> en esta shell. {action === 'autenticar'
           ? 'Completá el enlace o el código aquí.'

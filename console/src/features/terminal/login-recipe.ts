@@ -8,7 +8,7 @@ const ARGUMENT = /^(?:[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za
 const SIN_ARNES = 'Este agente no declara arnés, así que no hay receta de login.';
 const SIN_LOGIN = 'Este arnés no declara receta de login.';
 const POR_FLOTA = 'Este arnés autentica con su módulo de flota y no declara un comando de login para la terminal.';
-const SIN_COMPROBAR = 'Este arnés no declara comprobación de sesión (verify_argv).';
+const SIN_COMPROBAR = 'Este tipo de agente no ofrece una comprobación automática de sesión.';
 
 export type LoginAction = 'autenticar' | 'comprobar';
 

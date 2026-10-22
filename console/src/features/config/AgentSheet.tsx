@@ -147,7 +147,8 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
           </Tabs.List> : null}
           {tabs.map((id) => <Tabs.Panel key={id} value={id} keepMounted className={`${DIALOG_BODY} outline-none`}>
             {!visited.has(id) ? null : id === 'resumen' ? <SummaryTab agent={agent} view={view} snapshot={snapshot} danger={editable ? danger : null}
-              actions={editable ? <AgentQuickActions agent={agent} hasRuntime={view.hasRuntime} onPower={power} /> : null}
+              actions={editable ? <AgentQuickActions agent={agent} hasRuntime={view.hasRuntime} hasComputer={Boolean(view.hostId)} onPower={power}
+                onPrepare={() => { select('operacion'); }} /> : null}
               quota={editable ? <section className="grid gap-3" aria-label={`Cuota de la cuenta de ${view.ref}`}>
                 <h3 className={BLOCK_TITLE}>Cuota de su cuenta</h3>
                 <ErrorBoundary label={`Cuota de ${view.ref}`}><AgentQuotaDetail tenant={agent.tenantId} alias={agent.alias} /></ErrorBoundary>

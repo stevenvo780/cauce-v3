@@ -124,7 +124,7 @@ export function ProviderAuthPanel({ request, client, onAuthenticated, title = 'C
   const disconnected = useCallback(() => { if (alive.current && current.current && active(current.current)) {
     setError('El terminal de autenticación se cerró. Relee el estado de la operación.');
   } }, []);
-  return <section aria-label="Conexión de proveedor" className="grid gap-2">
+  return <section aria-label="Conexión de proveedor" className="grid min-w-0 gap-2 wrap-anywhere">
     {autoStart ? null : <>
       <h3>{title}</h3>
       <p>{request.provider_id} · {request.account_id}{showRuntime ? ` · ${request.harness_id}` : ''}</p>

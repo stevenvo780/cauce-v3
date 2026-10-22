@@ -48,7 +48,7 @@ function AgentPtyLoginContent({ tenantId, alias, harnessId }: {
   if (!loading && !error && !present) {
     return <p className="m-0 text-sm" role="status">El servidor no observa al agente {tenantId}:{alias}. No hay canal PTY para iniciar sesión aquí.</p>;
   }
-  return <div className="flex h-[min(70dvh,32rem)] min-h-0 flex-col">
+  return <div className="flex h-[min(70dvh,32rem)] min-h-0 min-w-0 flex-col wrap-anywhere">
     <OperatorWorkspace agents={agents} agentId={agentId} live={live} summary={summary}
       access={access.error ? undefined : access.data} terminalCapability={capability.error ? undefined : capability.data}
       terminalTargets={targetItems} fleetLoading={loading} fleetError={error} onRefresh={refreshAll}

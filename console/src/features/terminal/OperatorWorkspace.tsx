@@ -359,7 +359,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
         onRevisar={() => { void revisarPlazas(); }}
         onCerrar={(id) => { void cerrarPlaza(id); }}
       />
-      <div className="flex min-h-0 flex-1 flex-col" data-objeto-principal="escenario">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-objeto-principal="escenario">
         {agent && sessionId ? (
           <ErrorBoundary label="La terminal del agente" resetKey={sessionId}>
             <SessionStage

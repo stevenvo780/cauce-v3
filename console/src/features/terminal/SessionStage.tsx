@@ -349,9 +349,9 @@ export function SessionStage({
   const ptyClosedAll = !tuiEnabled && !channel.enabled;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" id={`terminal-session-${sessionId}`}>
-      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2 min-[761px]:flex-nowrap">
-        <AgentContextMenu agent={agent} omit={['tui', 'terminal']} className="order-1 flex min-w-0 flex-1 items-center gap-2.5 min-[761px]:flex-none">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col wrap-anywhere" id={`terminal-session-${sessionId}`}>
+      <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface px-3 py-2">
+        <AgentContextMenu agent={agent} omit={['tui', 'terminal']} className="order-1 flex min-w-0 flex-1 items-center gap-2.5">
           <AgentOrb seed={`${agent.tenantId}/${agent.alias}`} state={state} size={28} />
           <h2 className="m-0 flex min-w-0 items-baseline gap-1.5 text-sm font-semibold">
             <span className="truncate">{agent.alias}</span>
@@ -364,9 +364,9 @@ export function SessionStage({
           value={view}
           options={options}
           onChange={chooseByHand}
-          className="order-3 w-full min-[761px]:order-2 min-[761px]:w-auto"
+          className="order-3 w-full min-w-0 shrink-0"
         />
-        <div className="order-2 ml-auto flex items-center gap-1 min-[761px]:order-3">
+        <div className="order-2 ml-auto flex shrink-0 items-center gap-1">
           {grant ? (
             <PtySessionBar
               agent={agent}
@@ -436,7 +436,7 @@ export function SessionStage({
         />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {paneMatchesView && paneEnabled && paneSocketPath ? (
           <Suspense fallback={<p className="m-0 p-4 text-[13px] text-muted" role="status">Cargando Xterm…</p>}>
             <PtyTerminal

@@ -10,9 +10,11 @@ function agentPath(agent: SettingsAgent, base: '/messages' | '/terminal', query 
 }
 
 /** The actions the owner reaches for most, visible without opening any other tab. */
-export function AgentQuickActions({ agent, hasRuntime, onPower }: {
+export function AgentQuickActions({ agent, hasRuntime, hasComputer, onPower, onPrepare }: {
   agent: SettingsAgent;
   hasRuntime: boolean;
+  hasComputer: boolean;
+  onPrepare: () => void;
   /** Opens «Ejecución» with that operation already chosen; nothing runs until it is previewed and confirmed there. */
   onPower: (kind: 'start' | 'stop') => void;
 }) {
@@ -25,7 +27,8 @@ export function AgentQuickActions({ agent, hasRuntime, onPower }: {
   return <section className="grid gap-3" aria-label={`Acciones frecuentes de ${ref}`}>
     <h3 className={BLOCK_TITLE}>Acciones</h3>
     <div className="grid gap-3 rounded-lg border border-line bg-subtle p-3">
-      <AgentAuthenticate tenantId={agent.tenantId} alias={agent.alias} harnessId={agent.harness} size="md" className="justify-items-start" />
+      <AgentAuthenticate tenantId={agent.tenantId} alias={agent.alias} harnessId={agent.harness} prepared={hasComputer && hasRuntime}
+        onPrepare={onPrepare} size="md" className="justify-items-start" />
       <div className="flex flex-wrap items-center gap-2">
         {links.map(({ href, label, name, icon: Icon }) => <LinkButton key={href} href={href} aria-label={name}
           onClick={(event) => { onNavClick(event, href); }}><Icon size={14} aria-hidden="true" />{label}</LinkButton>)}
