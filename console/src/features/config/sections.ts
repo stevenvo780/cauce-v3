@@ -38,10 +38,10 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   {
     id: 'agentes',
     label: 'Agentes',
-    proposito: 'El registro de agentes: identidad, arnés declarado y estado; su contexto vive en su propia página.',
-    detalle: 'Es un registro declarado, no un mando: el programa que corre cada agente sale del binario en '
-      + 'ejecución y no de la columna «Arnés». Y esto no decide a quién se le entrega: eso son las membresías, '
-      + 'en «Espacios y salas».',
+    proposito: 'Tus agentes: si responden, su sesión, su cuota y sus ajustes. Pulsa uno para abrir su ficha.',
+    detalle: 'La ficha de cada agente empieza por lo que importa a diario: si responde, si su sesión del proveedor está '
+      + 'activa, en qué computadora corre y cuánta cuota le queda. Los cambios están en sus pestañas «Ajustes», «Ejecución», '
+      + '«Ampliaciones» y «Grupos». Quién recibe cada mensaje lo deciden las membresías, en «Espacios y salas».',
   },
   {
     id: 'computadoras',

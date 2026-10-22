@@ -152,7 +152,7 @@ export function AssignmentMatrix({ config, access, registry }: {
         No cambian la cuenta principal ni la ejecución del agente, y no activan un respaldo automático.</p>
       <Explain title="¿Qué cambia esta asignación?">
         <p>El acceso marca qué cuentas puede consultar cada agente; el orden marca en qué orden se prueban al consultar. El orden solo existe dentro del acceso: sin acceso no hay orden que guardar.</p>
-        <p>Los agentes administrados usan la cuenta principal elegida en «Operar agente». Para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.</p>
+        <p>Los agentes administrados usan la cuenta principal elegida en la pestaña «Ejecución» de su ficha. Para cambiar la cuenta efectiva, selecciona otra explícitamente en esa ficha y verifica su autenticación. Los reintentos conservan la cuenta seleccionada.</p>
       </Explain>
       {!available && agents.items.length === 0
         ? <EmptyState>Sin datos de agentes para cruzar.</EmptyState>

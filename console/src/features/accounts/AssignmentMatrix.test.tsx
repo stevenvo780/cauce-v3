@@ -106,7 +106,7 @@ it('declara la cuenta principal explícita y conserva esa cuenta durante los rei
 
   await openMatrix(user);
   await user.click(await screen.findByRole('button', { name: /qué cambia esta asignación/i }));
-  expect(await screen.findByText(/usan la cuenta principal elegida en «Operar agente»/i)).toBeInTheDocument();
+  expect(await screen.findByText(/usan la cuenta principal elegida en la pestaña «Ejecución» de su ficha/i)).toBeInTheDocument();
   expect(screen.getByText(/los reintentos conservan la cuenta seleccionada/i)).toBeInTheDocument();
 });
 

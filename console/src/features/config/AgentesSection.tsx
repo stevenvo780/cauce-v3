@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useConsoleAccess } from '../../api/console-access';
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON } from '../../router';
-import { Button, LinkButton, Notice, SectionCard } from '../../components/kit';
+import { Button, LinkButton, Notice, SearchField, SectionCard } from '../../components/kit';
 import { EmptyState } from '../../components/ui';
 import { onNavClick, useRouteSearch } from '../../router';
 import { TeamFormDialog } from './TeamFormDialog';
@@ -34,9 +34,9 @@ function retiredAgent(row: Record<string, unknown> | undefined): SettingsAgent |
 }
 
 /**
- * The agent registry as a grid of tiles. A tile opens the agent's sheet (a drawer): reading, registry
- * editing, operations and groups all live there, never inline. `?agente=<tenant>/<alias>` keeps it open
- * across reloads. `tablaCompleta` is the registry as a raw table, folded, so no published column is hidden.
+ * The agents as a grid of tiles, first on the page. A tile opens the agent's sheet (a drawer): status,
+ * settings, execution and groups all live there, never inline. `?agente=<tenant>/<alias>` keeps it open
+ * across reloads. Teams, retired agents and the raw table follow below; the raw table stays folded.
  */
 export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }: {
   snapshot: ConfigurationSnapshot;
@@ -92,30 +92,28 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const openCreated = (ref: string) => { setIntent({ ref, tab: 'resumen' }); setOpenRef(ref); };
   const finalFocus = () => document.querySelector<HTMLElement>(`[data-agent-tile="${CSS.escape(sheetRef ?? '')}"]`) ?? createTrigger.current;
 
-  return <div className="grid gap-4">
+  return <div className="grid gap-6">
     <ConfigSectionHeader seccion="agentes" />
-    {ctx ? <TeamsPanel snapshot={snapshot} ctx={ctx} /> : null}
-    <SectionCard level={3} title="Agentes y grupos" description="Identidad, grupos y responsabilidad en un solo lugar."
+    <SectionCard level={3} title="Tus agentes" description="Pulsa un agente para ver si responde, iniciar sesión, consultar su cuota o cambiar sus ajustes."
       actions={<Button ref={createTrigger} variant="primary" onClick={() => { setCreateOpen(true); }}>
         <Plus size={14} aria-hidden="true" />Añadir agente</Button>}>
-      {registryNotice ? <Notice tone={registryNotice.tone === 'success' ? 'ok' : 'warn'} role={registryNotice.tone === 'success' ? 'status' : 'alert'}>
-        {registryNotice.text}
+      {registryNotice ? <Notice tone={registryNotice.tone === 'success' ? 'ok' : 'warn'} role={registryNotice.tone === 'success' ? 'status' : 'alert'}
+        className="flex flex-wrap items-center justify-between gap-2">
+        <span>{registryNotice.text}</span>
         <Button size="sm" onClick={() => { setRegistryNotice(undefined); }}>Cerrar aviso del registro</Button>
       </Notice> : null}
       <AgentRegistryCreate snapshot={snapshot} open={createOpen} onOpenChange={setCreateOpen}
         onReloaded={reloaded} focusReturnRef={createTrigger} onOpenAgent={openCreated} />
-      <label className="max-w-md">Buscar agente o grupo
-        <input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} />
-      </label>
+      <SearchField label="Buscar agente o grupo" placeholder="Buscar por nombre, alias o grupo" className="max-w-md basis-auto"
+        value={query} onChange={(value) => { setQuery(value); setPage(0); }} />
       {!Array.isArray(snapshot.agents) ? <Notice role="note">
-        Registro de agentes desconocido: el servidor no lo publica. Las membresías no acreditan un perfil editable.
+        El servidor no publicó la lista de agentes. Solo se ven los que aparecen como miembros de un grupo, y no se pueden editar.
       </Notice> : null}
-      {hasMembersOnly ? <p className="m-0 text-xs text-muted">Los agentes «Solo miembro» no tienen registro editable: solo aparecen como miembros de un grupo, por eso su ficha es de solo lectura y no ofrece acciones.</p> : null}
       {!agents.length ? <EmptyState>{Array.isArray(snapshot.agents) && Array.isArray(snapshot.memberships)
-        ? 'No hay agentes registrados ni miembros en esta lectura.'
+        ? 'Todavía no hay agentes. Pulsa «Añadir agente» para crear el primero.'
         : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
-          : <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] items-start gap-3 p-0" aria-label="Agentes configurados">
+          : <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] items-stretch gap-3 p-0" aria-label="Agentes configurados">
             {visible.slice(first, first + PAGE_SIZE).map((agent) => <AgentRow key={agent.key} agent={agent} snapshot={snapshot}
               hosts={fleet.hosts} writeBlock={writeBlock} retireBlock={retireBlock} onOpen={(tab, kind) => { open(agent, tab, kind); }} />)}
           </ul>}
@@ -126,18 +124,18 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
           <Button size="sm" disabled={currentPage === lastPage} onClick={() => { setPage(currentPage + 1); }}>Siguiente</Button>
         </div>
       </nav> : null}
-      <p className="m-0 text-xs text-muted">El registro describe la configuración guardada. El arnés en ejecución,
-        los permisos y la aplicación del contexto se comprueban en la página de cada agente; si falta evidencia, se indica como desconocida.
-        Pulsa una tarjeta para abrir su ficha; el menú «⋯» salta a una sección. «Eliminar», solo dentro de la ficha, guía los dos pasos: retirar, que detiene la ejecución y conserva el historial, y eliminar definitivamente.</p>
+      {hasMembersOnly ? <p className="m-0 text-xs text-muted">Los agentes marcados «Solo en grupos» aparecen porque son miembros de un grupo,
+        pero no tienen ajustes propios en Cauce: su ficha solo se puede leer.</p> : null}
     </SectionCard>
-    {retired.length ? <SectionCard level={3} title="Agentes retirados" description="El historial y los datos se conservan hasta una purga acreditada.">
-      <p className="m-0 text-xs text-muted">«Eliminar definitivamente» es el paso 2: borra la configuración del agente y conserva los mensajes ya enviados. No se puede deshacer.</p>
+    {ctx ? <TeamsPanel snapshot={snapshot} ctx={ctx} /> : null}
+    {retired.length ? <SectionCard level={3} title="Agentes retirados" description="No reciben mensajes. Su historial se conserva hasta que los elimines definitivamente.">
+      <p className="m-0 text-xs text-muted">«Eliminar definitivamente» borra la configuración del agente y conserva los mensajes ya enviados. No se puede deshacer.</p>
       <ul className="m-0 grid list-none gap-2 p-0" aria-label="Agentes retirados">
         {retired.map((agent) => <li key={agent.key} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
           <strong className="text-[13px]" title={`${agent.tenantId}/${agent.alias}`}>{subtituloDeAgente(agent, leido)}</strong>
           <span className="flex flex-wrap items-center gap-2">
-            <Button size="sm" aria-label={`Operar agente ${agent.tenantId}/${agent.alias}`}
-              onClick={() => { open(agent, 'operacion'); }}>Operar</Button>
+            <Button size="sm" aria-label={`Restaurar o revisar ${agent.tenantId}/${agent.alias}`}
+              onClick={() => { open(agent, 'operacion'); }}>Restaurar o revisar</Button>
             <Button size="sm" variant="danger" disabled={Boolean(writeBlock)} title={writeBlock ?? 'Purga el registro retirado; no se puede deshacer'}
               aria-label={`Eliminar definitivamente ${agent.tenantId}/${agent.alias}`}
               onClick={() => { open(agent, 'operacion', 'remove'); }}>Eliminar definitivamente</Button>
@@ -146,17 +144,17 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       </ul>
     </SectionCard> : null}
     {tablaCompleta ? <details className="rounded-xl border border-line bg-surface shadow-card">
-      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Registro completo en tabla</summary>
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">Detalles técnicos: registro completo en tabla</summary>
       <div className="grid gap-3 p-4 pt-0">
-        <p className="m-0 text-xs text-muted">Todas las columnas que publica el servidor. Las marcadas «declarativo» no configuran por sí solas el runtime.</p>
+        <p className="m-0 text-xs text-muted">Todas las columnas que publica el servidor, para diagnóstico. Las marcadas «declarativo» no cambian por sí solas cómo corre el agente.</p>
         {tablaCompleta}
       </div>
     </details> : null}
-    <SectionCard level={3} title="Cuentas y ruteo de suscripciones"
-      description="Las suscripciones y el orden en que se consultan se editan en un solo sitio.">
-      <p className="m-0 text-[13px] text-fg-2">Se administran junto con su orden de consulta en «Cuentas»; su saldo está en «Mis cuotas». Estas tablas no se repiten en Ajustes.</p>
-      <div>
+    <SectionCard level={3} title="Cuentas de proveedor"
+      description="Las suscripciones que usan los agentes se dan de alta y se ordenan en «Cuentas»; el saldo de todas está en «Mis cuotas».">
+      <div className="flex flex-wrap gap-2">
         <LinkButton href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Ir a Cuentas</LinkButton>
+        <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Ir a Mis cuotas</LinkButton>
       </div>
     </SectionCard>
     {shown && sheetRef ? <AgentSheet key={sheetRef} agent={shown} retired={shown === sheetRetired} snapshot={snapshot} hosts={fleet.hosts}

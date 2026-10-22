@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
 
-export type AgentMenuAction = 'Editar registro' | 'Operar agente' | 'Retirar agente' | 'Perfil y contexto';
+export type AgentMenuAction = 'Cambiar ajustes' | 'Cambiar ejecución' | 'Retirar agente' | 'Perfil y contexto';
 
 /** Opens an agent's kebab menu and picks one of its actions. */
 export async function agentAction(user: UserEvent, ref: string, action: AgentMenuAction) {
