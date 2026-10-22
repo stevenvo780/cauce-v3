@@ -60,7 +60,7 @@ it('deja de sondear cuando recibe la operación terminada', async () => {
   await show(load); await advance(2_000); await advance(120_000);
   expect(load).toHaveBeenCalledTimes(2);
   expect(screen.queryByText(/el ordenador no responde/iu)).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Consultar' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Consultar cuota' })).toBeEnabled();
 });
 
 it.each([
@@ -71,7 +71,7 @@ it.each([
 ])('traduce el rechazo de la consulta HTTP %s sin presentar el mensaje remoto', async (status, code, message) => {
   vi.spyOn(testApi, 'queryAgentQuota').mockRejectedValue(new ApiError('remote quota request rejected', status, code));
   await show(async () => empty);
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Consultar' })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Consultar cuota' })); });
   expect(screen.getByRole('alert')).toHaveTextContent(message);
   expect(screen.queryByText('remote quota request rejected')).not.toBeInTheDocument();
 });
@@ -92,5 +92,5 @@ it('etiqueta la ausencia de ubicación operativa sin atribuirla al lector del ha
   await show(async () => ({ ...empty, status: 'unsupported', reader_available: false, can_query: false, reason: 'quota_target_unplaced' }));
   expect(screen.getByText('Sin ubicación operativa')).toBeVisible();
   expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Consultar' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Consultar cuota' })).toBeDisabled();
 });

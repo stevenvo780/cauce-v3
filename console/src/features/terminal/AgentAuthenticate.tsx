@@ -7,12 +7,13 @@ import { HUD_BUTTON, HUD_TEXT } from '../office/hud-style';
 import { harnessLoginRecipe, shellCommand } from './login-recipe';
 
 /** One login for one agent. The dialog picks the profile terminal or the live PTY. */
-export function AgentAuthenticate({ tenantId, alias, harnessId, tone = 'page', layout = 'row', className }: {
+export function AgentAuthenticate({ tenantId, alias, harnessId, tone = 'page', layout = 'row', size = 'sm', className }: {
   tenantId: string;
   alias: string;
   harnessId: string | null | undefined;
   tone?: 'page' | 'hud';
   layout?: 'row' | 'stack';
+  size?: 'sm' | 'md';
   className?: string;
 }) {
   const noteId = useId();
@@ -35,7 +36,7 @@ export function AgentAuthenticate({ tenantId, alias, harnessId, tone = 'page', l
           <KeyRound size={13} aria-hidden="true" /> Iniciar sesión
         </button>
       ) : (
-        <Button size="sm" variant="primary" aria-label={name} title={title} className={buttonClass} onClick={() => { setOpen(true); }}>
+        <Button size={size} variant="primary" aria-label={name} title={title} className={buttonClass} onClick={() => { setOpen(true); }}>
           <KeyRound size={13} aria-hidden="true" />Iniciar sesión
         </Button>
       )}
