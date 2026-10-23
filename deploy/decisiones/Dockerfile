@@ -1,6 +1,6 @@
 # Decisions service image: one bundled file plus the catalog, nothing else from the repo.
 # Built from a `git archive` of one commit (see desplegar.sh), never from a live working tree.
-ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819
+ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:9fee3a1d85a49993660c8ffc774ceafadc0b52eda69b4c981f6b6a1cfabcfe98
 FROM ${CAUCE_NODE_BASE} AS build
 WORKDIR /app
 RUN corepack enable
