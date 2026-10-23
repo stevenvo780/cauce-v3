@@ -239,6 +239,8 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
           WHERE own.tenant_id=$1 AND own.alias=$2 AND own.enabled AND role.allow_read
         ) AND ${runtimePrincipalScopeSql('l.tenant_id', 'l.alias')}
           AND ${ownTenantOnly ? 'l.tenant_id=$1' : fleetReadableSql('$1::text', 'l.tenant_id')}
+          AND NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id=l.tenant_id AND gone.alias=l.alias
+                          AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
        ORDER BY tenant_id,alias`, [actorTenant, actorAlias]
     );
     return result.rows.map((row) => ({
