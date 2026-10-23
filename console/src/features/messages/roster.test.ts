@@ -65,6 +65,16 @@ describe('el universo del roster de mensajería', () => {
     expect(motivoDeAgenteSuelto(gaia)).toMatch(/sólo porque el servidor publicó mensajes suyos/i);
   });
 
+  it('un agente retirado o purgado no vuelve a la lista por sus mensajes viejos', () => {
+    const roster = construirRosterDeMensajeria({
+      activity: { agents: [], retired: [{ tenant_id: 'Steven', alias: 'gaia' }] },
+      messages: mensajeParaGaia(),
+    });
+
+    expect(roster.find((agente) => agente.alias === 'gaia')).toBeUndefined();
+    expect(roster.find((agente) => agente.alias === 'kant')).toBeDefined();
+  });
+
   it('también trae al EMISOR del mensaje, no sólo al destinatario', () => {
     const roster = construirRosterDeMensajeria({
       topology: topologiaConSoloArgos(), messages: mensajeParaGaia(),

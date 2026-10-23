@@ -71,8 +71,11 @@ export function construirRosterDeMensajeria(entrada: {
     });
   }
 
+  const retirados = new Set((entrada.activity?.retired ?? []).map(fila => fleetAgentId(fila.tenant_id, fila.alias)));
   for (const [id, quien] of aliasDeLosMensajes(entrada.messages)) {
     const existente = registros.get(id);
+    // A retired or purged agent keeps its history, but it is no longer in the fleet: a thread is not a reason to draw it.
+    if (!existente && retirados.has(id)) continue;
     if (existente) {
       registros.set(id, {
         ...existente,

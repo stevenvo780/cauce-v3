@@ -1,7 +1,7 @@
 import { AliasSchema, hasUnsafeTextCodePoint, isRfcUuid, isStrictUtcIso8601, type Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-type-conversion: "error", @typescript-eslint/no-unnecessary-condition: "error", @typescript-eslint/consistent-type-definitions: "off" */
 import {
   agentWorkState, DEFAULT_FLEET_ACTIVITY_THRESHOLDS, FLEET_ACTIVITY_QUERY, FLEET_ACTIVITY_FLAGS,
-  FLEET_WORK_STATES, fleetReadableTenantsSql, type FleetActivityFlag, type FleetWorkState
+  FLEET_WORK_STATES, fleetReadableSql, fleetReadableTenantsSql, type FleetActivityFlag, type FleetWorkState
 } from '../fleet-activity.js';
 import { safeAuditSummary } from '../audit-summary.js';
 import { COMPANY_ID_PATTERN, lockCompanyAuthority } from '../company-authority.js';
@@ -279,11 +279,19 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       return acc;
     }, { agents: 0, in_flight: 0, queued: 0, retrying: 0, overdue_in_flight: 0 });
 
+    // Retired or purged aliases still appear in old messages; the console needs them to stop
+    // drawing those threads as fallen agents in the roster.
+    const retired = (await this.pool.query<{ tenant_id: string; alias: string }>(
+      `SELECT a.tenant_id, a.alias FROM agents a
+        WHERE (a.retired_at IS NOT NULL OR a.purged_at IS NOT NULL) AND ${fleetReadableSql('$1::text', 'a.tenant_id')}
+        ORDER BY a.tenant_id, a.alias`, [actorTenant])).rows;
+
     return {
       observed_at: new Date().toISOString(),
       thresholds,
       totals: { ...totals, by_state: byState, flagged },
-      agents
+      agents,
+      retired
     };
   }
 

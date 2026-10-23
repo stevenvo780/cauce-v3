@@ -146,6 +146,8 @@ export interface FleetActivitySnapshot {
   thresholds?: FleetActivityThresholds | null;
   totals?: FleetActivityTotals | null;
   agents?: FleetActivityAgent[] | null;
+  /** Retired or purged aliases: their old messages must not bring them back to the roster. */
+  retired?: { tenant_id: string; alias: string }[] | null;
   /** Optional: until the backend phase, the thickness comes only from in-flight deliveries. */
   edges?: FleetDelegationEdge[] | null;
 }
