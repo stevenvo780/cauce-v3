@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { CompanyPurgeBlockedError, createPool, lockCompanyAuthority, purgeCompany, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
+import { CompanyPurgeBlockedError, ConfigurationRepository, createPool, lockCompanyAuthority, purgeCompany, readCompanyOffice, registerCompany, updateCompany, withTransaction, writeCompanyOffice,
   type CompanyAuthoritySource, type CompanyPurgeSnapshot, type DatabasePool, type RegisteredCompany } from '../src/index.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -108,6 +108,64 @@ describe('public registration with durable owner and isolated office', () => {
     expect(saved.rooms).toEqual([room(first, 7)]);
     await admin.query("UPDATE rooms SET enabled=true WHERE tenant_id=$1 AND id='extra'", [first.hub.id]);
     expect((await readCompanyOffice(pool, source(first))).rooms).toEqual(expect.arrayContaining([room(first, 7), extra]));
+  });
+
+  it('deletes a room and its saved position atomically with CAS and company isolation', async () => {
+    await admin.query("INSERT INTO tenants(id,company_id) VALUES('north-side','north')");
+    await admin.query("INSERT INTO rooms(tenant_id,id) VALUES($1,'extra'),($1,'unplaced'),('north-side','beside'),($2,'extra')", [first.hub.id, second.hub.id]);
+    const extra = { ...room(first, 500), room_id: 'extra' };
+    const beside = { ...extra, tenant_id: 'north-side', room_id: 'beside' };
+    const foreign = { ...room(second), room_id: 'extra' };
+    await writeCompanyOffice(pool, source(first), { expected_version: 0, rooms: [room(first), extra, beside] });
+    const other = await writeCompanyOffice(pool, source(second), { expected_version: 0, rooms: [foreign] });
+    const repo = new ConfigurationRepository(pool);
+    const mutation = { resource: 'room', action: 'delete', tenant_id: first.hub.id, id: 'extra' } as const;
+    const stored = async () => (await admin.query<{ rooms: unknown; version: number }>(
+      'SELECT rooms,version::int FROM company_office_layouts WHERE company_id=$1', ['north'])).rows[0];
+    await repo.apply(first.hub.id, 'owner', mutation, true, 0, source(first));
+    expect(await stored()).toEqual({ rooms: [room(first), extra, beside], version: 1 });
+    await expect(repo.apply(first.hub.id, 'owner', { resource: 'batch', action: 'apply', mutations: [mutation,
+      { ...mutation, id: 'absent' }] }, false, 0, source(first))).rejects.toMatchObject({ code: 'not_found' });
+    expect((await admin.query("SELECT 1 FROM rooms WHERE tenant_id=$1 AND id='extra'", [first.hub.id])).rowCount).toBe(1);
+    expect(await stored()).toEqual({ rooms: [room(first), extra, beside], version: 1 });
+    const deleted = await repo.apply(first.hub.id, 'owner', mutation, false, 0, source(first));
+    expect(await stored()).toEqual({ rooms: [room(first), beside], version: 2 });
+    expect(await readCompanyOffice(pool, source(second))).toEqual(other);
+    await expect(writeCompanyOffice(pool, source(first), { expected_version: 1, rooms: [room(first)] }))
+      .rejects.toMatchObject({ code: 'conflict' });
+    await repo.apply(first.hub.id, 'owner', { ...mutation, id: 'unplaced' }, false, deleted.revision, source(first));
+    expect(await stored()).toEqual({ rooms: [room(first), beside], version: 2 });
+  });
+
+  it('serializes concurrent deletion and layout edits without resurrecting the room', async () => {
+    await admin.query("INSERT INTO rooms(tenant_id,id) VALUES($1,'extra')", [first.hub.id]);
+    const extra = { ...room(first, 500), room_id: 'extra' };
+    await writeCompanyOffice(pool, source(first), { expected_version: 0, rooms: [room(first), extra] });
+    const [deletion, edit] = await Promise.allSettled([
+      new ConfigurationRepository(pool).apply(first.hub.id, 'owner', { resource: 'room', action: 'delete',
+        tenant_id: first.hub.id, id: 'extra' }, false, 0, source(first)),
+      writeCompanyOffice(pool, source(first), { expected_version: 1, rooms: [room(first, 7)] }),
+    ]);
+    expect(deletion.status).toBe('fulfilled');
+    if (edit.status === 'rejected') expect(edit.reason).toMatchObject({ code: 'conflict' });
+    expect((await admin.query('SELECT rooms,version::int FROM company_office_layouts WHERE company_id=$1', ['north'])).rows[0])
+      .toEqual({ rooms: [room(first, edit.status === 'fulfilled' ? 7 : 1)], version: edit.status === 'fulfilled' ? 3 : 2 });
+    expect((await admin.query("SELECT 1 FROM rooms WHERE tenant_id=$1 AND id='extra'", [first.hub.id])).rowCount).toBe(0);
+  }, 15_000);
+
+  it('drops legacy missing or purged positions on save while preserving temporarily unavailable rooms', async () => {
+    await admin.query("INSERT INTO rooms(tenant_id,id) VALUES($1,'disabled'),($1,'retired'),($1,'unlisted'),($1,'missing'),($1,'purged')", [first.hub.id]);
+    const positions = ['disabled', 'retired', 'unlisted', 'missing', 'purged'].map(room_id => ({ ...room(first, 500), room_id }));
+    await writeCompanyOffice(pool, source(first), { expected_version: 0, rooms: [room(first), ...positions] });
+    await admin.query("UPDATE rooms SET enabled=false WHERE tenant_id=$1 AND id='disabled'", [first.hub.id]);
+    await admin.query("UPDATE rooms SET enabled=false,retired_at=now(),retired_enabled=true WHERE tenant_id=$1 AND id IN ('retired','purged')", [first.hub.id]);
+    await admin.query("UPDATE rooms SET purged_at=now() WHERE tenant_id=$1 AND id='purged'", [first.hub.id]);
+    await admin.query("DELETE FROM rooms WHERE tenant_id=$1 AND id='missing'", [first.hub.id]);
+    await writeCompanyOffice(pool, source(first), { expected_version: 1, rooms: [room(first, 7)] });
+    expect((await admin.query('SELECT rooms,version::int FROM company_office_layouts WHERE company_id=$1', ['north'])).rows[0])
+      .toEqual({ rooms: [room(first, 7), ...positions.slice(0, 3)], version: 2 });
+    await admin.query("UPDATE rooms SET enabled=true,retired_at=NULL,retired_enabled=NULL WHERE tenant_id=$1 AND id IN ('disabled','retired')", [first.hub.id]);
+    expect((await readCompanyOffice(pool, source(first))).rooms).toEqual([room(first, 7), ...positions.slice(0, 3)]);
   });
 
   it('revokes durable authority and refuses an owner session after the company is retired', async () => {

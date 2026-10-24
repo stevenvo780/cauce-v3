@@ -1,5 +1,6 @@
 import type { FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
+import { removeCompanyOfficeRooms } from '../company-office-cleanup.js';
 import { FleetOperationError, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { PRESERVED_MEMBERSHIP, PURGE_CONFIGURATION, purgeDependencies, purgeParams, purgePredicate, purgeTables, sqlIdentifier } from './fleet-operation-purge-plan.js';
 import { runtimePrincipalScopeSql } from './system-principal-scope.js';
@@ -66,6 +67,9 @@ export async function purgeRetiredTarget(client: DatabaseClient, row: FleetOpera
   if (dependencies.some(value => value.blocking)) throw new FleetOperationError('conflict', 'purge target has active work or control');
   await client.query("SELECT set_config('cauce.actor_tenant',$1,true),set_config('cauce.actor_alias',$2,true)", [row.actor_tenant, row.actor_alias]);
   const archive = await purgeTargetRecords(client, row.target);
+  if (row.target.resource !== 'agent') {
+    await removeCompanyOfficeRooms(client, row.target.tenant_id, row.target.resource === 'room' ? row.target.room_id : null);
+  }
   const historical = dependencies.some(value => value.type !== `purge.preserve.${table}` && value.type.startsWith('purge.preserve.'));
   if (!historical) await client.query(`DELETE FROM ${sqlIdentifier(table)} WHERE ${targetWhere(row.target)}`, params);
   else await client.query(`UPDATE ${sqlIdentifier(table)} SET purged_at=COALESCE(purged_at,clock_timestamp()) WHERE ${targetWhere(row.target)}`, params);

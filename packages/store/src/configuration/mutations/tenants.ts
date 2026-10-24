@@ -1,5 +1,6 @@
 import type { ConfigMutation } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
+import { removeCompanyOfficeRooms } from '../../company-office-cleanup.js';
 import { ConfigurationError, type ConfigurationLeafMutation } from '../contracts.js';
 import { assertConfigurationDeleteAllowed, has, valueRequired } from '../shared.js';
 
@@ -44,6 +45,7 @@ export async function tenantMutation(
          WHERE d.status IN ${activeDeliveryStates} AND (m.tenant_id=$1 OR d.recipient_tenant=$1) LIMIT 1`, [mutation.id]
     );
     if (active.rowCount) throw new ConfigurationError('conflict', 'tenant has active deliveries');
+    await removeCompanyOfficeRooms(client, mutation.id);
     await client.query('DELETE FROM tenants WHERE id=$1', [mutation.id]);
     return { inverse: deletionInverse(mutation, oldValue, old), summary: `delete tenant ${mutation.id}` };
   }
@@ -88,6 +90,7 @@ export async function roomMutation(
       [mutation.tenant_id, mutation.id]
     );
     if (active.rowCount) throw new ConfigurationError('conflict', 'room has active deliveries');
+    await removeCompanyOfficeRooms(client, mutation.tenant_id, mutation.id);
     await client.query('DELETE FROM rooms WHERE id=$1 AND tenant_id=$2', [mutation.id, mutation.tenant_id]);
     return { inverse: deletionInverse(mutation, oldValue, old), summary: `delete room ${mutation.id}` };
   }

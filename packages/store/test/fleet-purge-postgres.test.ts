@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ConfigurationRepository, FleetOperationsRepository, withTransaction, type DatabasePool } from '../src/index.js';
+import { ConfigurationRepository, FleetOperationsRepository, readCompanyOffice, withTransaction, writeCompanyOffice, type DatabasePool } from '../src/index.js';
 import { purgeFleetTarget } from '../src/repository/fleet-operation-lifecycle.js';
 import type { FleetOperationRow } from '../src/repository/fleet-operation-contracts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -135,8 +135,13 @@ describe('fleet purge with preserved historical identities', () => {
   });
   it('purges a used room without deleting its agent or message anchors', async () => {
     const message = await messageFixture(pool);
+    const position = { tenant_id: 'Steven', room_id: 'purge-owned', x: 1, y: 2, width: 10, height: 8, parts: [] };
+    const kept = { ...position, room_id: 'purge-admin' };
+    await writeCompanyOffice(pool, purgeAuthority, { expected_version: 0, rooms: [position, kept] });
     const target = { resource: 'room', tenant_id: 'Steven', room_id: 'purge-owned' } as const;
     const { repo, claim } = await preparePurge(pool, target); await finishPurge(repo, claim);
+    expect((await pool.query('SELECT rooms,version::int FROM company_office_layouts')).rows).toEqual([{ rooms: [kept], version: 2 }]);
+    await expect(writeCompanyOffice(pool, purgeAuthority, { expected_version: 1, rooms: [kept] })).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT enabled,purged_at IS NOT NULL AS purged FROM rooms WHERE id='purge-owned'")).rows[0])
       .toEqual({ enabled: false, purged: true });
     expect((await pool.query("SELECT primary_room_id,purged_at FROM agents WHERE tenant_id='Steven' AND alias='purge_agent'")).rows[0])
@@ -147,6 +152,23 @@ describe('fleet purge with preserved historical identities', () => {
       idempotency_key: 'restore-purged-room' }, PURGE_ACTOR_SUBJECT)).rejects.toMatchObject({ code: 'conflict' });
     const snapshot = await new ConfigurationRepository(pool).get('Steven', 'purge_operator', purgeAuthority);
     expect(JSON.stringify([snapshot.rooms, snapshot.memberships, snapshot.retired])).not.toContain('purge-owned');
+  });
+  it('purges an unused room and rolls back its removal if the layout update fails', async () => {
+    const position = { tenant_id: 'Steven', room_id: 'purge-unused', x: 1, y: 2, width: 10, height: 8, parts: [] };
+    await writeCompanyOffice(pool, purgeAuthority, { expected_version: 0, rooms: [position] });
+    const { repo, claim } = await preparePurge(pool, { resource: 'room', tenant_id: 'Steven', room_id: 'purge-unused' });
+    if (!current) throw new Error('test database missing');
+    await current.adminPool.query(`CREATE FUNCTION reject_test_layout_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      RAISE EXCEPTION 'isolated layout failure'; END; $$;
+      CREATE TRIGGER reject_test_layout_update BEFORE UPDATE ON company_office_layouts FOR EACH ROW EXECUTE FUNCTION reject_test_layout_update()`);
+    await expect(finishPurge(repo, claim)).rejects.toThrow('isolated layout failure');
+    expect((await pool.query("SELECT purged_at FROM rooms WHERE tenant_id='Steven' AND id='purge-unused'")).rows[0]).toEqual({ purged_at: null });
+    expect((await pool.query('SELECT rooms,version::int FROM company_office_layouts')).rows).toEqual([{ rooms: [position], version: 1 }]);
+    expect((await pool.query("SELECT 1 FROM fleet_operation_events WHERE operation_id=$1 AND metadata ? 'purge_scope'", [claim.operation.id])).rowCount).toBe(0);
+    await current.adminPool.query('DROP TRIGGER reject_test_layout_update ON company_office_layouts');
+    await finishPurge(repo, claim);
+    expect((await pool.query("SELECT 1 FROM rooms WHERE tenant_id='Steven' AND id='purge-unused'")).rowCount).toBe(0);
+    expect(await readCompanyOffice(pool, purgeAuthority)).toMatchObject({ rooms: [], version: 2 });
   });
   it('purges a tenant and its owned runtime configuration while preserving historical routing anchors', async () => {
     await pool.query("INSERT INTO tenants(id,display_name) VALUES('PurgeTenant','Retired client')");
@@ -159,7 +181,11 @@ describe('fleet purge with preserved historical identities', () => {
     const message = (await pool.query<{ id: string }>(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
       VALUES(gen_random_uuid(),'client-history','PurgeTenant','purge-tenant-room','client_agent','{}','interactive') RETURNING id`)).rows[0];
     const target = { resource: 'tenant', tenant_id: 'PurgeTenant' } as const;
+    const position = { tenant_id: 'PurgeTenant', room_id: 'purge-tenant-room', x: 1, y: 2, width: 10, height: 8, parts: [] };
+    const kept = { ...position, tenant_id: 'Steven', room_id: 'purge-admin' };
+    await writeCompanyOffice(pool, purgeAuthority, { expected_version: 0, rooms: [position, kept] });
     const { repo, claim } = await preparePurge(pool, target); await finishPurge(repo, claim);
+    expect((await pool.query('SELECT rooms,version::int FROM company_office_layouts')).rows).toEqual([{ rooms: [kept], version: 2 }]);
     expect((await pool.query("SELECT enabled,purged_at IS NOT NULL AS purged FROM tenants WHERE id='PurgeTenant'")).rows[0])
       .toEqual({ enabled: false, purged: true });
     expect((await pool.query("SELECT 1 FROM agent_profiles WHERE tenant_id='PurgeTenant'")).rowCount).toBe(0);

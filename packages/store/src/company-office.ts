@@ -80,20 +80,30 @@ export async function writeCompanyOffice(pool: DatabasePool, source: CompanyAuth
       const room = input.rooms.find(item => !available.has(JSON.stringify([item.tenant_id, item.room_id])));
       throw new StoreError('forbidden', `La sala ${room?.tenant_id ?? ''}/${room?.room_id ?? ''} no está disponible en la empresa activa (deshabilitada, retirada o de otra empresa).`);
     }
-    // The plan only edits what is available: positions of rooms that are temporarily disabled or retired survive the save.
+    // Omission may reflect incomplete topology; only deletion or purge removes a stored position.
     const stored = (await client.query<{ rooms: unknown }>('SELECT rooms FROM company_office_layouts WHERE company_id=$1', [authority.actingCompany])).rows[0];
-    const kept = Rooms.parse(stored?.rooms ?? []).filter(room => !available.has(JSON.stringify([room.tenant_id, room.room_id])));
-    const rooms = JSON.stringify([...input.rooms, ...kept]);
+    const existing = new Set((await client.query<{ tenant_id: string; id: string }>(
+      `SELECT room.tenant_id,room.id FROM rooms room JOIN tenants tenant ON tenant.id=room.tenant_id
+        WHERE tenant.company_id=$1 AND tenant.purged_at IS NULL AND room.purged_at IS NULL`,
+      [authority.actingCompany])).rows.map(room => JSON.stringify([room.tenant_id, room.id])));
+    const supplied = new Set(input.rooms.map(room => JSON.stringify([room.tenant_id, room.room_id])));
+    const kept = Rooms.parse(stored?.rooms ?? []).filter(room => {
+      const key = JSON.stringify([room.tenant_id, room.room_id]); return existing.has(key) && !supplied.has(key);
+    });
+    const layoutRooms = Rooms.parse([...input.rooms, ...kept]);
+    const rooms = JSON.stringify(layoutRooms);
     const written = input.expected_version === 0
-      ? await client.query(`INSERT INTO company_office_layouts(company_id,rooms,updated_by) VALUES($1,$2::jsonb,$3)
+      ? await client.query<{ version: string }>(`INSERT INTO company_office_layouts(company_id,rooms,updated_by) VALUES($1,$2::jsonb,$3)
           ON CONFLICT (company_id) DO NOTHING RETURNING version`, [authority.actingCompany, rooms, authority.humanId])
-      : await client.query(`UPDATE company_office_layouts SET rooms=$2::jsonb,updated_by=$3,version=version+1,updated_at=now()
+      : await client.query<{ version: string }>(`UPDATE company_office_layouts SET rooms=$2::jsonb,updated_by=$3,version=version+1,updated_at=now()
           WHERE company_id=$1 AND version=$4 RETURNING version`,
         [authority.actingCompany, rooms, authority.humanId, input.expected_version]);
-    if (!written.rowCount) throw new StoreError('conflict', 'office layout version changed; reload and retry');
+    const row = written.rows[0];
+    if (!row) throw new StoreError('conflict', 'office layout version changed; reload and retry');
     await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
       VALUES($1,$2,'office.layout.update','allow',$3,$4,$5::jsonb)`, [authority.homeTenant, authority.alias,
       authority.actingCompany, authority.humanId, JSON.stringify({ expected_version: input.expected_version })]);
-    return readLayout(client, authority);
+    return { company_id: authority.actingCompany, version: Number(row.version),
+      rooms: layoutRooms.filter(room => available.has(JSON.stringify([room.tenant_id, room.room_id]))) };
   });
 }
