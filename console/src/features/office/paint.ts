@@ -86,12 +86,15 @@ export class SpriteCache {
 
   character(seed: string, ghost: boolean, frame: FrameName, facing: Facing, step: number): HTMLCanvasElement {
     const key = `${this.lookKey(seed)}|${String(ghost)}|${frame}|${facing}|${String(step % 4)}`;
+    return this.cached(key, CHAR_W, CHAR_H, (ctx) => { this.paintCharacter(ctx, seed, ghost, frame, facing, step, 0, 0); });
+  }
+
+  /** Paints a character straight onto `ctx` with its top-left at (x, y); what falls outside the canvas is cut. */
+  paintCharacter(ctx: Ctx, seed: string, ghost: boolean, frame: FrameName, facing: Facing, step: number, x: number, y: number): void {
     const style = this.looks.get(seed)?.style ?? 'orb';
     const accessory = !ghost && DRESSED.has(frame) ? accessoryOf(style) : null;
-    return this.cached(key, CHAR_W, CHAR_H, (ctx) => {
-      paintRows(ctx, characterFrame(frame, facing, step), 0, 0, this.palette(seed, ghost));
-      if (accessory) paintRows(ctx, accessoryRows(accessory, facing), 0, 0, accessoryPalette(seed, this.looks.get(seed)?.hue));
-    });
+    paintRows(ctx, characterFrame(frame, facing, step), x, y, this.palette(seed, ghost));
+    if (accessory) paintRows(ctx, accessoryRows(accessory, facing), x, y, accessoryPalette(seed, this.looks.get(seed)?.hue));
   }
 
   lying(seed: string): HTMLCanvasElement {

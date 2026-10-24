@@ -20,12 +20,13 @@ import { stepZoom, type Inset } from './camera';
 import { createPlanMemory, nextPhaseEnd, orderByPlan, planCampus, type PlanGroup } from './campus-plan';
 import { CampusMap } from './CampusMap';
 import { useNight } from './daylight';
-import { agentRefOf, clientPointOf, hintSeen, rememberHint, useFrameSize, useHeight, useMaximized } from './frame';
+import { agentRefOf, clientPointOf, hintSeen, rememberHint, useFrameSize, useHeight, useMaximized, useWidth } from './frame';
 import { dotsByAgent } from './group-dots';
 import { HOTBAR_KEYS, Hotbar, type HotbarSlot } from './Hotbar';
 import { SHARED_IDS, SHARED_LABELS } from './interior-shared';
 import { CAMPUS } from './level';
 import type { OfficeAgent } from './office-agent';
+import { PartyPanel } from './PartyPanel';
 import { DirectionPad, OfficeControls, OfficeHint } from './OfficeControls';
 import type { Speech } from './speech';
 import { TalkPrompt } from './TalkPrompt';
@@ -74,6 +75,8 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const listRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const partyRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLButtonElement>(null);
   const mapRef = useRef<HTMLCanvasElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
@@ -84,6 +87,8 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const box = useFrameSize(frameRef);
   const topHeight = useHeight(topRef);
   const bottomHeight = useHeight(bottomRef);
+  const cardHeight = useHeight(cardRef);
+  const partyWidth = useWidth(partyRef);
   const night = useNight();
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
@@ -91,6 +96,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const quotaAgentIds = ordered.filter(agent => !agent.visitor).map(agent => agent.id).join('\0');
   const quotaBars = useMemo(() => new Map((quotaAgentIds ? quotaAgentIds.split('\0') : []).map(id =>
     [id, agentQuotaBar(quotas.data?.accounts ?? [], id, Boolean(quotas.error), now)])), [quotaAgentIds, quotas.data, quotas.error, now]);
+  const quotaReading = quotas.loading && !quotas.data && !quotas.error;
   const quotaPaintKey = JSON.stringify([...quotaBars].map(([id, quota]) => [id, quota.label, quota.color, quota.remaining]));
   const api = useApi();
   const saved = useResource('office-layout', () => api.getOfficeLayout()).data;
@@ -164,8 +170,8 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
     top: (topHeight + 12) * dpr,
     bottom: (bottomHeight + 12) * dpr,
     right: (sheetOpen && wide ? Math.min(box.width, SHEET_RESERVE) : narrow ? 0 : panels) * dpr,
-    left: 0,
-  }), [topHeight, bottomHeight, dpr, sheetOpen, wide, box.width, narrow, panels]);
+    left: (narrow || !partyWidth ? 0 : partyWidth + 8) * dpr,
+  }), [topHeight, bottomHeight, dpr, sheetOpen, wide, box.width, narrow, panels, partyWidth]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -372,8 +378,12 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
           />
         </div>
       </div> : null}
-      <div className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] flex-col items-start gap-1.5" style={{ top: topHeight + 12 }}>
+      <div className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] flex-col items-start gap-1.5"
+        style={{ top: topHeight + 12, bottom: bottomHeight + 12 + (cardHeight ? cardHeight + 6 : 0) }}>
         {chrome && hint && !talk ? <OfficeHint touch={coarse} onClose={dismissHint} /> : null}
+        <div ref={partyRef} className="flex min-h-0 max-w-full flex-col">
+          {talk ? null : <PartyPanel agents={ordered} quotas={quotaBars} reading={quotaReading} selectedId={selectedId} narrow={narrow} onPick={onSelect} />}
+        </div>
         {agents.length === 0 ? (
           <p className="pointer-events-auto m-0 max-w-xs border-2 border-[#0e0f17] bg-[#1a1c2c]/95 p-2.5 text-[12px] leading-snug text-[#c5d3dc]">
             No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente. Los edificios de cada grupo ya están en pie.
@@ -390,23 +400,25 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
           />
         </div>
       ) : null}
-      {selected && !sheetOpen && !talk ? (
-        <div className="pointer-events-none absolute left-2 z-20 grid max-h-[70%] gap-1 overflow-y-auto" style={{ bottom: bottomHeight + 12 }}>
-          {selectedQuota ? <section aria-label={`Cuota de ${selected.name}`} className={cn(HUD_PANEL, 'pointer-events-auto w-[min(23rem,calc(100vw-1rem))] p-2.5 text-[#f4f4f4]')}>
-            <AgentQuotaSummary quota={selectedQuota} now={now} />
-          </section> : null}
-          <AgentCard
-            agent={selected}
-            place={placeOf(selected.id)}
-            following={followId === selected.id}
-            onClose={onDeselect}
-            onTalk={onTalk ? () => { onTalk(selected.id); } : undefined}
-            onSheet={selected.visitor ? undefined : () => { onSheet(selected.id); }}
-            onEmote={(icon) => { engine.emote(selected.id, icon); kick(); }}
-            onFollow={() => { setFollowId(followId === selected.id ? null : selected.id); }}
-          />
-        </div>
-      ) : null}
+      <div ref={cardRef} className="pointer-events-none absolute left-2 z-20 grid max-h-[70%] gap-1 overflow-y-auto" style={{ bottom: bottomHeight + 12 }}>
+        {selected && !sheetOpen && !talk ? (
+          <>
+            {selectedQuota ? <section aria-label={`Cuota de ${selected.name}`} className={cn(HUD_PANEL, 'pointer-events-auto w-[min(23rem,calc(100vw-1rem))] p-2.5 text-[#f4f4f4]')}>
+              <AgentQuotaSummary quota={selectedQuota} now={now} />
+            </section> : null}
+            <AgentCard
+              agent={selected}
+              place={placeOf(selected.id)}
+              following={followId === selected.id}
+              onClose={onDeselect}
+              onTalk={onTalk ? () => { onTalk(selected.id); } : undefined}
+              onSheet={selected.visitor ? undefined : () => { onSheet(selected.id); }}
+              onEmote={(icon) => { engine.emote(selected.id, icon); kick(); }}
+              onFollow={() => { setFollowId(followId === selected.id ? null : selected.id); }}
+            />
+          </>
+        ) : null}
+      </div>
       <div ref={bottomRef} className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex justify-center">
         {talk || !chrome ? null : <Hotbar slots={slots} current={level} onGo={go} compact={narrow} />}
       </div>

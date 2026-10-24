@@ -33,3 +33,9 @@ export function agentQuotaBar(accounts: readonly QuotaAccount[], id: string, fai
     label: remaining === null || !limiting ? FATIGUE_LABEL[state] : `${quotaWindowLabel(limiting)} ${formatPercent(remaining)}`,
     color: remaining === null ? '#94a3b8' : remaining > 50 ? '#4ade80' : remaining >= 20 ? '#fbbf24' : '#f87171' };
 }
+
+export const READING_QUOTA = 'Leyendo cuotas…';
+
+export function quotaText(quota: AgentQuotaBar | undefined, reading: boolean): string {
+  return reading ? READING_QUOTA : quota?.label ?? '';
+}

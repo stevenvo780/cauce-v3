@@ -79,19 +79,22 @@ export function useFrameSize(ref: RefObject<HTMLElement | null>) {
 }
 
 /** Height in CSS px of an element, for the camera to keep the map clear of the HUD bars. */
-export function useHeight(ref: RefObject<HTMLElement | null>): number {
-  const [height, setHeight] = useState(0);
+function useSide(ref: RefObject<HTMLElement | null>, side: 'width' | 'height'): number {
+  const [size, setSize] = useState(0);
   useEffect(() => {
     const element = ref.current;
     if (!element) return undefined;
-    const measure = () => { setHeight(Math.round(element.getBoundingClientRect().height)); };
+    const measure = () => { setSize(Math.round(element.getBoundingClientRect()[side])); };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => { observer.disconnect(); };
-  }, [ref]);
-  return height;
+  }, [ref, side]);
+  return size;
 }
+
+export const useHeight = (ref: RefObject<HTMLElement | null>): number => useSide(ref, 'height');
+export const useWidth = (ref: RefObject<HTMLElement | null>): number => useSide(ref, 'width');
 
 export function useMaximized(ref: RefObject<HTMLElement | null>, escapeBlocked: RefObject<boolean>): [boolean, () => void] {
   const [maximized, setMaximized] = useState(false);
