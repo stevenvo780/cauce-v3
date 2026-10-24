@@ -193,7 +193,7 @@ it('ordena las consultas con una mutación de binding que lleva prioridad y esta
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
-    agent_alias: 'kant', account_id: 'minimax-pablo', value: { priority: 20, enabled: true },
+    agent_alias: 'kant', account_id: 'minimax-pablo', value: { priority: 20, enabled: false },
   });
 });
 
@@ -246,7 +246,7 @@ it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', asy
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
-    agent_alias: 'kant', account_id: 'minimax-pablo', value: { priority: 0, enabled: true },
+    agent_alias: 'kant', account_id: 'minimax-pablo', value: { priority: 0, enabled: false },
   });
 });
 

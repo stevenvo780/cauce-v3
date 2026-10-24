@@ -97,6 +97,7 @@ export function AssignmentMatrix({ config, access, registry }: {
       accountId,
       operation: cell.state === 'none' ? 'grant-ceiling'
         : cell.state === 'ceiling-only' ? 'create-binding' : 'update-binding',
+      enabled: cell.state !== 'bound-disabled',
       ...(cell.priority === null ? {} : { priority: String(cell.priority) }),
     });
   }

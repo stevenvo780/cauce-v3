@@ -282,7 +282,7 @@ function AgentRegistryForm({
           </label>
           : <div className="grid content-start gap-1 text-[13px]"><span className="font-medium">Computadora</span>
             <span>{hostOptions.find((host) => host.host_id === currentHost)?.display_name ?? currentHost}</span>
-            {hasRuntime(agent) ? <span className={HINT}>Se elige al crear el agente; trasladarlo a otra computadora no está soportado.</span> : null}</div>}
+            {hasRuntime(agent) ? <span className={HINT}>La computadora se cambia desde «Ejecución» mediante una operación de flota. Esa operación no copia los datos del espacio.</span> : null}</div>}
         <div className="grid content-start gap-1">
           <label>Recepción de mensajes
             <select value={draft.enabled} onChange={(event) => { update({ enabled: event.target.value }); }} disabled={editDisabled}>

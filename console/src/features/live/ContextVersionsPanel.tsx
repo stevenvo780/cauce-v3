@@ -33,6 +33,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     return () => { window.removeEventListener('beforeunload', warn); };
   }, [draft]);
   const snapshot = context.data;
+  const nextCursor = older ? older.next_cursor : history.data?.next_cursor;
   const files = draft?.files ?? snapshot?.files ?? [];
   const current = files.find(file => file.path === selected) ?? files.at(0);
   const appliedNotice = snapshot?.application.last_error ? applicationNotice(snapshot.application.last_error) : undefined;
@@ -46,6 +47,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       if (discard) { setDraft(undefined); setRestoring(undefined); setOlder(undefined); setDiff(undefined); }
       const reread = await context.reload();
       const versions = await history.reload();
+      if (!versions.error) setOlder(undefined);
       if (reread.error || versions.error) setError('La operación respondió, pero su estado no se pudo releer. Reintenta la consulta.');
       else setNotice(message);
     } catch (cause) { setError(contextRequestMessage(cause, 'No se confirmó la operación del contexto.')); }
@@ -82,7 +84,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     finally { setBusy(false); }
   }
   async function loadOlder() {
-    const cursor = older?.next_cursor ?? history.data?.next_cursor;
+    const cursor = nextCursor;
     if (cursor == null || busy) return;
     setBusy(true); setError('');
     try { const next = await api.getContextVersions(tenantId, alias, cursor); setOlder(previous => ({ ...next, entries: [...previous?.entries ?? [], ...next.entries] })); }
@@ -138,7 +140,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
         <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy || !snapshot} onClick={() => { void compare(entry.version); }}>Ver diferencias de versión {entry.version}</Button>
           <Button size="sm" disabled={!writable || !!draft} onClick={() => { setRestoring(entry.version); }}>Restaurar versión {entry.version}</Button></div></li>)}</ul>
       {history.data && !history.data.entries.length ? <p>Aún no hay cambios registrados.</p> : null}
-      {(older?.next_cursor ?? history.data?.next_cursor) != null ? <Button disabled={busy} onClick={() => { void loadOlder(); }}>Leer versiones anteriores</Button> : null}
+      {nextCursor != null ? <Button disabled={busy} onClick={() => { void loadOlder(); }}>Leer versiones anteriores</Button> : null}
     </section>
     {diff ? <section aria-label="Diferencias de contexto"><h3>Versión {diff.from} a {diff.to}</h3>{!diff.files.length ? <p>Sin diferencias.</p> : null}
       {diff.files.map(file => <details key={file.path} open><summary>{file.path} · {file.change === 'added' ? 'Añadido' : file.change === 'deleted' ? 'Eliminado' : 'Modificado'}</summary>

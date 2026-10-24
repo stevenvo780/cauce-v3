@@ -176,6 +176,7 @@ it('ofrece el delete necesario para retiro o rotación con confirmación exacta 
 
   await openInventory();
   await user.click(screen.getByRole('button', { name: /retirar o rotar «codex-steven»/i }));
+  expect(screen.getByRole('link', { name: 'Eliminar en Mis cuotas' })).toHaveAttribute('href', '/my-quotas');
   expect(deleteActions().getByRole('button', { name: /previsualizar/i })).toBeDisabled();
   await user.type(screen.getByLabelText(/confirmar borrado de codex-steven/i), 'codex-steven');
   expect(deleteActions().getByRole('button', { name: /^aplicar$/i })).toBeDisabled();

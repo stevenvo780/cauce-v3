@@ -64,7 +64,8 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
   }, [api, actingCompany]);
   const askedToCreate = useRef(false);
   useEffect(() => {
-    if (!startCreating || askedToCreate.current || loading || !inventory?.capabilities.create) return;
+    if (!startCreating) { askedToCreate.current = false; return; }
+    if (askedToCreate.current || loading || !inventory?.capabilities.create) return;
     askedToCreate.current = true; setEditing({}); setConfirmation(undefined); setNotice('');
   }, [startCreating, loading, inventory]);
   useEffect(() => api.onAuthGenerationChange(() => {

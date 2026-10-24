@@ -254,6 +254,11 @@ export function AccountsInventory({ config, access, registry }: {
         <Notice tone="danger" role="note">
           El borrado falla si cualquier agente conserva acceso a esta cuenta. Quitá antes esos accesos y retira sus entornos de consulta.
         </Notice>
+        <Notice tone="info">
+          Para eliminar la cuenta y su historial de cuotas, confirma su eliminación en «Mis cuotas» después de retirar sus entornos.
+          Este formulario solo elimina registros sin dependencias.
+          <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Eliminar en Mis cuotas</LinkButton>
+        </Notice>
         <label>
           <span>Confirmá escribiendo <strong className="mono">{form.accountId}</strong></span>
           <input
