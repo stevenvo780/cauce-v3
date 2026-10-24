@@ -25,10 +25,11 @@ export interface SpaceBackupRow {
   id:string;company_id:string;tenant_id:string;alias:string;host_id:string;requested_by:string;idempotency_key:string;
   policy_sha256:string;agent_snapshot:SpaceBackupAgent;status:'pending'|'running'|'ready'|'failed';
   error:'HOST_UNAVAILABLE'|'SCOPE_CHANGED'|'EXPORT_FAILED'|'EXPIRED'|'LIMIT_EXCEEDED'|null;claim_token:string|null;claim_epoch:number;
-  lease_until:Date|null;expires_at:Date;received_bytes:number;bytes:number|null;sha256:string|null;manifest_sha256:string|null;
+  lease_until:Date|null;created_at:Date;expires_at:Date;received_bytes:number;bytes:number|null;sha256:string|null;manifest_sha256:string|null;
 }
 export function spaceBackupReceipt(row:SpaceBackupRow) {
   return {id:row.id,company_id:row.company_id,tenant_id:row.tenant_id,alias:row.alias,status:row.status,
     bytes:row.bytes,sha256:row.sha256,manifest_sha256:row.manifest_sha256,error:row.error,
+    created_at:row.created_at.toISOString(),expires_at:row.expires_at.toISOString(),
     download_url:row.status==='ready'?`/v3/console/spaces/${encodeURIComponent(row.tenant_id)}/${encodeURIComponent(row.alias)}/backups/${row.id}/download`:null};
 }

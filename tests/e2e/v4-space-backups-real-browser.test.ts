@@ -9,7 +9,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
-  asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
+  apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Page, type V4Person,
 } from './v4-console-real-browser.helpers.js';
 import { registerSpaceBackupHostRoutes } from '../../services/gateway/src/fleet/space-backup.routes.js';
@@ -53,6 +53,7 @@ let hostApp: FastifyInstance | undefined;
 let worker: SpaceBackupHost | undefined;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 let backupId = '';
+let retainedBackupId = '';
 let sourceLargeSha256 = '';
 let sourceNoteSha256 = '';
 let sourceContextStateSha256 = '';
@@ -66,7 +67,8 @@ const base = (): string => active().baseUrl;
 const pool = () => active().database.pool;
 const ownerPage = (): V4Page => { if (!pageA) throw new Error('backup owner has no page yet'); return pageA; };
 const agentUrl = (): string => `${base()}/messages/${hub}/${alias}?view=context`;
-const backupPath = (id: string): string => `/v3/console/spaces/${hub}/${alias}/backups/${id}`;
+const backupsPath = (): string => `/v3/console/spaces/${hub}/${alias}/backups`;
+const backupPath = (id: string): string => `${backupsPath()}/${id}`;
 
 async function freshPage(label: string): Promise<V4Page> {
   const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
@@ -81,6 +83,13 @@ async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Pr
   }
 }
 
+async function screenshotEvidence(page: V4Page, name: string): Promise<void> {
+  const directory = process.env.CAUCE_SPACE_BACKUP_BROWSER_EVIDENCE_DIRECTORY;
+  if (!directory) return;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await page.screenshot({ path: join(directory, `${name}.png`), fullPage: true });
+}
+
 async function registerCompany(page: V4Page, person: V4Person): Promise<void> {
   const form = await openRegistration(page, base());
   await fillRegistration(form, person);
@@ -92,12 +101,28 @@ async function refreshCapabilities(): Promise<void> {
   await pool().query("UPDATE fleet_host_identities SET capabilities_seen_at=now() WHERE host_id=$1", [hostId]);
 }
 
-async function storedBackup(): Promise<{ status: string; error: string | null; bytes: number | null; sha256: string | null }> {
+async function storedBackup(id = backupId): Promise<{ status: string; error: string | null; bytes: number | null; sha256: string | null }> {
   const rows = await pool().query<{ status: string; error: string | null; bytes: string | null; sha256: string | null }>(
-    'SELECT status,error,bytes::text,sha256 FROM space_backups WHERE id=$1', [backupId]);
+    'SELECT status,error,bytes::text,sha256 FROM space_backups WHERE id=$1', [id]);
   const row = rows.rows[0];
   if (!row) throw new Error('canary backup row is absent');
   return { status: row.status, error: row.error, bytes: row.bytes === null ? null : Number(row.bytes), sha256: row.sha256 };
+}
+
+async function exportBackup(id: string): Promise<Awaited<ReturnType<typeof storedBackup>>> {
+  const host = worker;
+  if (!host) throw new Error('space backup host worker is not initialized');
+  const deadline = Date.now() + 200_000;
+  let current = await storedBackup(id);
+  while (Date.now() < deadline) {
+    await refreshCapabilities();
+    const worked = await host.runOnce(new AbortController().signal);
+    current = await storedBackup(id);
+    if (current.status === 'ready' || current.status === 'failed') break;
+    if (!worked) await sleep(500);
+  }
+  expect(current, JSON.stringify(current)).toMatchObject({ status: 'ready', error: null });
+  return current;
 }
 
 interface PlaywrightDownload { saveAs(path: string): Promise<void> }
@@ -311,7 +336,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 30_000 });
       await page.getByRole('region', { name: 'Backup del espacio', exact: true }).waitFor({ timeout: 20_000 });
-      await page.getByText('Todavía no se creó un backup desde esta ficha. Crea el primero para poder descargarlo.', { exact: true })
+      await page.getByText('No hay copias guardadas de este espacio.', { exact: true })
         .waitFor({ timeout: 20_000 });
     });
     const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
@@ -325,19 +350,8 @@ describe('copia de espacio desde navegador real con exportación física firmada
     expect(backupId).toMatch(/^[0-9a-f-]{36}$/u);
     expect((await storedBackup()).status).toBe('pending');
 
-    const host = worker;
-    if (!host) throw new Error('space backup host worker is not initialized');
     await step(page, 'signed physical export above 32 MiB', async () => {
-      const deadline = Date.now() + 200_000;
-      let current = await storedBackup();
-      while (Date.now() < deadline) {
-        await refreshCapabilities();
-        const worked = await host.runOnce(new AbortController().signal);
-        current = await storedBackup();
-        if (current.status === 'ready' || current.status === 'failed') break;
-        if (!worked) await sleep(500);
-      }
-      expect(current, JSON.stringify(current)).toMatchObject({ status: 'ready', error: null });
+      const current = await exportBackup(backupId);
       expect(current.bytes ?? 0).toBeGreaterThan(32 * 1024 * 1024);
       receiptBytes = current.bytes ?? 0;
       receiptSha256 = current.sha256 ?? '';
@@ -457,13 +471,95 @@ describe('copia de espacio desde navegador real con exportación física firmada
     }));
   }, 240_000);
 
+  it('recupera copias tras reabrir y recargar, descarga la anterior y elimina solo la confirmada con su archivo físico', async () => {
+    const page = ownerPage();
+    const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    await panel.getByRole('button', { name: 'Crear otro backup', exact: true }).click();
+    await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
+    retainedBackupId = (await pool().query<{ id: string }>(
+      'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 AND id<>$3', [hub, alias, backupId])).rows[0]?.id ?? '';
+    expect(retainedBackupId).toMatch(/^[0-9a-f-]{36}$/u);
+    const retained = await step(page, 'second signed physical export', () => exportBackup(retainedBackupId));
+    await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
+
+    await step(page, 'reopen and reload persisted backup list', async () => {
+      await page.goto(base(), { waitUntil: 'domcontentloaded' });
+      await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
+      await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
+      await panel.getByRole('list', { name: 'Copias guardadas', exact: true }).waitFor({ timeout: 30_000 });
+      expect(await panel.getByRole('listitem').count()).toBe(2);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await panel.getByRole('list', { name: 'Copias guardadas', exact: true }).waitFor({ timeout: 30_000 });
+      expect(await panel.getByRole('listitem').count()).toBe(2);
+      const listing = await apiGet(page, backupsPath());
+      expect(listing.status).toBe(200);
+      const receipts = listing.body.backups as { id: string; status: string; bytes: number; created_at: string; expires_at: string }[];
+      expect(receipts.map(row => row.id).sort()).toEqual([backupId, retainedBackupId].sort());
+      for (const receipt of receipts) {
+        expect(receipt.status).toBe('ready');
+        expect(receipt.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+        expect(Date.parse(receipt.expires_at)).toBeGreaterThan(Date.parse(receipt.created_at));
+        const row = panel.getByRole('listitem').filter({ hasText: `Ver copia ${receipt.id.slice(0, 8)}` });
+        const dates = await page.evaluate((value) => [value.created_at, value.expires_at].map(date => new Date(date).toLocaleString('es-CO')), receipt);
+        const text = await row.innerText();
+        expect(text).toContain(dates[0]); expect(text).toContain(`Caduca: ${dates[1] ?? ''}`);
+        expect(text).toContain('Lista para descargar'); expect(text).toContain(`${(receipt.bytes / 1024 / 1024).toFixed(2)} MiB`);
+      }
+      await screenshotEvidence(page, 'backups-after-reload');
+    });
+
+    const oldRow = panel.getByRole('listitem').filter({ hasText: `Ver copia ${backupId.slice(0, 8)}` });
+    await step(page, 'download older ready backup from its persisted row', async () => {
+      await page.evaluate(() => { if ('showSaveFilePicker' in window) Reflect.deleteProperty(window, 'showSaveFilePicker'); });
+      const downloadable = page as DownloadCapablePage;
+      if (!downloadable.waitForEvent) throw new Error('real browser downloads must be observable');
+      const downloadWait = downloadable.waitForEvent('download', { timeout: 25_000 });
+      await oldRow.getByRole('button', { name: `Descargar copia ${backupId.slice(0, 8)}`, exact: true }).click();
+      const downloaded = await downloadWait;
+      const archive = join(canaryRoot, 'download', `older-${backupId}.zip`);
+      await downloaded.saveAs(archive);
+      expect(digest(await readFile(archive))).toBe(receiptSha256);
+    });
+    await step(page, 'cancel and confirm removal of one physical backup', async () => {
+      const remove = oldRow.getByRole('button', { name: `Eliminar copia ${backupId.slice(0, 8)}`, exact: true });
+      const dialog = page.getByRole('alertdialog', { name: 'Eliminar copia del espacio', exact: true });
+      await remove.click();
+      await dialog.waitFor();
+      await screenshotEvidence(page, 'backup-delete-confirmation');
+      await dialog.getByRole('button', { name: 'Conservar copia', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden' });
+      expect((await storedBackup()).status).toBe('ready'); await access(join(storageDirectory, `${backupId}.zip`));
+      await remove.click();
+      await dialog.getByRole('button', { name: 'Eliminar copia definitivamente', exact: true }).click();
+      await panel.getByText('Copia eliminada del servidor.', { exact: true }).waitFor({ timeout: 30_000 });
+      expect(await oldRow.count()).toBe(0);
+      expect((await pool().query('SELECT 1 FROM space_backups WHERE id=$1', [backupId])).rowCount).toBe(0);
+      await expect(access(join(storageDirectory, `${backupId}.zip`))).rejects.toThrow();
+      expect(await storedBackup(retainedBackupId)).toEqual(retained);
+      expect(digest(await readFile(join(storageDirectory, `${retainedBackupId}.zip`)))).toBe(retained.sha256);
+      await panel.getByRole('button', { name: 'Actualizar copias', exact: true }).click();
+      await panel.getByRole('button', { name: 'Actualizar copias', exact: true }).waitFor();
+      expect(await panel.getByRole('listitem').count()).toBe(1);
+      expect(await oldRow.count()).toBe(0);
+      expect(await panel.getByRole('button', { name: `Descargar copia ${retainedBackupId.slice(0, 8)}`, exact: true }).count()).toBe(1);
+    });
+    console.info('SPACE_BACKUP_BROWSER_DELETE_RECEIPT ' + JSON.stringify({
+      deleted_backup_id: backupId, retained_backup_id: retainedBackupId,
+      reopened_and_reloaded: true, older_download_verified: true, older_download_mode: 'browser-without-file-system-access', cancellation_preserved_copy: true,
+      deleted_row_absent: true, deleted_archive_absent: true, retained_archive_verified: true,
+    }));
+  }, 240_000);
+
   it('rechaza la lectura y la ficha del espacio para otra empresa sin filtrar su copia', async () => {
     if (!pageB) throw new Error('foreign owner has no page yet');
     const page = pageB;
-    errors.expectHttpError(backupPath(backupId), 404);
-    expectDeniedArchive(await readDenied(page, backupPath(backupId)));
-    errors.expectHttpError(`${backupPath(backupId)}/download`, 404);
-    expectDeniedArchive(await readDenied(page, `${backupPath(backupId)}/download`));
+    errors.expectHttpError(backupsPath(), 404);
+    expectDeniedArchive(await readDenied(page, backupsPath()));
+    const existingId = retainedBackupId || backupId;
+    errors.expectHttpError(backupPath(existingId), 404);
+    expectDeniedArchive(await readDenied(page, backupPath(existingId)));
+    errors.expectHttpError(`${backupPath(existingId)}/download`, 404);
+    expectDeniedArchive(await readDenied(page, `${backupPath(existingId)}/download`));
     await step(page, 'foreign owner cannot open the canary agent', async () => {
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByText('No encontramos esa conversación', { exact: true }).waitFor({ timeout: 20_000 });

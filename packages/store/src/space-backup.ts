@@ -52,6 +52,32 @@ export class SpaceBackupRepository {
       return spaceBackupReceipt(row);
     });
   }
+  list(source:CompanyAuthoritySource,tenant:string,alias:string) {
+    return withTransaction(this.pool,async client=>{
+      const authority=await source(client);assertSpaceBackupAuthority(authority,tenant);
+      await readSpaceBackupAgent(client,authority.actingCompany,tenant,alias);
+      await client.query("UPDATE space_backups SET status='failed',error='EXPIRED',lease_until=NULL WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND expires_at<=now()",
+        [authority.actingCompany,tenant,alias]);
+      const rows=(await client.query<SpaceBackupRow>('SELECT * FROM space_backups WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY created_at DESC,id DESC',
+        [authority.actingCompany,tenant,alias])).rows;
+      return rows.map(spaceBackupReceipt);
+    });
+  }
+  remove(source:CompanyAuthoritySource,tenant:string,alias:string,id:string,removeCopy:(row:SpaceBackupRow)=>Promise<void>):Promise<void> {
+    return withTransaction(this.pool,async client=>{
+      const authority=await source(client);assertSpaceBackupAuthority(authority,tenant);
+      await readSpaceBackupAgent(client,authority.actingCompany,tenant,alias);
+      await client.query('SELECT pg_advisory_xact_lock($1)',[783_003_060]);
+      const row=(await client.query<SpaceBackupRow>('SELECT * FROM space_backups WHERE id=$1 AND company_id=$2 AND tenant_id=$3 AND alias=$4 FOR UPDATE',
+        [id,authority.actingCompany,tenant,alias])).rows[0];
+      if (!row) throw new StoreError('not_found','space backup is unavailable');
+      await removeCopy(row);
+      await client.query('DELETE FROM space_backups WHERE id=$1',[row.id]);
+      await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,company_id,actor_human_id,action,decision,metadata)
+        VALUES($1,$2,$3,$4,'space.backup.delete','allow',$5::jsonb)`,[authority.homeTenant,authority.alias,authority.actingCompany,authority.humanId,
+        JSON.stringify({id:row.id,tenant_id:tenant,alias,host_id:row.host_id,component:'backup'})]);
+    });
+  }
   async scoped<T>(source:CompanyAuthoritySource,tenant:string,alias:string,id:string,work:(row:SpaceBackupRow,client:DatabaseClient)=>Promise<T>):Promise<T> {
     return withTransaction(this.pool,async client=>{
       const authority=await source(client);assertSpaceBackupAuthority(authority,tenant);

@@ -1,5 +1,5 @@
 import { createHash,randomBytes,randomUUID,sign } from 'node:crypto';
-import { chmod,mkdir,mkdtemp,readFile,rm,truncate,writeFile } from 'node:fs/promises';
+import { chmod,mkdir,mkdtemp,readFile,readdir,rm,truncate,writeFile } from 'node:fs/promises';
 import { tmpdir,userInfo } from 'node:os';
 import { join } from 'node:path';
 import Fastify,{type FastifyInstance} from 'fastify';
@@ -57,6 +57,9 @@ beforeEach(async()=>{
 afterEach(async()=>{await app.close();await current?.close();current=undefined;await rm(root,{recursive:true,force:true});});
 afterAll(async()=>{if(database){await database.pool.end();await database.container.stop();}});
 function post(payload:Record<string,unknown>,headers:Record<string,string>={}) {return app.inject({method:'POST',url:base(),payload,headers:{cookie,origin:'http://localhost','x-csrf-token':csrf,...headers}});}
+function remove(id:string,payload:Record<string,unknown>={confirm:true},headers:Record<string,string>={}) {
+  return app.inject({method:'DELETE',url:`${base()}/${id}`,payload,headers:{cookie,origin:'http://localhost','x-csrf-token':csrf,...headers}});
+}
 function hostPacket(target:ChannelHost,payload:Record<string,unknown>) {
   const path=`/v3/fleet/hosts/${target.host_id}/space-backups`;
   const packet={host_id:target.host_id,company_id:target.company_id,issued_at:Date.now(),nonce:randomUUID().replaceAll('-','').repeat(2),payload,proof:''};
@@ -79,6 +82,50 @@ async function upload(claim:SpaceBackupClaim) {
   return receipt;
 }
 describe('durable space backup with real PostgreSQL runtime role and signed HTTP',()=>{
+  it('rediscovers dated receipts and deletes the selected ZIP and every epoch before releasing its row',async()=>{
+    expect((await app.inject({method:'GET',url:base(),headers:{cookie}})).json()).toEqual({backups:[]});
+    const {claim}=await createClaim();await upload(claim);expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(200);
+    const pending=await post({idempotency_key:'retained-other-copy'});expect(pending.statusCode).toBe(202);
+    const pendingId=pending.json<{id:string}>().id;
+    const listing=await app.inject({method:'GET',url:base(),headers:{cookie}});expect(listing.statusCode).toBe(200);
+    const backups=listing.json<{backups:{id:string;created_at:string;expires_at:string;status:string;bytes:number|null}[]}>().backups;
+    expect(backups.map(backup=>backup.id)).toEqual([pendingId,claim.id]);
+    expect(backups.map(backup=>backup.status)).toEqual(['pending','ready']);
+    expect(backups[1]?.bytes).toBeGreaterThan(0);
+    for(const backup of backups) {
+      expect(new Date(backup.created_at).toISOString()).toBe(backup.created_at);
+      expect(new Date(backup.expires_at).toISOString()).toBe(backup.expires_at);
+    }
+    expect(listing.body).not.toMatch(/claim_token|agent_snapshot|requested_by|idempotency_key/u);
+    for(const epoch of [1,17]) await writeFile(join(storage.directory,`${claim.id}.${String(epoch)}.part`),'partial',{mode:0o600});
+    await writeFile(join(storage.directory,`${pendingId}.1.part`),'preserved',{mode:0o600});
+    expect((await remove(claim.id)).statusCode).toBe(204);
+    expect((await readdir(storage.directory)).sort()).toEqual([`${pendingId}.1.part`]);
+    expect((await pool.query('SELECT id FROM space_backups WHERE id=$1',[claim.id])).rowCount).toBe(0);
+    expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(409);
+    expect((await app.inject({method:'GET',url:`${base()}/${claim.id}`,headers:{cookie}})).statusCode).toBe(404);
+    expect((await app.inject({method:'GET',url:base(),headers:{cookie}})).json<{backups:{id:string}[]}>().backups.map(backup=>backup.id)).toEqual([pendingId]);
+    const next=(await command({action:'claim'})).json<{claim:SpaceBackupClaim}>().claim;
+    expect(next.id).toBe(pendingId);expect((await remove(pendingId)).statusCode).toBe(204);
+    expect((await command({action:'begin',claim:fence(next),bytes:1,sha256:'1'.repeat(64),manifest_sha256:'2'.repeat(64)})).statusCode).toBe(409);
+    expect((await command({action:'append',claim:fence(next),offset:0,data:'Wg=='})).statusCode).toBe(409);
+    expect(await readdir(storage.directory)).toEqual([]);
+  });
+  it('requires deletion confirmation, preserves a row on unlink failure and releases its reservation only after retry',async()=>{
+    storage.companyMaxBytes=SPACE_BACKUP_MAX_BYTES;storage.globalMaxBytes=SPACE_BACKUP_MAX_BYTES;
+    const {claim}=await createClaim();
+    expect((await remove(claim.id,{})).statusCode).toBe(400);
+    expect((await remove(claim.id,{confirm:false})).statusCode).toBe(400);
+    expect((await remove(claim.id,{confirm:true},{'x-csrf-token':''})).statusCode).toBe(403);
+    expect((await remove(claim.id,{confirm:true},{origin:'https://foreign.example'})).statusCode).toBe(403);
+    await mkdir(join(storage.directory,`${claim.id}.zip`),{mode:0o700});
+    expect((await remove(claim.id)).statusCode).toBe(503);
+    expect((await pool.query('SELECT status FROM space_backups WHERE id=$1',[claim.id])).rows).toEqual([{status:'running'}]);
+    expect((await post({idempotency_key:'still-reserved-after-unlink-failure'})).statusCode).toBe(409);
+    await rm(join(storage.directory,`${claim.id}.zip`),{recursive:true});
+    expect((await remove(claim.id)).statusCode).toBe(204);
+    expect((await post({idempotency_key:'freed-after-individual-deletion'})).statusCode).toBe(202);
+  });
   it('records the verified backup host and component without private snapshots or duplicate events',async()=>{
     const response=await post({idempotency_key:'diagnostic-backup-audit'});expect(response.statusCode).toBe(202);
     const id=response.json<{id:string}>().id;
@@ -141,15 +188,27 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect(digest(await readFile(join(restored,'projects/work.txt')))).toBe(digest(Buffer.alloc(100_000,65)));
     await expect(readFile(join(restored,'config/auth.json'))).rejects.toThrow();
   },240_000);
-  it('requires exact CSRF, human authority and target company on create/read/download',async()=>{
+  it('requires exact CSRF, human authority and target company on create/list/read/download/delete',async()=>{
     expect((await post({idempotency_key:'csrf-failed'},{'x-csrf-token':''})).statusCode).toBe(403);
     expect((await post({idempotency_key:'origin-failed'},{origin:'https://foreign.example'})).statusCode).toBe(403);
     const {id}=await createClaim();const repository=new SpaceBackupRepository(pool);
     await expect(repository.get(companySource(south),north.hub.id,'worker',id)).rejects.toMatchObject({code:'not_found'});
+    await expect(repository.list(companySource(south),north.hub.id,'worker')).rejects.toMatchObject({code:'not_found'});
+    const login=await app.inject({method:'POST',url:'/v3/auth/login',headers:{origin:'http://localhost'},payload:{email:south.user.email,password}});
+    expect(login.statusCode).toBe(200);const header=login.headers['set-cookie'];const text=Array.isArray(header)?header[0]:header;
+    const foreignCookie=text?.split(';',1)[0]??'';
+    expect((await app.inject({method:'GET',url:base(),headers:{cookie:foreignCookie}})).statusCode).toBe(404);
+    expect((await remove(id,{confirm:true},{cookie:foreignCookie,'x-csrf-token':login.json<{csrf_token:string}>().csrf_token})).statusCode).toBe(404);
+    for(const url of [`/v3/console/spaces/${south.hub.id}/worker/backups`,`/v3/console/spaces/${north.hub.id}/other/backups`]) {
+      expect((await app.inject({method:'GET',url,headers:{cookie}})).statusCode).toBe(404);
+      expect((await app.inject({method:'DELETE',url:`${url}/${id}`,payload:{confirm:true},headers:{cookie,origin:'http://localhost','x-csrf-token':csrf}})).statusCode).toBe(404);
+    }
     expect((await app.inject({method:'GET',url:`${base()}/${id}/download`,headers:{cookie}})).statusCode).toBe(409);
     await admin.query('UPDATE human_tenant_memberships SET enabled=false,revoked_at=now() WHERE human_id=$1',[north.user.id]);
     expect((await app.inject({method:'GET',url:`${base()}/${id}`,headers:{cookie}})).statusCode).toBe(403);
     expect((await post({idempotency_key:'revoked-failed'})).statusCode).toBe(403);
+    expect((await app.inject({method:'GET',url:base(),headers:{cookie}})).statusCode).toBe(403);
+    expect((await remove(id)).statusCode).toBe(403);
   });
   it('fences old epochs, other signed hosts and replays, but permits exact accepted chunk retry',async()=>{
     const {claim}=await createClaim();expect((await command({action:'renew',claim:fence(claim)},other)).statusCode).toBe(409);
@@ -214,6 +273,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     await admin.query("UPDATE space_backups SET expires_at=now()-interval '1 second' WHERE id=$1",[claim.id]);
     expect((await command({action:'claim'})).json()).toEqual({claim:null});
     expect((await app.inject({method:'GET',url:`${base()}/${claim.id}`,headers:{cookie}})).json()).toMatchObject({status:'failed',error:'EXPIRED',download_url:null});
+    expect((await app.inject({method:'GET',url:base(),headers:{cookie}})).json()).toMatchObject({backups:[{id:claim.id,status:'failed',error:'EXPIRED',download_url:null}]});
     await expect(readFile(join(storage.directory,`${claim.id}.17.part`))).rejects.toThrow();
     expect(await readFile(join(storage.directory,'unrelated-file'),'utf8')).toBe('preserved');
     const repeated=await new SpaceBackupRepository(pool).enqueue(companySource(north),north.hub.id,'worker',

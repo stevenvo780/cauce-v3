@@ -13,6 +13,7 @@ import { canBackupSpace } from './space-backup-authority';
 const state = { authenticated: true, subject: 'owner@example.test', home_tenant: 'One', authority: { role: 'company_owner', scope: 'company',
   home_company: 'one', acting_company: 'one', platform_override: false } } satisfies ConsoleAuthState;
 const pending: SpaceBackup = { id: '00000000-0000-4000-8000-000000000050', company_id: 'one', tenant_id: 'One', alias: 'agent',
+  created_at: '2026-10-24T00:00:00.000Z', expires_at: '2099-01-01T00:00:00.000Z',
   status: 'pending', sha256: null, manifest_sha256: null, bytes: null, error: null, download_url: null };
 const ready: SpaceBackup = { ...pending, status: 'ready', sha256: 'a'.repeat(64), manifest_sha256: 'b'.repeat(64), bytes: 22,
   download_url: `/v3/console/spaces/One/agent/backups/${pending.id}/download` };
@@ -20,6 +21,7 @@ let clicked: string[] = [];
 function panel(session: ConsoleAuthState = state) { return <CompanySessionProvider state={session}><SpaceBackupPanel tenantId="One" alias="agent" /></CompanySessionProvider>; }
 beforeEach(() => {
   clicked = [];
+  vi.spyOn(testApi, 'listSpaceBackups').mockResolvedValue([]);
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked.push(this.href); });
 });
 afterEach(() => { vi.useRealTimers(); });
@@ -40,6 +42,12 @@ it('conserva idempotency_key tras una respuesta incierta y genera otra sólo par
   expect(create.mock.calls[1]?.[1]).toBe(create.mock.calls[0]?.[1]);
   fireEvent.click(screen.getByRole('button', { name: 'Crear otro backup' })); await waitFor(() => { expect(create).toHaveBeenCalledTimes(3); });
   expect(create.mock.calls[2]?.[1]).not.toBe(create.mock.calls[1]?.[1]);
+  await screen.findByText('Backup disponible');
+  fireEvent.click(screen.getByRole('button', { name: 'Actualizar copias' }));
+  await screen.findByText('No hay copias guardadas de este espacio.');
+  fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
+  await waitFor(() => { expect(create).toHaveBeenCalledTimes(4); });
+  expect(create.mock.calls[3]?.[1]).not.toBe(create.mock.calls[2]?.[1]);
 });
 it('error failed no ofrece descarga hasta que una relectura devuelve ready', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...pending, status: 'failed', error: 'EXPIRED' });
@@ -52,7 +60,7 @@ it('error failed no ofrece descarga hasta que una relectura devuelve ready', asy
 it('un backup de 100 MiB se muestra y se descarga por enlace', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: 100 * 1024 * 1024 });
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
-  expect(await screen.findByText(/100\.00 MiB/u)).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
+  expect(await screen.findByText(/100\.00 MiB · ZIP listo/u)).toBeVisible(); fireEvent.click(screen.getByRole('button', { name: 'Descargar backup ZIP' }));
   expect(clicked).toHaveLength(1);
 });
 function savePicker(name = `space-agent-${ready.id}.zip`) {
@@ -225,8 +233,29 @@ it('indica esperar y actualizar cuando el servicio de backups no está disponibl
   expect(alert).toHaveTextContent(/Espera a que se recupere y actualiza el estado/u);
   expect(alert.textContent).not.toContain('space backup service unavailable');
 });
-it('al abrir declara que todavía no hay backup creado, sin afirmar que el servidor no tenga ninguno', () => {
+it('al abrir carga las copias y solo declara vacío tras leer el servidor', async () => {
   renderWithApi(panel());
-  expect(screen.getByRole('status')).toHaveTextContent(/Todavía no se creó un backup desde esta ficha/u);
+  expect(screen.getByRole('status')).toHaveTextContent(/Cargando copias/u);
+  expect(await screen.findByText('No hay copias guardadas de este espacio.')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Crear backup del espacio' })).toBeEnabled();
+});
+it('redescubre copias guardadas y solo elimina la elegida tras confirmar; un fallo conserva la copia', async () => {
+  const other = { ...ready, id: '11111111-0000-4000-8000-000000000051' };
+  vi.spyOn(testApi, 'listSpaceBackups').mockResolvedValue([ready, other]);
+  const remove = vi.spyOn(testApi, 'deleteSpaceBackup').mockRejectedValueOnce(new Error('PRIVATE_PATH')).mockResolvedValue(undefined);
+  renderWithApi(panel());
+  const row = await screen.findByRole('button', { name: 'Eliminar copia 00000000' });
+  expect(screen.getByLabelText('Copias guardadas')).toHaveTextContent(/Lista para descargar/u);
+  expect(screen.getByLabelText('Copias guardadas')).toHaveTextContent(/Caduca:/u);
+  fireEvent.click(row); fireEvent.click(screen.getByRole('button', { name: 'Conservar copia' }));
+  expect(remove).not.toHaveBeenCalled();
+  fireEvent.click(row); fireEvent.click(screen.getByRole('button', { name: 'Eliminar copia definitivamente' }));
+  await waitFor(() => { expect(remove).toHaveBeenCalledOnce(); });
+  expect(await screen.findByRole('alert')).toHaveTextContent(/No se pudo eliminar la copia/u);
+  expect(document.body.textContent).not.toContain('PRIVATE_PATH');
+  fireEvent.click(screen.getByRole('button', { name: 'Eliminar copia definitivamente' }));
+  await screen.findByText('Copia eliminada del servidor.');
+  expect(screen.queryByRole('button', { name: 'Eliminar copia 00000000' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Eliminar copia 11111111' })).toBeVisible();
+  expect(remove).toHaveBeenLastCalledWith({ company_id: 'one', tenant_id: 'One', alias: 'agent' }, ready.id, expect.any(AbortSignal));
 });
