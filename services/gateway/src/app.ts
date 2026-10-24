@@ -12,7 +12,7 @@ import {
 import {
   CauceRepository, type AgentPreferencesRepository, type QuotaEnvironmentOptions, type ConfigurationAuthorityResolver, type subscribeDeliveryWakes,
   type ConnectionSessionFence, type DatabasePool, type DeliveryLeaseCap,
-  type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent,
+  type FencedWakeOutboxRecipient, type LeaseResult, type OutboxEvent, type RuntimeLeaseIdentity,
   type HumanMessageOptions, type PublishOptions, type PublishResult,
 } from '@cauce/store';
 import type { AuthProvider } from './auth.js';
@@ -135,11 +135,13 @@ interface GatewayNarrowedRepository {
     options?: {
       resume?: boolean; resumeWindowMs?: number;
       requireDeclaredCapacity?: boolean; requireEnabledAgent?: boolean;
+      identity?: RuntimeLeaseIdentity | undefined;
     },
   ): Promise<LeaseResult>;
   heartbeat(
     tenantId: Tenant, alias: string, instanceId: string, epoch: number, ttlMs: number,
     connectionToken: string, signal?: AbortSignal,
+    identity?: RuntimeLeaseIdentity,
   ): Promise<string>;
   releaseLease(
     tenantId: Tenant, alias: string, instanceId: string, epoch: number,

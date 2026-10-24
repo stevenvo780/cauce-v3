@@ -2,7 +2,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { WebSocket } from 'ws';
 import type { Tenant } from '@cauce/protocol';
 import type {
-  AgentProfileRepository, DatabasePool, DeliveryLeaseCap, subscribeDeliveryWakes
+  AgentProfileRepository, DatabasePool, DeliveryLeaseCap, RuntimeLeaseIdentity, subscribeDeliveryWakes
 } from '@cauce/store';
 import type { AuthProvider } from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
@@ -75,6 +75,7 @@ export interface Session {
   epoch: number;
   /** Rotated by PostgreSQL on every hello, including a same-instance/same-epoch resume. */
   connectionToken: string;
+  leaseIdentity?: RuntimeLeaseIdentity | undefined;
   abort: AbortController;
   /** A wake that arrived while we were draining. It is served at the end, never lost. */
   drainAgain: boolean;

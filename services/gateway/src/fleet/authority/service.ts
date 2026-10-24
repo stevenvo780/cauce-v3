@@ -111,6 +111,13 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output);
     if (request.action === 'issue' && 'token' in result
         && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
+    if (request.action === 'issue' && request.phase === 'normal' && 'certificate_sha256' in result) {
+      const bound = await client.query(`UPDATE agents SET runtime_certificate_sha256=$4,
+        runtime_certificate_host_id=$5,runtime_certificate_expires_at=$6
+        WHERE tenant_id=$1 AND alias=$2 AND runtime_key=$3 AND host_id=$5`,
+      [agent.tenant_id, agent.alias, agent.runtime_key, result.certificate_sha256, host, result.expires_at]);
+      if (bound.rowCount !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
+    }
     if (request.action === 'verify_absent' || request.action === 'revoke') {
       if (!('authorities' in result) || result.authorities.some(item => item.preserved === true ? !preserveLegacy
         : item.matching_records.length > 0)) {

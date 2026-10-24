@@ -6,6 +6,7 @@ import { visibleMessage } from '../../facades.js';
 import type { GatewayRepository } from '../../app.js';
 import { principal, replyError } from '../shared.js';
 import type { CoreResolvedOptions, CoreRouteOptions, Session } from './contracts.js';
+import { runtimeLeaseIdentity } from './lease-identity.js';
 import {
   RELEASES_CAPACITY, connectionToken, normalizeDeliveryClaim, parseAck,
   parseConnectionBoundBody, sessionKey,
@@ -43,7 +44,8 @@ export function registerCoreRuntimeHttpRoutes(
       }
       const lease = await repository.acquireLease(
         hello.tenant_id, hello.alias, hello.instance_id, hello.capabilities, leaseTtlMs,
-        { requireDeclaredCapacity: true, requireEnabledAgent: true },
+        { requireDeclaredCapacity: true, requireEnabledAgent: true,
+          identity: runtimeLeaseIdentity(request, actor, options.authProvider) },
       );
       if (!lease.acquired) return await reply.code(409).send(lease);
       if (!lease.epoch) throw new StoreError('conflict', 'lease acquisition returned no epoch');
@@ -101,7 +103,7 @@ export function registerCoreRuntimeHttpRoutes(
       );
       const leaseExpiresAt = await repository.heartbeat(
         actor.tenant_id, actor.alias, heartbeat.instance_id, heartbeat.epoch, leaseTtlMs,
-        heartbeat.connection_token,
+        heartbeat.connection_token, undefined, runtimeLeaseIdentity(request, actor, options.authProvider),
       );
       return { lease_expires_at: leaseExpiresAt };
     } catch (error) {

@@ -10,6 +10,7 @@ import {
 } from '@cauce/protocol';
 import type { DatabaseClient } from '../../db.js';
 import { withAbortableTransaction, withTransaction } from '../../db.js';
+import { assertRuntimeLeaseIdentity, auditRuntimeLease, type RuntimeLeaseIdentity } from '../../runtime-lease-identity.js';
 import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from '../agent-context-quarantine.js';
 import { StoreError } from '../errors.js';
@@ -57,7 +58,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
     if (options.requireEnabledAgent === true && options.requireDeclaredCapacity !== true) {
       throw new StoreError('conflict', 'requireEnabledAgent requires requireDeclaredCapacity');
     }
-    return withTransaction(this.pool, async (client) => {
+    return auditRuntimeLease(this.pool, tenantId, alias, 'hello', () => withTransaction(this.pool, async (client) => {
       await client.query("SET LOCAL lock_timeout='5000ms'");
       try {
         await client.query(`SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))`, [
@@ -74,6 +75,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       }
       await assertAgentContextAdmissionAllowed(client, tenantId, alias);
       await this.assertRuntimeRoute(client, tenantId, alias);
+      await assertRuntimeLeaseIdentity(client, tenantId, alias, options.identity);
       if (options.requireDeclaredCapacity === true) {
         const capacity = await client.query<{ cap: number | null; enabled: boolean }>(
           `SELECT max_concurrent_deliveries AS cap, enabled
@@ -157,7 +159,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         connection_token: acquiredLease.connection_token,
         lease_expires_at: acquiredLease.lease_until.toISOString(),
       };
-    });
+    }));
   }
 
 
@@ -169,12 +171,14 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
     ttlMs: number,
     connectionToken?: string,
     signal?: AbortSignal,
+    identity?: RuntimeLeaseIdentity,
   ): Promise<string> {
     if (connectionToken !== undefined && !validConnectionToken(connectionToken)) {
       throw new StoreError('fenced', 'heartbeat requires a valid connection token');
     }
     const work = async (client: DatabaseClient): Promise<string> => {
       await this.assertRuntimeRoute(client, tenantId, alias);
+      await assertRuntimeLeaseIdentity(client, tenantId, alias, identity);
       const result = await client.query<{ lease_until: Date }>(
         `UPDATE connection_leases SET lease_until=now()+$5*interval '1 millisecond',last_heartbeat_at=now()
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4 AND lease_until > now()
@@ -185,9 +189,9 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       if (!lease) throw new StoreError('fenced', 'heartbeat rejected by lease fencing');
       return lease.lease_until.toISOString();
     };
-    return signal === undefined
+    return auditRuntimeLease(this.pool, tenantId, alias, 'heartbeat', () => signal === undefined
       ? withTransaction(this.pool, work)
-      : withAbortableTransaction(this.pool, signal, work);
+      : withAbortableTransaction(this.pool, signal, work));
   }
 
 
