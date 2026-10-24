@@ -456,6 +456,15 @@ Cuando un dueño retira un correo y entra con otro, no se escribe el correo nuev
 
 Si se aplicó un parche en caliente a un release del host, reinicia el ejecutor del host: fija (pins) los ficheros medidos y, sin reinicio, los logins fallan con un desajuste de identidad engañoso.
 
+### Consola en 502 después de reiniciar el VPS
+
+Comprobar, en este orden:
+1. `docker ps -a | grep prod-gateway`. Si el error es `failed to fulfil mount request: open /run/cauce-fleet-v35/auth`, falta la entrada de tmpfiles. Ejecutar `systemd-tmpfiles --create /etc/tmpfiles.d/cauce-fleet-v35-controller.conf` y después `docker start cauce-v3-prod-gateway-1`. La consola se recupera sola en cuanto el gateway resuelve.
+2. `systemctl is-active cauce-fleet-v35-controller cauce-fleet-signed-authority`. Si alguno no está activo, arrancarlo.
+3. Si el journal del controlador repite `Fleet host could not claim work`, el controlador no llega al Postgres. Ejecutar `cauce-fleet-postgres-hosts` y reiniciar las dos unidades.
+
+Las piezas que evitan todo esto están en `docs/v3.5-controlador-despliegue.md`.
+
 ## 3. Diagnóstico y recuperación de un adaptador caído
 
 `cauce <alias>` resuelve primero `~/.config/cauce-v3/alias-host.tsv` del usuario real de la
