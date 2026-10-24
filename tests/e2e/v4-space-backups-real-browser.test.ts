@@ -57,6 +57,7 @@ let retainedBackupId = '';
 let sourceLargeSha256 = '';
 let sourceNoteSha256 = '';
 let sourceContextStateSha256 = '';
+let sourceSpaceDirectory = '';
 let receiptBytes = 0;
 let receiptSha256 = '';
 let downloadChannel = 'unstarted';
@@ -125,7 +126,7 @@ async function exportBackup(id: string): Promise<Awaited<ReturnType<typeof store
   return current;
 }
 
-interface PlaywrightDownload { saveAs(path: string): Promise<void> }
+interface PlaywrightDownload { saveAs(path: string): Promise<void>; path(): Promise<string | null> }
 type DownloadCapablePage = V4Page & {
   waitForEvent?: (event: 'download', options?: { timeout?: number }) => Promise<PlaywrightDownload>;
 };
@@ -252,6 +253,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
     const runtimeRoot = roots.runtime ?? '';
     const stateDirectory = join(runtimeRoot, runtimeKey);
     const space = join(stateDirectory, 'space');
+    sourceSpaceDirectory = space;
     await mkdir(stateDirectory, { mode: 0o700 });
     for (const name of ['context', 'directives', 'projects', 'config', 'data', 'logs']) {
       await mkdir(join(space, name), { recursive: true, mode: 0o700 });
@@ -474,12 +476,14 @@ describe('copia de espacio desde navegador real con exportación física firmada
   it('recupera copias tras reabrir y recargar, descarga la anterior y elimina solo la confirmada con su archivo físico', async () => {
     const page = ownerPage();
     const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    await writeFile(join(sourceSpaceDirectory, 'projects/large.bin'), randomBytes(2 * 1024 * 1024 + 4097), { mode: 0o600 });
     await panel.getByRole('button', { name: 'Crear otro backup', exact: true }).click();
     await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
     retainedBackupId = (await pool().query<{ id: string }>(
       'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 AND id<>$3', [hub, alias, backupId])).rows[0]?.id ?? '';
     expect(retainedBackupId).toMatch(/^[0-9a-f-]{36}$/u);
     const retained = await step(page, 'second signed physical export', () => exportBackup(retainedBackupId));
+    expect(retained.sha256).not.toBe(receiptSha256);
     await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
 
     await step(page, 'reopen and reload persisted backup list', async () => {
@@ -517,7 +521,12 @@ describe('copia de espacio desde navegador real con exportación física firmada
       await oldRow.getByRole('button', { name: `Descargar copia ${backupId.slice(0, 8)}`, exact: true }).click();
       const downloaded = await downloadWait;
       const archive = join(canaryRoot, 'download', `older-${backupId}.zip`);
-      await downloaded.saveAs(archive);
+      const browserFile = await downloaded.path();
+      if (!browserFile?.startsWith('/tmp/playwright-artifacts-')) throw new Error('download artifact is outside the owned browser directory');
+      const copied = spawnSync('docker', ['--context', 'lab', 'cp', `${active().browserContainer}:${browserFile}`, archive],
+        { encoding: 'utf8', timeout: 30_000 });
+      expect(copied.status, copied.stderr).toBe(0);
+      await chmod(archive, 0o600);
       expect(digest(await readFile(archive))).toBe(receiptSha256);
     });
     await step(page, 'cancel and confirm removal of one physical backup', async () => {
@@ -545,7 +554,8 @@ describe('copia de espacio desde navegador real con exportación física firmada
     });
     console.info('SPACE_BACKUP_BROWSER_DELETE_RECEIPT ' + JSON.stringify({
       deleted_backup_id: backupId, retained_backup_id: retainedBackupId,
-      reopened_and_reloaded: true, older_download_verified: true, older_download_mode: 'browser-without-file-system-access', cancellation_preserved_copy: true,
+      reopened_and_reloaded: true, older_download_verified: true, older_download_mode: 'browser-without-file-system-access',
+      older_download_transport: 'owned-browser-container', cancellation_preserved_copy: true,
       deleted_row_absent: true, deleted_archive_absent: true, retained_archive_verified: true,
     }));
   }, 240_000);
