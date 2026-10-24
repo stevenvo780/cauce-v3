@@ -221,6 +221,9 @@ def normalized_capabilities(values) -> set:
 
 
 RELEASE_BIND_DRIFT = frozenset({'helper_source', 'life_source'})
+# A deploy moves the approved image too; the provider session lives in the profile volume, so the
+# container is replaced the same way instead of asking the owner to recreate it by hand.
+REPLACEABLE_DRIFT = RELEASE_BIND_DRIFT | {'image'}
 
 
 def _mount_map(observed: dict) -> dict:
@@ -330,7 +333,7 @@ def require_current_runtime(policy: dict, environment: dict) -> dict:
     if observed is None or observed['State']['Running'] is not True:
         raise SafeFailure('quota environment is not running')
     mismatches = spec_mismatches(policy, environment, observed)
-    if mismatches and mismatches <= RELEASE_BIND_DRIFT and profile_owned(policy, environment, observed):
+    if mismatches and mismatches <= REPLACEABLE_DRIFT and profile_owned(policy, environment, observed):
         replace_release_binds(policy, environment)
         observed = inspect_container(environment['container_name'])
         if observed is None or observed['State']['Running'] is not True:
@@ -452,7 +455,7 @@ def remove(policy: dict, environment: dict) -> dict:
     existing = inspect_container(environment['container_name'])
     if existing is not None:
         mismatches = spec_mismatches(policy, environment, existing)
-        if not (mismatches and mismatches <= RELEASE_BIND_DRIFT and profile_owned(policy, environment, existing)):
+        if not (mismatches and mismatches <= REPLACEABLE_DRIFT and profile_owned(policy, environment, existing)):
             validate(policy, environment, existing)
         docker('rm', '-f', environment['container_name'])
     volume = environment['container_name'] + '-profile'
