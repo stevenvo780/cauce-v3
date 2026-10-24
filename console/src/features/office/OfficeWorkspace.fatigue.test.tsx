@@ -20,7 +20,7 @@ const topology = { tenants: [{ id: 'One', rooms: [
 ] }] };
 function workspace(onAgent = vi.fn()) {
   return <CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
-    <OfficeWorkspace campus={<p>Campus actual</p>} topology={topology} agents={[]} onAgent={onAgent} />
+    <OfficeWorkspace campus={<p>Campus actual</p>} topology={topology} agents={[]} now={Date.now()} onAgent={onAgent} />
   </CompanySessionProvider>;
 }
 const cases: { state: FatigueState; label: string; accounts: QuotaAccount[] }[] = [
@@ -37,23 +37,20 @@ const cases: { state: FatigueState; label: string; accounts: QuotaAccount[] }[] 
   }] }] },
 ];
 
-it.each(cases)('muestra $state con su etiqueta en campus, plano y ficha', async ({ state, label, accounts }) => {
+it.each(cases)('muestra $state con su etiqueta en plano y ficha', async ({ state, label, accounts }) => {
   const reads = vi.spyOn(testApi, 'getQuotaAccounts').mockResolvedValue(snapshot(accounts));
   vi.spyOn(testApi, 'getAgentQuota').mockResolvedValue({ tenant_id: 'One', alias: 'worker', revision: 0, reader_available: true,
     can_query: false, reason: null, status: 'unknown', captured_at: null, binding: null, sample: null, operation: null });
   const user = userEvent.setup(); const onAgent = vi.fn(); const view = renderWithApi(workspace(onAgent));
-  const campus = within(screen.getByRole('region', { name: 'Cansancio de agentes del campus' }));
-  expect(await campus.findByText(label)).toBeVisible();
-  expect(campus.getByText(label).closest('[data-fatigue]')).toHaveAttribute('data-fatigue', state);
-  expect(campus.getAllByRole('button')).toHaveLength(1);
-  expect(campus.queryByText('retired')).not.toBeInTheDocument();
-  await user.click(campus.getByRole('button', { name: `worker ${label}` }));
-  expect(onAgent).toHaveBeenCalledWith('One/worker');
   await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await user.click(await screen.findByRole('button', { name: 'General One' }));
   const roster = within(screen.getByRole('region', { name: 'Agentes de sala One/General' }));
-  expect(roster.getByText(label)).toBeVisible();
+  expect(await roster.findByText(label)).toBeVisible();
   expect(roster.getByText(label).closest('[data-fatigue]')).toHaveAttribute('data-fatigue', state);
+  expect(roster.getAllByRole('button')).toHaveLength(1);
+  expect(roster.queryByText('retired')).not.toBeInTheDocument();
+  await user.click(roster.getByRole('button', { name: `worker ${label}` }));
+  expect(onAgent).toHaveBeenCalledWith('One/worker');
   expect(reads).toHaveBeenCalledTimes(1);
   view.unmount();
   renderWithApi(<AgentQuotaDetail tenant="One" alias="worker" compact />);
@@ -62,24 +59,21 @@ it.each(cases)('muestra $state con su etiqueta en campus, plano y ficha', async 
   expect(within(detail).getByText(label)).toBeVisible();
 });
 
-it('la lectura inicial del campus espera los datos y una consulta fallida se distingue del agotamiento', async () => {
+it('la lectura inicial del plano espera los datos y una consulta fallida se distingue del agotamiento', async () => {
   let resolve: (value: QuotaAccountsSnapshot) => void = () => undefined;
   const pending = new Promise<QuotaAccountsSnapshot>(done => { resolve = done; });
   const reads = vi.spyOn(testApi, 'getQuotaAccounts').mockReturnValue(pending);
   const user = userEvent.setup(); renderWithApi(workspace());
-  const campus = screen.getByRole('region', { name: 'Cansancio de agentes del campus' });
-  expect(within(campus).getByRole('status')).toHaveTextContent('Leyendo cuotas…');
-  expect(campus.querySelector('[data-fatigue]')).toBeNull();
-  await act(async () => { resolve(snapshot([account])); await pending; });
-  expect(await within(campus).findByText('Disponible')).toBeVisible();
-  reads.mockRejectedValue(new Error('No se pudo leer la cuota.'));
   await user.click(screen.getByRole('button', { name: 'Plano editable' }));
-  await user.click(screen.getByRole('button', { name: 'Releer plano y cuotas' }));
-  await waitFor(() => { expect(campus.querySelector('[data-fatigue]')).toHaveAttribute('data-fatigue', 'error'); });
-  await user.click(screen.getByRole('button', { name: 'General One' }));
+  await user.click(await screen.findByRole('button', { name: 'General One' }));
   const roster = screen.getByRole('region', { name: 'Agentes de sala One/General' });
-  expect(roster.querySelector('[data-fatigue]')).toHaveAttribute('data-fatigue', 'error');
+  expect(within(roster).getByRole('status')).toHaveTextContent('Leyendo cuotas…');
+  expect(roster.querySelector('[data-fatigue]')).toBeNull();
+  await act(async () => { resolve(snapshot([account])); await pending; });
+  expect(await within(roster).findByText('Disponible')).toBeVisible();
+  reads.mockRejectedValue(new Error('No se pudo leer la cuota.'));
+  await user.click(screen.getByRole('button', { name: 'Releer plano y cuotas' }));
+  await waitFor(() => { expect(roster.querySelector('[data-fatigue]')).toHaveAttribute('data-fatigue', 'error'); });
+  expect(within(roster).getByText('Error de consulta')).toBeVisible();
   expect(within(roster).queryByText('Sin disponibilidad')).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Campus' }));
-  expect(within(campus).getByText('Error de consulta')).toBeVisible();
 });

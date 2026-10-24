@@ -25,23 +25,21 @@ function Office({ role = 'company_owner' }: { role?: 'company_owner' | 'reader' 
     role, scope: role === 'reader' ? 'tenant' : 'company', home_company: 'one', acting_company: 'one', platform_override: false,
   } }}>
     <button type="button" onClick={() => { setSheet(open => !open); }}>{sheet ? 'Cerrar ficha' : 'Abrir ficha'}</button>
-    <OfficeWorkspace campus={<p>Campus actual</p>} topology={topology} agents={[]} onAgent={() => { setSheet(true); }} />
+    <OfficeWorkspace campus={<p>Campus actual</p>} topology={topology} agents={[]} now={Date.now()} onAgent={() => { setSheet(true); }} />
     {sheet ? <AgentQuotaDetail tenant="One" alias="worker" /> : null}
   </CompanySessionProvider>;
 }
 const mount = (role?: 'company_owner' | 'reader') => render(<ApiProvider api={testApi}><FleetProvider><Office role={role} /></FleetProvider></ApiProvider>);
 
-it('plano, campus y ficha comparten una sola lectura de cuotas y reabrir la ficha no la repite', async () => {
+it('plano y ficha comparten una sola lectura de cuotas y reabrir la ficha no la repite', async () => {
   let remaining = 60; const reads = vi.fn();
   server.use(http.get('*/v3/console/quota-accounts', () => {
     reads(); return HttpResponse.json({ company_id: 'one', observed_at: new Date().toISOString(), accounts: [account(remaining)] });
   }));
   const user = userEvent.setup(); mount();
-  const campus = within(screen.getByRole('region', { name: 'Cansancio de agentes del campus' }));
-  expect(await campus.findByText('Disponible')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await user.click(await screen.findByRole('button', { name: 'General One' }));
-  expect(within(screen.getByRole('region', { name: 'Agentes de sala One/General' })).getByText('Disponible')).toBeVisible();
+  expect(await within(screen.getByRole('region', { name: 'Agentes de sala One/General' })).findByText('Disponible')).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Abrir ficha' }));
   const fatigue = () => screen.getByRole('region', { name: 'Disponibilidad de worker' }).querySelector('[data-fatigue]');
   expect(fatigue()).toHaveAttribute('data-fatigue', 'available');

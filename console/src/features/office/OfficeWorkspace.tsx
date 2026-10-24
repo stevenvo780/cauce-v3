@@ -12,21 +12,21 @@ import type { TopologySnapshot } from '../../api/types';
 import { onNavClick } from '../../router';
 import { useQuotaAccounts } from '../../shell/fleet-context';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
-import { agentFatigue } from '../accounts/quota-availability';
 import { quotaReadFailure } from '../accounts/quota-messages';
-import { FatigueIndicator } from '../accounts/FatigueIndicator';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
 import { officeFailure, officeVersionConflict, planSaveUnavailableReason } from './office-errors';
 import { officeLayoutProblem, officeRoomKey, officeRooms, rebaseOfficeDraft, reconcileOfficeLayout, reconcileOfficeLayoutIncludingSaved } from './office-layout';
+import { agentQuotaBar, READING_QUOTA } from './agent-quota-bar';
 import type { OfficeAgent } from './office-agent';
+import { QuotaMeter } from './QuotaMeter';
 
-export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
-  campus: ReactNode; topology?: TopologySnapshot; agents: readonly OfficeAgent[]; onAgent: (id: string) => void;
+export function OfficeWorkspace({ campus, topology, agents, onAgent, now }: {
+  campus: ReactNode; topology?: TopologySnapshot; agents: readonly OfficeAgent[]; onAgent: (id: string) => void; now: number;
 }) {
   const api = useApi();
   const authority = useCompanyAuthority();
   const layout = useResource('office-layout', () => api.getOfficeLayout());
-  // Plan, campus strip and agent sheet read the one shared quota snapshot of the fleet provider.
+  // Plan, campus and agent sheet read the one shared quota snapshot of the fleet provider.
   const quotas = useQuotaAccounts();
   const [mode, setMode] = useState<'campus' | 'plan'>('campus');
   // `base` is the saved plan the draft started from: after a 409 it tells what the draft changed and what the other person did.
@@ -64,9 +64,12 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     const agent = agents.find(value => value.id === id);
     const cut = id.indexOf('/');
     const reading = quotas.loading && !quotas.data && !quotas.error;
-    const fatigue = quotas.error ? 'error' : agentFatigue(quotas.data?.accounts ?? [], id.slice(0, cut), id.slice(cut + 1));
+    const quota = agentQuotaBar(quotas.data?.accounts ?? [], id, Boolean(quotas.error), now);
     return <Button key={id} size="sm" onClick={() => { onAgent(id); }} className="grid h-auto min-w-0 max-w-full shrink-0 gap-1 whitespace-normal bg-surface p-2" title={agent?.reason}>
-      <span className="min-w-0 wrap-anywhere">{agent?.name ?? id.slice(cut + 1)}</span>{reading ? <span role="status" className="text-xs text-muted">Leyendo cuotas…</span> : <FatigueIndicator state={fatigue} />}
+      <span className="min-w-0 wrap-anywhere">{agent?.name ?? id.slice(cut + 1)}</span>
+      {reading ? <span role="status" className="text-xs text-muted">{READING_QUOTA}</span> : <span className="grid gap-1 text-xs text-muted" data-fatigue={quota.state}>
+        <QuotaMeter quota={quota} className="w-16" /><span>{quota.label}</span>
+      </span>}
     </Button>;
   }
   function update(room: OfficeRoom) {
@@ -174,11 +177,6 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent }: {
     <div key={planSaves} className={mode === 'campus' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
       {mode === 'campus' && quotaFailure ? <div className="shrink-0"><ErrorNotice failure={{ ...quotaFailure,
         message: `${quotaFailure.message}${quotaFailure.message.includes('Relee el plano y las cuotas.') ? '' : ' Relee el plano y las cuotas.'} Abre «Plano editable» para hacerlo.` }} /></div> : null}
-      {/* The strip wraps instead of scrolling sideways: a wheel or a phone swipe never reveals what a horizontal
-          scroller cuts. Two rows stay in view and the rest scrolls down, so the campus keeps its height. */}
-      <section aria-label="Cansancio de agentes del campus" className="flex max-h-36 shrink-0 flex-wrap content-start gap-2 overflow-y-auto border-b border-line bg-subtle p-2">
-        {[...new Set(rooms.flatMap(room => room.agents))].map(agentButton)}
-      </section>
       <div className="min-h-0 flex-1">{campus}</div>
     </div>
     {mode === 'plan' ? <div className="grid min-h-0 flex-1 content-start gap-3 overflow-auto p-4">

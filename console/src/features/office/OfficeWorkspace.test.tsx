@@ -14,7 +14,7 @@ const topology = { tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'Gener
   { id: 'Two', rooms: [{ id: 'general', label: 'General', members: [{ alias: 'worker', enabled: true }] }] }] };
 function workspace(onAgent = vi.fn(), role: 'company_owner' | 'reader' = 'company_owner', map: typeof topology = topology) {
   return <CompanySessionProvider state={{ authenticated: true, authority: { role, scope: role === 'reader' ? 'tenant' : 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
-    <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} onAgent={onAgent} /></CompanySessionProvider>;
+    <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} now={Date.now()} onAgent={onAgent} /></CompanySessionProvider>;
 }
 it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a abrir', async () => {
   let version = 0; let rooms: OfficeRoom[] = []; const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
@@ -296,7 +296,7 @@ it('vuelve a montar el campus tras guardar el plano para que lea el plano nuevo'
   function Campus() { useEffect(() => { mounts(); }, []); return <p>Campus actual</p>; }
   const user = userEvent.setup();
   renderWithApi(<CompanySessionProvider state={{ authenticated: true, authority: { role: 'company_owner', scope: 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
-    <OfficeWorkspace campus={<Campus />} topology={topology} agents={[]} onAgent={vi.fn()} /></CompanySessionProvider>);
+    <OfficeWorkspace campus={<Campus />} topology={topology} agents={[]} now={Date.now()} onAgent={vi.fn()} /></CompanySessionProvider>);
   await user.click(screen.getByRole('button', { name: 'Plano editable' }));
   await waitFor(() => { expect(screen.getByRole('button', { name: 'General One' })).toBeEnabled(); });
   await user.click(screen.getByRole('button', { name: 'General One' })); await user.click(screen.getByRole('button', { name: 'Añadir parte' }));

@@ -319,7 +319,7 @@ export function LiveFleetPage() {
           </Notice>
         ) : null}
         <div className="min-h-0 flex-1">
-        <OfficeWorkspace topology={topology.data} agents={officeAgents} onAgent={(key) => { redirect(`/live?agente=${encodeURIComponent(key)}&ficha=1`); }} campus={
+        <OfficeWorkspace topology={topology.data} agents={officeAgents} now={now} onAgent={(key) => { redirect(`/live?agente=${encodeURIComponent(key)}&ficha=1`); }} campus={
         <OfficeGame
           agents={officeAgents}
           groups={groups}
