@@ -31,8 +31,7 @@ const SLICE_SQL = `WITH identities AS (
     UNION SELECT tenant_id,id FROM rooms WHERE $6::text='tenant' AND tenant_id=$1),
   host_ids AS (SELECT host_id AS id FROM scoped UNION SELECT jsonb_array_elements_text($5::jsonb))
   SELECT jsonb_build_object(
-    'agents',(SELECT jsonb_agg(to_jsonb(entry)-ARRAY['lifecycle_state','updated_at',
-      'runtime_certificate_sha256','runtime_certificate_host_id','runtime_certificate_expires_at'] ORDER BY tenant_id,alias) FROM scoped entry),
+    'agents',(SELECT jsonb_agg(to_jsonb(entry)-ARRAY['lifecycle_state','updated_at'] ORDER BY tenant_id,alias) FROM scoped entry),
     'memberships',(SELECT jsonb_agg(to_jsonb(entry) ORDER BY tenant_id,alias,room_id) FROM member entry),
     'policies',(SELECT jsonb_agg(to_jsonb(entry) ORDER BY role) FROM role_policies entry WHERE role IN (SELECT role FROM member)),
     'ceilings',(SELECT jsonb_agg(to_jsonb(entry) ORDER BY tenant_id,alias,account_id) FROM ceiling entry),

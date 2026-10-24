@@ -391,7 +391,7 @@ export function createCoreRoutePhases(
               }
               const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
               const delegationFeedback = hello.capabilities.includes('delegation_feedback_v1');
-              const leaseIdentity = runtimeLeaseIdentity(request, actor, options.authProvider);
+              const leaseIdentity = await runtimeLeaseIdentity(request, actor, options);
               let lease: LeaseResult;
               try {
                 lease = await repository.acquireLease(

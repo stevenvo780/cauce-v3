@@ -199,6 +199,7 @@ export interface GatewayOptions {
   providerAuthService?: ProviderAuthService;
   agentProviderAuthBroker?: AgentProviderAuthBroker;
   signedFleetAuthorityClient?: SignedFleetAuthorityClient;
+  legacyRuntimeHostId?: string;
   contextRepository?: ContextRepositoryBinding;
   contextVersion?: ContextVersionRouteOptions;
   spaceBackups?: SpaceBackupStorage;
@@ -320,7 +321,12 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const workerId = `gateway:${randomUUID()}`;
   const consoleRoutes = createConsoleRoutes(options, repository);
 
-  const coreRoutes = createCoreRoutePhases(app, options, repository, {
+  const signedFleetAuthority = options.signedFleetAuthorityClient ?? configuredSignedFleetAuthority();
+  const legacyRuntimeHostId = options.legacyRuntimeHostId ?? process.env.CAUCE_FLEET_CONTROLLER_HOST;
+  const coreRoutes = createCoreRoutePhases(app, {
+    ...options, ...(signedFleetAuthority === undefined ? {} : { signedFleetAuthorityClient: signedFleetAuthority }),
+    ...(legacyRuntimeHostId === undefined ? {} : { legacyRuntimeHostId }),
+  }, repository, {
     ackDeadlineMs,
     deliveryLeaseCap,
     admission,
@@ -339,7 +345,6 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   await app.register(websocket, { options: { maxPayload: GATEWAY_WS_MAX_PAYLOAD_BYTES } });
   const hostCapabilities = options.hostCapabilityRegistry ?? new HostCapabilityRegistry(options.pool);
-  const signedFleetAuthority = options.signedFleetAuthorityClient ?? configuredSignedFleetAuthority();
   if (signedFleetAuthority) registerHostAuthorityRoutes(app, signedFleetAuthority);
   const configuredCapability = options.fleetCapability ?? { available: false, actions: [], placements: [], reason: 'executor_unconfigured' };
   const fleetCapability = options.authProvider instanceof PasswordAuthProvider

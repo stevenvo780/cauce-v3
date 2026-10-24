@@ -9,6 +9,7 @@ import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js
 import type { DeliveryAdmissionConfig } from '../../config.js';
 import type { GatewayAck } from '../../app.js';
 import type { WakePumpTelemetry } from '../../wake-pump-telemetry.js';
+import type { SignedFleetAuthorityClient } from '../../fleet/authority/signed-client.js';
 
 export type CorePublishHandler = (
   request: FastifyRequest,
@@ -19,6 +20,8 @@ export interface CoreRouteOptions {
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;
   readonly deliveryWakeSubscriber?: typeof subscribeDeliveryWakes;
+  readonly signedFleetAuthorityClient?: Pick<SignedFleetAuthorityClient, 'resolveRuntimeAuthority'>;
+  readonly legacyRuntimeHostId?: string;
 }
 
 export interface CoreResolvedOptions {
