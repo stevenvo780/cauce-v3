@@ -1,5 +1,6 @@
 # The Muse bridge is supplied with --build-context musebridge=<ops/container-runtime>; empty by default.
 FROM scratch AS musebridge
+FROM scratch AS quotareaders
 
 # Agent runtime of enrolled computers. The executor starts it as root with `sleep`, mounts the release read-only and
 # runs the adapter as `node`; ops/scripts/build-host-release.sh pins each provider CLI it measures inside this image.
@@ -56,6 +57,8 @@ RUN if [ ! -f /tmp/muse-bridge/muse-cauce ]; then \
  && install -m 0555 /tmp/muse-bridge/muse-cauce /usr/local/bin/muse-cauce \
  && printf '%s  %s\n' "${MUSE_BRIDGE_SHA256}" /usr/local/bin/muse-cauce | sha256sum -c - \
  && rm -rf /tmp/muse-bridge
+
+COPY --from=quotareaders --chmod=0555 /leer-cuota.mjs /leer-cuota-grok.mjs /codex-http-probe.py /usr/local/bin/
 
 USER node
 WORKDIR /home/node
