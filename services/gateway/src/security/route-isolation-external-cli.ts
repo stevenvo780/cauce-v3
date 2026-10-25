@@ -10,6 +10,7 @@ import { planExternalVerification, runExternalVerification, type ExternalReceipt
 
 const USAGE = `Uso: pnpm verify:external --base-url <https://origen> [--dry-run] [--run-id <id>] [--rate <pet/s>]
        [--max-requests <n>] [--out-dir <dir>] [--receipt <ruta>] [--cleanup <run-id>] [--oauth-issuer <origen>]
+       [--terminal-fixture-socket <socket-privado-de-laboratorio>]
 Registra dos empresas zz-canary-<run>-{a,b}, recorre el registro y la empresa, ataca B desde A y retira ambas.`;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -37,17 +38,22 @@ async function main(argv: string[]): Promise<number> {
   const { values } = parseArgs({ args: argv, strict: true, options: {
     'base-url': { type: 'string' }, 'dry-run': { type: 'boolean', default: false }, 'run-id': { type: 'string' },
     rate: { type: 'string' }, 'max-requests': { type: 'string' }, 'out-dir': { type: 'string' }, receipt: { type: 'string' },
-    cleanup: { type: 'string' }, 'oauth-issuer': { type: 'string' }, help: { type: 'boolean', default: false } } });
+    cleanup: { type: 'string' }, 'oauth-issuer': { type: 'string' }, 'terminal-fixture-socket': { type: 'string' },
+    help: { type: 'boolean', default: false } } });
   if (values.help || values['base-url'] === undefined) { console.log(USAGE); return values.help ? 0 : 2; }
   const base = verifiedBaseUrl(values['base-url']);
   const loopback = LOOPBACK.has(base.hostname);
+  if (values['terminal-fixture-socket'] !== undefined && !loopback) throw new Error('terminal fixture is restricted to a loopback laboratory gateway');
   const rate = integer(values.rate, 5, '--rate');
   if (rate < 1 || rate > (loopback ? 100 : 10)) throw new Error(`--rate must be between 1 and ${loopback ? '100' : '10'} requests per second`);
   const maxRequests = integer(values['max-requests'], 4000, '--max-requests');
   const runId = validRunId(values.cleanup ?? values['run-id'] ?? newRunId());
   const options = { baseUrl: base.origin, runId, ratePerSecond: rate, maxRequests };
   if (values['dry-run']) {
-    console.log(JSON.stringify({ dry_run: true, client: clientRevision(), ...planExternalVerification(options) }, null, 2));
+    console.log(JSON.stringify({ dry_run: true, client: clientRevision(), ...planExternalVerification(options),
+      terminal_fixture: values['terminal-fixture-socket'] !== undefined,
+      ...(values['terminal-fixture-socket'] === undefined ? {} : { required_planes: ['terminal', 'relay', 'bootstrap'],
+        terminal_checks: ['real targets and grants', 'PTY roundtrip', 'foreign session credentials', 'mTLS relay admission', 'B unchanged'] }) }, null, 2));
     return 0;
   }
   const directory = resolve(values['out-dir'] ?? join(process.env.XDG_STATE_HOME ?? join(homedir(), '.local/state'), 'cauce-v3/verify-external'), runId);
@@ -56,7 +62,8 @@ async function main(argv: string[]): Promise<number> {
   const existing = values.cleanup === undefined ? undefined
     : assertCanaryStates(runId, JSON.parse(await readFile(statePath, 'utf8')) as Record<Side, CanaryState>);
   const issuer = values['oauth-issuer'] === undefined ? {} : { oauthIssuer: new URL(values['oauth-issuer']).origin };
-  const receipt: ExternalReceipt = await runExternalVerification({ ...options, ...issuer, client: clientRevision(),
+  const terminal = values['terminal-fixture-socket'] === undefined ? {} : { terminalFixtureSocket: resolve(values['terminal-fixture-socket']) };
+  const receipt: ExternalReceipt = await runExternalVerification({ ...options, ...issuer, ...terminal, client: clientRevision(),
     persist: async states => { await writePrivate(statePath, `${JSON.stringify(states, null, 1)}\n`); },
     log: line => { console.error(`[verify-external ${runId}] ${line}`); } }, existing);
   const receiptPath = resolve(values.receipt ?? join(directory, 'receipt.json'));

@@ -15,6 +15,7 @@ export interface CanaryState {
   reader?: { id: string; email: string; revision: string };
   invitation?: string; enrollmentHost?: string; account?: string; accountVersion?: number; blob?: string;
   layoutVersion?: number; preferencesVersion?: number; sentinel: string; retired?: boolean;
+  terminalCleanupPending?: boolean;
 }
 export interface StepRecord { step: string; side: Side | 'both'; method: string; route: string; status: number | null; outcome: 'pass' | 'fail' | 'info'; detail?: string }
 export interface WalkContext { client: ExternalClient; steps: StepRecord[]; persist: () => Promise<void> }
@@ -150,7 +151,7 @@ async function config(context: WalkContext, state: CanaryState, session: Externa
 }
 
 /** Basic company operations of the walk; B's resources are also the real targets of the isolation probes. */
-export async function populate(context: WalkContext, state: CanaryState, session: ExternalSession, full: boolean): Promise<void> {
+export async function populate(context: WalkContext, state: CanaryState, session: ExternalSession, full: boolean, terminal = false): Promise<void> {
   const hub = state.hub ?? '';
   await step(context, 'company', state, 'GET', `/v3/console/companies/${state.slug}`, { session }, [200], body => {
     assertCanary(state, body.id);
@@ -160,11 +161,11 @@ export async function populate(context: WalkContext, state: CanaryState, session
   const room = `${state.slug}-sala`;
   if (await config(context, state, session, 'room', { resource: 'room', action: 'create', tenant_id: hub, id: room,
     value: { display_name: `Sala ${state.sentinel}` } })) state.room = room;
-  if (!full) {
+  if (!full || terminal) {
     // A publishes from its own room so the cross-company recipient check, not the actor check, answers.
     if (state.room !== undefined) await config(context, state, session, 'membership', { resource: 'membership', action: 'create', tenant_id: hub,
       room_id: room, alias: state.ownerAlias ?? 'owner', value: { role: 'agent' } });
-    return;
+    if (!full) return;
   }
   const agent = `${state.slug}-lector`;
   if (await config(context, state, session, 'agent', { resource: 'agent', action: 'create', tenant_id: hub, alias: agent,

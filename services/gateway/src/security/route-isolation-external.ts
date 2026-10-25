@@ -9,6 +9,7 @@ import {
   type CanaryState, type Side, type StepRecord, type WalkContext,
 } from './route-isolation-external-canary.js';
 import { compareSnapshots, readSnapshot, volatilePaths, type Snapshot } from './route-isolation-external-snapshot.js';
+import { ExternalTerminalCleanupError, prepareExternalTerminal, type ExternalTerminalVerification } from './route-isolation-external-terminal.js';
 
 export type CaseOutcome = 'pass' | 'fail' | 'not_configured' | 'not_mounted' | 'inconclusive';
 export type CaseClass = 'matrix' | 'header' | 'parameter' | 'credential' | 'websocket';
@@ -21,6 +22,7 @@ export interface ExternalOptions {
   client: { sha: string; dirty: boolean };
   /** Origin the OAuth grant routes expect; production serves them on the console origin itself. */
   oauthIssuer?: string;
+  terminalFixtureSocket?: string;
   fetchImpl?: typeof fetch;
   persist?: (states: Record<Side, CanaryState>) => Promise<void>;
   log?: (line: string) => void;
@@ -47,6 +49,12 @@ export const MATRIX_CASES = ROUTE_ISOLATION_MATRIX.filter(entry => entry.probe !
 export const ACTOR_VIEWS = ['/v3/auth/session', '/v3/console/companies', '/v3/console/people', '/v3/console/config', '/v3/console/office/layout',
   '/v3/console/quota-accounts', '/v3/console/fleet/hosts/enrollments', '/v3/console/agents', '/v3/console/topology', '/v3/console/access',
   '/v3/console/audit?limit=100', '/v3/console/preferences'];
+const TERMINAL_VIEWS = ['/v3/console/terminal/targets', '/v3/console/terminal/sessions', '/v3/console/terminal/grants'];
+
+export function isTerminalIsolationRoute(route: string): boolean {
+  return route.startsWith('/v3/console/terminal/') || route.startsWith('/v3/terminal/relay/')
+    || /^\/v3\/console\/agents\/[^/]+\/[^/]+\/directive$/u.test(route);
+}
 
 function syntheticValues(b: CanaryState): Record<string, unknown> {
   const hex = (bytes: number) => randomBytes(bytes).toString('hex');
@@ -118,6 +126,15 @@ function judge(response: ExternalResponse, allowed: readonly number[], leak: str
   return { status, outcome: 'fail', detail: `HTTP ${String(status)} ${errorOf(response.body)}`.trim() };
 }
 
+function humanAgentDenial(entry: RouteIsolationEntry, response: ExternalResponse): boolean {
+  const routes = ['GET /v3/agent/queue', 'GET /v3/agent/egress',
+    'POST /v3/agent/deliveries/:deliveryId/progress', 'POST /v3/agent/deliveries/:deliveryId/retry'];
+  if (entry.kind !== 'host' || !routes.includes(`${entry.method} ${entry.url}`) || response.status !== 403
+    || !entry.probe?.expectedStatus?.includes(401)) return false;
+  const body = parseJson(response.body) as { error?: unknown; message?: unknown } | undefined;
+  return body?.error === 'forbidden' && body.message === 'agent identity is required' && Object.keys(body).length === 2;
+}
+
 class Run {
   readonly cases: CaseRecord[] = [];
   private reference: Snapshot | undefined;
@@ -125,7 +142,7 @@ class Run {
   coverage: ExternalReceipt['snapshot'];
   constructor(readonly client: ExternalClient, readonly states: Record<Side, CanaryState>,
     readonly sessions: Record<Side, ExternalSession>, readonly fixture: Fixture, readonly log: (line: string) => void,
-    readonly oauthOrigin: string) {}
+    readonly oauthOrigin: string, readonly terminal?: ExternalTerminalVerification) {}
 
   private push(record: CaseRecord): void {
     this.cases.push(record);
@@ -133,8 +150,8 @@ class Run {
   }
 
   async baseline(): Promise<void> {
-    const first = await readSnapshot(this.client, this.sessions.b, this.states.b);
-    const second = await readSnapshot(this.client, this.sessions.b, this.states.b);
+    const first = await readSnapshot(this.client, this.sessions.b, this.states.b, this.terminal !== undefined);
+    const second = await readSnapshot(this.client, this.sessions.b, this.states.b, this.terminal !== undefined);
     this.volatile = volatilePaths(first, second);
     this.reference = second;
     this.coverage = { routes: Object.fromEntries([...second].filter(([key]) => key.endsWith(' status')).map(([key, value]) => [key.slice(0, -7), value])),
@@ -143,7 +160,7 @@ class Run {
 
   /** Re-reads B through its own owner session; any non-volatile difference is a cross-company write. */
   async unchanged(): Promise<string | undefined> {
-    const after = await readSnapshot(this.client, this.sessions.b, this.states.b);
+    const after = await readSnapshot(this.client, this.sessions.b, this.states.b, this.terminal !== undefined);
     const changed = this.reference === undefined ? [] : compareSnapshots(this.reference, after, this.volatile);
     this.reference = after;
     return changed.length ? `company B changed: ${changed.slice(0, 5).join(', ')}` : undefined;
@@ -151,8 +168,9 @@ class Run {
 
   async matrix(entry: RouteIsolationEntry): Promise<void> {
     const placeholders = probePlaceholders(entry);
-    const synthetic = placeholders.filter(name => this.fixture.synthetic.has(name));
-    const probe = expandProbe(entry, this.fixture.b, this.fixture.a);
+    const actual = this.terminal?.probe(entry);
+    const synthetic = actual === undefined ? placeholders.filter(name => this.fixture.synthetic.has(name)) : [];
+    const probe = actual ?? expandProbe(entry, this.fixture.b, this.fixture.a);
     const a = this.sessions.a;
     const headers = Object.fromEntries(Object.entries(probe.headers ?? {})
       .map(([key, value]) => [key, key === 'origin' && value === ISOLATION_OAUTH_ISSUER ? this.oauthOrigin : value]));
@@ -170,7 +188,8 @@ class Run {
     const base = { class: 'matrix' as const, route: entry.url, target: synthetic.length ? 'synthetic' as const : 'real' as const,
       ...(synthetic.length ? { synthetic } : {}) };
     const response = await this.client.send(entry.method, probe.url, { session: a, headers, ...(payload === undefined ? {} : { json: payload }) });
-    const verdict = judge(response, allowed, foreignData(entry, response.body, this.fixture), { method: entry.method, path: probe.url });
+    const effectiveAllowed = humanAgentDenial(entry, response) ? [...allowed, 403] : allowed;
+    const verdict = judge(response, effectiveAllowed, foreignData(entry, response.body, this.fixture), { method: entry.method, path: probe.url });
     if (legacy && response.status === 409 && verdict.outcome === 'fail') {
       Object.assign(verdict, { outcome: 'inconclusive', detail: 'the global configuration revision is not observable from a company session; '
         + 'the stale-revision conflict answers before authority (the local guard covers that path)' });
@@ -183,8 +202,9 @@ class Run {
     if (entry.method === 'GET') {
       const head = await this.client.send('HEAD', probe.url, { session: a, headers });
       const inherited = verdict.outcome === 'not_mounted' || verdict.outcome === 'not_configured';
+      const headAllowed = verdict.outcome === 'pass' ? effectiveAllowed : allowed;
       this.push({ id: `HEAD ${entry.url}`, method: 'HEAD', ...base,
-        ...(inherited && head.status === verdict.status ? { status: head.status, outcome: verdict.outcome } : judge(head, allowed, undefined, { method: 'HEAD', path: probe.url })) });
+        ...(inherited && head.status === verdict.status ? { status: head.status, outcome: verdict.outcome } : judge(head, headAllowed, undefined, { method: 'HEAD', path: probe.url })) });
     }
   }
 
@@ -214,7 +234,7 @@ class Run {
     const forged = { 'x-cauce-tenant': b.hub ?? '', 'x-cauce-alias': b.ownerAlias ?? 'owner', 'x-cauce-company': b.slug,
       'x-company-id': b.slug, 'x-tenant-id': b.hub ?? '', 'x-cauce-acting-company': b.slug };
     const query = new URLSearchParams({ company: b.slug, company_id: b.slug, tenant_id: b.hub ?? '', tenant: b.hub ?? '', alias: b.ownerAlias ?? 'owner' });
-    for (const route of ACTOR_VIEWS) {
+    for (const route of [...ACTOR_VIEWS, ...(this.terminal === undefined ? [] : TERMINAL_VIEWS)]) {
       this.view(`tenant headers ${route}`, 'header', route, await this.client.send('GET', route, { session: this.sessions.a, headers: forged }), [200]);
       const target = `${route}${route.includes('?') ? '&' : '?'}${query.toString()}`;
       this.view(`company parameters ${route}`, 'parameter', target, await this.client.send('GET', target, { session: this.sessions.a }), [200, 400, 422]);
@@ -222,6 +242,14 @@ class Run {
     for (const route of ['/v3/console/people', `/v3/console/companies/${b.slug}`, '/v3/console/config']) {
       this.view(`tenant headers without session ${route}`, 'header', route, await this.client.send('GET', route, { headers: forged }), [401, 403]);
     }
+  }
+
+  async terminals(): Promise<void> {
+    if (this.terminal === undefined) return;
+    for (const record of await this.terminal.attacks()) this.push(record);
+    const changed = await this.unchanged();
+    if (changed !== undefined) this.push({ id: 'terminal class left B unchanged', class: 'credential', method: 'GET', route: 'snapshot',
+      target: 'real', status: null, outcome: 'fail', detail: changed });
   }
 
   async credentials(): Promise<void> {
@@ -347,6 +375,9 @@ function receiptOf(options: ExternalOptions, client: ExternalClient, states: Rec
   const cases = run?.cases ?? [];
   const failures = [...steps.filter(item => item.outcome === 'fail').map(item => ({ id: `walk ${item.side} ${item.step}`, detail: item.detail ?? `HTTP ${String(item.status)}` })),
     ...cases.filter(item => item.outcome === 'fail').map(item => ({ id: item.id, detail: item.detail ?? '' })),
+    ...(options.terminalFixtureSocket === undefined ? [] : cases.filter(item => (isTerminalIsolationRoute(item.route)
+      || item.route.startsWith('/v3/bootstrap/')) && item.outcome !== 'pass' && item.outcome !== 'fail')
+      .map(item => ({ id: item.id, detail: `required terminal or bootstrap check was ${item.outcome}` }))),
     ...(fatal === undefined ? [] : [{ id: 'run', detail: fatal }])];
   const count = (outcome: CaseOutcome) => cases.filter(item => item.outcome === outcome).length;
   const replay = steps.find(item => item.step === 'logout-replay');
@@ -372,8 +403,14 @@ export async function runExternalVerification(options: ExternalOptions, existing
   const context: WalkContext = { client, steps, persist: async () => { await options.persist?.(states); } };
   const sessions: Partial<Record<Side, ExternalSession>> = {};
   const run: { current?: Run } = {};
+  let terminal: ExternalTerminalVerification | undefined;
+  let terminalCleanupFailed = false;
   let fatal: string | undefined;
   try {
+    if (Object.values(states).some(state => state.terminalCleanupPending === true)) {
+      terminalCleanupFailed = true;
+      throw new Error('terminal cleanup remains pending; company retirement requires canonical settlement first');
+    }
     if (existing !== undefined) throw new Error('cleanup-only run');
     await context.persist();
     log(`registering ${states.a.slug} and ${states.b.slug}`);
@@ -382,9 +419,13 @@ export async function runExternalVerification(options: ExternalOptions, existing
     const b = await registerAndLogin(context, states.b);
     if (b) sessions.b = b;
     if (!a || !b) throw new Error('canary registration or login failed');
-    await populate(context, states.a, a, false);
-    await populate(context, states.b, b, true);
-    const current = new Run(client, states, { a, b }, fixtureOf(states.a, states.b), log, new URL(options.oauthIssuer ?? client.origin).origin);
+    await populate(context, states.a, a, options.terminalFixtureSocket !== undefined, options.terminalFixtureSocket !== undefined);
+    await populate(context, states.b, b, true, options.terminalFixtureSocket !== undefined);
+    if (options.terminalFixtureSocket !== undefined) terminal = await prepareExternalTerminal({ client, states, sessions: { a, b },
+      socketPath: options.terminalFixtureSocket, runId: options.runId });
+    const fixture = fixtureOf(states.a, states.b);
+    if (terminal !== undefined) fixture.markers.push(...terminal.markers);
+    const current = new Run(client, states, { a, b }, fixture, log, new URL(options.oauthIssuer ?? client.origin).origin, terminal);
     run.current = current;
     await current.baseline();
     // A's views are read before the attacks: its own audit afterwards rightly lists the B identifiers A sent in denied requests.
@@ -393,12 +434,25 @@ export async function runExternalVerification(options: ExternalOptions, existing
     for (const entry of MATRIX_CASES) await current.matrix(entry);
     await current.credentials();
     await current.sockets();
+    await current.terminals();
   } catch (error) {
+    if (error instanceof ExternalTerminalCleanupError) terminalCleanupFailed = true;
     const message = error instanceof Error ? error.message : String(error);
     if (message !== 'cleanup-only run') fatal = message;
   } finally {
+    if (terminal !== undefined) {
+      try { await terminal.close(); } catch {
+        terminalCleanupFailed = true;
+        fatal ??= 'terminal cleanup failed; canary retirement withheld until canonical settlement';
+      }
+    }
     log('retiring canaries');
-    try { await cleanup(context, states, sessions); } catch (error) { fatal ??= `cleanup: ${error instanceof Error ? error.message : String(error)}`; }
+    if (terminalCleanupFailed) {
+      for (const state of Object.values(states)) if (state.registered && !state.retired) state.terminalCleanupPending = true;
+    }
+    if (!terminalCleanupFailed) {
+      try { await cleanup(context, states, sessions); } catch (error) { fatal ??= `cleanup: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     await context.persist();
   }
   return receiptOf(options, client, states, steps, run.current, started, fatal);

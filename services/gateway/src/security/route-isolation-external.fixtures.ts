@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CauceRepository, FleetOperationsRepository, type LegacyAdoptionProbe } from '@cauce/store';
+import { CauceRepository, FleetOperationsRepository, type DatabasePool, type LegacyAdoptionProbe } from '@cauce/store';
 import { startTestCaseDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { buildGateway } from '../app.js';
 import { PasswordAuthProvider } from '../password-auth.js';
@@ -27,6 +27,35 @@ const unavailableLegacyProbe: LegacyAdoptionProbe = {
     assertHeld: async () => undefined,
   }),
 };
+
+type ExternalGatewayOptions = Pick<Parameters<typeof buildGateway>[0], 'providerAuthService' | 'fleetOperationsRepository'
+  | 'spaceBackups' | 'blobs' | 'signedFleetAuthorityClient' | 'legacyFleetAdoptionService'>;
+
+export function externalGatewayOptions({ pool, directory }: { pool: DatabasePool; directory: string }): ExternalGatewayOptions {
+  const projectRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+  return {
+    providerAuthService: providerAuthService(pool),
+    fleetOperationsRepository: new FleetOperationsRepository(pool),
+    spaceBackups: { directory, projectRoot, python: '/usr/bin/python3' },
+    blobs: { directory: join(directory, 'blobs'), maxBytes: 1_048_576 },
+    signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(directory, 'authority.sock'), { ownerUid: 0, peerUid: 0 }),
+    legacyFleetAdoptionService: createLegacyFleetAdoptionService(pool, unavailableLegacyProbe),
+  };
+}
+
+export async function configureExternalGateway({ app, pool, auth }: {
+  app: Awaited<ReturnType<typeof buildGateway>>; pool: DatabasePool; auth: PasswordAuthProvider;
+}): Promise<{ oauthIssuer: string }> {
+  const issuer = ISOLATION_OAUTH_ISSUER;
+  const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid: 'verify-external',
+    signingKey: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey });
+  const store = new PostgresOAuthStore(pool, issuer, auth.verifyCredentialStamp.bind(auth));
+  await registerOAuthAuthorizationServer(app, { tokens, store, clients: new OAuthClients(), passwordAuth: auth,
+    session: createOAuthPasswordSession({ provider: auth }) });
+  registerClientDelegationRoutes(app, pool, auth, { issuer, resource: tokens.resource,
+    verifyCredentialStamp: auth.verifyCredentialStamp.bind(auth) });
+  return { oauthIssuer: issuer };
+}
 
 async function freeLoopbackPort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -55,22 +84,10 @@ export async function startLocalDeployment(server: TestDatabase): Promise<LocalD
   const provider = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(database.pool), signingKey: Buffer.alloc(32, 59) });
   const app = await buildGateway({ pool: database.pool, repository: new CauceRepository(database.pool), authProvider: provider,
     consoleOrigins: [baseUrl], logger: false, exposeHealthRoutes: true,
-    providerAuthService: providerAuthService(database.pool),
-    fleetOperationsRepository: new FleetOperationsRepository(database.pool),
-    spaceBackups: { directory, projectRoot, python: '/usr/bin/python3' },
-    blobs: { directory: join(directory, 'blobs'), maxBytes: 1_048_576 },
-    signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(directory, 'authority.sock'), { ownerUid: 0, peerUid: 0 }),
-    legacyFleetAdoptionService: createLegacyFleetAdoptionService(database.pool, unavailableLegacyProbe) });
-  const issuer = ISOLATION_OAUTH_ISSUER;
-  const tokens = new OAuthTokens({ issuer, resource: `${issuer}/mcp`, kid: 'verify-external',
-    signingKey: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey });
-  const store = new PostgresOAuthStore(database.pool, issuer, provider.verifyCredentialStamp.bind(provider));
-  await registerOAuthAuthorizationServer(app, { tokens, store, clients: new OAuthClients(), passwordAuth: provider,
-    session: createOAuthPasswordSession({ provider }) });
-  registerClientDelegationRoutes(app, database.pool, provider, { issuer, resource: tokens.resource,
-    verifyCredentialStamp: provider.verifyCredentialStamp.bind(provider) });
+    ...externalGatewayOptions({ pool: database.pool, directory }) });
+  const { oauthIssuer } = await configureExternalGateway({ app, pool: database.pool, auth: provider });
   await app.listen({ host: '127.0.0.1', port });
-  return { baseUrl, oauthIssuer: issuer, database, close: async () => {
+  return { baseUrl, oauthIssuer, database, close: async () => {
     await app.close();
     await database.close();
     await rm(directory, { recursive: true, force: true });
