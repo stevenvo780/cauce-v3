@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { COMPUTER_RUNTIME, docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 import { apiGet } from './v4-console-real-browser.helpers.js';
-import { fleetCliReceipts, startFleetCliFixture, type FleetCliFixture, type FleetCliRuntime } from './v4-cli-flota-dinamica.host.js';
+import { FLEET_CLI_OWNER, fleetCliPrefix, fleetCliReceipts, fleetCliRun, startFleetCliFixture,
+  type FleetCliFixture, type FleetCliRuntime } from './v4-cli-flota-dinamica.host.js';
 import { buildInstalledCli, type InstalledCliResult } from './v4-cli-flota-dinamica.install.js';
 import { FLEET_CLI_PROVIDER_FIXTURE } from './v4-cli-flota-dinamica.runtime.js';
 
@@ -206,8 +208,20 @@ async function discardPrivateInstallation(): Promise<void> {
 }
 
 beforeAll(async () => {
+  const outer = await connectXOuterDocker();
+  const runner = outer.runner.runner;
+  const runnerOwner = typeof runner === 'object' && runner !== null && 'owner' in runner ? runner.owner : undefined;
+  if (typeof runnerOwner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/u.test(runnerOwner)
+      || process.env.HOME?.startsWith(`/tmp/cauce-e2e-home-${runnerOwner}-`) !== true) {
+    throw new Error('the installed CLI requires the verified runner owner and its private HOME');
+  }
+  const evidence = join(process.cwd(), '.delegados/v4/recibos', runnerOwner, 'dynamic-analysis', fleetCliRun);
+  await mkdir(evidence, { recursive: true, mode: 0o700 });
+  await writeFile(join(evidence, '00-docker-runner.json'), JSON.stringify({ runner: outer.runner,
+    install_owner: runnerOwner, owner_home_matches: true,
+    legacy_fixture: { owner: FLEET_CLI_OWNER, prefix: fleetCliPrefix, receipts: fleetCliReceipts } }, null, 2) + '\n', { mode: 0o600 });
   installationDirectory = await mkdtemp(join(tmpdir(), 'cauce-cli-candidate-'));
-  installed = await buildInstalledCli(installationDirectory);
+  installed = await buildInstalledCli(installationDirectory, { owner: runnerOwner });
   await mkdir(fleetCliReceipts, { recursive: true, mode: 0o700 });
   await copyFile(installed.manifestFile, join(fleetCliReceipts, 'installed-candidate-manifest.json'));
   await writeFile(join(fleetCliReceipts, 'provider-limit.json'), JSON.stringify(FLEET_CLI_PROVIDER_FIXTURE, null, 2));

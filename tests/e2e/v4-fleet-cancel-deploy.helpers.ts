@@ -15,12 +15,13 @@ import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INST
   PATTERN_DEFECT_RULE, syntheticPerson, type V4Page } from './v4-console-real-browser.helpers.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import { installCancelDeploySetup, type CancelDeploySetup } from './v4-fleet-cancel-deploy.setup.js';
+import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
-export const CANCEL_DEPLOY_OWNER = process.env.HOME?.match(/^\/tmp\/cauce-e2e-home-(f4f-hades-sin-fila-1025)-[0-9]+$/u)?.[1]
+export const CANCEL_DEPLOY_OWNER = process.env.HOME?.match(/^\/tmp\/cauce-e2e-home-([a-z0-9][a-z0-9-]{0,40})-[0-9]+$/u)?.[1]
   ?? 'f4e-hades-1025';
 export const cancelDeployRun = randomUUID().replaceAll('-', '').slice(0, 8);
-export const cancelDeployPrefix = `zz-canary-${CANCEL_DEPLOY_OWNER}-${cancelDeployRun}`;
+export const cancelDeployPrefix = `zz-canary-${CANCEL_DEPLOY_OWNER.slice(0, 20)}-${cancelDeployRun}`;
 export const cancelDeployReceipts = join(process.cwd(), '.delegados/v4/recibos', CANCEL_DEPLOY_OWNER, cancelDeployRun);
 
 export interface CancelDeployFixture extends CancelFixture {
@@ -32,10 +33,14 @@ export interface CancelDeployFixture extends CancelFixture {
 
 export async function startCancelDeployFixture(options: { runtimeBundle?: typeof cancelDeployRuntime; initialSharedTui?: boolean } = {}): Promise<CancelDeployFixture> {
   await mkdir(cancelDeployReceipts, { recursive: true, mode: 0o700 });
-  if (process.env.DOCKER_HOST !== 'unix:///var/run/docker.sock' || process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1'
+  if (process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1'
       || !process.env.HOME?.startsWith(`/tmp/cauce-e2e-home-${CANCEL_DEPLOY_OWNER}-`)) {
     throw new Error('fleet deployment E2E requires the isolated lab launcher');
   }
+  const outer = await connectXOuterDocker();
+  expect(outer.runner).toMatchObject({ runner: { owner: CANCEL_DEPLOY_OWNER } });
+  await writeFile(join(cancelDeployReceipts, 'runner-identity.json'), JSON.stringify({ owner: CANCEL_DEPLOY_OWNER,
+    prefix: cancelDeployPrefix, runner: outer.runner }, null, 2) + '\n', { mode: 0o600 });
   const directory = await mkdtemp(join(tmpdir(), 'cauce-fleet-cancel-deploy-'));
   const pki = createSelfSignedCert({ directory });
   const ports = await reserveNamedLoopbackPorts(['frontend'] as const);

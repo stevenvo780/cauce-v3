@@ -5,6 +5,7 @@ import http.client
 import ipaddress
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -51,11 +52,18 @@ def ssh(context: str, *args: str) -> str:
 
 def private_json(path: Path, document: dict) -> None:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
-        json.dump(document, stream, indent=2)
-        stream.write('\n')
-        stream.flush()
-        os.fsync(stream.fileno())
+    identity = os.fstat(descriptor)
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            json.dump(document, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        observed = path.lstat()
+        if (observed.st_dev, observed.st_ino) == (identity.st_dev, identity.st_ino):
+            path.unlink()
+        raise
 
 
 def daemon_hash(context: str) -> str:
@@ -147,46 +155,60 @@ def stage_code(scratch: Path) -> Path:
     return payload
 
 
-def remove_destination(identifier: str, run: str) -> bool:
-    observed = docker('lab2', 'inspect', '--format', '{{json .Config.Labels}}', identifier, check=False)
-    if observed.returncode:
-        if 'no such' in observed.stderr.lower():
-            return True
-        raise LabError('destination ownership could not be rechecked')
-    labels = json.loads(observed.stdout)
+def resource_identity(kind: str, identifier: str) -> str | None:
+    if kind == 'container':
+        selected = f'id={identifier}' if re.fullmatch('[a-f0-9]{64}', identifier) else f'name=^/{re.escape(identifier)}$'
+        rows = docker('lab2', 'ps', '-aq', '--no-trunc', '--filter', selected).stdout.split()
+    else:
+        rows = docker('lab2', 'volume', 'ls', '--format', '{{.Name}}', '--filter', f'name=^{re.escape(identifier)}$').stdout.split()
+    valid = not rows or (bool(re.fullmatch('[a-f0-9]{64}', rows[0])) if kind == 'container' else rows[0] == identifier)
+    if len(rows) > 1 or not valid:
+        raise LabError('owned resource lookup returned an unexpected identity')
+    return rows[0] if rows else None
+
+
+def require_owner(kind: str, identifier: str, run: str) -> None:
+    arguments = ['inspect', '--format', '{{json .Config.Labels}}'] if kind == 'container' else ['volume', 'inspect', '--format', '{{json .Labels}}']
+    labels = json.loads(docker('lab2', *arguments, identifier).stdout)
+    if not isinstance(labels, dict):
+        raise LabError('owned resource labels are unavailable')
     if labels.get('cauce.e2e.owner') != OWNER or labels.get('cauce.e2e.run') != run:
-        raise LabError('destination ownership changed; refusing removal')
-    docker('lab2', 'rm', '--force', identifier)
-    remaining = docker('lab2', 'ps', '-aq', '--filter', f'id={identifier}').stdout.strip()
-    if remaining:
+        raise LabError('resource ownership changed; refusing use or removal')
+
+
+def remove_destination(identifier: str, run: str) -> bool:
+    actual = resource_identity('container', identifier)
+    if actual is None:
+        return True
+    require_owner('container', actual, run)
+    docker('lab2', 'rm', '--force', actual)
+    if resource_identity('container', actual) is not None:
         raise LabError('owned destination survived removal')
     return True
 
 
 def remove_volume(name: str, run: str) -> None:
-    observed = docker('lab2', 'volume', 'inspect', '--format', '{{json .Labels}}', name, check=False)
-    if observed.returncode:
-        if 'no such' in observed.stderr.lower():
-            return
-        raise LabError('owned volume could not be rechecked')
-    labels = json.loads(observed.stdout)
-    if labels.get('cauce.e2e.owner') != OWNER or labels.get('cauce.e2e.run') != run:
-        raise LabError('volume ownership changed; refusing removal')
+    if resource_identity('volume', name) is None:
+        return
+    require_owner('volume', name, run)
     docker('lab2', 'volume', 'rm', name)
-    if docker('lab2', 'volume', 'inspect', name, check=False).returncode == 0:
+    if resource_identity('volume', name) is not None:
         raise LabError('owned volume survived removal')
 
 
 def main() -> int:
-    if len(sys.argv) != 1:
-        raise LabError('this provisioner takes no arguments')
+    global OWNER
+    if len(sys.argv) == 3 and sys.argv[1] == '--owner' and re.fullmatch('[a-z0-9][a-z0-9-]{0,40}', sys.argv[2]):
+        OWNER = sys.argv[2]
+    elif len(sys.argv) != 1:
+        raise LabError('usage: bash tests/e2e/v4-cli-cross-machine.lab.sh [--owner task-id]')
     if os.geteuid() != 1000 or os.getegid() != 1000:
         raise LabError('run this owned laboratory fixture as uid/gid 1000')
     if CONFIG.exists() or CONFIG.is_symlink():
         raise LabError('an existing cross-machine runtime configuration must not be replaced')
     os.umask(0o077)
     run = uuid.uuid4().hex[:12]
-    receipts = ROOT / '.delegados/v4/recibos' / OWNER / 'cross-machine-lab' / run
+    receipts = ROOT / '.delegados/v4/recibos' / OWNER / 'cross-analysis/lab' / run
     receipts.mkdir(parents=True, mode=0o700)
     scratch = Path(tempfile.mkdtemp(prefix=f'zz-canary-{OWNER}-cross-', dir='/datos'))
     destination = f'zz-canary-{OWNER}-destination-{run}'
@@ -197,7 +219,14 @@ def main() -> int:
     config_identity = None
     result = 1
     error = None
-    cleanup_error = None
+    cleanup_errors = []
+    absent_volumes = []
+
+    def interrupted(_number, _frame):
+        raise LabError('owned cross-machine run interrupted')
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     try:
         for context, expected in CONTEXTS.items():
             endpoint = docker(context, 'context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}').stdout.strip()
@@ -229,19 +258,32 @@ def main() -> int:
         certificate.chmod(0o600)
         for suffix in ('app', 'tls'):
             name = f'{destination}-{suffix}'
-            docker('lab2', 'volume', 'create', '--label', f'cauce.e2e.owner={OWNER}', '--label', f'cauce.e2e.run={run}', name)
+            if resource_identity('volume', name) is not None:
+                raise LabError('destination volume already exists; refusing replacement')
             volumes.append(name)
-        copy_container = docker('lab2', 'create', '--name', f'{destination}-copy',
+            docker('lab2', 'volume', 'create', '--label', f'cauce.e2e.owner={OWNER}', '--label', f'cauce.e2e.run={run}', name)
+            require_owner('volume', name, run)
+        copy_container = f'{destination}-copy'
+        if resource_identity('container', copy_container) is not None:
+            copy_container = None
+            raise LabError('destination copy container already exists; refusing replacement')
+        created = docker('lab2', 'create', '--name', copy_container,
                                 '--label', f'cauce.e2e.owner={OWNER}', '--label', f'cauce.e2e.run={run}',
                                 '--user', '1000:1000', '--network', 'none', '--cap-drop', 'ALL',
                                 '--security-opt', 'no-new-privileges:true',
                                 '--mount', f'type=volume,src={volumes[0]},dst=/app',
                                 '--mount', f'type=volume,src={volumes[1]},dst=/tls', IMAGE, '/bin/true').stdout.strip()
+        if re.fullmatch('[a-f0-9]{64}', created) is None:
+            raise LabError('destination copy container returned an invalid identity')
+        copy_container = created
+        require_owner('container', copy_container, run)
         docker('lab2', 'cp', '--archive', f'{payload}/app/.', f'{copy_container}:/app')
         docker('lab2', 'cp', '--archive', f'{tls}/.', f'{copy_container}:/tls')
         remove_destination(copy_container, run)
-        copy_container = None
-        identifier = docker('lab2', 'create', '--name', destination,
+        if resource_identity('container', destination) is not None:
+            raise LabError('destination container already exists; refusing replacement')
+        identifier = destination
+        created = docker('lab2', 'create', '--name', destination,
                             '--label', f'cauce.e2e.owner={OWNER}', '--label', f'cauce.e2e.run={run}',
                             '--user', '1000:1000', '--init', '--read-only', '--cap-drop', 'ALL',
                             '--security-opt', 'no-new-privileges:true', '--network', 'host',
@@ -253,6 +295,10 @@ def main() -> int:
                             '--env', 'CAUCE_SOURCE_RELAY_HOST=127.0.0.1', '--env', f'CAUCE_MANAGER_PORT={manager_port}',
                             '--env', 'PYTHONDONTWRITEBYTECODE=1',
                             IMAGE, 'python3', '-B', '/app/manager.py', timeout=90).stdout.strip()
+        if re.fullmatch('[a-f0-9]{64}', created) is None:
+            raise LabError('destination container returned an invalid identity')
+        identifier = created
+        require_owner('container', identifier, run)
         docker('lab2', 'start', identifier)
         tunnel = subprocess.Popen(['ssh', '-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
                                    '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ServerAliveInterval=15',
@@ -277,7 +323,8 @@ def main() -> int:
                 time.sleep(0.2)
         if initial.get('process_alive') is not False or initial.get('home') != '/state/home':
             raise LabError('the destination manager initial state is invalid')
-        configuration = {'endpoint': f'https://{management_host}:{management_port}', 'certFile': str(certificate), 'keyFile': str(key),
+        configuration = {'owner': OWNER, 'run': run,
+                         'endpoint': f'https://{management_host}:{management_port}', 'certFile': str(certificate), 'keyFile': str(key),
                          'relayHost': '127.0.0.1', 'sourceRelayPort': source_port, 'destinationRelayPort': destination_port,
                          'sourceDaemonHash': source_daemon, 'destinationDaemonHash': destination_daemon,
                          'sourceMachineHash': source_machine, 'destinationMachineHash': destination_machine,
@@ -292,61 +339,78 @@ def main() -> int:
                                                 'source_machine_hash': source_machine, 'destination_machine_hash': destination_machine,
                                                 'source_daemon_hash': source_daemon, 'destination_daemon_hash': destination_daemon,
                                                 'destination_container': identifier, 'destination_name': destination,
+                                                'copy_container': copy_container, 'owned_volumes': volumes,
                                                 'manager_mtls_verified': True, 'initial_process_alive': False,
                                                 'ssh_transport_pid': tunnel.pid, 'management_transport': 'owned_ssh_local_forward_mtls',
                                                 'relay_transport': 'owned_ssh_reverse_forward_mtls'})
-        print(f'cross-machine: destino lab2 preparado; recibos cross-machine-lab/{run}', flush=True)
+        print(f'cross-machine: destino lab2 preparado; recibos {receipts.relative_to(ROOT)}', flush=True)
         environment = {**os.environ, 'CAUCE_E2E_CONTEXT': 'lab'}
         with (receipts / 'e2e.log').open('w', encoding='utf-8') as log:
             tested = subprocess.run([str(ROOT / 'scripts/e2e-lab.sh'), OWNER, 'tests/e2e/v4-cli-cross-machine.test.ts', '--reporter=verbose'],
                                     cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=900, check=False)
         result = tested.returncode
-        print(f'cross-machine: runner exit {result}; recibos cross-machine-lab/{run}/e2e.log', flush=True)
+        print(f'cross-machine: runner exit {result}; recibos {receipts.relative_to(ROOT)}/e2e.log', flush=True)
     except (LabError, OSError, ValueError, subprocess.TimeoutExpired) as problem:
+        result = 1
         error = str(problem) if isinstance(problem, LabError) else type(problem).__name__
         print(f'cross-machine: {error}', file=sys.stderr)
     finally:
-        removed = identifier is None
-        try:
-            if identifier:
-                removed = remove_destination(identifier, run)
-        except (LabError, OSError, subprocess.TimeoutExpired) as problem:
-            cleanup_error = str(problem) if isinstance(problem, LabError) else type(problem).__name__
-        try:
-            if copy_container:
-                remove_destination(copy_container, run)
-            for name in volumes:
+        removed = None
+        copy_absent = None
+        for current in (identifier, copy_container):
+            if current is None:
+                continue
+            try:
+                absent = remove_destination(current, run)
+                if current == identifier:
+                    removed = absent
+                else:
+                    copy_absent = absent
+            except (LabError, OSError, ValueError, subprocess.TimeoutExpired) as problem:
+                cleanup_errors.append(str(problem) if isinstance(problem, LabError) else type(problem).__name__)
+        for name in volumes:
+            try:
                 remove_volume(name, run)
-        except (LabError, OSError, subprocess.TimeoutExpired) as problem:
-            cleanup_error = str(problem) if isinstance(problem, LabError) else type(problem).__name__
+                absent_volumes.append(name)
+            except (LabError, OSError, ValueError, subprocess.TimeoutExpired) as problem:
+                cleanup_errors.append(str(problem) if isinstance(problem, LabError) else type(problem).__name__)
         tunnel_stopped = tunnel is None
-        if tunnel is not None:
-            if tunnel.poll() is None:
-                os.killpg(tunnel.pid, signal.SIGTERM)
-                try:
-                    tunnel.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(tunnel.pid, signal.SIGKILL)
-                    tunnel.wait(timeout=5)
-            tunnel_stopped = tunnel.poll() is not None
+        try:
+            if tunnel is not None:
+                if tunnel.poll() is None:
+                    os.killpg(tunnel.pid, signal.SIGTERM)
+                    try:
+                        tunnel.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(tunnel.pid, signal.SIGKILL)
+                        tunnel.wait(timeout=5)
+                tunnel_stopped = tunnel.poll() is not None
+        except (LabError, OSError, subprocess.TimeoutExpired) as problem:
+            cleanup_errors.append(str(problem) if isinstance(problem, LabError) else type(problem).__name__)
         if config_identity is not None:
             try:
                 observed = CONFIG.lstat()
                 if (observed.st_dev, observed.st_ino) == config_identity:
                     CONFIG.unlink()
                 else:
-                    cleanup_error = 'runtime configuration identity changed; refusing removal'
+                    cleanup_errors.append('runtime configuration identity changed; refusing removal')
             except FileNotFoundError:
                 pass
-        shutil.rmtree(scratch)
+            except (LabError, OSError) as problem:
+                cleanup_errors.append(str(problem) if isinstance(problem, LabError) else type(problem).__name__)
+        try:
+            shutil.rmtree(scratch)
+        except OSError as problem:
+            cleanup_errors.append(type(problem).__name__)
         private_json(receipts / 'cleanup.json', {'owner': OWNER, 'run': run, 'destination_container': identifier,
                                                'destination_absent': removed, 'scratch_absent': not scratch.exists(),
-                                               'config_absent': not CONFIG.exists(), 'ssh_transport_stopped': tunnel_stopped,
+                                               'config_absent': not CONFIG.exists() and not CONFIG.is_symlink(), 'ssh_transport_stopped': tunnel_stopped,
                                                'owned_volumes': volumes, 'copy_container': copy_container,
+                                               'absent_volumes': absent_volumes, 'copy_container_absent': copy_absent,
                                                'runner_exit': result,
-                                               'error': error, 'cleanup_error': cleanup_error})
-        if cleanup_error:
-            print(f'cross-machine: {cleanup_error}', file=sys.stderr)
+                                               'error': error, 'cleanup_errors': cleanup_errors})
+        if cleanup_errors:
+            print(f'cross-machine: cleanup failed: {"; ".join(cleanup_errors)}', file=sys.stderr)
             result = 1
     return result
 
