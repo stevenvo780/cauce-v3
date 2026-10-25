@@ -65,7 +65,7 @@ const contextFiles = [
 function contextHistory() {
   return { entries: [
     { version: 2, source: 'ui', restored_from: null, created_at: OBSERVED_AT,
-      actor_human_id: OWNER_ID, actor_alias: 'Steven (QA)', digest: 'b'.repeat(64) },
+      actor_human_id: OWNER_ID, actor_name: 'Steven (QA)', actor_alias: 'Steven (QA)', digest: 'b'.repeat(64) },
     { version: 1, source: 'native', restored_from: null, created_at: PREVIOUS_AT,
       actor_human_id: null, actor_alias: 'jarvis', digest: 'a'.repeat(64) },
   ], next_cursor: null };
@@ -149,6 +149,7 @@ export async function loadV4Fixtures() {
     if (path === '/v3/console/people') return Response.json({ items: people,
       capabilities: { create: true, update: true, retire: true, restore: true, purge: true } });
     const context = /^\/v3\/console\/context\/agents\/([^/]+)\/([^/]+)(\/history|\/diff)?$/u.exec(path);
+    if (/^\/v3\/console\/spaces\/[^/]+\/[^/]+\/backups$/u.test(path)) return Response.json({ backups: [] });
     if (context?.[3] === '/history') return Response.json(contextHistory());
     if (context?.[3] === '/diff') return Response.json({ from: 1, to: 2, files: [{ path: contextFiles[0].path,
       before: '# Coordinación\n', after: contextFiles[0].content, change: 'modified' }] });

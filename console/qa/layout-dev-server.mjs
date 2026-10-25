@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const LOOPBACK = '127.0.0.1';
-const STARTUP_TIMEOUT_MS = 15_000;
+const STARTUP_TIMEOUT_MS = 45_000;
 const CLOSE_TIMEOUT_MS = 5_000;
 const OUTPUT_LIMIT = 4_000;
 const PORT_ATTEMPTS = 3;

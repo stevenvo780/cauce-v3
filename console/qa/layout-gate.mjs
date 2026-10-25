@@ -357,11 +357,7 @@ const OBJETIVOS = {
   },
 };
 
-const PENDIENTES = {
-  '1440./accounts.pantallas': 2.53,
-  '1920./accounts.pantallas': 2.51,
-  '2560./accounts.pantallas': 2.51,
-};
+const PENDIENTES = {};
 
 function revisarObjetivos(resumen) {
   const nuevos = [];
