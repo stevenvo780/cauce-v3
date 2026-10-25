@@ -156,7 +156,7 @@ export function AccountLogin({ account, snapshot, allowed, reload, readReady }: 
     {block && !requested && !error && (snapshot || !allowed) ? <p className="m-0 text-sm text-muted">{block}</p> : null}
     {verified && !requested ? <Notice tone="ok" role="status">Sesión iniciada y verificada.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <FormDialog open={requested} wide anchorTop title={providerSignInTitle(account.provider)}
+    {requested ? <FormDialog open={requested} wide anchorTop title={providerSignInTitle(account.provider)}
       description={`${account.provider}${destination ? ` · ${destination.label}` : ''}`} onClose={close}>
       {progress ? <p className="m-0 text-sm" role="status">{progress}</p> : null}
       {activeScope?.error ? <Notice tone="danger" role="alert">{activeScope.error}</Notice> : null}
@@ -164,6 +164,6 @@ export function AccountLogin({ account, snapshot, allowed, reload, readReady }: 
         <ProviderAuthPanel key={activeScope.operation} request={activeScope.request} client={api} autoStart
           onAuthenticated={authenticated} />
       </Suspense> : null}
-    </FormDialog>
+    </FormDialog> : null}
   </section>;
 }
