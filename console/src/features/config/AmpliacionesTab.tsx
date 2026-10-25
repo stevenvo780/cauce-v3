@@ -68,6 +68,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
 }) {
   const { known, published } = readAgentExtensions(snapshot, tenantId, alias);
   const allowed = readHostAllowed(snapshot, hostId, hostRaw);
+  if (!published || (hostId && !allowed.published)) throw new Error('Invalid extensions configuration snapshot');
   const target = useMemo(() => ({ resource: 'agent' as const, tenant_id: tenantId, alias }), [tenantId, alias]);
   const [draft, setDraft] = useState<AgentExtension[] | undefined>();
   const [adding, setAdding] = useState<ExtensionType | undefined>();
@@ -122,14 +123,10 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
       Cambiar las ampliaciones obliga a <strong>recrear el contenedor</strong> del agente (se detiene, se recrea
       conservando los volúmenes y se arranca). El cambio entra como operación de flota con vista previa.
     </Notice>
-    {!published ? <Notice tone="info" role="note">
-      El servidor aún no publica las ampliaciones de este agente en esta lectura. Puedes preparar el borrador;
-      relee el inventario antes de previsualizar y aplicar la operación de flota.
-    </Notice> : null}
-    {allowed.published && hostId ? <p className={HINT}>
+    {hostId ? <p className={HINT}>
       El ordenador admite: {allowed.allowed.types.length ? allowed.allowed.types.join(', ') : 'ningún tipo por ahora'}.
       Lo que el ordenador no admite, la vista previa lo rechaza con el motivo.
-    </p> : hostId ? <p className={HINT}>El ordenador aún no publica qué ampliaciones admite; la vista previa del servidor lo decide.</p> : null}
+    </p> : null}
 
     <section aria-label={`Ampliaciones de ${tenantId}/${alias}`} className="grid gap-2">
       <h3 className="m-0 text-sm font-semibold">{dirty ? 'Borrador de ampliaciones' : 'Ampliaciones activas'} ({extensions.length})</h3>
@@ -203,12 +200,12 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
     {operational.error ? <Notice role="alert" tone="danger">{operational.error}</Notice> : null}
     <div className="flex flex-wrap items-center justify-end gap-2">
       {dirty ? <Button variant="ghost" disabled={disabled} onClick={() => { setDraft(undefined); setTypedAlias(''); operational.clear(); }}>Descartar borrador</Button> : null}
-      <Button disabled={!published || !operational.canPreview} aria-busy={operational.previewing}
-        title={published ? operational.previewBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
-        onClick={() => { if (published) void operational.preview(); }}>Vista previa</Button>
-      <Button variant="primary" disabled={!published || !operational.canEnqueue} aria-busy={operational.sending}
-        title={published ? operational.enqueueBlock : 'Relee las ampliaciones guardadas antes de continuar.'}
-        onClick={() => { if (published) void operational.enqueue(); }}>{operational.canRetry ? 'Reintentar envío' : 'Aplicar y recrear'}</Button>
+      <Button disabled={!operational.canPreview} aria-busy={operational.previewing}
+        title={operational.previewBlock}
+        onClick={() => { void operational.preview(); }}>Vista previa</Button>
+      <Button variant="primary" disabled={!operational.canEnqueue} aria-busy={operational.sending}
+        title={operational.enqueueBlock}
+        onClick={() => { void operational.enqueue(); }}>{operational.canRetry ? 'Reintentar envío' : 'Aplicar y recrear'}</Button>
     </div>
     {!operational.canWrite ? <Notice role="note">Edición de ampliaciones en solo lectura: falta permiso acreditado de configuración.</Notice> : null}
     {operational.previewReceipt ? <AgentFleetPreview preview={operational.previewReceipt} /> : null}

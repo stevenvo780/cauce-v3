@@ -14,6 +14,65 @@ export interface X2Docker {
   dockerSocket: string;
 }
 
+export interface X2GuardObservation {
+  adapter: { pid: number; start: number; uid: number };
+  controller: { pid: number; start: number; uid: number };
+  sharedSession: true;
+  stopAuthority: string;
+  pane: { id: string; pid: number; inputOff: string; barrierPresent: boolean; socket: string; socketUid: number; socketInode: number };
+}
+
+export async function observeX2RestartGuard(client: X2Docker, container: string, runtime: string): Promise<X2GuardObservation> {
+  const script = String.raw`import hashlib,json,pathlib,stat,sys
+sys.path.insert(0,'/cauce/lifecycle')
+from cauce_container_base import STOP_AUTHORITY,open_control_directory
+from cauce_container_proc import read_metadata,verify_adapter,verify_controller
+from cauce_container_restart import assert_restart_safe,process_identity,shared_pane
+control=open_control_directory('/run/cauce-fleet/'+sys.argv[1])
+document,_=read_metadata(control)
+assert document is not None and document['phase']=='running'
+assert document.get('stopAuthority')==STOP_AUTHORITY
+verify_adapter(document,document['alias'],document['stateDirectory'])
+verify_controller(document)
+pane=shared_pane(document)
+assert pane is not None
+assert_restart_safe(document)
+_,snapshot=pane.read()
+fields=pane.fields()
+socket=pathlib.Path(pane.environment.get('TMUX_TMPDIR','/tmp'))/('tmux-'+str(pane.uid))/'cauce'
+socket_stat=socket.lstat()
+assert stat.S_ISSOCK(socket_stat.st_mode) and socket_stat.st_uid==pane.uid
+def identity(pid,start,runtime=False):
+ observed=process_identity(pid)
+ assert observed[0]==start and (not runtime or observed[1]==document['runtimeUid'])
+ return {'pid':pid,'start':start,'uid':observed[1]}
+assert fields[6]=='' and fields[7]=='0'
+print(json.dumps({'sharedSession':True,'stopAuthority':document['stopAuthority'],
+ 'adapter':identity(document['pid'],document['starttime'],True),
+ 'controller':identity(document['controllerPid'],document['controllerStarttime']),
+ 'pane':{'id':fields[0],'pid':int(fields[1]),'inputOff':fields[7],'barrierPresent':bool(fields[6]),
+         'socket':str(socket),'socketUid':socket_stat.st_uid,'socketInode':socket_stat.st_ino},
+ 'snapshotSha256':hashlib.sha256(snapshot.encode()).hexdigest(),
+ 'sourceSha256':{name:hashlib.sha256(pathlib.Path('/cauce/lifecycle',name+'.py').read_bytes()).hexdigest()
+                 for name in ['cauce_container_base','cauce_container_proc','cauce_container_restart']}}))`;
+  return JSON.parse(await client.docker(['exec', '--user', '0', container, 'python3', '-I', '-B', '-c', script, runtime])) as X2GuardObservation;
+}
+
+export async function observeX2Stopped(client: X2Docker, container: string, runtime: string, before: X2GuardObservation): Promise<{ metadataAbsent: boolean; processes: { role: string; activeIdentity: boolean }[] }> {
+  const script = String.raw`import json,pathlib,sys
+before=json.loads(sys.argv[2]);processes=[]
+for role in ['adapter','controller']:
+ expected=before[role];path=pathlib.Path('/proc')/str(expected['pid'])
+ try:
+  fields=(path/'stat').read_text().rsplit(') ',1)[1].split()
+  active=int(fields[19])==expected['start'] and path.stat().st_uid==expected['uid'] and fields[0]!='Z'
+ except FileNotFoundError:active=False
+ processes.append({'role':role,'activeIdentity':active})
+print(json.dumps({'metadataAbsent':not pathlib.Path('/run/cauce-fleet',sys.argv[1],'cauce-v3-adapter.json').exists(),'processes':processes}))`;
+  return JSON.parse(await client.docker(['exec', '--user', '0', container, 'python3', '-I', '-B', '-c', script, runtime,
+    JSON.stringify(before)])) as { metadataAbsent: boolean; processes: { role: string; activeIdentity: boolean }[] };
+}
+
 export async function attachX2Transport(isolation: XDockerIsolation, network: string, owner: string,
   outer: (args: string[]) => Promise<string>): Promise<Record<string, unknown>> {
   const before = await isolation.assertDedicated();
@@ -198,3 +257,143 @@ print(json.dumps({'code':result.returncode,'stdout':result.stdout,'stderr':resul
     },
   };
 }
+
+export async function diagnoseX2Restart(client: X2Docker, container: string, runtime: string): Promise<unknown> {
+  const script = String.raw`import hashlib,json,os,pathlib,re,stat,subprocess,sys
+sys.path.insert(0,'/cauce/lifecycle')
+from cauce_container_base import open_control_directory
+from cauce_container_proc import matched_fs_credentials,read_metadata
+from cauce_container_restart import process_identity,shared_pane,tmux_absent
+result={'commands':[],'sourceSha256':{}}
+for name in ['cauce_container_base.py','cauce_container_proc.py','cauce_container_restart.py','cauce-container-runtime.py']:
+ result['sourceSha256'][name]=hashlib.sha256(pathlib.Path('/cauce/lifecycle',name).read_bytes()).hexdigest()
+def identity(pid):
+ try:
+  path=pathlib.Path('/proc')/str(pid);fields=(path/'stat').read_text().rsplit(') ',1)[1].split()
+  return {'pid':pid,'uid':path.stat().st_uid,'startTicks':int(fields[19]),'state':fields[0]}
+ except OSError:return {'pid':pid,'absent':True}
+try:
+ control=open_control_directory('/run/cauce-fleet/'+sys.argv[1])
+ try:document,_=read_metadata(control)
+ finally:os.close(control)
+ result['metadata']={name:document.get(name) for name in ['phase','alias','wireAlias','stopAuthority','runtimeUid','runtimeGid','pid','starttime','controllerPid','controllerStarttime','containerGeneration','bundleDigest']} if document else None
+ if document:
+  result['identities']=[identity(document['pid']),identity(document['controllerPid'])]
+  original=process_identity(document['pid'])
+  assert original==(document['starttime'],document['runtimeUid'])
+  with matched_fs_credentials(document['runtimeUid'],document['runtimeGid']):
+   selected=(pathlib.Path('/proc')/str(document['pid'])/'environ').read_bytes().split(b'\0')
+   values={name:[item.partition(b'=')[2] for item in selected if item.partition(b'=')[0]==name]
+           for name in [b'CAUCE_BOOTSTRAP',b'CAUCE_SHARED_SESSION']}
+  assert process_identity(document['pid'])==original
+  def flag(name):
+   found=values[name]
+   return {'verifiedPid':document['pid'],'verifiedStartTicks':original[0],'verifiedUid':original[1],
+           'value':found[0].decode() if len(found)==1 and found[0] in [b'0',b'1'] else 'absent' if not found else 'invalid'}
+  result['bootstrapFlag']=flag(b'CAUCE_BOOTSTRAP')
+  result['sharedSessionFlag']=flag(b'CAUCE_SHARED_SESSION')
+  result['tmuxAbsent']=tmux_absent()
+  pane=shared_pane(document);result['sharedPane']=pane is not None
+  result['sharedPaneReturnedNone']=pane is None
+  if pane:
+   result['target']=pane.target;result['runtimeIdentity']={'uid':pane.uid,'gid':pane.gid}
+   result['tmuxEnvironment']={key:pane.environment[key] for key in ['HOME','PATH','LANG','TMUX_TMPDIR'] if key in pane.environment}
+   socket=pathlib.Path(pane.environment.get('TMUX_TMPDIR','/tmp'))/('tmux-'+str(pane.uid))/'cauce'
+   result['socketStats']=[]
+   for path in [socket.parent.parent,socket.parent,socket]:
+    row={'path':str(path)}
+    try:
+     observed=path.lstat();row.update(exists=True,uid=observed.st_uid,gid=observed.st_gid,mode=oct(stat.S_IMODE(observed.st_mode)),inode=observed.st_ino,isSocket=stat.S_ISSOCK(observed.st_mode))
+    except FileNotFoundError:row['exists']=False
+    result['socketStats'].append(row)
+   def read(arguments):
+    command=['/usr/bin/tmux','-N','-L','cauce',*arguments]
+    row={'command':command}
+    try:
+     value=subprocess.run(command,capture_output=True,timeout=4,check=False,env=pane.environment,cwd='/',**pane.credentials)
+     row.update(exitCode=value.returncode,stderr=value.stderr.decode(errors='replace')[:1024],stdoutBytes=len(value.stdout),stdoutSha256=hashlib.sha256(value.stdout).hexdigest())
+     return value.stdout if value.returncode==0 else None
+    except (OSError,subprocess.TimeoutExpired) as error:row['error']=type(error).__name__
+    finally:result['commands'].append(row)
+   for scope in [('-g',),(),('-w',),('-p',)]:read(['show-hooks',*scope,'-t',pane.target])
+   read(['show-options','-s','command-alias'])
+   fields=read(['list-panes','-t',pane.target,'-F','#{pane_id}|#{pane_pid}|#{pane_input_off}|#{@cauce_input_barrier}'])
+   if fields is not None:
+    lines=fields.decode(errors='replace').splitlines()
+    if len(lines)==1 and re.fullmatch(r'%[0-9]+',lines[0].split('|')[0]):
+     read(['capture-pane','-p','-e','-t',lines[0].split('|')[0]])
+except Exception as error:result['error']={'type':type(error).__name__,'message':str(error)[:512]}
+print(json.dumps(result))`;
+  const result = await client.command(['exec', '--user', '0', container, 'python3', '-I', '-B', '-c', script, runtime]);
+  return { code: result.code, stderr: result.stderr.slice(0, 1024),
+    observed: result.code === 0 ? JSON.parse(result.stdout) as unknown : { stdoutBytes: Buffer.byteLength(result.stdout),
+      stdoutSha256: createHash('sha256').update(result.stdout).digest('hex') } };
+}
+
+export const X2_ADMISSION_DIAGNOSTICS = String.raw`import json
+import pathlib
+import sys
+
+
+def document(path):
+    if not path.is_file() or path.is_symlink():
+        return None
+    return json.loads(path.read_bytes())
+
+
+def pointer(path):
+    value = document(path)
+    return {'exists': value is not None, 'generation': value.get('generation') if isinstance(value, dict) else None}
+
+
+root = pathlib.Path(sys.argv[1])
+runtime = sys.argv[2]
+result = []
+for filename in root.rglob('executor-policy.json'):
+    policy = document(filename)
+    state = pathlib.Path(policy['roots']['state'])
+    item = {
+        'policy': str(filename),
+        'stateRoot': str(state),
+        'hostId': policy.get('host_id'),
+        'desired': pointer(state / 'desired-fleet.json'),
+        'applied': pointer(state / 'applied-fleet.json'),
+        'templates': [{name: row.get(name) for name in ('harness_id', 'runtime_user', 'home_directory', 'state_root')}
+                      for row in policy.get('container_templates', [])],
+        'operations': [],
+        'generations': [],
+    }
+    for operation in (state / 'operations').glob('*'):
+        effects = document(operation / 'effects.json')
+        if not isinstance(effects, dict):
+            continue
+        verified = effects.get('verified')
+        item['operations'].append({
+            'id': operation.name,
+            'journalKeys': sorted(effects),
+            'attemptedSteps': effects.get('attempted'),
+            'verified': {name: verified.get(name) is True for name in
+                         ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')}
+                        if isinstance(verified, dict) else None,
+            'generation': effects.get('generation'),
+            'expectedApplied': effects.get('expected_applied'),
+            'bootstrapCredentialsPrepared': bool(effects.get('bootstrap_credentials')),
+            'normalCredentialsPrepared': bool(effects.get('normal_credentials')),
+            'admissionRecorded': isinstance(effects.get('admission'), dict),
+            'normalProofRecorded': isinstance(effects.get('admission_normal_proof'), dict),
+            'replacementRetirementRecorded': isinstance(effects.get('replacement_retirement'), dict),
+        })
+    for generation in (state / 'generations').glob('*'):
+        fleet = document(generation / 'flota.json')
+        if not isinstance(fleet, dict):
+            continue
+        public = {}
+        for section in ('fleet', 'bootstrap'):
+            row = fleet.get(section, {}).get(runtime)
+            public[section] = ({name: row.get(name) for name in ('tenant', 'alias', 'hostId', 'enabled',
+                               'lifecycleState', 'runtimeStateDirectory', 'home', 'room')}
+                              if isinstance(row, dict) else None)
+        item['generations'].append({'generation': generation.name, 'target': public,
+                                    'bootstrapPresent': runtime in fleet.get('bootstrap', {})})
+    result.append(item)
+print(json.dumps(result, sort_keys=True))`;
