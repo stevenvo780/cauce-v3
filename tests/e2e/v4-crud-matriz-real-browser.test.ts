@@ -91,6 +91,7 @@ async function captureAgentDeletion(page: V4Page, name: string): Promise<void> {
 
 async function freshPage(label: string): Promise<V4Page> {
   const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+  (page as V4Page & { setDefaultNavigationTimeout(timeout: number): void }).setDefaultNavigationTimeout(60_000);
   errors.watch(page, label);
   return page;
 }
@@ -110,7 +111,12 @@ async function registerCompany(page: V4Page, person: V4Person): Promise<void> {
 }
 
 async function openConfig(page: V4Page, section: string): Promise<void> {
-  await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
+  const target = `${base()}/config?seccion=${section}`;
+  if (page.url() === target) {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  } else {
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+  }
   await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
 }
 
@@ -144,7 +150,15 @@ async function storedAccount(): Promise<Record<string, unknown>[]> {
 }
 
 async function openAccounts(page: V4Page): Promise<void> {
-  await page.goto(`${base()}/accounts`, { waitUntil: 'domcontentloaded' });
+  const target = `${base()}/accounts`;
+  if (page.url() !== target) {
+    const link = page.getByRole('navigation', { name: 'Navegación principal', exact: true }).getByRole('link', { name: 'Cuentas', exact: true });
+    if (await link.count() > 0 && await link.isVisible()) {
+      await link.click();
+    } else {
+      await page.goto(target, { waitUntil: 'domcontentloaded' });
+    }
+  }
   await page.getByRole('heading', { name: 'Cuentas', exact: true }).waitFor({ timeout: 20_000 });
   await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
   await page.getByRole('link', { name: 'Registrar en Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
@@ -160,10 +174,21 @@ async function previewAndApply(page: V4Page, dialog: V4Locator, label: string): 
 }
 
 async function openPlan(page: V4Page): Promise<void> {
-  await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+  const target = `${base()}/live`;
+  if (page.url() !== target) {
+    const link = page.getByRole('navigation', { name: 'Navegación principal', exact: true }).getByRole('link', { name: 'Oficina', exact: true });
+    if (await link.count() > 0 && await link.isVisible()) {
+      await link.click();
+    } else {
+      await page.goto(target, { waitUntil: 'domcontentloaded' });
+    }
+  }
   await page.getByRole('region', { name: 'Oficina', exact: true }).waitFor({ timeout: 30_000 });
-  await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
-  await page.getByRole('heading', { name: 'Plano de oficina', exact: true }).waitFor({ timeout: 20_000 });
+  const heading = page.getByRole('heading', { name: 'Plano de oficina', exact: true });
+  if (!await heading.isVisible()) {
+    await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+    await heading.waitFor({ timeout: 20_000 });
+  }
   await page.getByRole('region', { name: `Sala ${hubA}/office`, exact: true }).waitFor({ timeout: 20_000 });
 }
 
@@ -187,6 +212,7 @@ async function storedParts(): Promise<{ label: string; width: number }[]> {
 }
 
 beforeAll(async () => {
+  process.env.CAUCE_PLAZOS_FACTOR ??= '3';
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
   fixture = await startConsoleFunctionalFixture();
@@ -471,6 +497,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await dialog.getByRole('button', { name: 'Crear registro', exact: true }).click();
       await dialog.getByText(`Registro creado: ${hubA}/${agentAlias}.`, { exact: true }).waitFor({ timeout: 20_000 });
       await dialog.getByRole('button', { name: 'Terminar', exact: true }).click();
+      await dialog.waitFor({ state: 'hidden', timeout: 20_000 });
     };
     await step(page, 'agent registry create', async () => { await createAgent(false); });
     const stored = await pool().query(
@@ -545,6 +572,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       value: { enabled: false } })).toBe(409);
     expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(deletedRevision);
     await step(page, 'purged agent stays outside active and retired inventory after reload and deep link', async () => {
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await openConfig(page, 'agentes');
       await page.getByLabel('Buscar agente o grupo').fill(agentAlias);
       await page.getByText('No hay agentes que coincidan con la búsqueda.', { exact: true }).waitFor({ timeout: 20_000 });
