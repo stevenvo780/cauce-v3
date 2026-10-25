@@ -9,7 +9,7 @@ import { expect } from 'vitest';
 import { FIXTURE_PROVIDER_IDENTITY, enrollComputer, startComputerHarness, type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
-import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, PATTERN_DEFECT_RULE,
+import { apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, PATTERN_DEFECT_RULE,
   syntheticPerson, type V4Page } from './v4-console-real-browser.helpers.js';
 
 const execute = promisify(execFile);
@@ -41,7 +41,7 @@ async function certificates(directory: string): Promise<{ ca: string; key: strin
   return { ca, key, cert };
 }
 
-export async function startCancelFixture(): Promise<CancelFixture> {
+export async function startCancelFixture(options: { extraSourceFiles?: readonly string[] } = {}): Promise<CancelFixture> {
   await mkdir(cancelReceipts, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(join(tmpdir(), 'cauce-fleet-cancel-'));
   const pki = await certificates(directory);
@@ -51,6 +51,8 @@ export async function startCancelFixture(): Promise<CancelFixture> {
   let computer: ComputerHarness | undefined;
   let trusted: TrustedBrowser | undefined;
   let vite: { close(): Promise<void>; listen(): Promise<void> } | undefined;
+  let page: V4Page | undefined;
+  let errors: BrowserErrorLog | undefined;
   const close = async () => {
     const failures: unknown[] = [];
     for (const action of [async () => trusted?.close(), async () => vite?.close(), async () => {
@@ -61,7 +63,8 @@ export async function startCancelFixture(): Promise<CancelFixture> {
     if (failures.length) throw new AggregateError(failures, 'fleet cancellation cleanup failed');
   };
   try {
-    computer = await startComputerHarness({ prefix: cancelPrefix, consoleOrigins: [origin], workRoot: '/datos', resourceOwner: CANCEL_OWNER });
+    computer = await startComputerHarness({ prefix: cancelPrefix, consoleOrigins: [origin], workRoot: '/datos', resourceOwner: CANCEL_OWNER,
+      ...options });
     const server = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
       configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
       cacheDir: join(directory, 'vite-cache'), server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true, watch: null, hmr: false,
@@ -71,8 +74,8 @@ export async function startCancelFixture(): Promise<CancelFixture> {
     vite = server; await server.listen();
     trusted = await startTrustedBrowser(pki.ca, directory, [ports.ports.frontend, Number(new URL(computer.gatewayUrl).port)]);
     const context = await trusted.browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
-    const page = asV4Page(await context.newPage());
-    const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+    page = asV4Page(await context.newPage());
+    errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
     errors.watch(page, 'fleet-cancel-owner');
     const owner = { ...syntheticPerson('cancel', cancelRun), email: `${cancelPrefix}@example.test`,
       company: { name: `zz-canary-empresa-cancel-${cancelRun}`, slug: `zz-cancel-${cancelRun}` } };
@@ -95,7 +98,18 @@ export async function startCancelFixture(): Promise<CancelFixture> {
     await computer.pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
       VALUES($1,'codex',$2,$3,'env_path','CAUCE_FLEET_CANCEL_PROFILE_PATH',true)`, [accountId, FIXTURE_PROVIDER_IDENTITY, tenantId]);
     return { computer, page, errors, baseUrl: origin, tenantId, hostId, room, accountId, close };
-  } catch (error) { await close(); throw error; }
+  } catch (error) {
+    try {
+      if (page) {
+        await writeFile(join(cancelReceipts, 'bootstrap-failure.json'), JSON.stringify({
+          error: error instanceof Error ? error.message : String(error), page: await bodySnippet(page),
+          browserErrors: errors?.unexpected, browserTrace: errors?.trace,
+        }, null, 2) + '\n', { mode: 0o600 });
+        await page.screenshot({ path: join(cancelReceipts, 'bootstrap-failure.png') }).catch(() => undefined);
+      }
+    } finally { await close(); }
+    throw error;
+  }
 }
 
 export async function cancelOperations(fixture: CancelFixture, alias: string): Promise<CancelOperation[]> {
