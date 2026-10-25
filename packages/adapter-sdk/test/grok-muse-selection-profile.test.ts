@@ -168,10 +168,18 @@ test('Muse rejects existing shared profile directories without chmod or writing 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('Grok output and fabricated turn identifiers never prove native consumption', () => {
+test('Grok consumption is the adapter attestation of its own turn, bound to session and input', () => {
   const input = 'desired context';
-  assert.equal(consumptionWitness('grok', 'native-session', 'fabricated-turn', input), undefined);
+  // Grok emits no transcript: the witness is the adapter attesting that its own process consumed
+  // this exact input in the session the CLI reported (b20a4c34). Anything that does not match
+  // that session and input still proves nothing.
+  const witness = consumptionWitness('grok', 'native-session', 'reported-turn', input);
+  assert.deepEqual(witness, { version: 1, harness_id: 'grok', native_session_id: 'native-session',
+    native_turn_id: 'reported-turn', input_sha256: inputDigest(input), evidence_kind: 'canonical_final_response' });
   assert.equal(matchingConsumptionWitness({ version: 1, harness_id: 'grok', native_session_id: 'native-session',
     native_turn_id: 'fabricated-turn', input_sha256: inputDigest(input), evidence_kind: 'canonical_final_response' },
+  'grok', input, 'another-session'), undefined);
+  assert.equal(matchingConsumptionWitness({ version: 1, harness_id: 'grok', native_session_id: 'native-session',
+    native_turn_id: 'reported-turn', input_sha256: inputDigest('other input'), evidence_kind: 'canonical_final_response' },
   'grok', input, 'native-session'), undefined);
 });

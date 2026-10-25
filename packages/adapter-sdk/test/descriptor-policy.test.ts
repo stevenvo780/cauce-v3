@@ -59,6 +59,7 @@ document={'operation_id':'2c647dc7-e3f3-4287-af89-7a6597e5a40c','action':'query'
           'account_id':'fixture-account','host_id':'fixture-host','provider':'codex',
           'container_name':'cauce-quota-1c647dc7e3f34287af897a6597e5a40c'}}
 policy['host_id']='fixture-host'
+policy['executor_user']='fixture-executor'
 import quota_runtime
 from unittest.mock import patch
 quota_runtime.inspect_container=lambda name: {'State': {'Running': True}}
