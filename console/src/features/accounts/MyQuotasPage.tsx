@@ -102,7 +102,7 @@ export function MyQuotasPage() {
       const reread = await preferences.reload(); if (reread.error) throw reread.error; }, 'Tarjetas fijadas guardadas para esta persona y empresa.');
   }
   const registerBlock = canWriteAccounts ? undefined : !canManageQuotaAccounts(authority?.role)
-    ? 'Solo el dueño o un administrador de la empresa registra cuentas de cuotas. Pide a uno de ellos que la registre.'
+    ? 'Solo el dueño de la empresa o un administrador de plataforma registra cuentas de cuotas. Pide a uno de ellos que la registre.'
     : busy ? 'Espera a que termine la operación en curso.'
       : accounts.loading ? 'Espera a que termine la lectura de cuentas.'
         : 'No hay una lectura vigente de cuentas. Actualiza cuotas y entornos y vuelve a intentarlo.';
@@ -214,7 +214,7 @@ function QuotaAccountForm({ account, executable, busy, canWrite, save, cancel, f
       {automatic ? null : <label>Motivo de pausa<input maxLength={128} value={reason} disabled={locked || resume} onChange={event => { setReason(event.target.value); }} /></label>}
       {hasPause ? <label className="flex items-center gap-2"><input type="checkbox" checked={resume} disabled={locked} onChange={event => { setResume(event.target.checked); }} />Reanudar ahora (quita la pausa)</label> : null}</> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
-    <div className="flex flex-wrap items-center gap-2"><Button type="submit" disabled={locked || !label.trim()} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide a un dueño o administrador de la empresa que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
+    <div className="flex flex-wrap items-center gap-2"><Button type="submit" disabled={locked || !label.trim()} title={locked ? (!canWrite ? 'Tu rol no permite guardar cuentas de cuotas. Pide al dueño de la empresa o a un administrador de plataforma que lo haga.' : 'Espera a que termine la operación en curso.') : !label.trim() ? 'Escribe el nombre de la cuenta.' : undefined}>{account ? 'Guardar cuenta' : 'Registrar cuenta'}</Button>
       <Button type="button" disabled={busy} onClick={cancel}>Cancelar</Button></div>
   </form>;
 }

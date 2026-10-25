@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { INVALID_REGISTRATION, REGISTRATION_IN_USE } from '../../services/gateway/src/company-registration.js';
+import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
+import { hashPassword } from '../../services/gateway/src/password.js';
 import { isaTenant, newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import { seedQuotaHost } from './v4-console-real-browser.quotas.js';
 import {
@@ -13,9 +15,18 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a7-cuotas-1025b/console', run);
 const ownerA = syntheticPerson('a', run);
 const ownerB = syntheticPerson('b', run);
+for (const [label, person] of [['a', ownerA], ['b', ownerB]] as const) {
+  person.email = `zz-canary-e2e-a7-cuotas-1025b-${label}-${run}@example.invalid`;
+  person.company.slug = `zz-canary-e2e-a7-cuotas-1025b-${label}-${run}`;
+}
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+const readerErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, {
+  id: 'reader-terminal-capability-forbidden', reason: 'reader has no permission to open a terminal',
+  matches: (text, url) => text.includes('status of 403') && url.endsWith('/v3/console/terminal/capability'),
+}]);
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let pageA: V4Page | undefined;
 let hubA = '';
@@ -27,7 +38,7 @@ const pool = () => active().database.pool;
 const base = () => active().baseUrl;
 const ownerPage = () => { if (!pageA) throw new Error('owner A has no page yet'); return pageA; };
 
-async function freshPage(label: string, viewport = { width: 1440, height: 1000 }): Promise<V4Page> {
+async function freshPage(label: string, viewport = { width: 1440, height: 900 }): Promise<V4Page> {
   const page = asV4Page(await newTrustedPage(active(), viewport));
   errors.watch(page, label);
   return page;
@@ -35,7 +46,11 @@ async function freshPage(label: string, viewport = { width: 1440, height: 1000 }
 
 /** Fails with the visible state of the page, which is what a person would have seen. */
 async function step<T>(page: V4Page, name: string, action: () => Promise<T>): Promise<T> {
-  try { return await action(); }
+  try {
+    const result = await action();
+    if (/quota|preferences/u.test(name)) await page.screenshot({ path: join(evidence, `${name.replaceAll(/\W+/gu, '-')}.png`), fullPage: false });
+    return result;
+  }
   catch (cause) {
     throw new Error(`${name} failed at ${page.url()}: ${await bodySnippet(page)} || console=${JSON.stringify(errors.trace.slice(-12))}`, { cause });
   }
@@ -59,6 +74,7 @@ async function openConfig(page: V4Page, section: string): Promise<void> {
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  await mkdir(evidence, { recursive: true });
   // Quota readers exist only for owner-approved descriptors: pin the packaged codex descriptor, never openclaw.
   approvals = await mkdtemp(join(tmpdir(), 'zz-canary-v4-console-approvals-'));
   const approvalsFile = join(approvals, 'approvals.json');
@@ -302,7 +318,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
   let savedLayout: unknown;
 
   async function openPlan(page: V4Page): Promise<void> {
-    await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).getByRole('link', { name: 'Oficina', exact: true }).click();
     await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
     await page.getByRole('region', { name: officeRoom(), exact: true }).waitFor({ timeout: 20_000 });
   }
@@ -356,11 +372,13 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     const page = ownerPage();
     const unplacedMessage = 'La consulta de cuota requiere un agente y un harness habilitados, un entorno de contenedor y un ordenador habilitado.';
     const noReaderMessage = 'Sin lector de cuota para este harness: el proveedor no expone una ventana de consumo medible.';
+    const notRunningMessage = 'No hay medición de cuota porque el agente aún no corre.';
     const revisionMatcher: unknown = expect.any(Number);
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
       VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`, [hubA, agentAlias, `cauce-v4-${run}`, `/srv/v4/${run}`, `/srv/v4/${run}/state`, ownerA.company.slug]);
     await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [hubA, agentAlias]);
     await pool().query('INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES($1,$2,$3)', [hubA, agentAlias, 'Agente de prueba V4']);
+    errors.expectHttpError(`/v3/console/spaces/${hubA}/${agentAlias}/backups`, 404);
     await step(page, 'agent sheet', async () => {
       await openPlan(page);
       await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button').first().click();
@@ -368,9 +386,10 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
         .getByRole('button', { name: new RegExp(agentAlias, 'u') }).click();
       const sheet = page.getByRole('dialog');
       await sheet.getByText(agentAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
-      await sheet.getByText(unplacedMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByText(notRunningMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByText(unplacedMessage, { exact: true }).count()).toBe(0);
       expect(await sheet.getByText(noReaderMessage, { exact: true }).count()).toBe(0);
-      await sheet.getByText('Todavía no hay una medición persistida.', { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByRole('button', { name: 'Consultar cuota', exact: true }).isDisabled()).toBe(true);
       const quota = await apiGet(page, `/v3/console/agents/${hubA}/${agentAlias}/quota`);
       expect(quota.status).toBe(200);
       expect(quota.body).toEqual({ tenant_id: hubA, alias: agentAlias, revision: revisionMatcher, configuration_revision: revisionMatcher,
@@ -407,9 +426,10 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
         .getByRole('button', { name: new RegExp(noReaderAlias, 'u') }).click();
       const sheet = page.getByRole('dialog');
       await sheet.getByText(noReaderAlias, { exact: true }).first().waitFor({ timeout: 15_000 });
-      await sheet.getByText(noReaderMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      await sheet.getByText(notRunningMessage, { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByText(noReaderMessage, { exact: true }).count()).toBe(0);
       expect(await sheet.getByText(unplacedMessage, { exact: true }).count()).toBe(0);
-      await sheet.getByText('Todavía no hay una medición persistida.', { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await sheet.getByRole('button', { name: 'Consultar cuota', exact: true }).isDisabled()).toBe(true);
       const quota = await apiGet(page, `/v3/console/agents/${hubA}/${noReaderAlias}/quota`);
       expect(quota.status).toBe(200);
       expect(quota.body).toEqual({ tenant_id: hubA, alias: noReaderAlias, revision: revisionMatcher, configuration_revision: revisionMatcher,
@@ -443,6 +463,19 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
 
   it('mis cuotas: alta sin agente, fijar tarjeta, preferencias en otra sesión, edición con CAS y borrado', async () => {
     const page = ownerPage();
+    await step(page, 'quota empty and cancel registration', async () => {
+      await page.goto(`${base()}/my-quotas`, { waitUntil: 'domcontentloaded' });
+      await page.getByText('Aún no hay cuentas. Registra una suscripción para empezar.', { exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Registrar cuenta de cuotas', exact: true });
+      await form.getByLabel('Nombre de la cuenta', { exact: true }).fill('Registro cancelado');
+      await form.getByRole('link', { name: 'Ajustes → Computadoras', exact: true }).waitFor({ timeout: 15_000 });
+      await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      expect((await pool().query('SELECT id FROM provider_accounts WHERE company_id=$1', [ownerA.company.slug])).rowCount).toBe(0);
+      await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
+      await form.getByRole('link', { name: 'Ajustes → Computadoras', exact: true }).click();
+      expect(page.url()).toContain('/config?seccion=computadoras');
+    });
     await seedQuotaHost(pool(), { companyId: ownerA.company.slug, ownerEmail: ownerA.email, hostId: quotaHost });
     let accountId = '';
     let pausedUntil = '';
@@ -470,6 +503,17 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     const account = created.accounts.find(item => item.label === 'Cuenta UI local');
     expect(account).toMatchObject({ observation_status: 'unknown', remaining_percent: null, agents: [] });
     accountId = account?.id ?? '';
+    await step(page, 'quota enable requires authentication', async () => {
+      await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Editar cuenta', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Editar cuenta de cuotas', exact: true });
+      await form.getByLabel('Cuenta habilitada', { exact: true }).check();
+      errors.expectHttpError(`/v3/console/quota-accounts/${accountId}`, 409);
+      await form.getByRole('button', { name: 'Guardar cuenta', exact: true }).click();
+      await page.getByText('Esta cuenta todavía no inició sesión. Primero pulsa «Iniciar sesión» en su tarjeta de «Mis cuotas» o en el agente que la usa: la cuenta se habilita sola cuando el proveedor confirma la sesión.', { exact: true }).waitFor({ timeout: 15_000 });
+      expect(await page.getByRole('group', { name: 'Conflicto de versión', exact: true }).count()).toBe(0);
+      expect((await pool().query('SELECT enabled FROM provider_accounts WHERE id=$1', [accountId])).rows).toEqual([{ enabled: false }]);
+      await form.getByRole('button', { name: 'Cancelar', exact: true }).click();
+    });
     await step(page, 'quota account pin', async () => {
       await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Fijar cuenta', exact: true }).click();
       await quotaCard(page, 'Cuenta UI local').getByRole('button', { name: 'Desfijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
@@ -479,6 +523,33 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
     expect(((await apiGet(page, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toContain(accountId);
     const pinned = await pool().query<{ pinned_quota_accounts: string[] }>('SELECT pinned_quota_accounts FROM console_company_preferences WHERE company_id=$1', [ownerA.company.slug]);
     expect(pinned.rows[0]?.pinned_quota_accounts).toContain(accountId);
+
+    const readerPerson = syntheticPerson('quota-reader', run);
+    const owner = (await pool().query<{ tenant_id: string; alias: string }>('SELECT tenant_id,alias FROM console_users WHERE email=$1', [ownerA.email])).rows[0];
+    if (!owner) throw new Error('quota owner missing');
+    await maintainConsoleUser(pool(), { email: readerPerson.email, name: readerPerson.name, role: 'reader',
+      tenant: owner.tenant_id, alias: owner.alias, updateOnly: false, activate: false }, await hashPassword(readerPerson.password));
+    const reader = asV4Page(await newTrustedPage(active(), { width: 390, height: 844 }));
+    readerErrors.watch(reader, 'quota-reader');
+    await step(reader, 'quota reader restrictions and personal preferences', async () => {
+      await login(reader, base(), readerPerson);
+      await reader.getByRole('button', { name: 'Más', exact: true }).click();
+      await reader.getByRole('dialog', { name: 'Gestión', exact: true }).getByRole('link', { name: 'Mis cuotas', exact: true }).click();
+      const card = quotaCard(reader, 'Cuenta UI local');
+      await card.waitFor({ timeout: 20_000 });
+      const register = reader.getByRole('button', { name: 'Registrar cuenta', exact: true });
+      expect(await register.isDisabled()).toBe(true);
+      expect(await register.evaluate(element => element.getAttribute('title')))
+        .toBe('Solo el dueño de la empresa o un administrador de plataforma registra cuentas de cuotas. Pide a uno de ellos que la registre.');
+      for (const name of ['Editar cuenta', 'Eliminar cuenta', 'Iniciar sesión']) expect(await card.getByRole('button', { name, exact: true }).isDisabled()).toBe(true);
+      expect(((await apiGet(reader, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toEqual([]);
+      await card.getByRole('button', { name: 'Fijar cuenta', exact: true }).click();
+      await card.getByRole('button', { name: 'Desfijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
+      expect(((await apiGet(reader, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toEqual([accountId]);
+      await card.getByRole('button', { name: 'Desfijar cuenta', exact: true }).click();
+      await card.getByRole('button', { name: 'Fijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
+      expect(((await apiGet(page, '/v3/console/preferences')).body as { pinned_quota_accounts: string[] }).pinned_quota_accounts).toEqual([accountId]);
+    });
 
     const second = await freshPage('owner-a-quotas-second');
     await step(second, 'preferences in second session', async () => {
@@ -520,6 +591,10 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await card.getByRole('button', { name: 'Desfijar cuenta', exact: true }).click();
       await card.getByRole('button', { name: 'Fijar cuenta', exact: true }).waitFor({ timeout: 15_000 });
       await card.getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
+      const confirmation = page.getByRole('region', { name: 'Confirmar eliminación de cuenta', exact: true });
+      await confirmation.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      expect((await pool().query('SELECT id FROM provider_accounts WHERE id=$1', [accountId])).rowCount).toBe(1);
+      await card.getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
       await page.getByRole('button', { name: 'Confirmar eliminación de cuenta', exact: true }).click();
       await page.getByText('Cuenta eliminada.', { exact: true }).waitFor({ timeout: 15_000 });
       await page.reload({ waitUntil: 'domcontentloaded' });
@@ -536,6 +611,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
       const account = page.getByRole('form', { name: 'Registrar cuenta de cuotas' });
       await account.getByLabel('Nombre de la cuenta', { exact: true }).fill('Cuenta de entorno');
+      await account.locator('select').selectOption('codex');
       await account.getByRole('button', { name: 'Registrar cuenta', exact: true }).click();
       await quotaCard(page, 'Cuenta de entorno').waitFor({ timeout: 20_000 });
     });
@@ -561,7 +637,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       await page.getByRole('article', { name: 'Entorno Entorno V4', exact: true }).getByRole('button', { name: 'Editar entorno', exact: true }).click();
       const form = page.getByRole('form', { name: 'Editar entorno de cuotas' });
       await form.getByLabel('Nombre del entorno', { exact: true }).fill('');
-      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
+      expect(await form.getByRole('button', { name: 'Guardar entorno', exact: true }).isDisabled()).toBe(true);
       const empty = await validity(form.getByLabel('Nombre del entorno', { exact: true }));
       expect(empty.valid).toBe(false);
       expect(empty.message).not.toBe('');
@@ -620,6 +696,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
         'SELECT enabled,retired_at IS NOT NULL AS retired FROM companies WHERE id=$1', [ownerB.company.slug])).rows[0],
       { timeout: 20_000 }).toEqual({ enabled: false, retired: true });
     });
+    await page.getByRole('heading', { name: 'Tu cuenta no tiene acceso vigente', exact: true }).waitFor({ timeout: 20_000 });
     const session = await apiGet(page, '/v3/auth/session');
     expect(session.body).toMatchObject({ authenticated: true, authority: { role: 'none' } });
     for (const path of ['/v3/console/companies', '/v3/console/quota-accounts', '/v3/console/preferences', '/v3/console/office/layout']) {
@@ -632,6 +709,7 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
   });
 
   it('consola: ninguna página del recorrido registró errores del navegador', () => {
+    readerErrors.assertClean();
     process.stdout.write(`V4 e2e tolerated console messages: ${JSON.stringify(Object.fromEntries(errors.ignored))}\n`);
     errors.assertClean();
     expect(errors.ignored.get(PATTERN_DEFECT_RULE.id) ?? 0).toBe(0);

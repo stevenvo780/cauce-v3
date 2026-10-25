@@ -7,8 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority } from '@cauce/store';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration,
   PATTERN_DEFECT_RULE, syntheticPerson, type V4Page,
@@ -16,6 +15,8 @@ import {
 import { HostCapabilitiesSchema } from '../../services/gateway/src/fleet/host-channel.capabilities.js';
 import { channelPacket, type ChannelHost } from '../../services/gateway/src/fleet/host-channel.fixtures.js';
 
+vi.stubEnv('CAUCE_PLAZOS_FACTOR', process.env.CAUCE_PLAZOS_FACTOR ?? '3');
+const { newTrustedPage, startConsoleFunctionalFixture } = await import('./console-functional-browser.fixtures.js');
 const repository = fileURLToPath(new URL('../../', import.meta.url));
 const execute = promisify(execFile);
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
@@ -181,13 +182,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   tls?.destroy();
-  await fixture?.close();
-  if (previousCwd) process.chdir(previousCwd);
+  try { await fixture?.close(); }
+  finally { if (previousCwd) process.chdir(previousCwd); vi.unstubAllEnvs(); }
 }, 180_000);
 
 describe('approved descriptor quota capabilities with real Python, PostgreSQL, gateway and Chromium', () => {
   it('withdraws the altered pinned descriptor from Mis cuotas and rejects create/query before enqueue', async () => {
-    const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+    const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
     errors.watch(page, 'descriptor-owner');
     const registration = await openRegistration(page, active().baseUrl);
     await fillRegistration(registration, owner);
@@ -248,6 +249,12 @@ describe('approved descriptor quota capabilities with real Python, PostgreSQL, g
       { exact: true }).waitFor({ timeout: 20_000 });
     expect(await page.getByRole('form', { name: 'Crear entorno de cuotas' }).getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
     expect(await page.getByRole('article', { name: `Entorno ${environmentLabel}`, exact: true }).getByRole('button', { name: 'Consultar cuotas', exact: true }).isDisabled()).toBe(true);
+    const evidence = join(repository, '.delegados/v4/recibos/e2e-a7-cuotas-1025b/environments', `descriptor-${run}`);
+    await mkdir(evidence, { recursive: true });
+    await page.screenshot({ path: join(evidence, 'descriptor-withdrawn-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(evidence, 'descriptor-withdrawn-mobile.png'), fullPage: true });
+    await page.setViewportSize({ width: 1440, height: 900 });
     const createKey = `descriptor-create-${run}`;
     errors.expectHttpError('/v3/console/quota-environments', 409);
     const rejectedCreate = await post(page, '/v3/console/quota-environments', {
@@ -284,6 +291,7 @@ describe('approved descriptor quota capabilities with real Python, PostgreSQL, g
     await page.getByRole('form', { name: 'Crear entorno de cuotas' }).locator('select').nth(1).selectOption(host.host_id);
     await page.getByRole('form', { name: 'Crear entorno de cuotas' }).getByLabel('Nombre del entorno', { exact: true }).fill(`Restored ${run}`);
     expect(await page.getByRole('form', { name: 'Crear entorno de cuotas' }).getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(false);
+    await page.screenshot({ path: join(evidence, 'descriptor-restored-desktop.png'), fullPage: true });
     errors.assertClean();
   }, 120_000);
 });
