@@ -15,7 +15,7 @@ import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 import { ChatLatencyCapture } from './browser-delivery-diagnostics.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
-import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
+import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserLifetimeSeconds, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
 import { plazo } from '../helpers/plazos.js';
 
 const require = createRequire(join(process.cwd(), 'console/package.json'));
@@ -159,12 +159,12 @@ RUN playwright install --with-deps chromium
   }
 }
 
-async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[]): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void>; closeContainer: () => Promise<void> }> {
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[], lifetimeSeconds?: number): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void>; closeContainer: () => Promise<void> }> {
   const owner = randomUUID();
   const container = `cauce-ui-browser-${owner}`;
   const network = await isolatedBrowserNetwork(docker, ports);
   const lifecycle = ownedBrowserLifecycle(docker, { name: container, owner, imageId: runtime.imageId,
-    networkName: network.name, networkId: network.id, networkOwner: network.owner, directory: network.directory, socketIdentity: network.socketIdentity });
+    networkName: network.name, networkId: network.id, networkOwner: network.owner, directory: network.directory, socketIdentity: network.socketIdentity, lifetimeSeconds: browserLifetimeSeconds(lifetimeSeconds) });
   const closeNetwork = async () => {
     if (lifecycle.retained()) { await network.closeTransport(); throw new BrowserResourcesRetained(lifecycle.descriptor); }
     await network.close();
@@ -347,10 +347,12 @@ async function availableLoopbackPort(): Promise<number> {
 
 interface FunctionalFixtureOptions {
   sessionTtlMs?: number;
+  browserLifetimeSeconds?: number;
   configureGateway?: (app: Fixture['app'], database: TestDatabase, auth: PasswordAuthProvider) => void;
 }
 
 export async function startConsoleFunctionalFixture(options: FunctionalFixtureOptions = {}): Promise<Fixture> {
+  const lifetimeSeconds = browserLifetimeSeconds(options.browserLifetimeSeconds);
   const directory = await mkdtemp(join(tmpdir(), 'cauce-ui-functional-'));
   let setupStage = 'prepare browser runtime';
   let browserRuntime: BrowserRuntime | undefined;
@@ -411,7 +413,7 @@ export async function startConsoleFunctionalFixture(options: FunctionalFixtureOp
     await devServer.listen();
     const address = devServer.httpServer?.address() as import('node:net').AddressInfo;
     setupStage = 'start isolated browser';
-    const isolatedBrowser = await startIsolatedBrowser(pki.ca.cert, runtime, [frontendPort, gatewayAddress.port]);
+    const isolatedBrowser = await startIsolatedBrowser(pki.ca.cert, runtime, [frontendPort, gatewayAddress.port], lifetimeSeconds);
     closeBrowserNetwork = () => isolatedBrowser.closeNetwork();
     const activeBrowser = isolatedBrowser.browser;
     const activeBrowserContainer = isolatedBrowser.container;

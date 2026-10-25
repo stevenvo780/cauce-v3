@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration,
+import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, login, openRegistration,
   type V4Page, type V4Person } from './v4-console-real-browser.helpers.js';
 
 vi.stubEnv('CAUCE_PLAZOS_FACTOR', '3');
-const { newTrustedPage, startConsoleFunctionalFixture } = await import('./console-functional-browser.fixtures.js');
+const { newTrustedPage, startConsoleFunctionalFixture, startTrustedBrowser } = await import('./console-functional-browser.fixtures.js');
+const { browserDocker } = await import('./browser-owned-lifecycle.js');
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const directory = resolve('.delegados/v4/recibos/e2e-a7-sigue-1025/reading', run);
 const person: V4Person = { email: `zz-canary-a7-reading-${run}@example.invalid`, name: 'Lectura cuotas',
@@ -130,6 +131,31 @@ describe('lecturas reales de Mis cuotas con PostgreSQL propio', () => {
       await page.setViewportSize({ width: 1440, height: 900 });
     }, 90_000);
   }
+
+  it('conserva la duración predeterminada del navegador privado y confirma su cierre después de una lectura real', async () => {
+    const contextDirectory = await mkdtemp('/tmp/cauce-quota-reading-default-');
+    const trusted = await startTrustedBrowser(active().pki.ca.cert, contextDirectory,
+      [Number(new URL(active().baseUrl).port), Number(new URL(active().gatewayUrl).port)]);
+    try {
+      const command: unknown = JSON.parse((await browserDocker(['container', 'inspect', '--format', '{{json .Config.Cmd}}', trusted.containerId])).stdout);
+      expect(command).toEqual(['-lc', 'sleep 600']);
+      const other = asV4Page(await newTrustedPage({ ...active(), browser: trusted.browser, contexts: [] }, { width: 1440, height: 900 }));
+      errors.watch(other, 'quota-reading-default-browser');
+      await login(other, active().baseUrl, person);
+      await other.goto(`${active().baseUrl}/my-quotas`, { waitUntil: 'domcontentloaded' });
+      await other.getByRole('article', { name: 'Cuotas de Cuenta de lectura', exact: true }).waitFor({ timeout: 20_000 });
+      expect((await apiGet(other, '/v3/console/quota-accounts')).body).toMatchObject({ accounts: [expect.objectContaining({ id: accountId })] });
+      await other.screenshot({ path: resolve(directory, 'default-browser-1440.png'), fullPage: false });
+      await other.setViewportSize({ width: 390, height: 844 });
+      await other.screenshot({ path: resolve(directory, 'default-browser-390.png'), fullPage: false });
+      await writeFile(resolve(directory, 'default-browser-resources.json'), JSON.stringify({ container: trusted.container,
+        container_id: trusted.containerId, image: trusted.runtime.image, image_id: trusted.runtime.imageId, command }));
+    } finally {
+      await trusted.close();
+      await rm(contextDirectory, { recursive: true, force: true });
+    }
+    await writeFile(resolve(directory, 'default-browser-cleanup.json'), JSON.stringify({ verified: true, container: trusted.container }));
+  }, 180_000);
 
   it('no registra errores inesperados del navegador', async () => {
     errors.assertClean();

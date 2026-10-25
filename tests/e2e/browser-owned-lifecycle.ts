@@ -60,6 +60,11 @@ export function browserErrorStdout(error: unknown): string {
 export interface BrowserDescriptor {
   name: string; owner: string; imageId: string; networkName: string; networkId: string; networkOwner: string; directory: string;
   socketIdentity: { uid: number; dev: number; ino: number };
+  lifetimeSeconds?: number;
+}
+export function browserLifetimeSeconds(value = 600): number {
+  if (!Number.isSafeInteger(value) || value < 600 || value > 1800) throw new Error('Browser lifetime must be between 600 and 1800 seconds');
+  return value;
 }
 type Docker = (args: string[], options?: { timeout: number }) => Promise<{ stdout: string }>;
 interface Container {
@@ -98,7 +103,8 @@ export const BROWSER_CLEANUP_TIMEOUT_MS = plazo(30_000);
 export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescriptor, timing = {
   now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
 }) {
-  const expected = Object.freeze({ ...descriptor, socketIdentity: Object.freeze({
+  const lifetimeSeconds = browserLifetimeSeconds(descriptor.lifetimeSeconds);
+  const expected = Object.freeze({ ...descriptor, lifetimeSeconds, socketIdentity: Object.freeze({
     uid: descriptor.socketIdentity.uid, dev: descriptor.socketIdentity.dev, ino: descriptor.socketIdentity.ino,
   }) });
   let cid: string | undefined;
@@ -199,7 +205,7 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     const receipt = (await docker(['create', '--pull=never', '--rm', '--init', '--network', expected.networkName,
       '--mount', `type=bind,source=${expected.directory},target=/qa-browser-transport,readonly`, '--name', expected.name,
       '--label', 'cauce.e2e.owner=ui-functional', '--label', `io.cauce.qa.browser=${expected.owner}`,
-      '--entrypoint', 'sh', expected.imageId, '-lc', 'sleep 600'], { timeout: BROWSER_DOCKER_TIMEOUT_MS })).stdout.trim();
+      '--entrypoint', 'sh', expected.imageId, '-lc', `sleep ${String(lifetimeSeconds)}`], { timeout: BROWSER_DOCKER_TIMEOUT_MS })).stdout.trim();
     if (!/^[a-f0-9]{64}$/u.test(receipt)) throw new Error('Owned browser create receipt lacks an exact CID');
     cid = receipt;
     const created = await inspect();
