@@ -183,13 +183,16 @@ export class HostSetupPackager {
   }
 
   isBackupOnlyHost(companyId: string, hostId: string): boolean {
-    return this.config.backup_only_hosts?.[companyId]?.includes(hostId) === true;
+    const companies = this.config.backup_only_hosts;
+    return companies !== undefined && Object.hasOwn(companies, companyId) && companies[companyId]?.includes(hostId) === true;
   }
 
   build(scope: HostSetupScope, issuedAt = Date.now()): SignedHostSetupPackage {
     const enabled = new Set(scope.harnesses);
     const { policy, release, image, quota_image: quotaImage, files } = this.config;
-    const legacy = this.config.legacy_backup_containers?.[scope.company_id]?.[scope.host_id];
+    const companies = this.config.legacy_backup_containers;
+    const hosts = companies !== undefined && Object.hasOwn(companies, scope.company_id) ? companies[scope.company_id] : undefined;
+    const legacy = hosts !== undefined && Object.hasOwn(hosts, scope.host_id) ? hosts[scope.host_id] : undefined;
     const backupOnly = this.isBackupOnlyHost(scope.company_id, scope.host_id);
     const bundles = Object.fromEntries(Object.entries(policy.bundles).filter(([harness]) => enabled.has(harness)));
     const narrowed = { ...policy, bundles,
