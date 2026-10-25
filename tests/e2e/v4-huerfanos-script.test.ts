@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { agentPlan, EVIDENCE, LIVE_ALIAS, NATIVE_ALIAS, nativeObservation, OWNER, PREFIX, runCleanup,
-  liveReply, startOrphansFixture, waitOperation, type OrphansFixture, type OrphansPlan } from './v4-huerfanos.fixtures.js';
+  liveReply, PROTECTED_SCOPE, startOrphansFixture, waitOperation, type OrphansFixture, type OrphansPlan } from './v4-huerfanos.fixtures.js';
 import { exerciseOrphanVolumes } from './v4-huerfanos-volumes.fixtures.js';
 import { exerciseDockerRemains } from './v4-huerfanos-docker.fixtures.js';
 import { exerciseOrphanContexts, startOrphansContextBroker, type OrphansContextBroker } from './v4-huerfanos-context.fixtures.js';
@@ -44,7 +44,7 @@ async function captureReceipt(fixture: OrphansFixture, name: string) {
   return JSON.parse(raw) as CleanupOutput;
 }
 
-it('simula sin efectos, retira y purga un canario por la API y conserva referencias y recursos de Praxis', async () => {
+it('simula sin efectos, retira y purga un canario por la API y conserva referencias y recursos protegidos', async () => {
   const evidence: Record<string, unknown> = { owner: OWNER, prefix: PREFIX, provider: 'existing synthetic CLI', sdk: 'real' };
   let fixture: OrphansFixture | undefined;
   let broker: OrphansContextBroker | undefined;
@@ -61,8 +61,9 @@ it('simula sin efectos, retira y purga un canario por la API y conserva referenc
         reason: 'Referenced by the active fixture agent', scope: { company_id: current.company, tenant_id: current.tenant, host_id: current.host } },
       { id: 'live-state', kind: 'resource', resource_type: 'volume', name: `${current.liveContainer}-state`,
         reason: 'State of the active fixture agent', scope: { company_id: current.company, tenant_id: current.tenant } },
-      { id: 'praxis-state', kind: 'resource', resource_type: 'volume', name: current.retainedVolume,
-        reason: 'Synthetic equivalent of a retained real-agent state volume', scope: { company_id: 'Praxis', tenant_id: 'Hospital', host_id: 'server2-praxis' } },
+      { id: 'protected-state', kind: 'resource', resource_type: 'volume', name: current.retainedVolume,
+        reason: 'Synthetic equivalent of a retained real-agent state volume', scope: { company_id: PROTECTED_SCOPE.company,
+          tenant_id: PROTECTED_SCOPE.tenant, host_id: PROTECTED_SCOPE.host } },
       { id: 'network', kind: 'resource', resource_type: 'network', name: current.retainedNetwork.name,
         reason: 'No canonical cleanup route is authorized', scope: { company_id: current.company } },
     );
@@ -77,7 +78,7 @@ it('simula sin efectos, retira y purga un canario por la API y conserva referenc
     expect(simulated.items.find(item => item.id === 'native-retire')).toMatchObject({ status: 'would_enqueue', reason_code: 'ready' });
     expect(simulated.items.find(item => item.id === 'live-container')).toMatchObject({ status: 'retained', reason_code: 'no_canonical_cleanup' });
     expect(simulated.items.find(item => item.id === 'live-state')).toMatchObject({ status: 'retained', reason_code: 'volume_retained' });
-    expect(simulated.items.find(item => item.id === 'praxis-state')).toMatchObject({ status: 'retained', reason_code: 'praxis_inventory_only' });
+    expect(simulated.items.find(item => item.id === 'protected-state')).toMatchObject({ status: 'retained', reason_code: 'praxis_inventory_only' });
     expect(simulated.items.find(item => item.id === 'network')).toMatchObject({ status: 'retained', reason_code: 'no_canonical_cleanup' });
     expect(await operationalState(current)).toEqual(before);
     evidence.default_simulation = simulated;
@@ -151,7 +152,8 @@ it('simula sin efectos, retira y purga un canario por la API y conserva referenc
     evidence.reply_after = await liveReply(current);
     evidence.native_after = afterPurge;
     evidence.retained = { container: current.liveContainer, volume: current.retainedVolume, network: current.retainedNetwork };
-    evidence.sources = Object.fromEntries(await Promise.all(['limpiar-huerfanos.sh', 'limpiar-huerfanos-driver.py', 'limpiar-huerfanos-volumes.py'].map(async name =>
+    evidence.sources = Object.fromEntries(await Promise.all(['limpiar-huerfanos.sh', 'limpiar-huerfanos-driver.py',
+      'limpiar-huerfanos-volumes.py', 'limpiar-huerfanos-sellar.py'].map(async name =>
       [name, createHash('sha256').update(await readFile(join(process.cwd(), '.delegados/v4', name))).digest('hex')] as const)));
   } catch (error) {
     failures.push(error);

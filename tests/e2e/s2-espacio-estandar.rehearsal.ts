@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFile, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { expect } from 'vitest';
+import { afterAll, beforeAll, expect } from 'vitest';
 import type { DatabasePool } from '@cauce/store';
 import type { MtlsAuthProvider } from '../../services/gateway/src/auth.js';
 import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
@@ -13,6 +13,7 @@ import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.j
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { docker, type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import type { Legacy, Probe, Runtime } from './s2-espacio-estandar.test.js';
+import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 
 const execute = promisify(execFile);
 const PREVIOUS_OPS = 'c25cc0e636a4836b417c0a9081c804498a74b672';
@@ -25,6 +26,44 @@ const SOURCE_FILES = ['tests/e2e/s2-espacio-estandar.test.ts', 'tests/e2e/s2-esp
   '.delegados/v4/live_adapter.py', '.delegados/v4/live_adapter_probe.py', ...HARNESS_SOURCE_FILES];
 const PREPARATION_FILES = ['tests/e2e/s2b-espacio-estandar-preparado.test.ts',
   '.delegados/v4/espacio-estandar-preparar.sh', '.delegados/v4/espacio-estandar-preparar.py'];
+
+export function registerRehearsalDockerContext(): void {
+  const previousDocker = { DOCKER_CONTEXT: process.env.DOCKER_CONTEXT, DOCKER_CONFIG: process.env.DOCKER_CONFIG };
+  let dockerConfiguration = '';
+  beforeAll(async () => {
+    const outer = await connectXOuterDocker();
+    const endpoint = process.env.DOCKER_HOST;
+    assert.equal(endpoint, 'unix:///var/run/docker.sock');
+    const format = '{{.Name}}\t{{.ID}}';
+    const daemon = await outer.docker(['info', '--format', format]);
+    const [name, identity] = daemon.split('\t');
+    const contexts: Record<string, string> = { 'docker-lab': 'lab', 'docker-lab-2': 'lab2', 'docker-lab-3': 'lab3' };
+    const context = contexts[name ?? ''];
+    assert.ok(context && identity, 'standard-space rehearsal requires a laboratory Docker daemon');
+    dockerConfiguration = await mkdtemp('/tmp/zz-canary-standard-space-docker-');
+    const environment: NodeJS.ProcessEnv = { ...process.env, DOCKER_CONFIG: dockerConfiguration };
+    delete environment.DOCKER_CONTEXT;
+    const options = { env: environment, encoding: 'utf8' as const, timeout: 30_000, maxBuffer: 64 * 1024 };
+    await execute('docker', ['context', 'create', context, '--docker', 'host=' + endpoint], options);
+    const configured = await execute('docker', ['context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}'], options);
+    assert.equal(configured.stdout.trim(), endpoint);
+    const selected = await execute('docker', ['info', '--format', format],
+      { ...options, env: { ...environment, DOCKER_CONTEXT: context } });
+    assert.equal(selected.stdout.trim(), daemon, 'named Docker context must address the runner daemon');
+    process.env.DOCKER_CONFIG = dockerConfiguration;
+    process.env.DOCKER_CONTEXT = context;
+    console.info('S2B_LABORATORY_DOCKER_ENDPOINT', JSON.stringify({ context, endpoint, name, identity, runner: outer.runner }));
+  });
+  // Parent cleanup must still run when the imported child suite's cleanup fails.
+  afterAll(async () => {
+    if (previousDocker.DOCKER_CONTEXT === undefined) delete process.env.DOCKER_CONTEXT;
+    else process.env.DOCKER_CONTEXT = previousDocker.DOCKER_CONTEXT;
+    if (previousDocker.DOCKER_CONFIG === undefined) delete process.env.DOCKER_CONFIG;
+    else process.env.DOCKER_CONFIG = previousDocker.DOCKER_CONFIG;
+    if (dockerConfiguration) await rm(dockerConfiguration, { recursive: true, force: true });
+  });
+}
+
 type Save = (name: string, value: unknown) => Promise<void>;
 async function command(file: string, args: string[], input?: string) {
   const running = execute(file, args, { timeout: 240_000, maxBuffer: 4 * 1024 * 1024 });
@@ -129,8 +168,13 @@ export async function configureRehearsal(configuration: Configuration): Promise<
     const target = join(previous, relative); await mkdir(dirname(target), { recursive: true, mode: 0o700 });
     if (relative === 'container-aliases.json') await copyFile(join(sourceOps, relative), target);
     else if (relative !== 'scripts/adapter-space-launcher.sh') {
-      const old = await command('git', ['-C', root, 'show', PREVIOUS_OPS + ':ops/' + relative]);
       const entry = (await command('git', ['-C', root, 'ls-tree', PREVIOUS_OPS, '--', 'ops/' + relative])).stdout.trim();
+      if (!entry) {
+        assert.ok(['container-runtime/cauce_container_lease.py', 'container-runtime/cauce_container_restart.py'].includes(relative),
+          'previous operations release is missing a required source');
+        continue;
+      }
+      const old = await command('git', ['-C', root, 'show', PREVIOUS_OPS + ':ops/' + relative]);
       const mode = entry.split(' ')[0]; assert.ok(mode === '100755' || mode === '100644');
       await writeFile(target, old.stdout, { mode: mode === '100755' ? 0o755 : 0o644 });
     }

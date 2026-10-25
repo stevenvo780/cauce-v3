@@ -147,8 +147,9 @@ async function stageOps() {
     'scripts/fleet_runtime_inventory.py', 'scripts/fleet_runtime_materialization.py', 'scripts/atomic_file.py',
     'scripts/secure_path.py', 'scripts/pin-container-release.py', 'scripts/validate-container-mount.py',
     'scripts/alias-lock-exec.py', 'scripts/verify-hermes-runtime.py', 'container-runtime/cauce-container-runtime.py',
-    'container-runtime/cauce_container_base.py', 'container-runtime/cauce_container_proc.py',
-    'container-runtime/cauce_container_tree.py', 'container-runtime/cauce_container_adoption.py', 'container-runtime/podar-releases.py'];
+    'container-runtime/cauce_container_base.py', 'container-runtime/cauce_container_proc.py', 'container-runtime/cauce_container_lease.py',
+    'container-runtime/cauce_container_tree.py', 'container-runtime/cauce_container_adoption.py',
+    'container-runtime/cauce_container_restart.py', 'container-runtime/podar-releases.py'];
   for (const file of files) {
     await mkdir(dirname(join(ops, file)), { recursive: true }); await copyFile(join(ROOT, 'ops', file), join(ops, file));
   }
@@ -168,6 +169,13 @@ async function seedRuntime(runtime: Runtime) {
     " VALUES('Steven',$1,$2,true,$3,$4,$5,$6)", [runtime.alias, runtime.harness, runtime.container, runtime.user, runtime.home, runtime.state]);
   await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','grp.steven',$1,'agent')", [runtime.alias]);
 }
+class ReapingContainer extends GenericContainer {
+  constructor(image: string) {
+    super(image);
+    this.hostConfig.Init = true;
+  }
+}
+
 async function provisionContainers(image: string) {
   const wsHome = join(directory, 'ws-home'), clawHome = join(directory, 'claw-home'), workspace = join(directory, 'workspace');
   for (const home of [wsHome, clawHome]) {
@@ -176,12 +184,12 @@ async function provisionContainers(image: string) {
   }
   await mkdir(workspace, { mode: 0o700 }); await writeFile(join(workspace, 'legacy.marker'), RUN, { mode: 0o600 });
   await writeFile(join(clawHome, 'legacy.marker'), RUN, { mode: 0o600 });
-  const ws = await new GenericContainer(image).withName(PREFIX + '-ws').withLabels({ 'cauce.e2e.owner': OWNER, 'cauce.e2e.run': RUN })
+  const ws = await new ReapingContainer(image).withName(PREFIX + '-ws').withLabels({ 'cauce.e2e.owner': OWNER, 'cauce.e2e.run': RUN })
     .withUser('0').withNetworkMode('host').withBindMounts([{ source: wsHome, target: '/home/node', mode: 'rw' },
       { source: workspace, target: '/workspace', mode: 'rw' }]).withWorkingDir('/workspace')
     .withCommand(['sleep', 'infinity']).withWaitStrategy(Wait.forSuccessfulCommand('id node')).start();
   containers.push(ws);
-  const claw = await new GenericContainer(image).withName(PREFIX + '-claw').withLabels({ 'cauce.e2e.owner': OWNER, 'cauce.e2e.run': RUN })
+  const claw = await new ReapingContainer(image).withName(PREFIX + '-claw').withLabels({ 'cauce.e2e.owner': OWNER, 'cauce.e2e.run': RUN })
     .withUser('0').withNetworkMode('host').withBindMounts([{ source: clawHome, target: '/home/node', mode: 'rw' }])
     .withWorkingDir('/home/node').withCommand(['sleep', 'infinity']).withWaitStrategy(Wait.forSuccessfulCommand('id node')).start();
   containers.push(claw);

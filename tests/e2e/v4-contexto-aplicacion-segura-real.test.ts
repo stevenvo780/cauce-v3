@@ -12,6 +12,7 @@ import { browserDocker } from './browser-owned-lifecycle.js';
 import { isaTenant, login, publish, startContextFixture, waitForDone, waitForLease } from './context-multiuser-continuity.fixtures.js';
 import { apiGet, asV4Page } from './v4-console-real-browser.helpers.js';
 import { memoryDigest, startLocalContextModel, startRealOpenClaw } from './v4-contexto-aplicacion-segura-real.helpers.js';
+import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 12);
 const artifacts = join(process.cwd(), '.delegados/v4/recibos/c7-aplicacion-segura-real-1025', run);
@@ -22,6 +23,8 @@ const serverMemory = `${nativeMemory}\nInstrucción posterior del servidor: vers
 let fixture: Awaited<ReturnType<typeof startContextFixture>> | undefined;
 let adapter: Awaited<ReturnType<typeof startRealOpenClaw>> | undefined;
 let model: Awaited<ReturnType<typeof startLocalContextModel>> | undefined;
+let daemon: { name: string; id: string } | undefined;
+let dockerProof: Record<string, unknown> | undefined;
 let space = '';
 let oldLeaseEpoch: number | undefined;
 const active = () => { if (!fixture) throw new Error('safe context application fixture missing'); return fixture; };
@@ -38,8 +41,15 @@ async function application() {
 }
 
 beforeAll(async () => {
-  expect((await browserDocker(['info', '--format', '{{.Name}}'])).stdout.trim()).toBe('docker-lab');
+  const outer = await connectXOuterDocker();
+  expect(process.env.DOCKER_CONTEXT ?? '').toBe('');
+  daemon = JSON.parse((await browserDocker(['info', '--format', '{"name":{{json .Name}},"id":{{json .ID}}}'])).stdout) as {
+    name: string; id: string;
+  };
+  expect(daemon).toEqual(outer.runner.daemon);
+  dockerProof = outer.runner;
   await mkdir(artifacts, { recursive: true });
+  await writeFile(join(artifacts, 'daemon.json'), JSON.stringify(dockerProof, null, 2), { mode: 0o600 });
   fixture = await startContextFixture();
   space = join(fixture.directory, 'c7-space');
   await Promise.all(['workspace', 'context', 'directives'].map(path => mkdir(join(space, path), { recursive: true, mode: 0o700 })));
@@ -152,7 +162,8 @@ describe('aplicación segura en OpenClaw real con modelo HTTP local determinista
     await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
     await page.getByText('Aplicada', { exact: true }).waitFor({ timeout: 20_000 });
     await page.screenshot({ path: join(artifacts, 'aplicada.png') });
-    await writeFile(join(artifacts, 'evidence.json'), JSON.stringify({ run, daemon: 'docker-lab', openclaw: { real: true, version: runtimeVersion },
+    await writeFile(join(artifacts, 'evidence.json'), JSON.stringify({ run, daemon: daemon?.name, docker: dockerProof,
+      openclaw: { real: true, version: runtimeVersion },
       provider: 'owned deterministic HTTP model; no provider account accredited', container: adapter.name, image: adapter.image, image_id: adapter.imageId,
       capabilities, native_v2: nativeVersion, first_delivery: first.deliveryId, second_delivery: second.deliveryId,
       first_result: firstDone.result, second_result: secondDone.result, native_bytes_preserved: bytesBefore.equals(bytesAfterV2),

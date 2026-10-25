@@ -28,8 +28,8 @@ export async function exerciseOrphanVolumes(fixture: OrphansFixture, capture: Ca
   const daemon = JSON.parse(await docker(['info', '--format', '{{json .ID}}'])) as string;
   const empty = await volume(`${PREFIX}-orphan-empty`, `${PREFIX}-purged`);
   const changed = await volume(`${PREFIX}-inventory-changed`, `${PREFIX}-old`);
-  const real = await volume(`${PREFIX}-real-agent-guard`, 'kant');
-  const campaign = await volume(`${PREFIX}-campaign-guard`, 'zz-canary-144');
+  const real = await volume(`${PREFIX}-real-agent-guard`, 'retained-live-agent');
+  const campaign = await volume(`${PREFIX}-campaign-guard`, 'zz-canary-active-campaign');
   const item = (id: string, name: string): TestVolumePlanItem => ({ id, kind: 'test_volume', name,
     scope: { company_id: fixture.company }, location: { kind: 'lab_socket' },
     pin: { daemon_id: daemon, volume_sha256: null, preview_sha256: null } });
@@ -76,12 +76,12 @@ export async function exerciseOrphanVolumes(fixture: OrphansFixture, capture: Ca
   await capture('volume-changed');
   const protectedNames = [real, campaign, fixture.retainedVolume];
   const protectedBefore = await Promise.all(protectedNames.map(identity));
-  const protectedPlan = plan([item('real', real), item('campaign144', campaign), item('praxis', fixture.retainedVolume)]);
+  const protectedPlan = plan([item('real', real), item('campaign144', campaign), item('protected', fixture.retainedVolume)]);
   const protectedResult = await checkedResource(fixture, protectedPlan, 'volume-protected', true);
   expect(protectedResult.items).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'real', status: 'retained', reason_code: 'real_agent_volume' }),
     expect.objectContaining({ id: 'campaign144', status: 'retained', reason_code: 'active_campaign_144' }),
-    expect.objectContaining({ id: 'praxis', status: 'retained', reason_code: 'praxis_inventory_only' }),
+    expect.objectContaining({ id: 'protected', status: 'retained', reason_code: 'praxis_inventory_only' }),
   ]));
   expect(await Promise.all(protectedNames.map(identity))).toEqual(protectedBefore);
   await capture('volume-protected');

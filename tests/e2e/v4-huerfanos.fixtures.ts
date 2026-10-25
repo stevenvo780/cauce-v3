@@ -12,7 +12,9 @@ import { COMPUTER_RUNTIME, docker, dockerInventory, enrollComputer, FIXTURE_PROV
 import { registerSetupOwner, type SetupOwnerSession } from '../../services/gateway/src/fleet/host-setup.fixtures.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 
-export const OWNER = 'h10b-huerfanos-retirada-1025';
+export const OWNER = 'b3c3-suites-entorno-1025';
+export const PROTECTED_SCOPE = { company: 'CanaryProtectedCompany', tenant: 'CanaryProtectedTenant',
+  host: 'canary-protected-host', alias: 'canary-protected-agent' };
 export const RUN = randomUUID().slice(0, 8);
 export const PREFIX = `zz-canary-${OWNER}-${RUN}`;
 export const EVIDENCE = join(process.cwd(), '.delegados/v4/recibos', OWNER, `e2e-${RUN}`);
@@ -169,9 +171,9 @@ export async function startOrphansFixture(options: { contextRepository?: string 
           state_directory: `${COMPUTER_RUNTIME.stateRoot}/${LIVE_KEY}` } } };
     const queued = await request('POST', '/v3/console/fleet/operations', create);
     if (typeof queued.operation_id !== 'string') throw new Error('live reference create operation absent');
-    const retainedVolume = `${PREFIX}-praxis-retained-state`;
-    await docker(['volume', 'create', '--label', `cauce.e2e.owner=${OWNER}`, '--label', 'cauce.fleet.tenant=Hospital',
-      '--label', 'cauce.fleet.alias=teseo', '--label', 'cauce.fleet.host=server2-praxis', retainedVolume]);
+    const retainedVolume = `${PREFIX}-protected-retained-state`;
+    await docker(['volume', 'create', '--label', `cauce.e2e.owner=${OWNER}`, '--label', `cauce.fleet.tenant=${PROTECTED_SCOPE.tenant}`,
+      '--label', `cauce.fleet.alias=${PROTECTED_SCOPE.alias}`, '--label', `cauce.fleet.host=${PROTECTED_SCOPE.host}`, retainedVolume]);
     const networkName = `${PREFIX}-retained-network`;
     const networkId = await docker(['network', 'create', '--internal', '--label', `cauce.e2e.owner=${OWNER}`, networkName]);
     retainedNetwork = { name: networkName, id: networkId };
@@ -203,7 +205,14 @@ export async function runCleanup(fixture: OrphansFixture, plan: OrphansPlan, nam
   const args = [join(process.cwd(), '.delegados/v4/limpiar-huerfanos.sh'), '--ops-root', join(process.cwd(), 'ops'),
     '--plan', planFile, '--recibo', receipt, ...(withAuthority ? ['--authority-fd', '3'] : []), ...(mode ? [mode] : [])];
   return new Promise((resolve, reject) => {
-    const child = spawn('bash', args, { stdio: ['ignore', 'pipe', 'pipe', 'pipe'] });
+    const protectedIdentifiers = Object.values(PROTECTED_SCOPE);
+    const child = spawn('bash', args, { stdio: ['ignore', 'pipe', 'pipe', 'pipe'], env: { ...process.env,
+      CAUCE_ORPHANS_SSH_TARGETS: '[]', CAUCE_ORPHANS_RETENTION_POLICY: JSON.stringify({
+        protected_identifiers: protectedIdentifiers.map(value => value.toLowerCase()),
+        protected_pattern: protectedIdentifiers.join('|'),
+        campaign_pattern: '(?:^|[-_.])canary-active-campaign(?:$|[-_.])',
+        inventory_company: 'zz-canary-inventory-only', platform_company: fixture.company, lab_owner: OWNER,
+      }) } });
     let stdout = '', stderr = '';
     if (!child.stdout || !child.stderr) { child.kill(); reject(new Error('cleanup output descriptors unavailable')); return; }
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
