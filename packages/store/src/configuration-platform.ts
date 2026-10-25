@@ -32,6 +32,9 @@ class PlatformConfigurationRepository extends ConfigurationRepository {
     }
   }
   protected override async execute(client: DatabaseClient, mutation: ConfigMutation, company: string): Promise<{ inverse: ConfigMutation; summary: string }> {
+    // Authority was asserted for this transaction before this point; the flag is what lets the
+    // database guard distinguish this write from a direct runtime write to the catalogs.
+    await client.query("SELECT set_config('cauce.platform_catalog_write','on',true)");
     const result = await super.execute(client, mutation, company);
     if (mutation.resource === 'role_policy') {
       const holders = await client.query<{ human_id: string }>(`SELECT human_id::text FROM platform_admins
