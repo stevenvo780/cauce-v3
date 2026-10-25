@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { randomUUID } from "node:crypto";
-import { sharedSessionRunner } from "../src/bin/shared.js";
+import { createHash, randomUUID } from "node:crypto";
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
+import { ensureSharedSessionStartup, sharedSessionRunner } from "../src/bin/shared.js";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
 import type { AdapterLog } from "../src/sdk/types.js";
 import {
@@ -11,11 +14,12 @@ import {
 } from "../src/shared-session/config.js";
 import {
   ensureSharedSession,
+  waitForAccreditedTui,
   paneEnvironmentPrefix,
   transcriptDirectory,
   transcriptDirectoryIn,
 } from "../src/shared-session/session.js";
-import { CliTmux } from "../src/shared-session/tmux.js";
+import { CliTmux, type TmuxController } from "../src/shared-session/tmux.js";
 import { FakeTmux, freshState } from "./shared-session-fixtures.js";
 
 const immediate = (): Promise<void> => Promise.resolve();
@@ -36,6 +40,159 @@ test("un binding Claude ilegible aborta antes de construir el runner compartido"
       && error.code === "SHARED_TUI_UNAVAILABLE" && !error.retryable,
   );
   assert.deepEqual(logs.map((entry) => entry.event), ["shared_session_degraded"]);
+});
+
+test('startup creates the canonical TUI without a delivery and reacquiring the lease preserves it', async () => {
+  const { state, home, workspace } = await freshState('startup-without-delivery');
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, {
+    HOME: home, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured);
+  const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = []; tmux.panePid = String(process.pid);
+  await ensureSharedSessionStartup(configured, () => undefined, tmux);
+  const firstSession = tmux.sessionId; const firstPane = tmux.paneId;
+  const captures = tmux.calls.filter(call => call[0] === 'capture-pane' && call.at(-1) === firstPane).length;
+  await ensureSharedSessionStartup(configured, () => undefined, tmux);
+  assert.ok(tmux.calls.filter(call => call[0] === 'capture-pane' && call.at(-1) === firstPane).length > captures);
+  assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+  assert.equal(tmux.sessionId, firstSession); assert.equal(tmux.paneId, firstPane);
+  for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+});
+
+test('startup refuses a foreign canonical session without replacing it or injecting a turn', async () => {
+  const { state, home, workspace } = await freshState('startup-foreign-session');
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, {
+    HOME: home, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured);
+  const tmux = new FakeTmux(); tmux.sessionName = 'cauce-socrates'; tmux.sessionOptions.set('@cauce_harness', 'claude');
+  await assert.rejects(ensureSharedSessionStartup(configured, () => undefined, tmux),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
+  assert.equal(tmux.sessionExists, true);
+  for (const command of ['new-session', 'kill-session', 'send-keys', 'paste-buffer']) assert.equal(tmux.used(command), false);
+});
+
+test('startup cancellation prevents new tmux operations and reaches an active client', async () => {
+  const { state, home, workspace } = await freshState('startup-cancelled');
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, {
+    HOME: home, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured);
+  const preAborted = new AbortController(); preAborted.abort(); const tmux = new FakeTmux();
+  await assert.rejects(ensureSharedSessionStartup(configured, () => undefined, tmux, preAborted.signal), { name: 'AbortError' });
+  assert.equal(tmux.calls.length, 0);
+  const active = new AbortController(); let clientSignal: AbortSignal | undefined;
+  const cancellingTmux: TmuxController = { run: async (args, stdin, control) => {
+    clientSignal = control?.signal;
+    assert.ok(clientSignal); assert.equal(clientSignal.aborted, false);
+    active.abort(); assert.equal(clientSignal.aborted, true);
+    return tmux.run(args, stdin, control);
+  } };
+  await assert.rejects(ensureSharedSessionStartup(configured, () => undefined, cancellingTmux, active.signal),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
+  assert.equal(clientSignal?.aborted, true);
+  for (const command of ['new-session', 'kill-session', 'send-keys', 'paste-buffer']) assert.equal(tmux.used(command), false);
+});
+
+test('cold startup spans a canonical wait window without replacing its process or creating another session', async () => {
+  const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+  tmux.panePid = String(process.pid); tmux.paneContent = 'Initializing';
+  const spec = { alias: 'socrates', harness: 'codex', workspace: '/workspace' } as const;
+  const initial = await ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 0 });
+  assert.equal(initial.ready, false); assert.equal(initial.failure, 'tui_absent'); assert.ok(initial.pane);
+  const identity = { ...initial.pane }; let elapsed = 0; const pending: string[] = [];
+  const ready = await waitForAccreditedTui(tmux, spec, initial.pane, {
+    now: () => elapsed, log: detail => { pending.push(detail); },
+    sleep: () => { elapsed += 45_000; if (elapsed >= 135_000) tmux.paneContent = '❯ '; return Promise.resolve(); },
+  });
+  assert.equal(ready, 'ready'); assert.equal(elapsed, 135_000); assert.deepEqual(pending, ['tui_starting']);
+  assert.equal(tmux.panePid, identity.panePid); assert.equal(tmux.sessionId, identity.sessionId);
+  assert.equal(tmux.paneId, identity.paneId); assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+  for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+});
+
+test('startup waits on the created pane and shutdown cancels that wait before consuming', async () => {
+  const { state, home, workspace } = await freshState('startup-wait-shutdown');
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, {
+    HOME: home, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured);
+  const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+  tmux.panePid = String(process.pid); tmux.paneContent = 'Initializing';
+  const shutdown = new AbortController(); const logs: AdapterLog[] = [];
+  let cancelledAt: number | undefined;
+  const controlled: TmuxController = { run: async (args, stdin, control) => {
+    if (args[0] === 'capture-pane' && args.at(-1) === tmux.paneId) {
+      assert.equal(control?.signal?.aborted, false); shutdown.abort();
+    }
+    const result = await tmux.run(args, stdin, control);
+    if (shutdown.signal.aborted) cancelledAt ??= tmux.calls.length;
+    return result;
+  } };
+  await assert.rejects(ensureSharedSessionStartup(configured, entry => { logs.push(entry); }, controlled, shutdown.signal),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
+  assert.ok(cancelledAt); assert.equal(tmux.calls.length, cancelledAt);
+  assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+  assert.ok(logs.some(entry => entry.event === 'shared_session_degraded' && entry.reason === 'startup_cancelled'));
+  for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+});
+
+test('waiting startup stops on cancellation and rejects a replaced pane without mutation', async () => {
+  for (const interruption of ['cancel', 'replace', 'alias', 'harness'] as const) {
+    const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+    tmux.panePid = String(process.pid); tmux.paneContent = 'Initializing';
+    const spec = { alias: 'socrates', harness: 'codex', workspace: '/workspace' } as const;
+    const initial = await ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 0 });
+    assert.ok(initial.pane); const controller = new AbortController();
+    let callsAtCancellation: number | undefined;
+    const ready = await waitForAccreditedTui(tmux, spec, initial.pane, {
+      signal: controller.signal, sleep: () => {
+        if (interruption === 'cancel') { controller.abort(); callsAtCancellation = tmux.calls.length; }
+        else if (interruption === 'replace') tmux.respawnPane();
+        else tmux.sessionOptions.set(interruption === 'alias' ? '@cauce_alias' : '@cauce_harness', 'foreign');
+        return Promise.resolve();
+      },
+    });
+    assert.equal(ready, interruption === 'cancel' ? 'cancelled' : 'changed');
+    if (callsAtCancellation !== undefined) assert.equal(tmux.calls.length, callsAtCancellation);
+    assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+    for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+  }
+});
+
+test('a changed command pin while waiting cannot publish ready or recreate the session', async () => {
+  const { state, workspace } = await freshState('startup-changed-pin');
+  const command = `${state}/codex`; await writeFile(command, 'original', { mode: 0o700 });
+  const sha256 = createHash('sha256').update('original').digest('hex');
+  const spec = { alias: 'socrates', harness: 'codex', workspace, command,
+    commandPins: { command, sha256, files: {} } } as const;
+  const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+  tmux.panePid = String(process.pid); tmux.paneContent = 'Initializing';
+  const initial = await ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 0 });
+  assert.ok(initial.pane);
+  await assert.rejects(waitForAccreditedTui(tmux, spec, initial.pane, { sleep: async () => {
+    await writeFile(command, 'changed'); tmux.paneContent = '❯ ';
+  } }), /pinned harness file changed/u);
+  assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+  for (const operation of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(operation), false);
+});
+
+test('a stale tmux PID cannot remain accredited after the real process exits', async () => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  try {
+    assert.ok(child.pid);
+    const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+    tmux.panePid = String(child.pid); tmux.paneContent = 'Initializing';
+    const spec = { alias: 'socrates', harness: 'codex', workspace: '/workspace' } as const;
+    const initial = await ensureSharedSession(tmux, spec, { sleep: immediate, readyTimeoutMs: 0 });
+    assert.ok(initial.pane);
+    const ready = await waitForAccreditedTui(tmux, spec, initial.pane, { sleep: async () => {
+      const exited = once(child, 'exit'); child.kill(); await exited; tmux.paneContent = '❯ ';
+    } });
+    assert.equal(ready, 'changed'); assert.equal(tmux.panePid, String(child.pid));
+    assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+    for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+  } finally { if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill(); await exited; } }
 });
 
 // ---------------------------------------------------------------------------

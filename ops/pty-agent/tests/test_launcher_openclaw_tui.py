@@ -34,6 +34,7 @@ empty screen and believe the agent is stuck.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -117,6 +118,41 @@ def _fake_docker(
 
 
 class DeriveOpenClawTuiTest(unittest.TestCase):
+    def test_measured_help_receives_the_exact_profile_and_private_temporary_directories(self) -> None:
+        source = _function_source("derive_openclaw_tui_command")
+        program = source.split("/usr/bin/python3 -I -B -c '\n", 1)[1].split("\n' \"$agent_root\"", 1)[0]
+        with tempfile.TemporaryDirectory() as raw:
+            home = pathlib.Path(raw)
+            node = home / "node"
+            node.write_text('#!/usr/bin/env python3\nimport os, sys\n'
+                'required = ("OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_AGENT_DIR", '
+                '"TMPDIR", "NODE_COMPILE_CACHE", "CODEX_HOME", "CLAUDE_CONFIG_DIR")\n'
+                'assert all(os.environ.get(key, "").startswith(os.environ["HOME"] + "/") for key in required)\n'
+                'print("--session --local")\n', encoding="utf-8")
+            node.chmod(0o755)
+            generation = "ab" * 32
+            environment = {"PATH": os.environ["PATH"], "HOME": str(home), "CAUCE_ALIAS": "zz-canary-openclaw",
+                "CAUCE_TENANT_ID": "zz-canary", "CAUCE_STATE_DIR": str(home / "state"),
+                "CAUCE_CONTAINER_ID": "c" * 64, "CAUCE_CONTAINER_GENERATION": generation,
+                "CAUCE_HARNESS_COMMAND": str(node), "CAUCE_OPENCLAW_DIST_DIR": str(home / "dist"),
+                "CAUCE_OPENCLAW_LOCAL": "1", "CAUCE_OPENCLAW_AGENT_ID": "main",
+                **{key: str(home / key.lower()) for key in ("OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH",
+                    "OPENCLAW_AGENT_DIR", "TMPDIR", "NODE_COMPILE_CACHE", "CODEX_HOME", "CLAUDE_CONFIG_DIR")}}
+            adapter = subprocess.Popen(["/bin/sleep", "30"], env=environment)
+            try:
+                arguments = ["python3", "-I", "-B", "-c", program, str(LAUNCHER.parent), environment["CAUCE_ALIAS"],
+                    str(home), environment["CAUCE_CONTAINER_ID"], environment["CAUCE_STATE_DIR"], generation, "zz-canary", ""]
+                result = subprocess.run(arguments, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), f'{node}\t{home / "dist"}\t1')
+                node.write_text('#!/usr/bin/env python3\nprint("--session")\n', encoding="utf-8")
+                result = subprocess.run(arguments, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+            finally:
+                adapter.terminate()
+                adapter.wait(timeout=2)
+
     def _run(self, *, pointer: str = "valid", **kwargs: object) -> str:
         with tempfile.TemporaryDirectory() as raw:
             tmp = pathlib.Path(raw)

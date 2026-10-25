@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { sharedSessionRunner } from "../src/bin/shared.js";
 import { join } from "node:path";
 import test from "node:test";
 import { parseMuseOutput } from "../src/sdk/output-parser.js";
 import {
   harnessConfigDirectory,
+  cliSharedSessionSpec,
   loadSharedSessionConfig,
   museReasoningEffort,
 } from "../src/shared-session/config.js";
@@ -100,6 +101,66 @@ test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max
   assert.equal(harnessConfigDirectory("muse", "/home/dev", { XDG_CONFIG_HOME: "/datos/config", XDG_DATA_HOME: "/datos/data" }, "hegel"),
     "/datos/data/muse");
   assert.throws(() => harnessConfigDirectory("muse", "/home/dev", {}), /alias/u);
+});
+
+test('muse: both shared-session builders select the approved native CLI while preserving bridge pins', () => {
+  const files = { '/usr/local/bin/muse': 'a'.repeat(64), '/usr/local/bin/muse-cauce': 'b'.repeat(64) };
+  const environment = { CAUCE_SHARED_SESSION: '1', HOME: '/home/dev',
+    CAUCE_HARNESS_COMMAND: '/usr/local/bin/muse-cauce', CAUCE_HARNESS_COMMAND_SHA256: files['/usr/local/bin/muse-cauce'],
+    CAUCE_HARNESS_COMMAND_FILES: JSON.stringify(files),
+    CAUCE_MUSE_CLI_COMMAND: '/usr/local/bin/muse', CAUCE_MUSE_CLI_SHA256: files['/usr/local/bin/muse'] };
+  for (const builder of [() => loadSharedSessionConfig('muse', 'hegel', '/state/hegel', environment),
+    () => cliSharedSessionSpec('muse', 'hegel', '/workspace', '/home/dev', environment, '/state/hegel')]) {
+    const selected = builder();
+    assert.equal(selected?.command, '/usr/local/bin/muse');
+    assert.deepEqual(selected.commandPins, { command: '/usr/local/bin/muse', sha256: files['/usr/local/bin/muse'], files });
+  }
+  assert.equal(environment.CAUCE_HARNESS_COMMAND, '/usr/local/bin/muse-cauce');
+  assert.equal(environment.CAUCE_HARNESS_COMMAND_SHA256, files['/usr/local/bin/muse-cauce']);
+});
+
+test('muse: incomplete or conflicting native pins cannot fall back to the headless bridge', () => {
+  const base = { CAUCE_SHARED_SESSION: '1', HOME: '/home/dev',
+    CAUCE_HARNESS_COMMAND: '/usr/local/bin/muse-cauce', CAUCE_HARNESS_COMMAND_SHA256: 'b'.repeat(64),
+    CAUCE_HARNESS_COMMAND_FILES: JSON.stringify({ '/usr/local/bin/muse': 'a'.repeat(64) }) };
+  const overrides = [{ CAUCE_MUSE_CLI_COMMAND: '/usr/local/bin/muse' }, { CAUCE_MUSE_CLI_SHA256: 'a'.repeat(64) },
+    { CAUCE_MUSE_CLI_COMMAND: '/usr/local/bin/muse', CAUCE_MUSE_CLI_SHA256: 'c'.repeat(64) },
+    { CAUCE_MUSE_CLI_COMMAND: '/unapproved/muse', CAUCE_MUSE_CLI_SHA256: 'a'.repeat(64) }];
+  for (const override of overrides) {
+    const environment = { ...base, ...override };
+    assert.throws(() => loadSharedSessionConfig('muse', 'hegel', '/state/hegel', environment), /approved native/u);
+    assert.throws(() => cliSharedSessionSpec('muse', 'hegel', '/workspace', '/home/dev', environment), /approved native/u);
+  }
+});
+
+test('muse: the canonical Echo profile omits only automatic reasoning effort', async () => {
+  const { home, state } = await freshState('muse-echo-profile');
+  const config = join(home, 'profile', 'config'); const data = join(home, 'profile', 'data');
+  const directory = join(config, 'muse'); const settings = join(directory, 'settings.json');
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const environment = { CAUCE_SHARED_SESSION: '1', HOME: home, XDG_CONFIG_HOME: config, XDG_DATA_HOME: data };
+  const builders = (override: NodeJS.ProcessEnv = {}) => [
+    loadSharedSessionConfig('muse', 'hegel', state, { ...environment, ...override }),
+    cliSharedSessionSpec('muse', 'hegel', '/workspace', home, { ...environment, ...override }, state),
+  ];
+  await writeFile(settings, JSON.stringify({ schema_version: 1, provider: 'echo' }), { mode: 0o600 });
+  for (const value of builders()) assert.deepEqual(value?.harnessArguments, ['--yolo', '--trust-workspace']);
+  for (const override of [{ CAUCE_REASONING_EFFORT: 'high' }, { MUSE_REASONING_EFFORT: 'low' }]) {
+    for (const value of builders(override)) assert.deepEqual(value?.harnessArguments,
+      ['--yolo', '--trust-workspace', '--reasoning-effort', Object.values(override)[0]]);
+  }
+  await writeFile(settings, JSON.stringify({ provider: 'meta' }));
+  for (const value of builders()) assert.deepEqual(value?.harnessArguments,
+    ['--yolo', '--trust-workspace', '--reasoning-effort', 'max']);
+  await writeFile(settings, '{');
+  assert.throws(() => builders(), /canonical provider setting/u);
+  await writeFile(settings, ' '.repeat(65_537));
+  assert.throws(() => builders(), /canonical provider setting/u);
+  const linked = join(config, 'linked.json');
+  await symlink(settings, linked);
+  await writeFile(settings, JSON.stringify({ provider: 'echo' }));
+  await unlink(settings); await rename(linked, settings);
+  assert.throws(() => builders(), /canonical provider setting/u);
 });
 
 test("muse: el comando del panel se reconoce como muse y no como otro arnés", () => {

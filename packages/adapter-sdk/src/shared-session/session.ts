@@ -5,7 +5,6 @@ import { signalAborted } from "../runtime-state.js";
 import { assertCommandPins } from '../sdk/command-pins.js';
 import {
   CREATION_NONCE_OPTION,
-  capturePane,
   exactSessionTarget,
   hasSessionId,
   inspectSolePaneHarness,
@@ -21,7 +20,8 @@ import {
   type PaneHarnessIdentity,
   type TmuxController,
 } from "./tmux.js";
-import { inputBoxState } from "./pane.js";
+import { waitForTui } from './session/readiness.js';
+export { waitForAccreditedTui } from './session/readiness.js';
 import { ensureExactSessionLaunch, paneWorkspaceState } from "./exact-launch.js";
 import {
   LEGACY_DEGRADED_WINDOW,
@@ -46,6 +46,7 @@ export interface EnsureOptions {
   readonly signal?: AbortSignal;
   /** How long to wait for the TUI to be ready after creating it. */
   readonly readyTimeoutMs?: number;
+  readonly now?: () => number;
   /** Width/height with which the session is born without attached clients. */
   readonly width?: number;
   readonly height?: number;
@@ -70,9 +71,6 @@ export interface EnsureResult {
   /** Whether the session was created by resuming a prior conversation. */
   readonly resumed?: boolean;
 }
-
-const DEFAULT_READY_TIMEOUT_MS = 90_000;
-const READY_POLL_MS = 1_000;
 
 function tuiTarget(sessionId: string): string {
   return `${sessionId}:${TUI_WINDOW}`;
@@ -729,30 +727,6 @@ async function createSession(
 function tmuxError(stderr: string): string {
   const detail = stderr.trim().split(/\r?\n/u)[0] ?? "";
   return detail === "" ? "tmux rechazó la creación de la sesión" : detail;
-}
-
-/**
- * Waits until the TUI is fully initialized and the input box is available.
- */
-async function waitForTui(
-  tmux: TmuxController,
-  target: string,
-  options: EnsureOptions,
-): Promise<"ready" | "gone" | "timeout" | "cancelled"> {
-  const deadline = Date.now() + (options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
-  for (;;) {
-    if (signalAborted(options.signal)) return "cancelled";
-    const pane = await capturePane(tmux, target, { styled: true });
-    if (signalAborted(options.signal)) return "cancelled";
-    if (!inputBoxState(pane).occupied || inputBoxState(pane).unfocused === true) return "ready"; // grok without focus is a live TUI.
-    // The pane is only asked when the box was NOT free: if it was free there is a live TUI and
-    // asking would be redundant. The expensive poll is paid only while the TUI is starting up.
-    if (await panePid(tmux, target) === undefined) return "gone";
-    if (signalAborted(options.signal)) return "cancelled";
-    if (Date.now() >= deadline) return "timeout";
-    await options.sleep(READY_POLL_MS);
-    if (signalAborted(options.signal)) return "cancelled";
-  }
 }
 
 interface SharedSessionStatus {

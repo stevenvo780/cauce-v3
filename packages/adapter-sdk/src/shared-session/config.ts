@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, normalize } from "node:path";
 import type { HarnessId } from "../sdk/types.js";
 import type { SharedSessionSpec } from "./session.js";
 import { sharedSessionResume } from "./resume.js";
+import { museEchoProfile } from './muse-profile.js';
 import { isSharedSessionHarness, type SharedSessionHarness } from "./types.js";
 import { commandPinsFromEnvironment, type CommandPins } from '../sdk/command-pins.js';
 import { executionSelection, projectSelectionArguments, selectionArguments, selectionFromEnvironment } from '../sdk/execution-selection.js';
@@ -27,6 +28,17 @@ export interface SharedSessionConfig {
 }
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
+
+function sharedCommandPins(harness: SharedSessionHarness, environment: NodeJS.ProcessEnv): CommandPins | undefined {
+  const pins = commandPinsFromEnvironment(environment);
+  if (harness !== 'muse') return pins;
+  const command = environment.CAUCE_MUSE_CLI_COMMAND; const sha256 = environment.CAUCE_MUSE_CLI_SHA256;
+  if (command === undefined && sha256 === undefined) return pins;
+  if (pins === undefined || command === undefined || sha256 === undefined || pins.files[command] !== sha256) {
+    throw new Error('Muse shared session requires an approved native command and matching file pin');
+  }
+  return commandPinsFromEnvironment({ ...environment, CAUCE_HARNESS_COMMAND: command, CAUCE_HARNESS_COMMAND_SHA256: sha256 });
+}
 
 function physicalAlias(alias: string, environment: NodeJS.ProcessEnv): string {
   const key = environment.CAUCE_RUNTIME_KEY;
@@ -79,8 +91,11 @@ export function museDataHome(home: string, alias: string, environment: NodeJS.Pr
   return museProfileDirectories(home, alias, environment).data;
 }
 
-function sharedSelection(harness: SharedSessionHarness, environment: NodeJS.ProcessEnv) {
+function sharedSelection(harness: SharedSessionHarness, home: string, alias: string, environment: NodeJS.ProcessEnv) {
   const selected = selectionFromEnvironment(harness, environment);
+  if (harness === 'muse' && environment.CAUCE_REASONING_EFFORT === undefined
+    && (environment.MUSE_REASONING_EFFORT === undefined || environment.MUSE_REASONING_EFFORT === '')
+    && museEchoProfile(museProfileDirectories(home, alias, environment).config)) return selected;
   return harness === 'muse' ? { ...selected, reasoningEffort: museReasoningEffort(environment) } : selected;
 }
 const SHARED_SESSION_WORKSPACE_ENV = "CAUCE_SHARED_SESSION_WORKSPACE";
@@ -150,7 +165,7 @@ export function cliSharedSessionSpec(
 ): SharedSessionSpec {
   alias = physicalAlias(alias, environment);
   const configDirectory = harnessConfigDirectory(harness, home, environment, alias);
-  const selection = sharedSelection(harness, environment); const pins = commandPinsFromEnvironment(environment);
+  const selection = sharedSelection(harness, home, alias, environment); const pins = sharedCommandPins(harness, environment);
   return {
     alias,
     harness,
@@ -194,7 +209,7 @@ export function loadSharedSessionConfig(
   const home = environment.HOME ?? homedir();
   if (!isAbsolute(home)) throw new Error("HOME debe ser una ruta absoluta para la sesión compartida");
   const nativeId = environment[SHARED_SESSION_NATIVE_ID_ENV];
-  const selection = sharedSelection(harnessId, environment); const pins = commandPinsFromEnvironment(environment);
+  const selection = sharedSelection(harnessId, home, alias, environment); const pins = sharedCommandPins(harnessId, environment);
   if (nativeId !== undefined && nativeId !== "") {
     if (harnessId === "codex") {
       throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} no existe para codex: reanuda con resume --last`);

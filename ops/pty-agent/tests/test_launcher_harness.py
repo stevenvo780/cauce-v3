@@ -71,6 +71,7 @@ def _fake_docker(
     pane_cwd: str = "/workspace/repo",
     window_panes: int = 1,
     duplicate_tui: bool = False,
+    expected_tmux_tmpdir: str | None = None,
 ) -> pathlib.Path:
     """Docker falso para las sondas de identidad, ventana y panel de tmux."""
     script = tmp / "docker"
@@ -87,6 +88,7 @@ def _fake_docker(
     body += [
         "fi",
         'if [[ $args == *list-windows* ]]; then',
+        f'  [[ $args == *"--env TMUX_TMPDIR={expected_tmux_tmpdir}"* ]] || exit 90' if expected_tmux_tmpdir else '  :',
         '  [[ $args == *"-t cauce-zeus"* ]] || exit 88',
         "  [[ $args == *$'#{session_name}\\t#{session_id}\\t#{window_name}\\t#{window_panes}\\t#{@cauce_alias}\\t#{@cauce_harness}\\t#{pane_pid}\\t#{pane_dead}\\t#{pane_current_path}'* ]] || exit 89",
         "  exit 1" if not session_live else
@@ -103,14 +105,16 @@ def _fake_docker(
 
 
 class DeriveHarnessCommandTest(unittest.TestCase):
-    def _run(self, expected_harness: str = "claude", **kwargs: object) -> str:
+    def _run(self, expected_harness: str = "claude", managed: bool = False, **kwargs: object) -> str:
         import tempfile
 
         with tempfile.TemporaryDirectory() as raw:
             tmp = pathlib.Path(raw)
             fake = _fake_docker(tmp, **kwargs)  # type: ignore[arg-type]
             done = subprocess.run(
-                ["bash", "-c", PRELUDE.replace("harness=claude", f"harness={expected_harness}") + _window_constant_source() + _function_source() + EPILOGUE],
+                ["bash", "-c", PRELUDE.replace("harness=claude", f"harness={expected_harness}")
+                    + f"\nADAPTER_V4_MANAGED={int(managed)}\nstate_directory=/home/runtime/state\n"
+                    + _window_constant_source() + _function_source() + EPILOGUE],
                 capture_output=True,
                 text=True,
                 env={"PATH": "/usr/bin:/bin", "FAKE_DOCKER": str(fake)},
@@ -134,6 +138,11 @@ class DeriveHarnessCommandTest(unittest.TestCase):
                 self.assertEqual(self._run(expected_harness=harness, tmux_path="/usr/bin/tmux",
                                            session_live=True, marker_harness="claude"),
                                  "NO_TUI conflict=1 path=/usr/bin/tmux")
+
+    def test_v4_probes_the_sdk_socket_below_the_exact_state_directory(self) -> None:
+        self.assertEqual(self._run(tmux_path="/usr/bin/tmux", session_live=True, managed=True,
+                                   expected_tmux_tmpdir="/home/runtime/state"),
+                         "DERIVED /usr/bin/tmux $7 $7:agente /workspace/repo")
 
     def test_control_negativo_no_session_no_harness(self) -> None:
         self.assertEqual(

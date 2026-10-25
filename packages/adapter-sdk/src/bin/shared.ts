@@ -9,6 +9,7 @@ import { BlobClient, configureDefaultBlobClient } from "../sdk/blob-client.js";
 import { ContextIngestClient, configureDefaultContextIngestClient } from "../sdk/context-ingest-client.js";
 import { DurableStore } from "../sdk/durable-store.js";
 import { ProcessExecutionError } from "../sdk/errors.js";
+import { systemClock } from '../sdk/backoff.js';
 import { SpawnCommandRunner } from "../sdk/process-runner.js";
 import { WebSocketConsumerConnector } from "../sdk/websocket-transport.js";
 import { OpenClawApiRunner } from "../sdk/openclaw-api-runner.js";
@@ -23,7 +24,7 @@ import type {
 import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
 import { CliTmux, type TmuxController } from "../shared-session/tmux.js";
-import { ensureSharedSession, type SharedSessionSpec } from '../shared-session/session.js';
+import { ensureSharedSession, waitForAccreditedTui, type SharedSessionSpec } from '../shared-session/session.js';
 import { PasteSessionRunner } from "../shared-session/paste-runner.js";
 import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runner/runtime.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
@@ -203,8 +204,7 @@ function sharedSessionSpec(shared: SharedSessionConfig): SharedSessionSpec {
 export async function ensureSharedSessionStartup(
   configured: SharedSessionConfig, logger: AdapterLogger, tmux: TmuxController = new CliTmux(), parentSignal?: AbortSignal,
 ): Promise<void> {
-  const timeout = AbortSignal.timeout(15_000);
-  const signal = parentSignal === undefined ? timeout : AbortSignal.any([timeout, parentSignal]);
+  const signal = parentSignal ?? new AbortController().signal;
   signal.throwIfAborted();
   const shared = await checkedSharedSessionConfig(configured, logger);
   signal.throwIfAborted();
@@ -212,13 +212,19 @@ export async function ensureSharedSessionStartup(
     ...control, timeoutMs: Math.min(control?.timeoutMs ?? 1000, 1000),
     signal: control?.signal === undefined ? signal : AbortSignal.any([signal, control.signal]),
   }) };
-  const result = await ensureSharedSession(boundedTmux, sharedSessionSpec(shared), {
-    signal, readyTimeoutMs: 10_000, sleep: ms => new Promise(resolveSleep => { setTimeout(resolveSleep, ms); }),
-  });
-  if (!result.ready || signal.aborted) {
+  const spec = sharedSessionSpec(shared);
+  const options = { signal, sleep: (ms: number) => systemClock.sleep(ms, signal).catch((error: unknown) => {
+    if (!signal.aborted) throw error;
+  }) };
+  const result = await ensureSharedSession(boundedTmux, spec, { ...options, readyTimeoutMs: 0 });
+  const readiness = result.pane !== undefined && (result.ready || result.failure === 'tui_absent')
+    ? await waitForAccreditedTui(boundedTmux, spec, result.pane, { ...options,
+      log: () => { logger({ event: 'shared_session_pending', alias: shared.alias, reason: 'tui_starting' }); } })
+    : undefined;
+  if (readiness !== 'ready' || signal.aborted) {
     logger({ event: 'shared_session_degraded', alias: shared.alias,
-      reason: parentSignal?.aborted === true ? 'startup_cancelled'
-        : signal.aborted ? 'startup_deadline_exceeded' : result.failure ?? 'session_absent',
+      reason: signal.aborted ? 'startup_cancelled' : readiness === 'changed'
+        ? 'session_identity_unverified' : result.failure ?? 'tui_absent',
       error_message: 'La TUI canónica no quedó acreditada al adquirir el lease.' });
     throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE', 'La terminal canónica no está disponible para iniciar el consumidor', false);
   }
@@ -470,6 +476,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
             error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
       }
+      if (shared !== undefined) await ensureSharedSessionStartup(shared, logger, undefined, shutdown.signal);
     },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,

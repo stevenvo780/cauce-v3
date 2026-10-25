@@ -14,13 +14,14 @@ HARNESSES = frozenset({"claude", "codex", "muse", "grok"})
 SHA = re.compile(r"^[a-f0-9]{64}$")
 ALIAS = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ENVIRONMENT = frozenset({
-    "HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "XDG_RUNTIME_DIR",
+    "HOME", "PATH", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "TMUX_TMPDIR", "XDG_RUNTIME_DIR",
     "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "GROK_HOME",
     "CAUCE_ALIAS", "CAUCE_RUNTIME_KEY", "CAUCE_TENANT_ID", "CAUCE_TENANT", "CAUCE_STATE_DIR",
     "CAUCE_CONTAINER_ID", "CAUCE_CONTAINER_GENERATION", "CAUCE_SHARED_SESSION",
     "CAUCE_SHARED_SESSION_WORKSPACE", "CAUCE_MODEL_ID", "CAUCE_REASONING_EFFORT",
     "CAUCE_HARNESS_COMMAND", "CAUCE_HARNESS_COMMAND_SHA256", "CAUCE_HARNESS_COMMAND_FILES",
     "MUSE_REASONING_EFFORT", "MUSE_NO_AUTO_UPDATE", "NODE_COMPILE_CACHE",
+    "CAUCE_MUSE_CLI_COMMAND", "CAUCE_MUSE_CLI_SHA256",
 })
 STATES = frozenset({"present", "absent", "resumed", "recreated", "unsupported", "conflict", "failed"})
 
@@ -108,6 +109,7 @@ def adapter_command(bundle: dict[str, Any], deadline: float) -> tuple[list[str],
                     or environment.get("CAUCE_STATE_DIR") != configuration["state_directory"]
                     or environment.get("CAUCE_CONTAINER_ID") != bundle["container_id"]
                     or environment.get("CAUCE_CONTAINER_GENERATION") != configuration["adapter_generation"]
+                    or environment.get("TMUX_TMPDIR", configuration["state_directory"]) != configuration["state_directory"]
                     or environment.get("CAUCE_SHARED_SESSION") != "1"):
                 continue
             with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:

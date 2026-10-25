@@ -264,6 +264,7 @@ derive_harness_command() {
   local tmux_path session windows observed_session_name observed_session_id extra session_id
   local validated_pane_cwd
   local marker_alias marker_harness window_name window_panes harness_windows pane_pid pane_dead pane_cwd
+  local -a tmux_environment=()
   TMUX_MEASUREMENT_CONFLICT=0
   TMUX_PANE_CWD_FOUND=''
   tmux_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
@@ -275,10 +276,13 @@ derive_harness_command() {
   # the agent additionally validates ownership/mode and resolves the session per OPEN.
   TMUX_PATH_FOUND=$tmux_path
   session="cauce-${TMUX_PHYSICAL_ALIAS:-$alias_name}"
+  if [[ ${ADAPTER_V4_MANAGED:-0} == 1 ]]; then
+    tmux_environment+=(--env "TMUX_TMPDIR=$state_directory")
+  fi
 
   # One tmux command returns session, markers, window cardinality and pane facts from the same observation: separate
   # probes could assemble a cwd from states that never coexisted, and `list-windows` rejects duplicate windows too.
-  windows=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+  windows=$(docker_control exec --user "$runtime_uid:$runtime_gid" "${tmux_environment[@]}" "$container_id" \
     "$tmux_path" -L "$TMUX_SOCKET" list-windows -t "$session" -F \
     $'#{session_name}\t#{session_id}\t#{window_name}\t#{window_panes}\t#{@cauce_alias}\t#{@cauce_harness}\t#{pane_pid}\t#{pane_dead}\t#{pane_current_path}' \
     2>/dev/null) || return 1
@@ -318,20 +322,8 @@ OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 [[ $OPENCLAW_HISTORY_LIMIT =~ ^[0-9]{1,5}$ && $((10#$OPENCLAW_HISTORY_LIMIT)) -ge 1 \
   && $((10#$OPENCLAW_HISTORY_LIMIT)) -le 10000 ]] || die 'OpenClaw history limit is invalid'
 
-# Native OpenClaw TUI for aliases that do not (and cannot) have a tmux panel.
-# The panel emitted by 7 aliases today is the SHARED SESSION, which exists only for `claude` and
-# `codex`. An `openclaw` alias does not start `cauce-<alias>` in tmux, and its images may not even
-# ship tmux: its process is a daemon (`node .../openclaw/dist/index.js gateway`), not a screen.
-# Hence `derive_harness_command` returns empty and the console says "no TUI to emit".
-# OpenClaw DOES bring its own TUI, a client of the gateway that the same alias already runs on
-# loopback. So no tmux, no new image, no extra supervised process: launch it in the agent's pty
-# like any other `harness_command`.
-# The read-only lock is NOT here (no `tmux -r` equivalent); the PTY agent enforces it via a viewer
-# mode that rejects human STDIN and only forwards the closed list of DA/DSR technical replies.
-# Capability is measured INSIDE the container as the alias user. Presence only advertises
-# `harness` when the canonical pointer exists, is initialised, and passes the same
-# ownership/mode/schema boundary the agent re-checks on every OPEN. The native id never leaves
-# that process nor is frozen in the bundle.
+# Probe OpenClaw in the adapter profile as its runtime user. The PTY agent checks the canonical
+# pointer on every OPEN; no conversation id is frozen in the bundle or capability probe.
 derive_openclaw_tui_command() {
   local node_path tui_help entry configured_dist measured measured_node measured_dist measured_local extra
   local -a entry_candidates=()
@@ -341,7 +333,7 @@ derive_openclaw_tui_command() {
   if [[ -n ${adapter_generation:-} && -n ${agent_root:-} ]]; then
     measured=$(docker_control exec --user "$runtime_uid:$runtime_gid" -w / "$container_id" \
       /usr/bin/python3 -I -B -c '
-import sys
+import os, subprocess, sys
 sys.path.insert(0, sys.argv[1])
 from cauce_pty_agent.tui_environment import measured_environment, openclaw_local
 bundle = dict(
@@ -353,8 +345,20 @@ values = measured_environment(bundle)
 node = values.get("CAUCE_HARNESS_COMMAND", "")
 dist = values.get("CAUCE_OPENCLAW_DIST_DIR", "")
 if node and dist:
-    print(node + "\t" + dist + "\t" + str(int(openclaw_local(bundle))))
+    dist = sys.argv[8] or dist
+    entry = os.path.join(dist, "index.js")
+    local = openclaw_local(bundle)
+    environment = {**os.environ, **values, "HOME": bundle["home"]}
+    try:
+        help_result = subprocess.run([node, entry, "tui", "--help"], env=environment,
+            cwd="/", stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=20, check=False)
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        raise SystemExit(1)
+    if help_result.returncode == 0 and "--session" in help_result.stdout and (not local or "--local" in help_result.stdout):
+        print(node + "\t" + dist + "\t" + str(int(local)))
 ' "$agent_root" "$alias_name" "$container_home" "$container_id" "$state_directory" "$adapter_generation" "$tenant" \
+      "$configured_dist" \
       2>/dev/null) || return 1
     if [[ -n $measured ]]; then
       [[ $measured != *$'\r'* && $measured != *$'\n'* ]] || return 1
@@ -364,6 +368,9 @@ if node and dist:
       node_path=$measured_node
       OPENCLAW_LOCAL_FOUND=$measured_local
       [[ -n $configured_dist ]] || configured_dist=$measured_dist
+      OPENCLAW_ENTRY="${configured_dist%/}/index.js"
+      OPENCLAW_NODE_FOUND=$node_path
+      return 0
     fi
   fi
   [[ ${ADAPTER_V4_MANAGED:-0} == 0 || -n ${measured:-} ]] || return 1

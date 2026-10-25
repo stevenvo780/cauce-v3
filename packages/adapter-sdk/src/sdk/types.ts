@@ -377,6 +377,7 @@ export interface AdapterLog {
     | 'inbound_frame_invalid'
     /** Turn ran on the fallback path or with the shared session unavailable. */
     | 'shared_session_degraded'
+    | 'shared_session_pending'
     /** Result of syncing the profile into the harness files on connect. */
     | 'profile_seed'
     | 'fixed_context'

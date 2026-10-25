@@ -39,7 +39,10 @@ class SessionRecoveryPhysicalIdentityTest(unittest.TestCase):
             "CAUCE_TENANT_ID": "zz-canary-recovery", "CAUCE_STATE_DIR": str(self.state),
             "CAUCE_CONTAINER_ID": "c" * 64, "CAUCE_CONTAINER_GENERATION": "a" * 64,
             "CAUCE_SHARED_SESSION": "1", "CAUCE_SHARED_SESSION_WORKSPACE": str(self.workspace),
+            "TMUX_TMPDIR": str(self.state),
         }
+        if harness == "muse":
+            environment.update(CAUCE_MUSE_CLI_COMMAND="/usr/local/bin/muse", CAUCE_MUSE_CLI_SHA256="d" * 64)
         for key, value in (overrides or {}).items():
             if value is None:
                 environment.pop(key, None)
@@ -97,6 +100,14 @@ class SessionRecoveryPhysicalIdentityTest(unittest.TestCase):
         for harness in HARNESSES:
             with self.subTest(harness=harness), self.adapter(harness, overrides={
                 "CAUCE_ALIAS": "another-visible-alias",
+            }) as (bundle, _, trusted):
+                self.assertIsNone(self.probe(bundle))
+                trusted.assert_not_called()
+
+    def test_each_harness_rejects_a_socket_directory_outside_the_exact_state(self) -> None:
+        for harness in HARNESSES:
+            with self.subTest(harness=harness), self.adapter(harness, overrides={
+                "TMUX_TMPDIR": str(self.home),
             }) as (bundle, _, trusted):
                 self.assertIsNone(self.probe(bundle))
                 trusted.assert_not_called()

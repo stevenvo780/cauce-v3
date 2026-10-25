@@ -1,5 +1,32 @@
 import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize, parse } from 'node:path';
+
+export function museEchoProfile(config: string): boolean {
+  const directory = join(config, 'muse');
+  let descriptor: number | undefined;
+  try {
+    if (realpathSync(directory) !== directory) throw new Error('noncanonical profile');
+    descriptor = openSync(join(directory, 'settings.json'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.()
+      || (stat.mode & 0o022) !== 0 || stat.size > 65_536) throw new Error('unsafe profile');
+    const bytes = Buffer.alloc(65_537); let length = 0;
+    for (;;) {
+      const count = readSync(descriptor, bytes, length, bytes.length - length, null);
+      if (count === 0) break;
+      length += count;
+      if (length === bytes.length) throw new Error('oversized profile');
+    }
+    const value: unknown = JSON.parse(bytes.subarray(0, length).toString('utf8'));
+    if (typeof value !== 'object' || value === null || Array.isArray(value)
+      || ('provider' in value && typeof value.provider !== 'string')) throw new Error('invalid profile');
+    return 'provider' in value && value.provider === 'echo';
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw new Error('Muse shared session cannot read its canonical provider setting');
+  } finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
 
 async function secureDirectory(path: string, privateRoot: string): Promise<void> {
   const root = parse(path).root; let current = root;
