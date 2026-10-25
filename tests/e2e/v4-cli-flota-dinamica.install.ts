@@ -154,9 +154,9 @@ async function saveRuntimeArchive(args: string[], archive: string, cwd: string, 
   } finally { clearTimeout(timer); clearTimeout(forced); }
 }
 
-async function exportCanonicalRuntime(source: string, release: string, revision: string, sourceDigest: string) {
+async function exportCanonicalRuntime(source: string, release: string, revision: string, sourceDigest: string, taskOwner: string) {
   const inRunner = process.env.CI === '1' && process.env.DOCKER_HOST === 'unix:///var/run/docker.sock'
-    && process.env.HOME?.startsWith('/tmp/cauce-e2e-home-l2b-ciclo-sdk-1025-') === true;
+    && process.env.HOME?.startsWith(`/tmp/cauce-e2e-home-${taskOwner}-`) === true;
   const context = process.env.DOCKER_CONTEXT ?? 'lab';
   if (!inRunner && !/^lab[23]?$/u.test(context)) throw new Error('candidate runtime build requires Docker lab');
   const dockerEnv = { ...process.env };
@@ -165,13 +165,13 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
   const docker = async (args: string[]) => await execute('docker', [...prefix, ...args], {
     cwd: source, env: dockerEnv, maxBuffer: 32 * 1024 * 1024, timeout: 20 * 60_000,
   });
-  const owner = `zz-canary-l2-cli-${randomUUID()}`;
+  const owner = `zz-canary-${taskOwner === 'l2b-ciclo-sdk-1025' ? 'l2-cli' : taskOwner + '-cli'}-${randomUUID()}`;
   const imageName = `${owner}:${revision.slice(0, 12)}`;
   let imageBuilt = false;
   let containerCreated = false;
   try {
     await docker(['build', '--quiet', '--target', 'runtime', '--label', `io.cauce.test.owner=${owner}`,
-      '--label', 'cauce.e2e.owner=l2b-ciclo-sdk-1025',
+      '--label', `cauce.e2e.owner=${taskOwner}`,
       '--build-arg', `CAUCE_RELEASE_COMMIT=${revision}`, '--build-arg', `CAUCE_SOURCE_DIGEST=${sourceDigest}`,
       '--file', join(source, 'deploy/Dockerfile'), '--tag', imageName, source]);
     imageBuilt = true;
@@ -188,7 +188,7 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
       ? variables.find((value: unknown): value is string => typeof value === 'string' && value.startsWith('NODE_VERSION=')) : undefined;
     if (typeof nodeVersion !== 'string') throw new Error('canonical runtime has no Node version');
     await docker(['create', '--name', owner, '--network', 'none', '--read-only', '--label', `io.cauce.test.owner=${owner}`,
-      '--label', 'cauce.e2e.owner=l2b-ciclo-sdk-1025', imageName]);
+      '--label', `cauce.e2e.owner=${taskOwner}`, imageName]);
     containerCreated = true;
     const runtimeArchive = join(dirname(release), 'cli-candidate-runtime.tar');
     await saveRuntimeArchive([...prefix, 'cp', `${owner}:/app/.`, '-'], runtimeArchive, source, dockerEnv);
@@ -207,7 +207,9 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
   }
 }
 
-export async function buildInstalledCli(directory: string) {
+export async function buildInstalledCli(directory: string, options: { owner?: string } = {}) {
+  const taskOwner = options.owner ?? 'l2b-ciclo-sdk-1025';
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/u.test(taskOwner)) throw new Error('the CLI task owner is invalid');
   const requested = process.env.CAUCE_FLEET_CLI_REVISION;
   if (requested !== undefined && !/^[a-f0-9]{40}$/u.test(requested)) throw new Error('the CLI candidate must be an exact commit');
   const revision = (await execute('git', ['rev-parse', '--verify', `${requested ?? 'HEAD'}^{commit}`], { cwd: root })).stdout.trim();
@@ -239,7 +241,7 @@ export async function buildInstalledCli(directory: string) {
     'ops/scripts/install-cauce-cli.sh'], { cwd: root });
   await execute('tar', ['--no-same-owner', '-xf', sourceArchive, '-C', source]);
   const sourceDigest = createHash('sha256').update(await readFile(sourceArchive)).digest('hex');
-  const runtimeMetadata = await exportCanonicalRuntime(source, release, revision, sourceDigest);
+  const runtimeMetadata = await exportCanonicalRuntime(source, release, revision, sourceDigest, taskOwner);
   await execute('tar', ['--no-same-owner', '--delay-directory-restore', '--overwrite', '-xf', opsArchive, '-C', release]);
   await execute('tar', ['-cf', archive, '-C', release, '.']);
   const manifest: InstalledCliManifest = { revision,
