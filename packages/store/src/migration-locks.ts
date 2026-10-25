@@ -82,6 +82,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '086_terminal_grants.sql': { agents: SRE, companies: SRE, console_users: SRE, tenants: SRE },
   '087_platform_catalog_web.sql': {},
   '088_fleet_recovery.sql': { fleet_operations: AE },
+  '089_device_authorizations.sql': { agents: SRE, console_users: SRE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

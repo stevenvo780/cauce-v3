@@ -17,6 +17,7 @@ export * from './terminal-grants.js';
 export * from './pending-delivery-sweep.js';
 export * from './agent-context-revisions.js';
 export * from './human-identity.js';
+export * from './device-authorization.js';
 export * from './company-authority.js';
 export * from './company-context.js';
 export * from './repository/agent-context-quarantine.js';
