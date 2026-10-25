@@ -7,6 +7,7 @@ import pathlib
 import re
 import shutil
 import stat
+import sys
 import unicodedata
 
 from fleet_executor_policy import SafeFailure, bounded_text, path
@@ -127,12 +128,13 @@ def validate_templates(policy: dict):
     if not isinstance(rows, list) or len(rows) > 100:
         raise SafeFailure('invalid bounded container templates')
     identities = set()
-    for row in rows:
+    for index, row in enumerate(rows):
         if not isinstance(row, dict) or set(row) != fields or row['harness_id'] not in policy['bundles'] \
-                or not isinstance(row['prefix'], str) or re.fullmatch(r'[a-z][a-z0-9-]{0,47}-', row['prefix']) is None \
                 or re.fullmatch(r'sha256:[0-9a-f]{64}', row.get('image', '')) is None \
                 or any(not isinstance(row[key], str) or USER.fullmatch(row[key]) is None for key in ('runtime_user', 'systemd_user')):
             raise SafeFailure('invalid approved container template')
+        if not isinstance(row['prefix'], str) or re.fullmatch(r'[a-z][a-z0-9-]{0,47}-', row['prefix']) is None:
+            raise SafeFailure(f'policy_template_prefix_invalid: container_templates[{index}].prefix')
         for key in ('home_directory', 'state_root', 'profile_root', 'python'):
             path(row[key])
         state, profile = path(row['state_root']), path(row['profile_root'])
@@ -349,9 +351,16 @@ def capabilities(policy: dict) -> dict:
     if 'extensions_allowed' in policy:
         placement['extensions_allowed'] = policy['extensions_allowed']
     if not enabled:
+        if os.environ.get('CAUCE_FLEET_SETUP_DIAGNOSTICS') == '1':
+            missing = next((name for name in ('authenticate', 'profile', 'verify', 'revoke') if name not in policy['hooks']), None)
+            code, field = ('executor_templates_unavailable', 'runtimes') if not runtimes else (
+                ('executor_transport_missing', 'transport') if 'transport' not in policy else ('executor_hook_missing', 'hooks.' + str(missing)))
+            print('CAUCE_SETUP_DIAGNOSTIC=' + code + ': ' + field, file=sys.stderr)
         return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
     from fleet_executor_authority import authority_ready
     if not authority_ready(policy):
+        if os.environ.get('CAUCE_FLEET_SETUP_DIAGNOSTICS') == '1':
+            print('CAUCE_SETUP_DIAGNOSTIC=executor_authority_unavailable: authority', file=sys.stderr)
         return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
     actions = ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge']
     if any(row['harness_id'] in {'claude', 'codex', 'grok', 'muse'}

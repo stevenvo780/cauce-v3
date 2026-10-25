@@ -7,8 +7,7 @@ import { HostReleaseManifestSchema, HostSetupFileSchema } from '../../services/g
 
 const execute = promisify(execFile);
 const workspace = resolve(import.meta.dirname, '../..');
-const task = 'h11-alta-ordenador-completa-1025';
-export const COMPLETE_RELEASE_REVISION = '03142b8de31af143dd3ac79a7fb244672f712258';
+const task = 'h11b-rechazo-setup-tres-vm-1025';
 export const COMPLETE_RELEASE_PROVIDER_IDENTITY = 'host-setup@example.test';
 export const COMPLETE_RELEASE_RUNTIME = { user: 'cauce', uid: 1500, home: '/home/cauce',
   stateRoot: '/home/cauce/.cauce', python: '/usr/local/bin/python3.12' } as const;
@@ -152,7 +151,8 @@ async function existingImage(tag: string): Promise<InspectedImage | undefined> {
 
 export async function buildCompleteRelease(options: { revision: string; directory: string; runId: string }): Promise<CompleteRelease> {
   const { revision, directory, runId } = options;
-  if (revision !== COMPLETE_RELEASE_REVISION) throw new Error('the complete host release must use the captured committed revision');
+  const committed = (await execute('git', ['rev-parse', 'HEAD'], { cwd: workspace })).stdout.trim();
+  if (revision !== committed || !/^[a-f0-9]{40}$/u.test(revision)) throw new Error('the complete host release must use the frozen checkout commit');
   if (!isAbsolute(directory) || !/^[a-z0-9][a-z0-9-]{0,63}$/u.test(runId)) throw new Error('invalid private release directory or run id');
   await mkdir(directory, { recursive: true });
   if ((await readdir(directory)).length !== 0) throw new Error('the private release directory must be empty');
