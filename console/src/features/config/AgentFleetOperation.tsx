@@ -118,7 +118,7 @@ function previewTitle(preview: FleetOperationPreview): string {
   const name = target.resource === 'agent' ? target.alias : target.resource === 'room' ? target.room_id : target.tenant_id;
   const kindLabel: Record<FleetOperationPreview['kind'], string> = {
     create: 'Preparar a', update: 'Actualizar a', start: 'Iniciar a', stop: 'Detener a',
-    retire: 'Retirar a', restore: 'Restaurar a', purge: 'Eliminar definitivamente a',
+    retire: 'Retirar a', restore: 'Restaurar a', purge: 'Eliminar definitivamente a', recover: 'Recuperar a',
   };
   if (target.resource === 'agent') return `${kindLabel[preview.kind]} ${name}`;
   if (target.resource === 'room') return `${kindLabel[preview.kind].replace(' a', ' el grupo')} ${name}`;

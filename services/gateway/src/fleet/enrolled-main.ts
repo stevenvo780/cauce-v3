@@ -41,7 +41,7 @@ async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
     template_id: `tpl-${createHash('sha256').update(JSON.stringify(runtime)).digest('hex').slice(0, 24)}` })));
   return HostCapabilitiesSchema.parse({ resource: 'host', action: 'capabilities', schemaVersion: 1,
     executor_version: '4.0.0', policy_sha256: digest, fleet_executor: capabilities.available,
-    templates, quota_executor: quotaCapabilities !== undefined,
+    templates, agent_recovery: capabilities.actions.includes('recover'), quota_executor: quotaCapabilities !== undefined,
     quota_providers: quotaCapabilities?.providers ?? [],quota_provider_actions:quotaCapabilities?.actions ?? {},
     ...(quotaCapabilities?.unavailable === undefined ? {} : { quota_provider_unavailable: quotaCapabilities.unavailable }) });
 }

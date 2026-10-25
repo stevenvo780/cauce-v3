@@ -62,15 +62,15 @@ export function operationTargetName(operation: FleetOperation): string {
 
 const AGENT_VERB: Record<FleetOperation['kind'], string> = {
   create: 'Preparar a', update: 'Actualizar a', start: 'Iniciar a', stop: 'Detener a',
-  retire: 'Retirar a', restore: 'Restaurar a', purge: 'Eliminar definitivamente a',
+  retire: 'Retirar a', restore: 'Restaurar a', purge: 'Eliminar definitivamente a', recover: 'Recuperar la TUI de',
 };
 const GROUP_VERB: Record<FleetOperation['kind'], string> = {
   create: 'Preparar el grupo', update: 'Actualizar el grupo', start: 'Iniciar el grupo', stop: 'Detener el grupo',
-  retire: 'Retirar el grupo', restore: 'Restaurar el grupo', purge: 'Eliminar definitivamente el grupo',
+  retire: 'Retirar el grupo', restore: 'Restaurar el grupo', purge: 'Eliminar definitivamente el grupo', recover: 'Recuperar el grupo',
 };
 const SPACE_VERB: Record<FleetOperation['kind'], string> = {
   create: 'Preparar el espacio', update: 'Actualizar el espacio', start: 'Iniciar el espacio', stop: 'Detener el espacio',
-  retire: 'Retirar el espacio', restore: 'Restaurar el espacio', purge: 'Eliminar definitivamente el espacio',
+  retire: 'Retirar el espacio', restore: 'Restaurar el espacio', purge: 'Eliminar definitivamente el espacio', recover: 'Recuperar el espacio',
 };
 
 /** Human title of an operation: «Preparar a Hades en server2», «Retirar a Teseo». */
@@ -133,6 +133,9 @@ const REMOVED_NOUN: Record<string, { one: string; many: string }> = {
 
 /** Physical outcome in words: «Borró el contenedor cauce-x y 2 volúmenes». */
 export function physicalResult(operation: FleetOperation): string | undefined {
+  const recovered = operation.steps.find(step => step.name === 'verify' && step.status === 'succeeded')?.evidence?.recovery;
+  if (operation.kind === 'recover' && recovered) return ['resumed', 'recreated'].includes(recovered.session.state)
+    ? 'Reanudó la misma conversación y conservó el contenedor y el adaptador.' : 'Consultó la conversación sin reiniciar el agente.';
   const removed = operation.steps.flatMap((step) => step.status === 'succeeded' ? step.evidence?.removed ?? [] : []);
   const purgeStep = operation.steps.find((step) => step.name === 'purge');
   if (!removed.length) {
@@ -231,9 +234,9 @@ export function purgeBlockers(preview: FleetOperationPreview): PurgeBlocker[] {
 type OperationKind = FleetOperation['kind'];
 const UNRESOLVED_STATUSES: readonly FleetOperation['status'][] = ['failed', 'queued', 'running', 'awaiting_auth', 'cancelling'];
 const KIND_NOUNS: Record<OperationKind, string> = { create: 'preparación', update: 'actualización', start: 'inicio', stop: 'detención',
-  retire: 'retiro', restore: 'restauración', purge: 'eliminación definitiva' };
+  retire: 'retiro', restore: 'restauración', purge: 'eliminación definitiva', recover: 'recuperación' };
 const KIND_VERBS: Record<OperationKind, string> = { create: 'preparar', update: 'actualizar', start: 'iniciar', stop: 'detener',
-  retire: 'retirar', restore: 'restaurar', purge: 'eliminar definitivamente' };
+  retire: 'retirar', restore: 'restaurar', purge: 'eliminar definitivamente', recover: 'recuperar' };
 
 export function isUnresolved(operation: FleetOperation | undefined): operation is FleetOperation {
   return !!operation && UNRESOLVED_STATUSES.includes(operation.status);

@@ -53,8 +53,9 @@ export class FleetHostUnavailableError extends Error {
 }
 
 async function assertFleetHostOperable(client: DatabaseClient, request: FleetOperationRequest): Promise<void> {
-  if (request.kind !== 'create' && request.kind !== 'update' && request.kind !== 'start') return;
-  const hostId = request.kind === 'start' ? await placedHostId(client, request.target) : request.parameters.placement.host_id;
+  if (request.kind !== 'create' && request.kind !== 'update' && request.kind !== 'start' && request.kind !== 'recover') return;
+  const hostId = request.kind === 'start' || request.kind === 'recover'
+    ? await placedHostId(client, request.target) : request.parameters.placement.host_id;
   if (hostId === null) return;
   if (!(await fleetHostAvailability(client, hostId)).usable) throw new FleetHostUnavailableError(hostId);
 }
@@ -90,6 +91,16 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     const authority=await assertFleetAuthority(client,tenant,alias,input.target,true,subject,source);
     const current=registry===undefined?capability:await registry.fleet(authority.actingCompany,capability);
     assertFleetPlacement(current,input);await assertFleetProviderAccount(pool,current,input);await assertFleetHostOperable(client,input);
+    if (input.kind === 'recover' && registry !== undefined) {
+      const recoveryHost = await placedHostId(client, input.target);
+      const signed = await client.query('SELECT 1 FROM fleet_host_identities WHERE host_id=$1', [recoveryHost]);
+      const supported = signed.rowCount
+        ? (await registry.read(authority.actingCompany)).some(host => host.host_id === recoveryHost
+          && host.executor_ready && host.capabilities.agent_recovery === true)
+        : capability.available && capability.actions.includes('recover')
+          && capability.placements.some(host => host.host_id === recoveryHost);
+      if (!supported) throw new FleetOperationError('forbidden', 'La computadora de este agente no publica un ejecutor de recuperación compatible y vigente.');
+    }
     if (!repository) throw new Error('fleet repository is unavailable');
     const hostId=registry===undefined||config===undefined?null:input.kind==='create'||input.kind==='update'?input.parameters.placement.host_id
       :input.target.resource==='agent'?await placedHostId(client,input.target):null;

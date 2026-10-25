@@ -8,6 +8,7 @@ import { cn } from '../../cn';
 import { permissionState, type PermissionState } from '../../lib';
 import { navigate } from '../../router';
 import { terminalRequest } from '../terminal/api';
+import { executeFleetRecovery } from './fleet-agent-recovery';
 
 interface Props {
   tenantId: string;
@@ -21,6 +22,7 @@ interface RecoveryPreview {
   identity: NativeRuntimeIdentity;
   session: AgentSessionOutcome;
   in_flight: number;
+  expected_revision?: number;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -74,7 +76,16 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
     const controller = new AbortController(); pending.current = controller;
     setBusy('reading'); setPreview(undefined); setError(''); setOutcome('');
     try {
-      const result = recoveryPreview(await terminalRequest<unknown>(path, { signal: controller.signal }, api), tenantId, alias);
+      const measured = record(await terminalRequest<unknown>(path, { signal: controller.signal }, api));
+      let result: RecoveryPreview;
+      if (measured.transport === 'fleet') {
+        if (measured.tenant_id !== tenantId || measured.alias !== alias || !Number.isSafeInteger(measured.expected_revision)
+          || Number(measured.expected_revision) < 0 || !Number.isSafeInteger(measured.in_flight) || Number(measured.in_flight) < 0) {
+          throw new Error('La consulta no acreditó el agente y la revisión de su empresa.');
+        }
+        const probe = await executeFleetRecovery(api, { tenant_id: tenantId, alias }, Number(measured.expected_revision), { action: 'probe' }, controller.signal);
+        result = { ...probe, in_flight: Number(measured.in_flight) };
+      } else result = recoveryPreview(measured, tenantId, alias);
       if (token === revision.current) setPreview(result);
     } catch (failure) {
       if (token === revision.current) setError(failure instanceof Error ? failure.message : 'No se pudo comprobar la conversación.');
@@ -85,15 +96,19 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
   const ready = resumable && preview.in_flight === 0 && (preview.session.state === 'present' || preview.session.state === 'absent');
 
   async function recover() {
-    if (!preview || !ready || pending.current || busy || permission === 'denied') return;
+    if (!preview || !ready || !preview.session.fingerprint || pending.current || busy || permission === 'denied') return;
+    const fingerprint = preview.session.fingerprint;
     const original = preview;
     const token = ++revision.current;
     const controller = new AbortController(); pending.current = controller;
     setBusy('recovering'); setPreview(undefined); setError(''); setOutcome('');
     try {
-      const result = recoveryPreview(await terminalRequest<unknown>(path, { method: 'POST', signal: controller.signal,
+      const result = original.expected_revision === undefined ? recoveryPreview(await terminalRequest<unknown>(path, { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ identity: original.identity, expected_fingerprint: original.session.fingerprint,
-          force: original.session.state === 'present' }) }, api), tenantId, alias);
+          force: original.session.state === 'present' }) }, api), tenantId, alias)
+        : await executeFleetRecovery(api, { tenant_id: tenantId, alias }, original.expected_revision,
+          { action: 'apply', identity: original.identity, expected_fingerprint: fingerprint,
+            force: original.session.state === 'present' }, controller.signal);
       if (token !== revision.current) return;
       if ((result.session.state !== 'resumed' && result.session.state !== 'recreated')
         || !result.session.resumable || result.session.fingerprint !== original.session.fingerprint) {

@@ -16,7 +16,7 @@ import { isGuidedDrift } from './guided-recreate';
 import { useGuidedRecreate } from './use-guided-recreate';
 import './agent-lifecycle.css';
 
-type Kind = FleetOperationRequest['kind'];
+type Kind = Exclude<FleetOperationRequest['kind'], 'recover'>;
 const newKey = () => `fleet_${crypto.randomUUID()}`;
 const ACTION_LABELS: Record<Kind, string> = { ...FLEET_ACTION_LABELS, purge: 'Eliminar definitivamente' };
 export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft, initialOpen = false, initialKind, triggerLabel, hideTrigger = false, embedded = false, fixedKind = false, onClose, onDirtyChange }: {

@@ -12,7 +12,7 @@ const QuotaActions=z.array(QuotaAction).max(5)
   .refine(value=>new Set(value).size===value.length);
 export const HostCapabilitiesSchema=z.object({resource:z.literal('host'),action:z.literal('capabilities'),schemaVersion:z.literal(1),
   executor_version:z.string().min(1).max(128),policy_sha256:z.string().regex(/^[a-f0-9]{64}$/u),
-  fleet_executor:z.boolean(),quota_executor:z.boolean(),templates:z.array(Template).max(100),
+  fleet_executor:z.boolean(),quota_executor:z.boolean(),templates:z.array(Template).max(100),agent_recovery:z.boolean().optional(),
   quota_providers:z.array(QuotaProvider).max(6).default([]),
   quota_provider_actions:z.partialRecord(QuotaProvider,QuotaActions).default({}),
   quota_provider_unavailable:z.partialRecord(QuotaProvider,z.partialRecord(QuotaAction,
@@ -68,6 +68,7 @@ export class HostCapabilityRegistry {
         home_roots:[...new Set(runtimes.map(runtime=>runtime.home_directory))],state_roots:[...new Set(runtimes.map(runtime=>runtime.state_root))]});
     }
     return placements.length===0?unavailable:FleetCapabilitySchema.parse({available:true,
-      actions:[...new Set([...configured.actions,...(enrolled.some(row=>row.executor_ready)?actions:[])])],placements});
+      actions:[...new Set([...configured.actions,...(enrolled.some(row=>row.executor_ready)?actions:[]),
+        ...(enrolled.some(row=>row.executor_ready&&row.capabilities.agent_recovery===true)?['recover' as const]:[])])],placements});
   }
 }

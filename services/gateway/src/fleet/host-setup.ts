@@ -24,7 +24,7 @@ const Served = z.object({ name: Name, path: LoginPathSchema, sha256: Hex, size: 
 /** Same fields the executor demands of an approved runtime bundle; the directory always lives inside the signed release. */
 const Bundle = z.object({ directory: z.string().regex(/^@release@\/[A-Za-z0-9_./-]+$/u).refine(value => !value.split('/').includes('..')),
   digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u), executable: z.string().min(1).max(4096), executable_sha256: Hex.nullable(),
-  argv: z.array(z.string().max(4096)).max(32), descriptor_sha256: Hex.optional() }).strict();
+  argv: z.array(z.string().max(4096)).max(32), descriptor_sha256: Hex.optional(), shared_tui: z.boolean().optional() }).strict();
 const Template = z.record(z.string(), z.unknown());
 const Providers = z.array(Name).min(1).max(100).refine(values => new Set(values).size === values.length);
 const QuotaEnvironment = z.object({ image: ImageId,

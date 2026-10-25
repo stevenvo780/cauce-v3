@@ -5,7 +5,7 @@ import {
   AGENT_RECOVERY_FEATURE, AgentSessionOutcomeSchema, AliasSchema, NativeRuntimeIdentitySchema,
   TenantSchema, type AgentSessionOutcome, type NativeAdminCommand, type NativeRuntimeIdentity,
 } from '@cauce/protocol';
-import { lockTerminalControlLease, StoreError, withTransaction, type DatabaseClient, type DatabasePool } from '@cauce/store';
+import { companyRevision, lockTerminalControlLease, StoreError, withTransaction, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider } from '../auth.js';
 import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import { PasswordAuthProvider } from '../password-auth.js';
@@ -27,8 +27,8 @@ async function authorize(client: DatabaseClient, actor: Actor, target: Target) {
   const authority = await actor.access.companyAuthority(client);
   if (`console:${human.humanId}` !== actor.subject || human.tenantId !== actor.tenant || human.actorAlias !== actor.alias
     || authority.humanId !== human.humanId || !['company_owner', 'company_admin', 'platform_admin'].includes(authority.role)) throw new AuthorizationError();
-  const row = (await client.query<{ company_id: string; host_id: string | null }>(
-    `SELECT tenant.company_id,agent.host_id FROM tenants tenant
+  const row = (await client.query<{ company_id: string; host_id: string | null; runtime_key: string | null; harness_id: string | null }>(
+    `SELECT tenant.company_id,agent.host_id,agent.runtime_key,agent.harness_id FROM tenants tenant
        JOIN agents agent ON agent.tenant_id=tenant.id
       WHERE tenant.id=$1 AND agent.alias=$2 AND tenant.enabled AND agent.enabled
         AND tenant.retired_at IS NULL AND agent.retired_at IS NULL FOR SHARE OF tenant,agent`,
@@ -37,6 +37,9 @@ async function authorize(client: DatabaseClient, actor: Actor, target: Target) {
   if (row?.company_id !== authority.actingCompany) throw new AuthorizationError();
   actor.access.options.signal.throwIfAborted();
   return row;
+}
+function usesFleet(row: Awaited<ReturnType<typeof authorize>>) {
+  return row.runtime_key !== null && row.harness_id !== 'openclaw';
 }
 async function inFlight(client: DatabaseClient, target: Target) {
   const row = (await client.query<{ count: string }>(
@@ -83,6 +86,7 @@ async function recover(deps: Dependencies, actor: Actor, target: Target, input: 
   const operation = randomUUID();
   await withTransaction(deps.pool, async client => {
     const owner = await authorize(client, actor, target);
+    if (usesFleet(owner)) throw new RecoveryError('unsupported', 'Este agente se recupera mediante una operación de flota con consulta previa y confirmación.');
     await audit(client, actor, target, operation, 'requested', owner.company_id, owner.host_id);
   });
   return withTransaction(deps.pool, async client => {
@@ -149,7 +153,12 @@ export function registerAgentRecoveryRoutes(app: FastifyInstance, deps: Dependen
   app.get(path, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     try { return await run(deps, request, reply, async (actor, target) => {
-      await withTransaction(deps.pool, client => authorize(client, actor, target));
+      const fleet = await withTransaction(deps.pool, async client => {
+        const owner = await authorize(client, actor, target);
+        return usesFleet(owner) ? { tenant_id: target.tenantId, alias: target.alias, transport: 'fleet',
+          expected_revision: await companyRevision(client, owner.company_id), in_flight: await inFlight(client, target) } : undefined;
+      });
+      if (fleet) return fleet;
       const identity = await runtime(deps.probe, target);
       const session = await call(deps, actor, target, { op: 'session_probe', request_id: randomUUID(), identity });
       const count = await withTransaction(deps.pool, async client => { await authorize(client, actor, target); return inFlight(client, target); });
