@@ -29,7 +29,7 @@ function retiredAgent(row: Record<string, unknown> | undefined): SettingsAgent |
   return {
     key: `retired:${row.tenant_id}/${row.alias}`, tenantId: row.tenant_id, alias: row.alias, name, registered: true,
     enabled: false, harness: typeof row.harness_id === 'string' ? row.harness_id : undefined, responsibility: undefined,
-    groups: [], groupsKnown: false,
+    groups: [],
   };
 }
 
@@ -114,12 +114,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
         onReloaded={reloaded} focusReturnRef={createTrigger} onOpenAgent={openCreated} />
       <SearchField label="Buscar agente o grupo" placeholder="Buscar por nombre, alias o grupo" className="max-w-md basis-auto"
         value={query} onChange={(value) => { setQuery(value); setPage(0); }} />
-      {!Array.isArray(snapshot.agents) ? <Notice role="note">
-        El servidor no publicó la lista de agentes. Solo se ven los que aparecen como miembros de un grupo, y no se pueden editar.
-      </Notice> : null}
-      {!agents.length ? <EmptyState>{Array.isArray(snapshot.agents) && Array.isArray(snapshot.memberships)
-        ? 'Todavía no hay agentes. Pulsa «Añadir agente» para crear el primero.'
-        : 'No hay un inventario completo de agentes en esta lectura.'}</EmptyState>
+      {!agents.length ? <EmptyState>Todavía no hay agentes. Pulsa «Añadir agente» para crear el primero.</EmptyState>
         : !visible.length ? <EmptyState>No hay agentes que coincidan con la búsqueda.</EmptyState>
           : <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] items-stretch gap-3 p-0" aria-label="Agentes configurados">
             {visible.slice(first, first + PAGE_SIZE).map((agent) => <AgentRow key={agent.key} agent={agent} snapshot={snapshot}

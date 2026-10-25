@@ -6,7 +6,7 @@ import type { SettingsAgent } from './settings-model';
 
 const agent: SettingsAgent = {
   key: '["A","w"]', tenantId: 'A', alias: 'w', name: 'Worker', registered: true,
-  enabled: true, harness: 'codex', responsibility: undefined, groups: [], groupsKnown: true,
+  enabled: true, harness: 'codex', responsibility: undefined, groups: [],
 };
 const snapshot = {
   tenants: [{ id: 'A', display_name: 'Empresa A' }],

@@ -237,7 +237,7 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
             {preparing ? <Button onClick={() => { onOpenChange(false); }}>Cerrar</Button> : <>
               {stepIndex > 0 ? <Button className="mr-auto" onClick={back} disabled={busy}>Atrás</Button> : null}
               {step === 'revision' ? <>
-                <Button onClick={() => { void preview(); }} disabled={disabled || !tenants.length}>Previsualizar alta</Button>
+                <Button onClick={() => { void preview(); }} disabled={disabled}>Previsualizar alta</Button>
                 <Button variant="primary" onClick={() => { void apply(); }}
                   disabled={disabled || !mutation || !runner.isValidated(mutation) || Boolean(hostReason)}>Crear registro</Button>
               </> : <Button variant="primary" onClick={next} disabled={busy}>Siguiente</Button>}
