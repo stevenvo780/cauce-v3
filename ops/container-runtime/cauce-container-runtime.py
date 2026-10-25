@@ -162,9 +162,15 @@ def run_adapter(args: argparse.Namespace) -> int:
     guard_fd = mutation_guard(control_fd)
     try:
         lock_fd = lock_control(control_fd)
-    finally:
+        try:
+            state_fd = open_directory(args.state)
+        except BaseException:
+            os.close(lock_fd)
+            raise
+    except BaseException:
         os.close(guard_fd)
-    state_fd = open_directory(args.state)
+        os.close(control_fd)
+        raise
     process: subprocess.Popen[bytes] | None = None
     process_tree: PinnedAdapterLeader | None = None
     running_document: dict[str, Any] | None = None
@@ -282,6 +288,12 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
             raise PermanentError("adapter launch was cancelled before process creation")
 
+        if args.retire_consumer_lease:
+            from cauce_container_lease import retire_consumer_lease
+            retire_consumer_lease(state_fd, args.state, args.alias, args.wire_alias, args.runtime_uid, args.runtime_gid)
+            if termination_requested:
+                raise PermanentError("adapter launch was cancelled before process creation")
+
         # The adapter's own stderr is the only trace of a startup failure (docker exec -d discards ours): keep it,
         # bounded, in the agent state directory where the operator and the executor can read it.
         # The runtime user can write this directory, so never follow a link nor touch a file root does not own or
@@ -299,6 +311,8 @@ def run_adapter(args: argparse.Namespace) -> int:
                                        **launch_credentials)
         finally:
             os.close(log_fd)
+            os.close(guard_fd)
+            guard_fd = None
         try:
             # Pin before any phase wait, exec inspection or process.wait()/poll()
             # can observe and reap the leader.
@@ -396,6 +410,8 @@ def run_adapter(args: argparse.Namespace) -> int:
                 adoption_server.close()
             if process_tree is not None:
                 process_tree.close()
+            if guard_fd is not None:
+                os.close(guard_fd)
             os.close(lock_fd)
             os.close(state_fd)
             os.close(control_fd)
@@ -578,6 +594,7 @@ run_parser.add_argument("--wire-alias")
 run_parser.add_argument("--tenant")
 run_parser.add_argument("--runtime-uid", type=int, required=True)
 run_parser.add_argument("--runtime-gid", type=int, required=True)
+run_parser.add_argument("--retire-consumer-lease", action="store_true")
 run_parser.add_argument("command", nargs=argparse.REMAINDER)
 stop_parser = subparsers.add_parser("stop")
 common_lifecycle(stop_parser, require_bundle=False)
@@ -596,6 +613,8 @@ def _validate_identity(namespace: argparse.Namespace, *, require_bundle: bool) -
     if (wire_alias is None) != (tenant is None) or (wire_alias is not None
             and (not WIRE_ALIAS_RE.fullmatch(wire_alias) or not TENANT_RE.fullmatch(tenant))):
         raise PermanentError("lifecycle wire identity arguments are invalid")
+    if getattr(namespace, "retire_consumer_lease", False) and wire_alias is None:
+        raise PermanentError("consumer lease retirement requires an explicit wire identity")
     canonical_absolute(namespace.control_dir, "control directory")
     canonical_absolute(namespace.state, "state directory")
     if require_bundle and not DIGEST_RE.fullmatch(namespace.bundle_digest):

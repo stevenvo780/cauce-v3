@@ -9,7 +9,7 @@ import stat
 
 from fleet_executor_policy import SafeFailure, open_absolute_directory, open_regular_at
 
-MODULES = ('cauce_container_base', 'cauce_container_proc', 'cauce_container_restart', 'cauce_container_tree', 'cauce_container_adoption')
+MODULES = ('cauce_container_base', 'cauce_container_proc', 'cauce_container_lease', 'cauce_container_restart', 'cauce_container_tree', 'cauce_container_adoption')
 SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / 'container-runtime'
 MAX_SOURCE = 262144
 
@@ -35,7 +35,7 @@ raw=sys.stdin.buffer.read(1048577)
 if len(raw)>1048576 or hashlib.sha256(raw).hexdigest()!=sys.argv.pop(1):
     raise SystemExit('current lifecycle payload differs')
 packet=json.loads(raw)
-names=('cauce_container_base','cauce_container_proc','cauce_container_restart','cauce_container_tree','cauce_container_adoption')
+names=('cauce_container_base','cauce_container_proc','cauce_container_lease','cauce_container_restart','cauce_container_tree','cauce_container_adoption')
 if set(packet)!={'modules','entry'} or list(packet['modules'])!=list(names):
     raise SystemExit('current lifecycle modules differ')
 for name in names:

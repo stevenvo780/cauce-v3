@@ -132,6 +132,7 @@ class SpaceTurnTemporaryTests(unittest.TestCase):
             for name, replacement in replacements.items():
                 stack.enter_context(mock.patch.object(container, name, replacement))
             stack.enter_context(mock.patch.object(profiles, 'prepare_profile', side_effect=profile))
+            stack.enter_context(mock.patch('fleet_executor_start.retirement_arguments', return_value=['--retire-consumer-lease']))
             result = container.start_existing_adapter({}, agent, {}, {'directory': '/bundle', 'digest': 'sha256:' + 'd' * 64,
                 'executable': '/usr/bin/python3', 'argv': []}, bootstrap=False)
         self.assertEqual(result, {'runtime_digest': 'c' * 64})
@@ -139,6 +140,7 @@ class SpaceTurnTemporaryTests(unittest.TestCase):
         self.assertLess(events.index(('profile', provider)), events.index(('environment', provider)))
         self.assertFalse(computer_state.parent.exists())
         replacements['docker'].assert_called_once()
+        self.assertIn('--retire-consumer-lease', replacements['docker'].call_args.args)
 
 
 if __name__ == '__main__':
