@@ -11,7 +11,13 @@ from contextlib import contextmanager
 from typing import Any
 
 from cauce_container_base import IDENTITY_ENV_KEYS, PermanentError
-from cauce_container_proc import expected_environment, matched_fs_credentials, open_pidfd, pidfd_matches_starttime
+from cauce_container_proc import (
+    expected_environment,
+    matched_fs_credentials,
+    open_pidfd,
+    pidfd_matches_starttime,
+    proc_stat,
+)
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
 # The composer prompt sits at column 0 or right inside a box edge; drafts indent their continuation lines.
@@ -227,7 +233,7 @@ def shared_pane(document: dict[str, Any]) -> RestartPane | None:
 
 def tmux_absent() -> bool:
     # A shared session that never got its TUI, or whose TUI died, has no composer left to protect.
-    # Any tmux process in this PID namespace, whatever its socket or user, keeps the fail-closed pane checks.
+    # Any non-zombie tmux in this PID namespace, whatever its socket or user, keeps the fail-closed pane checks.
     try:
         entries = [entry.path for entry in os.scandir(PROC) if entry.name.isdigit()]
     except OSError:
@@ -241,7 +247,13 @@ def tmux_absent() -> bool:
         except OSError:
             hold("TMUX_PROCESS_UNKNOWN")
         if name.startswith(b"tmux"):
-            return False
+            try:
+                if proc_stat(int(os.path.basename(entry)))["state"] != "Z":
+                    return False
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except (OSError, ValueError, KeyError, PermanentError):
+                hold("TMUX_PROCESS_UNKNOWN")
     return True
 
 
