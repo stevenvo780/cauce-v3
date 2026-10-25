@@ -244,6 +244,19 @@ def sdk_environment_proof(policy: dict, agent: dict, observed: dict, bootstrap: 
         raise NamespaceMismatch('running runtime has another SDK identity or transport')
 
 
+def teardown_sdk_environment_proof(agent: dict, identity: dict, observed: dict) -> None:
+    room = agent.get('primary_room_id')
+    if not isinstance(room, str) or not 1 <= len(room) <= 128 or any(ord(char) < 32 for char in room):
+        raise SafeFailure('original SDK primary room is not pinned')
+    expected = {'CAUCE_ROOM': room, 'CAUCE_ALIAS': agent['alias'], 'CAUCE_RUNTIME_KEY': agent['runtime_key'],
+                'CAUCE_TENANT_ID': agent['tenant_id'], 'CAUCE_STATE_DIR': agent['state_directory'],
+                'CAUCE_CONTROL_DIR': str(identity['control']), 'CAUCE_CONTAINER_ID': identity['container_id'],
+                'CAUCE_CONTAINER_GENERATION': identity['generation']}
+    if any(observed.get(key) != value for key, value in expected.items()) \
+            or 'CAUCE_TENANT' in observed and observed['CAUCE_TENANT'] != agent['tenant_id']:
+        raise NamespaceMismatch('running runtime has another teardown identity')
+
+
 def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, bootstrap: bool | None = None, operation_id: str | None = None) -> dict | None:
     if not identity['control'].exists():
         return None

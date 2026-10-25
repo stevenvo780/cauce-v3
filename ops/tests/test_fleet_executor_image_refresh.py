@@ -106,6 +106,7 @@ class ImageRefreshTests(ReleaseFixture):
     def setUp(self):
         super().setUp()
         self.docker = RefreshDocker()
+        self.agent['primary_room_id'] = 'fixture'
         self.policy['roots'] = {'state': str(self.base.parent / 'executor-state')}
         pathlib.Path(self.policy['roots']['state']).mkdir(mode=0o700)
         for module in (container, rebind):
@@ -128,6 +129,7 @@ class ImageRefreshTests(ReleaseFixture):
         row = self.docker.add(self.name, container.expected_labels(self.policy, self.agent),
                               self.mounts(root or self.old), running=running)
         row['Image'] = PREVIOUS_IMAGE
+        self.docker.register_adapter(self.agent, row, self.policy['bundles']['codex']['digest'])
         return row
 
     def receipt(self):
@@ -323,6 +325,7 @@ class ImageRefreshTests(ReleaseFixture):
         previous = image_refresh.previous_agent(self.agent, PREVIOUS_IMAGE)
         before = container.create_container(self.policy, previous, container.runtime_mounts(self.policy, self.agent, self.old, self.new))
         self.docker('start', before['Id'])
+        self.docker.register_adapter(self.agent, self.docker.containers[self.name], self.policy['bundles']['codex']['digest'])
         self.docker.live.add(self.name)
         self.policy['extensions_allowed'] = {'types': [], 'mount_roots': [], 'networks': []}
         self.docker.calls.clear()
@@ -620,6 +623,88 @@ class ImageRefreshTests(ReleaseFixture):
             container.observe_container(self.policy, self.agent)
         self.assert_original(before)
         self.assertFalse(any(call[0] in {'stop', 'rename', 'create', 'rm'} for call in self.docker.calls))
+
+    def test_an_adapter_started_without_shared_tui_can_stop_after_the_policy_enables_it(self):
+        self.agent['primary_room_id'] = 'fixture'
+        self.policy['transport'] = {'gateway_url': 'https://gateway.example.test'}
+        self.policy['bundles']['codex']['shared_tui'] = False
+        before = self.old_container()
+        previous = image_refresh.previous_agent(self.agent, PREVIOUS_IMAGE)
+        identity = container.identity_for(previous, before)
+        operation = str(uuid.uuid4())
+        row = {'tenant': self.agent['tenant_id'], 'alias': self.agent['alias'], 'user': self.agent['runtime_user'],
+               'runtimeStateDirectory': self.agent['state_directory'], 'enabled': True, 'room': 'fixture'}
+        snapshot = {'schemaVersion': 1, 'fleet': {self.agent['runtime_key']: row}}
+        with mock.patch.object(runtime, 'materialized_sdk_snapshot', return_value=({'generation': 'f' * 64}, snapshot)):
+            environment = {**runtime.sdk_environment(self.policy, self.agent, False, operation),
+                'CAUCE_BOOTSTRAP': '0', 'CAUCE_FLEET_OPERATION_ID': operation,
+                'CAUCE_ALIAS': self.agent['alias'], 'CAUCE_RUNTIME_KEY': self.agent['runtime_key'],
+                'CAUCE_TENANT_ID': self.agent['tenant_id'], 'CAUCE_TENANT': self.agent['tenant_id'],
+                'CAUCE_STATE_DIR': self.agent['state_directory'], 'CAUCE_CONTROL_DIR': str(identity['control']),
+                'CAUCE_CONTAINER_ID': identity['container_id'], 'CAUCE_CONTAINER_GENERATION': identity['generation']}
+            original_environment = dict(environment)
+            metadata = {'alias': self.agent['runtime_key'], 'wireAlias': self.agent['alias'], 'tenantId': self.agent['tenant_id'],
+                'stateDirectory': self.agent['state_directory'], 'controlDirectory': str(identity['control']),
+                'containerId': identity['container_id'], 'containerGeneration': identity['generation'],
+                'runtimeUid': 65534, 'runtimeGid': 65534, 'phase': 'running', 'pid': 42,
+                'bundleDigest': self.policy['bundles']['codex']['digest']}
+
+            def read_runtime(*arguments):
+                if '/bin/cat' in arguments:
+                    if arguments[-1] == '/proc/42/environ':
+                        return b'\0'.join((key + '=' + value).encode() for key, value in environment.items())
+                    self.assertEqual(arguments[-1], str(identity['control'] / 'cauce-v3-adapter.json'))
+                    return json.dumps(metadata).encode()
+                return self.docker(*arguments)
+
+            def observe_runtime(command, **options):
+                if options.get('input_data') is not None and command[-1].startswith('{'):
+                    expected = json.loads(command[-1])
+                    self.assertTrue(all(metadata.get(key) == value for key, value in expected.items()))
+                    return json.dumps({'metadata': metadata, 'environment': environment}).encode()
+                return read_runtime(*command[1:])
+
+            with mock.patch.object(container, 'docker', side_effect=read_runtime), \
+                    mock.patch.object(container, 'checked_command', side_effect=observe_runtime):
+                self.docker.live.add(self.name)
+                self.assertIn('runtime_digest', container.process_proof(self.policy, previous, identity,
+                    self.policy['bundles']['codex'], bootstrap=False, operation_id=operation))
+                self.policy['bundles']['codex']['shared_tui'] = True
+                self.assertNotIn('CAUCE_SHARED_SESSION', environment)
+                with self.assertRaisesRegex(runtime.NamespaceMismatch, 'SDK identity or transport'):
+                    container.process_proof(self.policy, previous, identity,
+                        self.policy['bundles']['codex'], bootstrap=False, operation_id=operation)
+                for key, value in (('CAUCE_ROOM', 'foreign-room'), ('CAUCE_TENANT_ID', 'ForeignCompany'),
+                                   ('CAUCE_RUNTIME_KEY', 'foreign-runtime'), ('CAUCE_ALIAS', 'foreign-alias'),
+                                   ('CAUCE_STATE_DIR', '/foreign-state'), ('CAUCE_CONTROL_DIR', '/foreign-control'),
+                                   ('CAUCE_CONTAINER_ID', 'f' * 64), ('CAUCE_CONTAINER_GENERATION', 'f' * 64),
+                                   ('CAUCE_BOOTSTRAP', '2'),
+                                   ('CAUCE_FLEET_OPERATION_ID', 'foreign-operation')):
+                    with self.subTest(key=key):
+                        environment[key] = value
+                        self.docker.calls.clear()
+                        with self.assertRaises(SafeFailure):
+                            container.adapter_restart_state(self.policy, self.agent, before)
+                        with self.assertRaises(SafeFailure):
+                            container.stop_container(self.policy, self.agent)
+                        self.assertIn(self.name, self.docker.live)
+                        self.assertFalse(any(call[:2] == ('helper', 'stop') for call in self.docker.calls))
+                        environment.clear()
+                        environment.update(original_environment)
+                restart = container.adapter_restart_state(self.policy, self.agent, before)
+                self.assertTrue(restart['adapter_running'])
+                self.assertFalse(restart['adapter_bootstrap'])
+                self.assertFalse(container.adapter_restart_state(self.policy, self.agent, before,
+                    check_sdk_policy=True)['adapter_sdk_current'])
+                self.assertEqual(restart['adapter_operation_id'], operation)
+                self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+                self.assertNotIn(self.name, self.docker.live)
+                with self.assertRaises(runtime.NamespaceMismatch):
+                    runtime.namespace_proof({**original_environment, 'CAUCE_BOOTSTRAP': '1'}, False, operation)
+                with self.assertRaisesRegex(runtime.NamespaceMismatch, 'SDK identity or transport'):
+                    runtime.sdk_environment_proof(self.policy, self.agent, original_environment, False, operation)
+        self.assert_original(before)
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
 
     def test_restore_without_a_materialized_sdk_identity_only_stops_the_original_adapter(self):
         for running in (False, True):

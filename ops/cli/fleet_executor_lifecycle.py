@@ -62,14 +62,21 @@ try:
         raise RuntimeError('previous adapter controller ancestry differs')
     wanted={'CAUCE_BOOTSTRAP','CAUCE_FLEET_OPERATION_ID','CAUCE_ROOM','CAUCE_INSTANCE_ID','CAUCE_SPACE_ROOT',
         'CAUCE_RELAY_URL','CAUCE_MODEL_ID','CAUCE_REASONING_EFFORT','CAUCE_SHARED_HUMAN_IDS',
-        'CAUCE_SHARED_SESSION','CAUCE_SHARED_SESSION_WORKSPACE','TMUX_TMPDIR'}
+        'CAUCE_SHARED_SESSION','CAUCE_SHARED_SESSION_WORKSPACE','TMUX_TMPDIR','CAUCE_ALIAS',
+        'CAUCE_RUNTIME_KEY','CAUCE_TENANT_ID','CAUCE_TENANT','CAUCE_STATE_DIR','CAUCE_CONTROL_DIR',
+        'CAUCE_CONTAINER_ID','CAUCE_CONTAINER_GENERATION'}
     with matched_fs_credentials(document['runtimeUid'],document['runtimeGid']):
         raw=open('/proc/'+str(document['pid'])+'/environ','rb').read()
     environment={}
     for item in raw.split(b'\\0'):
         name,separator,value=item.partition(b'=')
-        if separator and name.decode('utf-8') in wanted:
-            environment[name.decode('utf-8')]=value.decode('utf-8')
+        if not separator:
+            continue
+        name=name.decode('utf-8')
+        if name in wanted:
+            if name in environment:
+                raise RuntimeError('previous adapter environment contains a duplicate identity variable')
+            environment[name]=value.decode('utf-8')
     verify_adapter(document,expected['alias'],expected['stateDirectory'])
     verify_controller(document)
     if read_metadata(control)[0]!=document:

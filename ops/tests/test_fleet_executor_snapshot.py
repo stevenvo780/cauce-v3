@@ -145,6 +145,36 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
             with self.assertRaises(runtime.NamespaceMismatch):
                 runtime.sdk_environment_proof({}, {}, {**expected, 'CAUCE_SHARED_HUMAN_IDS': self.ENTRY}, False, 'op')
 
+    def test_teardown_pins_identity_without_requiring_the_current_sdk_configuration(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        agent = {'tenant_id': 'Equipo_42', 'alias': 'shared_alias', 'runtime_key': 'physical-one',
+                 'state_directory': '/tmp/cauce-state/physical-one', 'primary_room_id': 'fixture'}
+        identity = {'container_id': 'a' * 64, 'generation': 'b' * 64,
+                    'control': pathlib.Path('/run/cauce-fleet/physical-one')}
+        environment = {'CAUCE_ROOM': 'fixture', 'CAUCE_ALIAS': agent['alias'], 'CAUCE_RUNTIME_KEY': agent['runtime_key'],
+                       'CAUCE_TENANT_ID': agent['tenant_id'], 'CAUCE_STATE_DIR': agent['state_directory'],
+                       'CAUCE_CONTROL_DIR': str(identity['control']), 'CAUCE_CONTAINER_ID': identity['container_id'],
+                       'CAUCE_CONTAINER_GENERATION': identity['generation']}
+        configurations = ({}, {'CAUCE_TENANT': agent['tenant_id']},
+                          {'CAUCE_SHARED_SESSION': '1', 'CAUCE_SHARED_SESSION_WORKSPACE': '/previous/workspace',
+                           'TMUX_TMPDIR': '/previous/tmux', 'CAUCE_SHARED_HUMAN_IDS': self.ENTRY,
+                           'CAUCE_MODEL_ID': 'previous-model', 'CAUCE_REASONING_EFFORT': 'low',
+                           'CAUCE_RELAY_URL': 'wss://previous-gateway.example.test/v3/ws',
+                           'CAUCE_INSTANCE_ID': 'previous-instance'})
+        for configuration in configurations:
+            with self.subTest(configuration=configuration):
+                self.assertIsNone(runtime.teardown_sdk_environment_proof(agent, identity, {**environment, **configuration}))
+        for key in environment:
+            for value in (None, 'foreign'):
+                with self.subTest(key=key, value=value), self.assertRaises(runtime.NamespaceMismatch):
+                    runtime.teardown_sdk_environment_proof(agent, identity, {**environment, key: value})
+        with self.assertRaises(runtime.NamespaceMismatch):
+            runtime.teardown_sdk_environment_proof(agent, identity, {**environment, 'CAUCE_TENANT': 'ForeignCompany'})
+        for room in (None, '', 'unapproved\nroom'):
+            with self.subTest(room=room), self.assertRaises(runtime.SafeFailure):
+                runtime.teardown_sdk_environment_proof({**agent, 'primary_room_id': room}, identity, environment)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -105,7 +105,7 @@ def run_case(directory: pathlib.Path, name: str, old_image: str, new_image: str,
               'bundles': {'codex': {'directory': str(bundle), 'digest': bundle_digest(str(bundle)),
                   'executable': '/usr/local/bin/python3.12', 'executable_sha256': None,
                   'argv': [str(bundle / 'adapter.py')]}}}
-    raw = {'tenant_id': 'Fixture', 'alias': 'image', 'runtime_key': 'image', 'harness_id': 'codex',
+    raw = {'tenant_id': 'Fixture', 'alias': 'image', 'runtime_key': 'image', 'harness_id': 'codex', 'primary_room_id': 'fixture',
            'host_id': policy['host_id'], 'runtime_mode': 'container', 'container_name': name,
            'runtime_user': placement['runtime_user'], 'home_directory': placement['home_directory'],
            'state_directory': placement['state_root'] + '/image', 'systemd_user': placement['systemd_user']}

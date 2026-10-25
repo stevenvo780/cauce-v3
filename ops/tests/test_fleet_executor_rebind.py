@@ -29,6 +29,19 @@ IMAGE = 'sha256:' + 'd' * 64
 class FakeDocker:
     def __init__(self):
         self.containers, self.volumes, self.calls, self.live, self.stuck, self.counter = {}, {}, [], set(), set(), 0
+        self.adapters = {}
+
+    def register_adapter(self, agent, observed, bundle_digest):
+        identity = container.identity_for(agent, observed)
+        metadata = {'alias': agent['runtime_key'], 'wireAlias': agent['alias'], 'tenantId': agent['tenant_id'],
+            'stateDirectory': agent['state_directory'], 'controlDirectory': str(identity['control']),
+            'containerId': identity['container_id'], 'containerGeneration': identity['generation'],
+            'runtimeUid': 65534, 'runtimeGid': 65534, 'phase': 'running', 'bundleDigest': bundle_digest}
+        environment = {'CAUCE_BOOTSTRAP': '0', 'CAUCE_ROOM': agent['primary_room_id'], 'CAUCE_ALIAS': agent['alias'],
+            'CAUCE_RUNTIME_KEY': agent['runtime_key'], 'CAUCE_TENANT_ID': agent['tenant_id'],
+            'CAUCE_STATE_DIR': agent['state_directory'], 'CAUCE_CONTROL_DIR': str(identity['control']),
+            'CAUCE_CONTAINER_ID': identity['container_id'], 'CAUCE_CONTAINER_GENERATION': identity['generation']}
+        self.adapters[observed['Id']] = {'metadata': metadata, 'environment': environment}
 
     def by_id(self, identity):
         return next(name for name, row in self.containers.items() if row['Id'] == identity)
@@ -95,6 +108,12 @@ class FakeDocker:
             arguments[arguments.index('/cauce/lifecycle/cauce-container-runtime.py') + 1]
         source = str(lifecycle.SOURCE_ROOT) if current_helper else \
             next(row['Source'] for row in self.containers[name]['Mounts'] if row['Destination'] == '/cauce/lifecycle')
+        if action.startswith('{'):
+            observation = self.adapters[self.containers[name]['Id']]
+            if any(observation['metadata'].get(key) != value for key, value in json.loads(action).items()):
+                raise SafeFailure('previous adapter lifecycle identity differs')
+            self.calls[-1] = ('helper', 'observe', source)
+            return json.dumps(observation).encode()
         self.calls[-1] = ('helper', action, source)
         if action == 'stopped' and name in self.live:
             raise SafeFailure('runtime effect or observation failed')
@@ -201,6 +220,7 @@ class RebindEffectTests(ReleaseFixture):
     def setUp(self):
         super().setUp()
         self.docker = FakeDocker()
+        self.agent['primary_room_id'] = 'fixture'
         for module in (container, rebind):
             patch = mock.patch.object(module, 'docker', self.docker)
             patch.start()
@@ -213,6 +233,7 @@ class RebindEffectTests(ReleaseFixture):
 
     def old_container(self, *, running=True, live=False):
         row = self.docker.add(self.name, container.expected_labels(self.policy, self.agent), self.mounts(self.old), running=running)
+        self.docker.register_adapter(self.agent, row, self.policy['bundles']['codex']['digest'])
         if live:
             self.docker.live.add(self.name)
         return row
@@ -233,7 +254,9 @@ class RebindEffectTests(ReleaseFixture):
         self.assertEqual(after['Mounts'], mounts)
         self.assertNotIn(self.name, self.docker.live)
         helpers = [call for call in self.docker.calls if call[0] == 'helper']
-        self.assertEqual(helpers, [('helper', 'stop', str(lifecycle.SOURCE_ROOT)),
+        self.assertEqual(helpers, [('helper', 'stopped', str(lifecycle.SOURCE_ROOT)),
+                                   ('helper', 'observe', str(lifecycle.SOURCE_ROOT)),
+                                   ('helper', 'stop', str(lifecycle.SOURCE_ROOT)),
                                    ('helper', 'stopped', str(lifecycle.SOURCE_ROOT))])
         self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
         self.assertFalse(any(call[:2] == ('volume', 'create') or call[:2] == ('volume', 'rm') for call in self.docker.calls))
@@ -287,6 +310,12 @@ class RebindEffectTests(ReleaseFixture):
         self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
         self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
         self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'stop', 'start', 'rename', 'rm', 'create'}])
+
+    def test_a_running_container_without_an_adapter_does_not_require_a_room_pin(self):
+        self.old_container()
+        self.agent.pop('primary_room_id')
+        self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+        self.assertEqual([call[1] for call in self.docker.calls if call[0] == 'helper'], ['stopped', 'stop', 'stopped'])
 
     def test_rollback_pass_returns_containers_to_the_previous_release(self):
         self.old_container(running=True)

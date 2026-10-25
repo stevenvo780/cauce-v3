@@ -537,11 +537,11 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
         return replacement['_adapter_restored']
     if not allow_refresh and previous['_placement']['image'] != approved['_placement']['image'] and bundle['executable_sha256'] is None:
         bundle = {**bundle, 'executable_sha256': approved_executable_digest(policy, approved, bundle)}
-    restart = adapter_restart_state(restored, agent, observed)
+    restart = adapter_restart_state(restored, agent, observed, check_sdk_policy=True)
     if restart['adapter_running']:
         operation_id = restart['adapter_operation_id']
         namespace_proof({'CAUCE_BOOTSTRAP': '1' if restart['adapter_bootstrap'] else '0'}, bootstrap)
-        if restart['adapter_bundle_digest'] == bundle['digest']:
+        if restart['adapter_bundle_digest'] == bundle['digest'] and restart['adapter_sdk_current']:
             return process_proof(restored, agent, identity_for(agent, observed), bundle,
                                  bootstrap=bootstrap, operation_id=operation_id)
         stop_running_adapter(agent, observed)
@@ -555,16 +555,15 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
     return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
 
 
-def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None) -> dict:
-    from fleet_executor_image import validate_previous
+def observe_adapter_state(agent: dict, observed: dict) -> tuple[dict, dict]:
     from fleet_executor_lifecycle import command
-    agent = validate_previous(policy, agent, observed, release)
+    from fleet_executor_runtime import teardown_sdk_environment_proof
     if not observed['State']['Running']:
-        return {'adapter_running': False}
+        return {'adapter_running': False}, {}
     identity = identity_for(agent, observed)
     try:
         helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
-        return {'adapter_running': False}
+        return {'adapter_running': False}, {}
     except SafeFailure:
         pass
     uid, gid = user_identity(agent, identity)
@@ -586,9 +585,25 @@ def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pa
         raise SafeFailure('original adapter operation identity is invalid') from None
     bootstrap = environment['CAUCE_BOOTSTRAP'] == '1'
     namespace_proof(environment, bootstrap, operation or None)
-    sdk_environment_proof(policy, agent, environment, bootstrap, operation or None)
-    return {'adapter_running': True, 'adapter_bootstrap': bootstrap,
-            'adapter_operation_id': operation or None, 'adapter_bundle_digest': observation['metadata']['bundleDigest']}
+    teardown_sdk_environment_proof(agent, identity, environment)
+    result = {'adapter_running': True, 'adapter_bootstrap': bootstrap,
+              'adapter_operation_id': operation or None, 'adapter_bundle_digest': observation['metadata']['bundleDigest']}
+    return result, environment
+
+
+def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None, *,
+                          check_sdk_policy: bool = False) -> dict:
+    from fleet_executor_image import validate_previous
+    agent = validate_previous(policy, agent, observed, release)
+    result, environment = observe_adapter_state(agent, observed)
+    if check_sdk_policy and result['adapter_running']:
+        try:
+            sdk_environment_proof(policy, agent, environment, result['adapter_bootstrap'], result['adapter_operation_id'])
+        except NamespaceMismatch:
+            result['adapter_sdk_current'] = False
+        else:
+            result['adapter_sdk_current'] = True
+    return result
 
 
 def executable_digest(raw: bytes) -> str:
@@ -714,6 +729,7 @@ def stop_running_adapter(agent: dict, observed: dict) -> dict:
         return {'stopped_verified': True}
     identity = identity_for(agent, observed)
     user_identity(agent, identity)
+    observe_adapter_state(agent, observed)
     helper(agent, identity, 'stop', *lifecycle_arguments(agent, identity))
     helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
     return {'stopped_verified': True}
