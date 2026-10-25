@@ -21,6 +21,13 @@ import {
 import { assertRuntimeSynchronizedMutation, configurationDependencies, configurationIdentity, databaseError } from './configuration/shared.js';
 import { assertHoldersKept, protectedHolders, QUALIFIED_PEOPLE_SQL } from './configuration/control-holders.js';
 import { assertEditablePrincipalMutation, runtimePrincipalScopeSql } from './repository/system-principal-scope.js';
+import { grantCreatorTerminalAccess } from './terminal-grants.js';
+
+function createdAgentTargets(mutation: ConfigMutation): { tenant_id: string; alias: string }[] {
+  if (mutation.resource === 'batch') return mutation.mutations.flatMap((leaf) => createdAgentTargets(leaf));
+  return mutation.resource === 'agent' && mutation.action === 'create'
+    ? [{ tenant_id: mutation.tenant_id, alias: mutation.alias }] : [];
+}
 
 export { ConfigurationError };
 export type {
@@ -297,6 +304,13 @@ export class ConfigurationRepository extends ConfigurationMutations {
           summary, mutation: mutationForRead(mutation), inverse_mutation: mutationForRead(inverse),
           mutation_sha256: sha256Hex(configurationMutationHashInput(mutation)),
         }, rollback: true };
+      }
+      for (const target of createdAgentTargets(mutation)) {
+        await grantCreatorTerminalAccess(client, {
+          tenant_id: target.tenant_id, alias: target.alias,
+          creator_human_id: current.humanId, creator_home_tenant: current.homeTenant, creator_alias: current.alias,
+          can_grant: ['platform_admin', 'company_owner', 'company_admin'].includes(current.role),
+        });
       }
       const nextRevision = await this.record(client, current, mutation, inverse, summary, null);
       await this.audit(client, current, 'config.change', { revision: nextRevision, mutation, summary }, isPlatformMutation(mutation));

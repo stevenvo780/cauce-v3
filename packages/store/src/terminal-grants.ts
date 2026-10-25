@@ -120,9 +120,10 @@ function grantNote(value: unknown): string | null {
 }
 
 async function auditGrant(
-  client: DatabaseClient, authority: CompanyAuthority,
+  client: DatabaseClient, authority: Pick<CompanyAuthority, 'homeTenant' | 'alias' | 'humanId'>,
   action: 'terminal.grant.create' | 'terminal.grant.update' | 'terminal.grant.revoke',
   grant: Pick<TerminalGrantRecord, 'id' | 'company_id' | 'tenant_id' | 'alias' | 'grantee_human_id' | 'modes' | 'expires_at'>,
+  reason?: string,
 ): Promise<void> {
   await client.query(
     `INSERT INTO audit_events(tenant_id,actor_alias,action,decision,company_id,actor_human_id,metadata)
@@ -131,9 +132,63 @@ async function auditGrant(
       JSON.stringify({
         grant_id: grant.id, target_tenant: grant.tenant_id, target_alias: grant.alias,
         grantee_human_id: grant.grantee_human_id, modes: grant.modes, expires_at: grant.expires_at,
-        component: 'terminal',
+        component: 'terminal', ...(reason === undefined ? {} : { reason }),
       })],
   );
+}
+
+export interface CreatorTerminalGrantInput {
+  tenant_id: string;
+  alias: string;
+  creator_human_id: string | null;
+  creator_home_tenant: string;
+  creator_alias: string;
+  can_grant: boolean;
+}
+
+/**
+ * The person who creates an agent from the console can open its terminal without a second
+ * manual step. Runs inside the creation transaction; an existing active grant (or a creator
+ * who cannot grant) leaves creation untouched and reports null.
+ */
+export async function grantCreatorTerminalAccess(
+  client: DatabaseClient, input: CreatorTerminalGrantInput,
+): Promise<TerminalGrantRecord | null> {
+  if (!input.can_grant || input.creator_human_id === null || !UUID_PATTERN.test(input.creator_human_id)) return null;
+  const company = (await client.query<{ company_id: string }>(
+    `SELECT tenant.company_id FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
+      WHERE agent.tenant_id=$1 AND agent.alias=$2 FOR SHARE OF agent,tenant`,
+    [input.tenant_id, input.alias])).rows[0]?.company_id;
+  if (company === undefined) return null;
+  const grantee = (await client.query<{ id: string }>(
+    'SELECT id FROM console_users WHERE id=$1::uuid AND active FOR SHARE', [input.creator_human_id],
+  )).rows[0];
+  if (grantee === undefined) return null;
+  const modes: TerminalGrantMode[] = ['shell', 'harness', 'harness_rw'];
+  const inserted = (await client.query<{ id: string }>(
+    `INSERT INTO terminal_grants(company_id,tenant_id,alias,grantee_human_id,modes,expires_at,note,granted_by_human_id)
+     VALUES($1,$2,$3,$4,$5,NULL,NULL,$4)
+     ON CONFLICT (grantee_human_id,tenant_id,alias) WHERE revoked_at IS NULL DO NOTHING RETURNING id`,
+    [company, input.tenant_id, input.alias, input.creator_human_id, modes])).rows[0];
+  if (inserted === undefined) {
+    const existing = (await client.query<TerminalGrantRow>(
+      `SELECT ${GRANT_COLUMNS} FROM terminal_grants grant_row
+         JOIN console_users person ON person.id=grant_row.grantee_human_id
+        WHERE grant_row.grantee_human_id=$1::uuid AND grant_row.tenant_id=$2 AND grant_row.alias=$3
+          AND grant_row.revoked_at IS NULL`,
+      [input.creator_human_id, input.tenant_id, input.alias])).rows[0];
+    return existing === undefined ? null : toRecord(existing);
+  }
+  const created = (await client.query<TerminalGrantRow>(
+    `SELECT ${GRANT_COLUMNS} FROM terminal_grants grant_row
+       JOIN console_users person ON person.id=grant_row.grantee_human_id WHERE grant_row.id=$1`,
+    [inserted.id])).rows[0];
+  if (created === undefined) throw new Error('creator terminal grant insert lost its row');
+  const record = toRecord(created);
+  await auditGrant(client,
+    { homeTenant: input.creator_home_tenant, alias: input.creator_alias, humanId: input.creator_human_id },
+    'terminal.grant.create', record, 'creator');
+  return record;
 }
 
 /** Closes the open sessions a grant fed, with their control holds, as human revocation does. */

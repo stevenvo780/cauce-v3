@@ -8,6 +8,7 @@ import { admitFleetAgent } from './fleet-operation-admission.js';
 import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 import { isFleetRecoveryProbe, prepareFleetRecovery, restoreFleetRecovery } from './fleet-operation-recovery.js';
 import { preparedState } from './fleet-operation-state.js';
+import { grantCreatorTerminalAccess } from '../terminal-grants.js';
 export { admitFleetAgent } from './fleet-operation-admission.js';
 
 export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperationRow): Promise<FencedFleetTarget[]> {
@@ -91,6 +92,14 @@ export async function prepareAgentDesired(client: DatabaseClient, row: FleetOper
       primary_account_id=$14,model_id=$15,reasoning_effort=$16,extensions=$17::jsonb,lifecycle_state='provisioning',updated_at=clock_timestamp()
       WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`;
   await client.query(sql, parametersList);
+  if (inserting) {
+    const creatorHumanId = row.actor_subject?.startsWith('console:') ? row.actor_subject.slice('console:'.length) : null;
+    await grantCreatorTerminalAccess(client, {
+      tenant_id: target.tenant_id, alias: target.alias,
+      creator_human_id: creatorHumanId, creator_home_tenant: row.actor_tenant, creator_alias: row.actor_alias,
+      can_grant: creatorHumanId !== null,
+    });
+  }
   if (request.kind === 'create') {
     await client.query(`INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
       [target.tenant_id, target.alias, `Agente ${parameters.display_name ?? target.alias}`]);
