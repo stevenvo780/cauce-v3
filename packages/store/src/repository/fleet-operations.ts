@@ -8,7 +8,7 @@ import { assertFleetHumanAuthority, assertFleetOperationAuthority, loadFleetOrig
 import { assertFleetSealedHostBarrier, loadFleetHostSlices } from './fleet-operation-hosts.js';
 import { lockPreparedFleetRevision } from './fleet-operation-slice.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
-import { fleetRollbackCompleted, fleetRollbackIntent } from './fleet-operation-rollback-intent.js';
+import { fleetCompensationExhausted, fleetRollbackCompleted, fleetRollbackIntent } from './fleet-operation-rollback-intent.js';
 import { fleetReplacementCommit } from './fleet-operation-retirement.js';
 import { preemptUnpreparedMaintenance } from './fleet-operation-maintenance.js';
 
@@ -144,7 +144,9 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       if (await fleetReplacementCommit(client, row.id) !== undefined) throw new FleetOperationError('conflict', 'replacement is committed and its retirement must finish');
       const restoredFailure = row.status === 'failed' && await fleetRollbackCompleted(client, row.id);
       let status: FleetOperation['status'];
-      if (action === 'resume') {
+      const exhausted = row.status === 'failed' && !restoredFailure && await fleetCompensationExhausted(client, row.id);
+      if (action === 'resume' && exhausted) status = 'cancelling';
+      else if (action === 'resume') {
         if (restoredFailure || await fleetRollbackIntent(client, row.id) !== undefined) {
           throw new FleetOperationError('conflict', 'the failed update requires restoration or a new update after closing it');
         }
@@ -165,7 +167,7 @@ export class FleetOperationsRepository extends FleetOperationExecution {
           worker_id=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE worker_id END,
           claim_token=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE claim_token END,
           lease_expires_at=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE lease_expires_at END
-         WHERE id=$1 RETURNING *`, [id, status, action === 'cancel'])).rows[0];
+         WHERE id=$1 RETURNING *`, [id, status, action === 'cancel' || exhausted && row.cancel_requested])).rows[0];
       if (!next) throw new Error('fleet operation control returned no row');
       await recordFleetEvent(client, id, Number(next.version), action === 'resume' ? 'resumed' : status === 'cancelled' ? 'cancelled' : 'cancel_requested',
         { actor_tenant: tenant, actor_alias: alias, ...(restoredFailure ? { rollback_archived: true } : {}),

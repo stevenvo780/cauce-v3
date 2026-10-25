@@ -140,3 +140,52 @@ it('identifica la operación fallida anterior y abre Ejecución sin consultar ni
   expect(window.location.pathname).toBe('/config');
   expect(new URLSearchParams(window.location.search).get('ficha')).toBe('operacion');
 });
+
+async function blocked(input: Partial<FleetOperation> & Pick<FleetOperation, 'status'>): Promise<FleetOperation> {
+  const request: FleetOperationRequest = { kind: 'update', target: { resource: 'agent', tenant_id: 'A', alias: 'one' },
+    expected_revision: 4, idempotency_key: 'blocked-update', parameters: { runtime_key: 'one', harness_id: 'codex',
+      primary_room_id: 'room', primary_account_id: 'account', memberships: [{ room_id: 'room', role: 'agent' }],
+      placement: { host_id: 'host', mode: 'container', container_name: 'one', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/home/dev/.cauce' } } };
+  return { id: '00000000-0000-4000-8000-000000000063', version: 5, kind: 'update', target: request.target,
+    request_sha256: await fleetRequestHash(request), actor: { tenant_id: 'A', alias: 'operator' }, expected_revision: 4,
+    desired_revision: 5, applied_revision: null, steps: [{ name: 'runtime', status: 'compensated' }], error: null,
+    created_at: '2026-10-25T12:00:00Z', updated_at: '2026-10-25T12:00:00Z', ...input };
+}
+
+it('explica una actualización fallida y restaurada y ofrece cerrarla para seguir con el reinicio', async () => {
+  const restored = await blocked({ status: 'failed', error: { code: 'STEP_FAILED', step: 'runtime', retryable: false } });
+  vi.spyOn(testApi, 'listFleetOperations').mockResolvedValueOnce([restored]).mockResolvedValue([]);
+  const cancel = vi.spyOn(testApi, 'cancelFleetOperation').mockResolvedValue({ ...restored, status: 'cancelled', version: 6 });
+  const { user } = await open(ready);
+  expect(await screen.findByRole('alert')).toHaveTextContent('se restauró el estado anterior de one');
+  await user.click(screen.getByRole('button', { name: 'Cerrar la actualización y continuar' }));
+  expect(cancel).toHaveBeenCalledWith(restored.id, restored.version);
+  expect(await screen.findByRole('button', { name: 'Confirmar reinicio y reanudar' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+});
+
+it('ante una restauración agotada muestra el motivo y ofrece Reintentar y Cancelar con la operación sin cerrar', async () => {
+  const exhausted = await blocked({ status: 'failed', steps: [{ name: 'runtime', status: 'failed' }],
+    error: { code: 'STEP_FAILED', step: 'runtime', retryable: true, reason: 'compensation_attempts_exhausted' } });
+  vi.spyOn(testApi, 'listFleetOperations').mockResolvedValue([exhausted]);
+  const resume = vi.spyOn(testApi, 'resumeFleetOperation').mockResolvedValue({ ...exhausted, status: 'cancelling', version: 6, error: null });
+  const cancel = vi.spyOn(testApi, 'cancelFleetOperation');
+  const { user } = await open(ready);
+  expect(await screen.findByRole('alert')).toHaveTextContent('no se pudo restaurar el estado anterior tras varios intentos automáticos');
+  expect(screen.queryByRole('button', { name: 'Cerrar la actualización y continuar' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Cancelar la actualización' })).toBeEnabled();
+  await user.click(screen.getByRole('button', { name: 'Reintentar' }));
+  expect(resume).toHaveBeenCalledWith(exhausted.id, exhausted.version);
+  expect(cancel).not.toHaveBeenCalled();
+  expect(await screen.findByText(/Estado: Cancelación en curso/u)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
+});
+
+it('no ofrece cerrar una actualización fallida sin restaurar', async () => {
+  const failed = await blocked({ status: 'failed', steps: [{ name: 'runtime', status: 'failed' }],
+    error: { code: 'STEP_FAILED', step: 'runtime', retryable: false } });
+  vi.spyOn(testApi, 'listFleetOperations').mockResolvedValue([failed]);
+  await open(ready);
+  expect(await screen.findByRole('button', { name: 'Ver operación' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Cerrar la actualización y continuar' })).toBeNull();
+});

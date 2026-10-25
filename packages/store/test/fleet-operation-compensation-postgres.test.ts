@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256Hex, type FleetError, type FleetEvidence, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
-import { FleetOperationsRepository, canRestoreFleetUpdate, describesFleetCompensationTarget, withTransaction, fleetReplacementRuntimeDigest, parseFleetCompensationSnapshot,
+import { FleetOperationsRepository, canRestoreFleetUpdate, describesFleetCompensationTarget, FLEET_COMPENSATION_MAX_ATTEMPTS, withTransaction, fleetReplacementRuntimeDigest, parseFleetCompensationSnapshot,
   validateFleetCompensationSnapshot, type DatabasePool, type FleetCompensationSnapshot, type FleetOperationClaim, type FleetOperationRow } from '../src/index.js';
 import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -155,6 +155,39 @@ describe('replacement cancellation snapshot and atomic restoration', () => {
     expect(await repo.claim('retry-worker', 'restore-host')).toBeNull();
     expect((await pool.query(`SELECT count(*)::integer AS count FROM fleet_operation_events
       WHERE operation_id=$1 AND event='failed' AND metadata->>'compensation'='true'`, [value.operation.id])).rows[0]).toEqual({ count: 1 });
+  });
+  it('turns a compensation that keeps failing into a terminal failure that a person can retry or cancel', async () => {
+    const { repo, value } = await replacement();
+    // The backoff is real time and the history is immutable, so the test ages the case database's events with the trigger off.
+    await caseDatabase?.adminPool.query('ALTER TABLE fleet_operation_events DISABLE TRIGGER fleet_events_history');
+    const settle = async () => pool.query("UPDATE fleet_operation_events SET created_at=created_at-interval '1 hour' WHERE operation_id=$1", [value.operation.id]);
+    const read = () => repo.get('Steven', 'restore_operator', value.operation.id, subject);
+    await repo.fail(value, { code: 'HOST_UNAVAILABLE', retryable: true });
+    let attempt = value;
+    for (let index = 1; index <= FLEET_COMPENSATION_MAX_ATTEMPTS; index += 1) {
+      await settle(); attempt = await claim(repo, `compensation-${String(index)}`);
+      expect((await read()).status).toBe('cancelling');
+      await repo.fail(attempt, { code: 'STEP_FAILED', retryable: true, step: 'runtime', reason: 'replacement_authority_unverified' });
+    }
+    const exhausted = await read();
+    expect(exhausted.status).toBe('failed');
+    expect(exhausted.error).toEqual({ code: 'STEP_FAILED', retryable: true, step: 'runtime', reason: 'compensation_attempts_exhausted' });
+    await settle(); expect(await repo.claim('late-worker', 'restore-host')).toBeNull();
+    // Retry hands the operation back to the restoration with a fresh budget of attempts.
+    const retried = await repo.resume('Steven', 'restore_operator', value.operation.id, exhausted.version, subject);
+    expect(retried.status).toBe('cancelling');
+    attempt = await claim(repo, 'compensation-retry');
+    await repo.fail(attempt, { code: 'HOST_UNAVAILABLE', retryable: true });
+    expect((await read()).status).toBe('cancelling');
+    // Cancel from the terminal failure also restores, ending as a cancellation instead of a failure.
+    for (let index = 1; index < FLEET_COMPENSATION_MAX_ATTEMPTS; index += 1) {
+      await settle(); attempt = await claim(repo, `compensation-again-${String(index)}`);
+      await repo.fail(attempt, { code: 'HOST_UNAVAILABLE', retryable: true });
+    }
+    const again = await read(); expect(again.status).toBe('failed');
+    const cancelled = await repo.cancel('Steven', 'restore_operator', value.operation.id, again.version, subject);
+    expect(cancelled.status).toBe('cancelling');
+    expect((await pool.query('SELECT cancel_requested FROM fleet_operations WHERE id=$1', [value.operation.id])).rows[0]).toEqual({ cancel_requested: true });
   });
   it('rejects a changed target seal even when no new configuration revision was recorded', async () => {
     const { repo, value, snapshot } = await replacement();

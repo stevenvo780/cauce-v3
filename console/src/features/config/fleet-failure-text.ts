@@ -7,6 +7,8 @@ export const FLEET_FAILURE_TEXT: Record<NonNullable<FleetError['reason']>, { mes
     next: 'La restauración seguirá pendiente hasta comprobar el contenedor original y su ejecución.' },
   replacement_authority_unverified: { message: 'No se pudo verificar la autoridad del agente original.',
     next: 'La restauración seguirá pendiente hasta comprobar su autoridad y retirar solo la emitida por esta operación.' },
+  compensation_attempts_exhausted: { message: 'La actualización falló y no se pudo restaurar el estado anterior tras varios intentos automáticos.',
+    next: 'Cuando la computadora del agente esté disponible, pulsa «Reintentar» para volver a restaurarlo, o «Cancelar» para cancelar la actualización.' },
   runtime_mounts_differ: { message: 'Los montajes de la ejecución no coinciden con la versión aprobada.',
     next: 'Actualiza la ejecución y vuelve a comprobar su estado antes de reiniciar.' },
   shared_tui_disabled: { message: 'La política de este equipo no permite una TUI compartida.',

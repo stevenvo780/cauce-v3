@@ -143,7 +143,8 @@ export const FleetRecoveryReasonSchema = z.enum(['runtime_mounts_differ', 'share
 export const FleetExecutionReasonSchema = z.enum([...FleetRecoveryReasonSchema.options,
   'runtime_identity_mismatch', 'runtime_security_mismatch', 'runtime_bundle_changed',
   'runtime_stop_unverified', 'provider_functional_proof_failed', 'terminal_provision_failed',
-  'replacement_snapshot_missing', 'replacement_original_unverified', 'replacement_authority_unverified']);
+  'replacement_snapshot_missing', 'replacement_original_unverified', 'replacement_authority_unverified',
+  'compensation_attempts_exhausted']);
 export type FleetExecutionReason = z.infer<typeof FleetExecutionReasonSchema>;
 export const FleetErrorSchema = z.object({
   code: z.enum(['AUTHORITY_REVOKED', 'REVISION_CONFLICT', 'HOST_UNAVAILABLE', 'DEPENDENCIES_PRESENT',

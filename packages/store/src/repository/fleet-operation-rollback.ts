@@ -7,7 +7,10 @@ import { isFleetRecoveryProbe } from './fleet-operation-recovery.js';
 import { isMaintenanceOperation } from './fleet-operation-maintenance.js';
 import { fleetRollbackIntent, type FleetRollbackIntent } from './fleet-operation-rollback-intent.js';
 import { assertFleetReplacementCommitBinding, fleetReplacementCommit } from './fleet-operation-retirement.js';
-export { fleetRollbackIntent, fleetRollbackCompleted, type FleetRollbackIntent } from './fleet-operation-rollback-intent.js';
+export { fleetRollbackIntent, fleetRollbackCompleted, fleetCompensationExhausted, type FleetRollbackIntent } from './fleet-operation-rollback-intent.js';
+
+/** Automatic restoration attempts (spaced by the claim backoff, about ten minutes) before it stops and asks a person. */
+export const FLEET_COMPENSATION_MAX_ATTEMPTS = 8;
 
 export function restoredFleetFailure(intent: FleetRollbackIntent): FleetError {
   return { ...intent.original_error, retryable: false };
@@ -53,7 +56,18 @@ export async function recordFleetFailure(client: DatabaseClient, claim: FleetOpe
   const compensation = wasCancelling && (await client.query<{ cancelling: boolean }>(
     `SELECT COALESCE((metadata->>'cancelling')::boolean,false) AS cancelling FROM fleet_operation_events
       WHERE operation_id=$1 AND event='claimed' ORDER BY id DESC LIMIT 1`, [row.id])).rows[0]?.cancelling === true;
+  // The attempts counter restarts at every durable marker, exactly like the claim backoff, so Retry and Cancel grant a fresh budget.
+  const exhausted = compensation && Number((await client.query<{ failures: string }>(
+    `SELECT count(*)::text AS failures FROM fleet_operation_events failure WHERE failure.operation_id=$1 AND failure.event='failed'
+      AND failure.metadata->>'compensation'='true' AND failure.id>COALESCE((SELECT max(marker.id) FROM fleet_operation_events marker
+        WHERE marker.operation_id=$1 AND marker.event IN ('cancel_requested','resumed','step_completed','succeeded')),0)`,
+    [row.id])).rows[0]?.failures ?? 0) + 1 >= FLEET_COMPENSATION_MAX_ATTEMPTS;
+  if (exhausted) {
+    row.status = 'failed';
+    row.error = { code: 'STEP_FAILED', retryable: true, reason: 'compensation_attempts_exhausted', ...(error.step === undefined ? {} : { step: error.step }) };
+  }
   return saveFleetState(client, row, claim, 'failed', { code: error.code, ...(compensation ? { compensation: true } : {}),
+    ...(exhausted ? { compensation_exhausted: true } : {}),
     ...(requestsRollback ? { rollback_requested: { original_error: error, snapshot_sha256: snapshot.snapshot_sha256 } } : {}) }, true);
 }
 

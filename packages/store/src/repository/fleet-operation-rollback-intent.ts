@@ -22,3 +22,11 @@ export async function fleetRollbackCompleted(client: DatabaseClient, operationId
   return (await client.query(`SELECT 1 FROM fleet_operation_events WHERE operation_id=$1 AND event='failed'
     AND metadata->>'rollback_completed'='true' LIMIT 1`, [operationId])).rowCount === 1;
 }
+
+/** A failed update whose automatic restoration ran out of attempts: its rollback intent stays sealed and a person may retry it. */
+export async function fleetCompensationExhausted(client: DatabaseClient, operationId: string): Promise<boolean> {
+  const last = (await client.query<{ exhausted: boolean }>(`SELECT COALESCE((metadata->>'compensation_exhausted')::boolean,false) AS exhausted
+    FROM fleet_operation_events WHERE operation_id=$1 AND event IN ('failed','resumed','cancel_requested','step_completed','succeeded')
+    ORDER BY id DESC LIMIT 1`, [operationId])).rows[0];
+  return last?.exhausted === true;
+}

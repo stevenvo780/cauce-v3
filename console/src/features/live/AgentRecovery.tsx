@@ -151,7 +151,8 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
     <Button size="sm" disabled={busy !== undefined} aria-expanded={preview !== undefined || problem !== undefined || unresolved !== undefined} onClick={() => { void inspect(); }}>
       <RotateCcw size={13} aria-hidden="true" />{busy === 'reading' ? 'Comprobando conversación…' : 'Reiniciar agente'}
     </Button>
-    {unresolved ? <UnresolvedRecovery operation={unresolved} tenantId={tenantId} alias={alias} onClose={() => { setUnresolved(undefined); }} /> : null}
+    {unresolved ? <UnresolvedRecovery operation={unresolved} tenantId={tenantId} alias={alias} onClose={() => { setUnresolved(undefined); }}
+      onResolved={() => { setUnresolved(undefined); void inspect(); }} onChanged={setUnresolved} /> : null}
     {problem ? <div role="region" aria-labelledby={titleId} className="grid gap-2 rounded-lg border border-line bg-subtle p-3">
       <h2 id={titleId} className="m-0 text-sm font-semibold">Reiniciar {alias}</h2>
       <Notice tone="warn" role="alert">{problem.reason}</Notice>

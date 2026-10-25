@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { FleetEvidence, FleetStepName } from '@cauce/protocol';
 import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestDatabase, startTestCaseDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -319,5 +320,59 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     await expect(repository.state(identity, operationId, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
     await pool.query("UPDATE agents SET retired_at=NULL WHERE alias='boot-agent'; UPDATE human_tenant_memberships SET enabled=false,revoked_at=clock_timestamp() WHERE actor_alias='boot-owner'");
     await expect(repository.state(identity, operationId, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
+  });
+});
+
+describe('state of an original runtime while its update compensation is pending', () => {
+  const compensated = { tenant_id: 'Steven', alias: 'comp-agent' };
+  const EFFECTS: [FleetStepName, FleetEvidence][] = [
+    ['stop', { stopped_verified: true }], ['artifacts', { artifact_sha256: 'a'.repeat(64) }],
+    ['credentials', { certificate_fingerprint: 'b'.repeat(64) }], ['runtime', { runtime_digest: 'c'.repeat(64) }],
+    ['authenticate', { provider_verified: true }], ['profile', { profile_verified: true }],
+    ['verify', { bootstrap_verified: true, roundtrip_verified: true }], ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }],
+  ];
+  async function pending(): Promise<{ created: string; update: string }> {
+    await pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id,extensions_allowed)
+      SELECT 'comp-host','Comp host',company_id,'{"types":[],"mount_roots":[],"networks":[]}'::jsonb FROM tenants WHERE id='Steven'`);
+    await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES('Steven','comp-agent','Compensation purpose')").catch(() => undefined);
+    const origin = (await pool.query<{ subject: string }>(`SELECT metadata->>'actor_subject' AS subject
+      FROM fleet_operation_events WHERE operation_id=$1 AND event='queued'`, [operationId])).rows[0];
+    if (!origin) throw new Error('origin absent');
+    // The seeded bootstrap operation holds the company's single worker slot.
+    await pool.query("UPDATE fleet_operations SET status='succeeded',worker_id=NULL,claim_token=NULL,lease_expires_at=NULL WHERE id=$1", [operationId]);
+    const fleet = new FleetOperationsRepository(pool);
+    const target = { resource: 'agent' as const, ...compensated };
+    const parameters = { runtime_key: 'comp-agent', harness_id: 'codex', primary_room_id: 'boot-hub', primary_account_id: 'boot-account',
+      model_id: 'test-model', memberships: [{ room_id: 'boot-hub', role: 'agent' as const }],
+      placement: { host_id: 'comp-host', mode: 'container' as const, container_name: 'comp-agent', runtime_user: 'dev',
+        home_directory: '/home/dev', state_directory: '/home/dev/.cauce/comp' } };
+    const run = async (worker: string, through: string) => {
+      const claim = await fleet.claim(worker, 'comp-host'); if (!claim) throw new Error('claim absent');
+      await fleet.prepare(claim);
+      for (const [name, evidence] of EFFECTS) {
+        if (!claim.operation.steps.some(step => step.name === name)) continue;
+        await fleet.startStep(claim, name); await fleet.completeStep(claim, name, evidence);
+        if (name === through) break;
+      }
+      return claim;
+    };
+    const first = await fleet.enqueue('Steven', 'boot-owner', { kind: 'create', target, expected_revision: 0, idempotency_key: 'comp-create', parameters }, origin.subject);
+    await fleet.settle(await run('create-worker', 'admission'));
+    const update = await fleet.enqueue('Steven', 'boot-owner', { kind: 'update', target, expected_revision: 2, idempotency_key: 'comp-update',
+      parameters: { ...parameters, reasoning_effort: 'high' } }, origin.subject);
+    const claim = await run('update-worker', 'credentials');
+    const current = await fleet.get('Steven', 'boot-owner', update.id, origin.subject);
+    await fleet.cancel('Steven', 'boot-owner', current.id, current.version, origin.subject);
+    expect(claim.operation.id).toBe(update.id);
+    return { created: first.id, update: update.id };
+  }
+  it('lets the original runtime read its settled operation while the sealed restoration is pending, and nothing else', async () => {
+    const { created, update } = await pending();
+    expect((await pool.query("SELECT status FROM fleet_operations WHERE id=$1", [update])).rows[0]).toEqual({ status: 'cancelling' });
+    expect((await pool.query("SELECT reasoning_effort FROM agents WHERE alias='comp-agent'")).rows).toEqual([{ reasoning_effort: 'high' }]);
+    expect(await repository.state(compensated, created, 'normal')).toMatchObject({ status: 'succeeded' });
+    // Without the explicit cancellation or a sealed rollback intent the stale operation no longer describes the pending restoration.
+    await pool.query('UPDATE fleet_operations SET cancel_requested=false WHERE id=$1', [update]);
+    await expect(repository.state(compensated, created, 'normal')).rejects.toMatchObject({ code: 'conflict' });
   });
 });
