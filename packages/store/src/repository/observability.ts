@@ -224,6 +224,7 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
         alias: row.alias,
         display_name: row.display_name ?? null,
         harness_id: row.harness_id ?? null,
+        provider_login_required: row.provider_login_required === true,
         lifecycle_state: typeof row.lifecycle_state === 'string' ? row.lifecycle_state : null,
         registered,
         agent_enabled: row.agent_enabled === true,

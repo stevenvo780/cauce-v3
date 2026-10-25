@@ -74,7 +74,75 @@ async function timeline(delivery: DeliveryEnvelope) {
   return found.timeline;
 }
 
+async function loginState(delivery: DeliveryEnvelope) {
+  const page = await repository.listMessages('Steven', 'kant');
+  const rows = page.items as { deliveries: { delivery_id: string; provider_login_required: boolean }[] }[];
+  const message = rows.flatMap(row => row.deliveries).find(row => row.delivery_id === delivery.delivery_id);
+  const snapshot = await repository.fleetActivity('Steven', 'kant') as {
+    agents: { tenant_id: string; alias: string; provider_login_required: boolean }[];
+  };
+  const agent = snapshot.agents.find(row => row.tenant_id === 'Steven' && row.alias === 'argos');
+  return { message: message?.provider_login_required, agent: agent?.provider_login_required, page, snapshot };
+}
+
+function loginAck(delivery: DeliveryEnvelope, epoch: number): Ack {
+  return { ...ack(delivery, epoch, undefined), status: 'failed', retryable: true,
+    error_code: 'PROVIDER_LOGIN_REQUIRED', error: 'zz-canary-private-provider-prompt' };
+}
+
 describe('durable consumption receipt projection', () => {
+  it('projects only an applied provider login failure and keeps unrelated errors from clearing it', async () => {
+    const first = await claim();
+    const rejected = { ...loginAck(first.delivery, first.epoch), claim_token: randomUUID() };
+    expect((await repository.ackDelivery(first.delivery.delivery_id, 'Steven', 'argos', rejected)).applied).toBe(false);
+    expect(await loginState(first.delivery)).toMatchObject({ message: false, agent: false });
+    expect(await repository.ackDelivery(first.delivery.delivery_id, 'Steven', 'argos', loginAck(first.delivery, first.epoch)))
+      .toMatchObject({ status: 'retry', applied: true });
+    const failed = await loginState(first.delivery);
+    expect(failed).toMatchObject({ message: true, agent: true });
+    expect(JSON.stringify(failed)).not.toContain('zz-canary-private-provider-prompt');
+    expect(JSON.stringify(failed)).not.toContain('PROVIDER_LOGIN_REQUIRED');
+    await pool.query("UPDATE deliveries SET available_at=now()+interval '1 hour' WHERE id=$1", [first.delivery.delivery_id]);
+    const other = await claim();
+    const unrelated = { ...loginAck(other.delivery, other.epoch), error_code: 'NETWORK_UNAVAILABLE', retryable: false };
+    await repository.ackDelivery(other.delivery.delivery_id, 'Steven', 'argos', unrelated);
+    expect(await loginState(first.delivery)).toMatchObject({ message: true, agent: true });
+    const healthy = await claim();
+    const wrongDone = { ...ack(healthy.delivery, healthy.epoch, evidence), claim_token: randomUUID() };
+    expect((await repository.ackDelivery(healthy.delivery.delivery_id, 'Steven', 'argos', wrongDone)).applied).toBe(false);
+    expect((await loginState(first.delivery)).agent).toBe(true);
+    await repository.ackDelivery(healthy.delivery.delivery_id, 'Steven', 'argos', ack(healthy.delivery, healthy.epoch, evidence));
+    expect(await loginState(first.delivery)).toMatchObject({ message: true, agent: false });
+  });
+
+  it('clears a retried message after a healthy later attempt and ignores rejected old claims across epochs', async () => {
+    const first = await claim();
+    await repository.ackDelivery(first.delivery.delivery_id, 'Steven', 'argos', loginAck(first.delivery, first.epoch));
+    await repository.releaseLease('Steven', 'argos', instance, first.epoch);
+    const lease = await repository.acquireLease('Steven', 'argos', instance, [], 30_000);
+    if (lease.epoch === undefined) throw new Error('missing replacement consumer lease');
+    expect(lease.epoch).toBeGreaterThan(first.epoch);
+    expect(await loginState(first.delivery)).toMatchObject({ message: true, agent: true });
+    await pool.query('UPDATE deliveries SET available_at=now() WHERE id=$1', [first.delivery.delivery_id]);
+    const [next] = await repository.claimDeliveries('Steven', 'argos', instance, lease.epoch, 1, 30_000);
+    if (next === undefined) throw new Error('missing retry');
+    expect(next.attempt).toBe(first.delivery.attempt + 1);
+    await repository.ackDelivery(next.delivery_id, 'Steven', 'argos', ack(next, lease.epoch, evidence));
+    expect(await loginState(next)).toMatchObject({ message: false, agent: false });
+    expect((await repository.ackDelivery(first.delivery.delivery_id, 'Steven', 'argos', loginAck(first.delivery, first.epoch))).applied).toBe(false);
+    expect(await loginState(next)).toMatchObject({ message: false, agent: false });
+  });
+
+  it('does not expose the provider signal outside readable tenant scope', async () => {
+    const first = await claim();
+    await repository.ackDelivery(first.delivery.delivery_id, 'Steven', 'argos', loginAck(first.delivery, first.epoch));
+    await pool.query("UPDATE acl_edges SET enabled=false WHERE from_tenant='Isa'");
+    const snapshot = await repository.fleetActivity('Isa', 'salva') as { agents: { tenant_id: string; alias: string }[] };
+    expect(snapshot.agents.some(row => row.tenant_id === 'Steven' && row.alias === 'argos')).toBe(false);
+    const page = await repository.listMessages('Isa', 'salva');
+    expect(JSON.stringify(page)).not.toContain(first.delivery.message_id);
+  });
+
   it('projects one applied witness with its real attempt and replays without another receipt', async () => {
     const { delivery, epoch } = await claim();
     const event = ack(delivery, epoch, evidence);

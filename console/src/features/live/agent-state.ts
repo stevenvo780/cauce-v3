@@ -14,6 +14,7 @@ import {
   type PulseMap,
   type OrigenEncargo,
 } from './agent-state-helpers';
+import { PROVIDER_LOGIN_REQUIRED_MESSAGE } from './provider-login';
 
 /**
  * The eight states the console distinguishes, each with its own doll. The order of the union
@@ -152,6 +153,10 @@ function decidirEstado(
   }
   if (flags.includes('lease_expired') || agent.presence?.online === false) {
     return { state: 'down', reason: 'El lease venció. El adaptador no está sosteniendo la conexión.', overloaded };
+  }
+
+  if (agent.provider_login_required === true) {
+    return { state: 'blocked', reason: PROVIDER_LOGIN_REQUIRED_MESSAGE, overloaded };
   }
 
   if (flags.includes('overdue_acks')) {

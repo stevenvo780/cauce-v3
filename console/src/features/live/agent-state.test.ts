@@ -17,6 +17,15 @@ import { agent, snapshot } from './agent-state-fixtures';
 const NOW = 1_700_000_000_000;
 
 describe('liveState', () => {
+  it('shows the applied provider login failure until the server reports recovery', () => {
+    const current = agent({ presence: { online: true }, provider_login_required: true });
+    expect(liveState(current, { nowMs: NOW })).toMatchObject({ state: 'blocked',
+      reason: 'La sesión del proveedor caducó: vuelve a iniciar sesión' });
+    expect(liveState({ ...current, provider_login_required: false }, { nowMs: NOW }).reason)
+      .not.toContain('vuelve a iniciar sesión');
+    expect(liveState({ ...current, flags: ['lease_expired'] }, { nowMs: NOW }).state).toBe('down');
+  });
+
   it('un lease vivo con trabajo tomado hace mucho es BLOQUEADO, no trabajando', () => {
     // This is the expensive lesson: `presence.online` stays true and the heartbeat is fresh.
     // The agent looks healthy by every connection signal and is mute nonetheless.

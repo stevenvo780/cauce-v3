@@ -625,6 +625,11 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
               COALESCE(jsonb_agg(jsonb_build_object(
                 'delivery_id',d.id,'recipient_tenant',d.recipient_tenant,'recipient_alias',d.recipient_alias,
                 'status',d.status,'attempt',d.attempt,'client_mailbox',${CLIENT_MAILBOX_DELIVERY_VIEW_SQL},
+                'provider_login_required',COALESCE((SELECT login.status='failed'
+                  FROM delivery_acks login WHERE login.delivery_id=d.id AND login.applied
+                    AND login.attempt<=d.attempt AND (login.status='done'
+                      OR (login.status='failed' AND login.payload->>'error_code'='PROVIDER_LOGIN_REQUIRED'))
+                  ORDER BY login.attempt DESC,login.created_at DESC,login.id DESC LIMIT 1),false),
                 'timeline',(SELECT COALESCE(jsonb_agg(event ORDER BY at),'[]'::jsonb) FROM (
                   SELECT jsonb_build_object('status','published','at',m.created_at,'attempt',0) AS event,m.created_at AS at
                   UNION ALL

@@ -203,6 +203,16 @@ participants AS (
    WHERE NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id = l.tenant_id AND gone.alias = l.alias
                       AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
      AND ${runtimePrincipalScopeSql('l.tenant_id', 'l.alias')}
+),
+provider_login_state AS (
+  SELECT DISTINCT ON (d.recipient_tenant,d.recipient_alias)
+         d.recipient_tenant AS tenant_id,d.recipient_alias AS alias,
+         (k.status='failed') AS provider_login_required
+    FROM participants p JOIN deliveries d ON d.recipient_tenant=p.tenant_id AND d.recipient_alias=p.alias
+    JOIN delivery_acks k ON k.delivery_id=d.id
+   WHERE k.applied AND k.attempt<=d.attempt AND (k.status='done'
+     OR (k.status='failed' AND k.payload->>'error_code'='PROVIDER_LOGIN_REQUIRED'))
+   ORDER BY d.recipient_tenant,d.recipient_alias,k.created_at DESC,k.id DESC
 )
 SELECT p.tenant_id,
        p.alias,
@@ -210,6 +220,7 @@ SELECT p.tenant_id,
        ag.harness_id,
        ag.lifecycle_state,
        ag.host_id,
+       COALESCE(provider_login.provider_login_required,false) AS provider_login_required,
        (ag.tenant_id IS NOT NULL)         AS registered,
        COALESCE(ag.enabled, false)        AS agent_enabled,
        lease.instance_id,
@@ -248,6 +259,7 @@ SELECT p.tenant_id,
   LEFT JOIN connection_leases lease ON lease.tenant_id = p.tenant_id AND lease.alias = p.alias
   LEFT JOIN work w                 ON w.tenant_id     = p.tenant_id AND w.alias     = p.alias
   LEFT JOIN ack_activity ack       ON ack.tenant_id   = p.tenant_id AND ack.alias   = p.alias
+  LEFT JOIN provider_login_state provider_login ON provider_login.tenant_id=p.tenant_id AND provider_login.alias=p.alias
   LEFT JOIN LATERAL (
     -- Entregas en vuelo más antiguas del alias (acotadas a $4).
     SELECT COALESCE(jsonb_agg(to_jsonb(top) ORDER BY top.claimed_at), '[]'::jsonb) AS items

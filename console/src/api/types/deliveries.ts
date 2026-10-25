@@ -36,6 +36,7 @@ export interface DeliveryView {
   recipient_alias?: string | null;
   status?: DeliveryState | null;
   attempt?: number | null;
+  provider_login_required?: boolean;
   timeline?: TimelineEvent[] | null;
   client_mailbox?: ClientMailboxDeliveryReceipt | null;
 }

@@ -9,6 +9,9 @@ import { compactId } from '../../lib';
 import { useRouteSearch } from '../../router';
 import type { LiveAgentView } from '../live/agent-state';
 import { liveStateOf } from '../terminal/fleet';
+import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
+import { harnessLoginRecipe } from '../terminal/login-recipe';
+import { PROVIDER_LOGIN_REQUIRED_MESSAGE } from '../live/provider-login';
 import { previsualizacionRecortada, textoDelCuerpo } from '../terminal/cuerpo-del-mensaje';
 import { transcriptForSession, type OperatorRoute, type OperatorSession, type TranscriptItem } from '../terminal/session';
 import { AgentSettingsView } from './AgentSettingsView';
@@ -384,6 +387,15 @@ function ConversationPaneContent({
         leaseWarning={avisoDeLease} leaseExpired={agent.leaseState === 'expired'}
         topologyWarning={fueraDeLaTopologia(agent) ? motivoDeAgenteSuelto(agent) : undefined}
         onQueueReload={onQueueReload} fallbackFocusRef={moreTrigger} />
+
+      {live?.agent.provider_login_required === true ? (
+        <section role="alert" aria-label="Sesión del proveedor caducada" className="grid shrink-0 gap-2 border-b border-line bg-warn-soft px-4 py-3 text-sm text-warn-ink">
+          <p className="m-0">{PROVIDER_LOGIN_REQUIRED_MESSAGE}</p>
+          {harnessLoginRecipe(live.harnessId).authenticate ? (
+            <AgentAuthenticate tenantId={agent.tenantId} alias={agent.alias} harnessId={live.harnessId} />
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">

@@ -5,6 +5,7 @@ import { ApiProvider } from '../../api/context';
 import type { MessagePage, PublishResult } from '../../api/types';
 import { ConversationPane } from './ConversationPane';
 import type { AgenteDeMensajeria } from './roster';
+import type { LiveAgentView } from '../live/agent-state';
 
 const agent: AgenteDeMensajeria = {
   id: 'Empresa:agente', tenantId: 'Empresa', alias: 'agente', roomIds: ['sala'],
@@ -48,6 +49,23 @@ function setup() {
   };
   return { api, publish, preparePublishIntent, publishMessage, getMessage, input, props, view, rendered, submit };
 }
+
+it('offers the existing provider sign-in action for an expired session and removes the notice after recovery', () => {
+  const current = setup();
+  const live: LiveAgentView = {
+    key: 'Empresa/agente', tenantId: 'Empresa', alias: 'agente', harnessId: 'claude', state: 'blocked',
+    reason: 'La sesión del proveedor caducó: vuelve a iniciar sesión', overloaded: false, inFlight: 0, queued: 1,
+    delegatesTo: [], delegatedFrom: [], flags: [], rooms: [], origenes: [],
+    agent: { tenant_id: 'Empresa', alias: 'agente', host_id: 'zz-canary-host', provider_login_required: true },
+  };
+  const view = (value: LiveAgentView) => <ApiProvider api={current.api}><ConversationPane {...current.props} live={value} /></ApiProvider>;
+  current.rendered.rerender(view(live));
+  const notice = screen.getByRole('alert', { name: 'Sesión del proveedor caducada' });
+  expect(notice).toHaveTextContent('La sesión del proveedor caducó: vuelve a iniciar sesión');
+  expect(within(notice).getByRole('button', { name: 'Iniciar sesión de agente' })).toBeEnabled();
+  current.rendered.rerender(view({ ...live, state: 'idle', agent: { ...live.agent, provider_login_required: false } }));
+  expect(screen.queryByRole('alert', { name: 'Sesión del proveedor caducada' })).not.toBeInTheDocument();
+});
 
 describe('publicación visible antes de la respuesta de red', () => {
   it('muestra la fila y reloj al submit; el recibo confirma la publicación en cola sin feed', async () => {

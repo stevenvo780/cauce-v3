@@ -11,6 +11,7 @@ export type MessageListDeliveryRow = {
   recipient_alias: string;
   status: string;
   attempt: number;
+  provider_login_required?: boolean;
   timeline: unknown[];
 };
 

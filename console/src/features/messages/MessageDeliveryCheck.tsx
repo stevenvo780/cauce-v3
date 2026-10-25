@@ -1,5 +1,6 @@
 import type { DeliveryView } from '../../api/types';
 import { HarnessConsumptionEvidenceSchema } from '@cauce/protocol/harness-consumption';
+import { PROVIDER_LOGIN_REQUIRED_MESSAGE } from '../live/provider-login';
 import {
   MAILBOX_EXPLANATION,
   MAILBOX_STATE_LABEL,
@@ -17,6 +18,7 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
   const published = events.some((event) => event.status === 'published');
   const queued = status === 'pending' && !received && (delivery.attempt ?? 0) === 0;
   const failed = !isMailbox && (status === 'failed' || status === 'dead');
+  const loginRequired = !isMailbox && delivery.provider_login_required === true;
   const read = !isMailbox && Number.isSafeInteger(delivery.attempt) && (delivery.attempt ?? 0) > 0
     && events.some((event) => event.applied === true && event.status === 'done'
     && event.attempt === delivery.attempt
@@ -29,7 +31,8 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     ['done', 'Recibido por el agente · ejecución terminada'],
     ['failed', 'La ejecución falló'], ['dead', 'La entrega quedó detenida'], ['retry', 'Cauce reintentará la entrega'],
   ]);
-  const label = (isMailbox ? MAILBOX_STATE_LABEL : undefined)
+  const label = (loginRequired ? PROVIDER_LOGIN_REQUIRED_MESSAGE : undefined)
+    ?? (isMailbox ? MAILBOX_STATE_LABEL : undefined)
     ?? (status ? labels.get(status) : undefined)
     ?? (published ? 'Enviado · esperando aceptación del agente' : 'Estado de entrega no disponible');
   const retrying = !failed && !isMailbox && status === 'retry';
@@ -42,6 +45,6 @@ export function MessageDeliveryCheck({ delivery }: { delivery: DeliveryView }) {
     <span aria-hidden="true" data-checks={checks || undefined} className={checks ? 'font-semibold tracking-[-0.15em] text-brand-ink' : undefined}>
       {checks === 2 ? '✓✓' : checks === 1 ? '✓' : '◷'}
     </span>
-    {failed || isMailbox || status === 'pending' ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
+    {failed || isMailbox || status === 'pending' || loginRequired ? <span>{label}</span> : retrying ? <span>En reintento</span> : null}
   </span>;
 }

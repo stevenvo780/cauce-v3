@@ -32,6 +32,19 @@ function rows(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('article[data-message-id]')];
 }
 
+it('keeps a retrying message visible with its provider login error and clears that error after recovery', () => {
+  const { message, delivery } = fixture();
+  const item = { message, delivery: { ...delivery, status: 'retry' as const, provider_login_required: true }, direction: 'input' as const };
+  const rendered = thread({ items: [item] });
+  const label = 'Entrega: La sesión del proveedor caducó: vuelve a iniciar sesión';
+  expect(screen.getByRole('status', { name: label })).toBeVisible();
+  expect(screen.getByText('Ping humano')).toBeVisible();
+  rendered.rerender(<ChatThread alias="argos" seed="Steven/argos" fullBodies={{}} onSelectItem={vi.fn()} onExpand={vi.fn()}
+    items={[{ ...item, delivery: { ...item.delivery, status: 'done', provider_login_required: false } }]} />);
+  expect(screen.queryByRole('status', { name: label })).not.toBeInTheDocument();
+  expect(screen.getByText('Ping humano')).toBeVisible();
+});
+
 it('muestra metadatos de adjuntos entrantes y salientes sin precargar sus bytes', () => {
   const source = fixture();
   const getAttachment = vi.spyOn(cauceApi, 'getMessageAttachment');
