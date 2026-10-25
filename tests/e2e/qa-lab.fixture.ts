@@ -10,6 +10,7 @@ import {
 } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { startQaLabApplication, sha256, type QaLabApplication } from './qa-lab-app.js';
 import { startQaDocker } from './qa-lab-docker.js';
+import { withSharedTui } from './qa-lab-runtime.js';
 import { QA_CODEX_QUOTA_PROBE, startQaLabQuota, type QaLabQuota } from './qa-lab-quota.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
@@ -174,7 +175,7 @@ async function main(): Promise<void> {
     const origins = [url, 'https://localhost:4443'];
     stage = 'computer_harness';
     computer = await startComputerHarness({ prefix, consoleOrigins: origins, resourceOwner: OWNER,
-      dockerSocket: proxy.socket, workRoot, runtimeBundle: qaRuntime, extraSourceFiles: await untrackedReleaseSources(),
+      dockerSocket: proxy.socket, workRoot, runtimeBundle: withSharedTui(qaRuntime), extraSourceFiles: await untrackedReleaseSources(),
       terminal: { masterFile, masterSha256: sha256(master), relayHost: '127.0.0.1', relayPort: ports.ports.agent, serverName: 'localhost' } });
     checkStop();
     const email = `${prefix}@example.test`, password = `Qa-${randomBytes(24).toString('hex')}`;
