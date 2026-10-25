@@ -250,8 +250,12 @@ def load_policy(filename: pathlib.Path) -> dict:
     finally:
         os.close(parent)
     required = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'native', 'containers', 'bundles', 'profiles', 'hooks'}
-    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments', 'extensions_allowed'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
+    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'terminal', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments', 'extensions_allowed'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
         raise SafeFailure('invalid executor policy schema')
+    if 'terminal' in policy and (not isinstance(policy['terminal'], dict) or set(policy['terminal']) != {'required'}
+            or type(policy['terminal']['required']) is not bool
+            or policy['terminal']['required'] and ('authority' not in policy or 'transport' not in policy)):
+        raise SafeFailure('invalid approved terminal provisioning policy')
     if 'extensions_allowed' in policy:
         validate_extensions_allowed(policy['extensions_allowed'])
     if policy['executor_user'] != pwd.getpwuid(os.geteuid()).pw_name or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', policy['host_id']) is None:

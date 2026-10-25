@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import pathlib
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import time
+
+from fleet_executor_native_manager import systemctl
+from fleet_executor_pki import checked_file
+from fleet_executor_policy import SafeFailure, open_absolute_directory
+from fleet_executor_terminal import properties
+
+
+def approved_release(policy: dict, agent: dict) -> tuple[pathlib.Path, str, bytes]:
+    release = pathlib.Path(__file__).resolve().parents[2]
+    bundle = pathlib.Path(policy['bundles'][agent['harness_id']]['directory'])
+    if not bundle.is_relative_to(release) or re.fullmatch(r'[a-f0-9]{40}|[a-f0-9]{64}', release.name) is None:
+        raise SafeFailure('terminal runtime is outside the approved adapter release')
+    root = release / 'ops'
+    for directory in (release, root, root / 'pty-agent'):
+        descriptor = open_absolute_directory(directory)
+        try:
+            info = os.fstat(descriptor)
+            if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022:
+                raise SafeFailure('terminal release directory is unsafe')
+        finally:
+            os.close(descriptor)
+    pins = {}
+    for directory, names, files in os.walk(root / 'pty-agent', followlinks=False):
+        for name in [*names, *files]:
+            filename = pathlib.Path(directory) / name
+            info = filename.lstat()
+            if info.st_uid not in {0, os.geteuid()} or info.st_mode & 0o022 or stat.S_ISREG(info.st_mode) and info.st_nlink != 1 \
+                    or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                raise SafeFailure('terminal release ownership or mode is unsafe')
+            if stat.S_ISREG(info.st_mode):
+                pins[str(filename.relative_to(root))] = hashlib.sha256(filename.read_bytes()).hexdigest()
+    for name in ('pty-agent/cauce-pty-launcher.sh', 'pty-agent/cauce_pty_agent/__main__.py',
+                 'pty-agent/systemd/cauce-v3-pty@.service', 'pty-agent/reap_orphan_agent.py'):
+        if name not in pins:
+            raise SafeFailure('terminal approved release is incomplete')
+    version = hashlib.sha256(json.dumps(pins, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return root, version, (root / 'pty-agent/systemd/cauce-v3-pty@.service').read_bytes()
+
+
+def selector(ops: pathlib.Path, version: str, state: str, generation: str, key: str, identity: str, host: str) -> bytes:
+    values = {'CAUCE_PTY_OPS_ROOT': str(ops), 'CAUCE_PTY_AGENT_VERSION': version,
+              'CAUCE_PTY_FLEET_STATE': state, 'CAUCE_PTY_FLEET_GENERATION': generation,
+              'CAUCE_PTY_FLEET_RUNTIME_KEY': key, 'CAUCE_PTY_FLEET_IDENTITY': identity, 'CAUCE_PTY_FLEET_HOST': host}
+    if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
+        raise SafeFailure('terminal unit environment contains an invalid value')
+    return ('[Service]\n' + ''.join('Environment="' + name + '=' + value.replace('\\', '\\\\').replace('"', '\\"') + '"\n'
+                                   for name, value in values.items())).encode()
+
+
+def unit_state(unit: str, root: pathlib.Path) -> dict:
+    row = properties(unit, root)
+    return {'active': row.get('ActiveState') == 'active', 'enabled': row.get('UnitFileState', '').startswith('enabled')}
+
+
+def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: bytes | None = None, *, agent: dict) -> dict:
+    row = properties(unit, root)
+    if row.get('LoadState') == 'not-found':
+        return row
+    fragment = pathlib.Path(row['FragmentPath'])
+    if checked_file(fragment) != body:
+        raise SafeFailure('terminal existing unit is not the canonical template')
+    for name in row.get('DropInPaths', '').split():
+        filename = pathlib.Path(name)
+        raw = checked_file(filename)
+        managed = filename.name == 'zz-fleet-terminal.conf'
+        if any(line and not line.startswith((b'#', b';', b'Environment=')) and line != b'[Service]'
+               for line in raw.splitlines()):
+            raise SafeFailure('terminal unit drop-in changes more than its approved environment')
+        values = {}
+        for line in raw.decode().splitlines():
+            if line.startswith('Environment='):
+                for assignment in shlex.split(line[len('Environment='):]):
+                    key, separator, value = assignment.partition('=')
+                    allowed = {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION'}
+                    if managed:
+                        allowed |= {'CAUCE_PTY_FLEET_STATE', 'CAUCE_PTY_FLEET_GENERATION', 'CAUCE_PTY_FLEET_RUNTIME_KEY',
+                                    'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}
+                    if not separator or key in values or key not in allowed:
+                        raise SafeFailure('terminal legacy selector has unapproved environment fields')
+                    values[key] = value
+        if managed and set(values) != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION', 'CAUCE_PTY_FLEET_STATE',
+                                      'CAUCE_PTY_FLEET_GENERATION', 'CAUCE_PTY_FLEET_RUNTIME_KEY',
+                                      'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}:
+            raise SafeFailure('terminal managed selector is incomplete')
+        if values:
+            ops = pathlib.Path(values.get('CAUCE_PTY_OPS_ROOT', ''))
+            if managed:
+                from fleet_executor_rebind import installed_release
+                from fleet_executor_terminal_inventory import launcher_row
+                current = pathlib.Path(__file__).resolve().parents[2]
+                if ops.name != 'ops' or ops.parent.parent != current.parent:
+                    raise SafeFailure('terminal selector is outside its approved release family')
+                installed_release(ops.parent)
+                if values.get('CAUCE_PTY_FLEET_RUNTIME_KEY') != agent['runtime_key']:
+                    raise SafeFailure('terminal selector belongs to another physical identity')
+                selected = launcher_row(pathlib.Path(values['CAUCE_PTY_FLEET_STATE']), values['CAUCE_PTY_FLEET_GENERATION'],
+                    agent['runtime_key'], values['CAUCE_PTY_FLEET_IDENTITY'])
+                if selected['tenant'] != agent['tenant_id'] or selected.get('alias', agent['runtime_key']) != agent['alias']:
+                    raise SafeFailure('terminal selector belongs to another wire identity')
+                if expected_selector is not None and raw != expected_selector:
+                    raise SafeFailure('terminal unit selector differs from its approved placement')
+                continue
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
+            try:
+                from rollout_pty_lib import ManagerWorker, RolloutError
+                worker = ManagerWorker('server')
+                try:
+                    published, fleet = worker.validate_release(values.get('CAUCE_PTY_AGENT_VERSION', ''))
+                except RolloutError:
+                    raise SafeFailure('terminal legacy immutable release is unverified') from None
+                if ops != published or filename.name >= 'zz-fleet-terminal.conf':
+                    raise SafeFailure('terminal legacy selector is outside its immutable published release')
+                selected = fleet.aliases.get(unit.split('@', 1)[1][:-len('.service')])
+                if selected is None or selected['tenant'] != agent['tenant_id'] \
+                        or selected.get('alias', agent['alias']) != agent['alias'] or selected['container'] != agent['container_name']:
+                    raise SafeFailure('terminal legacy unit belongs to another physical or wire identity')
+            finally:
+                del sys.path[0]
+    return row
+
+
+def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
+    runtime = pathlib.Path('/run/user') / str(os.geteuid())
+    for attempt in range(attempts):
+        details = dict(line.split('=', 1) for line in systemctl('show', unit,
+            '--property=ActiveState,MainPID,InvocationID,ExecMainStartTimestampMonotonic').splitlines())
+        pid = details.get('MainPID', '')
+        invocation = details.get('InvocationID', '')
+        if details.get('ActiveState') == 'active' and pid.isdigit() and int(pid) > 1 \
+                and re.fullmatch(r'[a-f0-9]{32}', invocation or ''):
+            process = pathlib.Path('/proc') / pid
+            try:
+                raw = (process / 'environ').read_bytes().split(b'\0')
+                if process.stat().st_uid != os.geteuid() or raw.count(('CAUCE_PTY_AGENT_VERSION=' + version).encode()) != 1:
+                    raise SafeFailure('terminal unit process is outside its approved release')
+            except OSError:
+                raise SafeFailure('terminal unit process identity is unavailable') from None
+            result = subprocess.run(['/usr/bin/journalctl', '--user', '-u', unit, '_SYSTEMD_INVOCATION_ID=' + invocation,
+                '--no-pager', '-o', 'json', '-n', '100'], capture_output=True, timeout=10, check=False,
+                env={'PATH': '/usr/bin:/bin', 'XDG_RUNTIME_DIR': str(runtime),
+                     'DBUS_SESSION_BUS_ADDRESS': 'unix:path=' + str(runtime / 'bus')})
+            if result.returncode == 0 and len(result.stdout) <= 1024 * 1024:
+                records = [json.loads(line) for line in result.stdout.splitlines() if line]
+                messages = [row.get('MESSAGE', '') for row in records
+                            if row.get('_SYSTEMD_INVOCATION_ID') == invocation and isinstance(row.get('MESSAGE'), str)]
+                start = any(re.search(r'\bstarting alias=' + re.escape(wire) + r' .*\bversion=' + version + r'(?:\s|$)', row)
+                            for row in messages)
+                accepted = [index for index, row in enumerate(messages)
+                            if re.search(r'\brelay accepted alias=' + re.escape(wire) + r' modes=shell(?:,|$)', row)]
+                disconnected = any('relay connect failed:' in row or 'relay session ended:' in row
+                                   for row in messages[accepted[-1] + 1:]) if accepted else True
+                if start and accepted and not disconnected:
+                    after = systemctl('show', unit, '--property=MainPID,InvocationID')
+                    if dict(line.split('=', 1) for line in after.splitlines()) == {'MainPID': pid, 'InvocationID': invocation}:
+                        return {'main_pid': int(pid), 'invocation_id': invocation, 'relay_acknowledged': True}
+        if attempt + 1 < attempts:
+            time.sleep(0.5)
+    raise SafeFailure('terminal relay acknowledgement was not observed for the current unit invocation')

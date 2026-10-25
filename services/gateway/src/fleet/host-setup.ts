@@ -37,6 +37,7 @@ const Policy = z.object({
   transport: Template.optional(),
   quota_environments: QuotaEnvironment.optional(),
   extensions_allowed: ExtensionsAllowedSchema.optional(),
+  terminal: z.object({ required: z.boolean() }).strict().optional(),
   authority: z.object({ identity_directory: z.literal('@identity@'), host_id: z.literal('@host@'), ca_certificate: z.string().min(1).max(4096) })
     .strict().optional(),
 }).strict();

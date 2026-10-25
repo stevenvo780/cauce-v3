@@ -99,9 +99,9 @@ RUN chmod 0755 ${LOGIN_CLI} && chmod 0644 ${LOGIN_CLI_SCRIPT}
 `;
 const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
-  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py',
+  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent',
   'ops/guardias/cauce-estado', 'ops/guardias/cauce-sesiones', 'ops/guardias/cauce-attach'];
-const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py',
+const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent',
   'ops/guardias/cauce-estado', 'ops/guardias/cauce-sesiones', 'ops/guardias/cauce-attach'];
 const AGENT_FORWARDER = `import { writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
@@ -281,7 +281,11 @@ setInterval(()=>{},60000);
   return { directory, revision, manifest, argv };
 }
 
-async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, gatewayAddress?: string) {
+export interface ComputerTerminal {
+  masterFile: string; masterSha256: string; relayHost: string; relayPort: number; serverName?: string;
+}
+
+async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, gatewayAddress?: string, terminal?: ComputerTerminal) {
   const directory = join(work, 'authority'); const state = join(directory, 'state');
   await mkdir(state, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
   const registryFile = (name: string): string => join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
@@ -298,7 +302,10 @@ async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, g
   await chmod(key, 0o600);
   const policyFile = join(directory, 'issuer-policy.json');
   await writeFile(policyFile, JSON.stringify({ version: 1, state_root: state, registries, signer: { certificate, key,
-    certificate_sha256: hash(await readFile(certificate)), key_sha256: hash(await readFile(key)) } }), { mode: 0o600 });
+    certificate_sha256: hash(await readFile(certificate)), key_sha256: hash(await readFile(key)) },
+    ...(terminal === undefined ? {} : { terminal: { master_file: terminal.masterFile, master_sha256: terminal.masterSha256,
+      relay_host: terminal.relayHost, relay_port: terminal.relayPort,
+      ...(terminal.serverName === undefined ? {} : { relay_server_name: terminal.serverName }) } }) }), { mode: 0o600 });
   const executable = join(ROOT, 'ops/cli/fleet-authority-issuer.py');
   const socket = join(directory, 'signed.sock'); const uid = process.geteuid?.() ?? 0;
   owned.bridge = await startSignedFleetAuthorityBridge(socket, pool, { ownerUid: uid, peerUid: uid, command: { python: '/usr/bin/python3', executable,
@@ -378,6 +385,7 @@ export async function startComputerHarness(options: {
   resourceOwner?: string;
   runtimeBundle?: ComputerRuntimeBundle;
   extraSourceFiles?: readonly string[];
+  terminal?: ComputerTerminal;
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
@@ -409,7 +417,7 @@ export async function startComputerHarness(options: {
     };
     const built = await images();
     const transport = options.agentNetwork === undefined ? undefined : await createAgentTransport(work, prefix, built.computer, options.agentNetwork.name);
-    const authority = await signedAuthority(work, pool, owned, transport?.address);
+    const authority = await signedAuthority(work, pool, owned, transport?.address, options.terminal);
     // With the login fixture the pack measures the provider CLI inside the agent image, as the real build does.
     const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`], options.runtimeBundle);
     const imageReference = `cauce-host-image:${release.manifest.image.id.replace(/^sha256:/u, '')}`;
@@ -437,7 +445,7 @@ export async function startComputerHarness(options: {
       policy: {
         bundles: { codex: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
           executable_sha256: null, argv: release.argv,
-          ...(options.runtimeBundle?.sharedTui === false ? { shared_tui: false } : {}) } },
+          ...(options.runtimeBundle?.sharedTui === true ? {} : { shared_tui: false }) } },
         // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
         // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
         container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: '@pin:image@', runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
@@ -449,6 +457,7 @@ export async function startComputerHarness(options: {
         transport: { bootstrap_url: agentOrigin, gateway_url: agentOrigin, ca_certificate: '@install@/files/fleet-ca',
           network: options.agentNetwork?.name ?? 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
+        terminal: { required: options.terminal !== undefined },
       } }), generateKeyPairSync('ed25519').privateKey);
     const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 61) }),

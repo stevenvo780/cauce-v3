@@ -78,8 +78,22 @@ command -v timeout >/dev/null 2>&1 || die 'timeout is unavailable' 127
 [[ -f $JOURNAL_SOURCE && ! -L $JOURNAL_SOURCE ]] || die_transient 'PTY journal provisioner is unavailable'
 
 # 1. Alias -> container tuple. Read-only use of the fleet mapping owned by ops/scripts.
-mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
-IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
+wire_alias=$alias_name
+runtime_key=$alias_name
+if [[ -n ${CAUCE_PTY_FLEET_STATE:-}${CAUCE_PTY_FLEET_GENERATION:-}${CAUCE_PTY_FLEET_RUNTIME_KEY:-}${CAUCE_PTY_FLEET_IDENTITY:-} ]]; then
+  [[ -n ${CAUCE_PTY_FLEET_STATE:-} && ${CAUCE_PTY_FLEET_GENERATION:-} =~ ^[a-f0-9]{64}$ \
+    && ${CAUCE_PTY_FLEET_RUNTIME_KEY:-} =~ ^[a-z][a-z0-9-]{0,63}$ && ${CAUCE_PTY_FLEET_IDENTITY:-} =~ ^[a-f0-9]{64}$ \
+    && ${CAUCE_PTY_FLEET_HOST:-} =~ ^[a-z][a-z0-9_-]{0,63}$ ]] \
+    || die 'verified fleet terminal selector is incomplete'
+  runtime_key=$CAUCE_PTY_FLEET_RUNTIME_KEY
+  mapping_line=$(python3 -I -B "$OPS_ROOT/cli/fleet_executor_terminal_inventory.py" "$CAUCE_PTY_FLEET_STATE" \
+    "$CAUCE_PTY_FLEET_GENERATION" "$runtime_key" "$CAUCE_PTY_FLEET_IDENTITY") || exit $?
+  IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness wire_alias extra <<<"$mapping_line"
+  [[ $wire_alias =~ ^[a-z][a-z0-9_-]{0,63}$ ]] || die 'verified fleet wire alias is invalid'
+else
+  mapping_line=$(PYTHONDONTWRITEBYTECODE=1 python3 "$OPS_ROOT/scripts/container-alias-query.py" "$alias_name") || exit $?
+  IFS=$'\t' read -r tenant room container_name container_user container_home state_directory harness extra <<<"$mapping_line"
+fi
 [[ -n $tenant && -n $room && -n $container_name && -n $container_user && -n $container_home \
   && -n $state_directory && -n $harness && -z ${extra:-} ]] \
   || die 'container alias mapping returned invalid fields'
@@ -180,19 +194,30 @@ TMUX_PHYSICAL_ALIAS=''
 read_adapter_generation() {
   local init_starttime digest labels label_alias label_tenant runtime_key extra
   ADAPTER_V4_MANAGED=0
-  TMUX_PHYSICAL_ALIAS=$alias_name
+  TMUX_PHYSICAL_ALIAS=${CAUCE_PTY_FLEET_RUNTIME_KEY:-$alias_name}
   labels=$(docker_control inspect --format \
     '{{index .Config.Labels "cauce.fleet.alias"}} {{index .Config.Labels "cauce.fleet.tenant"}} {{index .Config.Labels "cauce.fleet.runtime_key"}}' \
     "$container_id" 2>/dev/null) || return 1
   read -r label_alias label_tenant runtime_key extra <<<"$labels"
-  if [[ $label_alias == "$alias_name" && $label_tenant == "$tenant" \
-    && $runtime_key =~ ^[a-z][a-z0-9-]{0,63}$ && -z ${extra:-} ]]; then
+  if [[ $label_alias == "${wire_alias:-$alias_name}" && $label_tenant == "$tenant" \
+    && $runtime_key =~ ^[a-z][a-z0-9-]{0,63}$ && -z ${extra:-} \
+    && ( -z ${CAUCE_PTY_FLEET_RUNTIME_KEY:-} || $runtime_key == "$CAUCE_PTY_FLEET_RUNTIME_KEY" ) ]]; then
+    if [[ -n ${CAUCE_PTY_FLEET_RUNTIME_KEY:-} ]]; then
+      local label_host label_owner
+      labels=$(docker_control inspect --format \
+        '{{index .Config.Labels "cauce.fleet.host"}} {{index .Config.Labels "cauce.fleet.owner"}}' "$container_id") \
+        || die 'verified terminal container ownership is unavailable' 78
+      read -r label_host label_owner extra <<<"$labels"
+      [[ $label_host == "$CAUCE_PTY_FLEET_HOST" && $label_owner == "$(id -un)" && -z ${extra:-} ]] \
+        || die 'verified terminal container ownership differs' 78
+    fi
     ADAPTER_V4_MANAGED=1
     TMUX_PHYSICAL_ALIAS=$runtime_key
     digest=$(printf '%s\0%s' "$container_id" "$container_started" | sha256sum)
     adapter_generation=${digest%% *}
     return 0
   fi
+  [[ -z ${CAUCE_PTY_FLEET_RUNTIME_KEY:-} ]] || die 'verified terminal container identity differs' 78
   init_starttime=$(docker_control exec "$container_id" /usr/bin/python3 -c \
     'raw=open("/proc/1/stat",encoding="utf-8").read(); fields=raw[raw.rfind(")")+2:].split(); print(fields[19])' 2>/dev/null) || return 1
   [[ $init_starttime =~ ^[0-9]+$ ]] || return 1
@@ -357,7 +382,7 @@ if node and dist:
         raise SystemExit(1)
     if help_result.returncode == 0 and "--session" in help_result.stdout and (not local or "--local" in help_result.stdout):
         print(node + "\t" + dist + "\t" + str(int(local)))
-' "$agent_root" "$alias_name" "$container_home" "$container_id" "$state_directory" "$adapter_generation" "$tenant" \
+' "$agent_root" "${wire_alias:-$alias_name}" "$container_home" "$container_id" "$state_directory" "$adapter_generation" "$tenant" \
       "$configured_dist" \
       2>/dev/null) || return 1
     if [[ -n $measured ]]; then
@@ -425,7 +450,7 @@ if node and dist:
 measure_adapter_runtime_facts() {
   local measured
   local -a measurement_environment=(
-    --env "CAUCE_PTY_MEASURE_ALIAS=$alias_name"
+    --env "CAUCE_PTY_MEASURE_ALIAS=${wire_alias:-$alias_name}"
     --env "CAUCE_PTY_MEASURE_GENERATION=$adapter_generation"
     --env "CAUCE_PTY_MEASURE_STATE=$state_directory"
     --env "CAUCE_PTY_MEASURE_HOME=$container_home"
@@ -681,7 +706,7 @@ publish_bundle() {
     if [[ -n $TMUX_PATH_FOUND ]]; then
       harness_command=null
       tmux_tui=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
-        CAUCE_TMUX_PHYSICAL_ALIAS=${TMUX_PHYSICAL_ALIAS:-$alias_name} CAUCE_TMUX_WIRE_ALIAS=$alias_name \
+        CAUCE_TMUX_PHYSICAL_ALIAS=${TMUX_PHYSICAL_ALIAS:-$alias_name} CAUCE_TMUX_WIRE_ALIAS=${wire_alias:-$alias_name} \
         PYTHONDONTWRITEBYTECODE=1 python3 -c \
         'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"],**({"alias":os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"]} if os.environ.get("CAUCE_TMUX_PHYSICAL_ALIAS") and os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"] != os.environ.get("CAUCE_TMUX_WIRE_ALIAS") else {})},separators=(",",":")))') \
         || die "cannot assemble the dynamic tmux harness resolver"
@@ -714,7 +739,7 @@ publish_bundle() {
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"
   CAUCE_PTY_BUNDLE_TENANT=$tenant \
-  CAUCE_PTY_BUNDLE_ALIAS=$alias_name \
+  CAUCE_PTY_BUNDLE_ALIAS=${wire_alias:-$alias_name} \
   CAUCE_PTY_BUNDLE_CONTAINER=$container_id \
   CAUCE_PTY_BUNDLE_GENERATION=$container_generation \
   CAUCE_PTY_BUNDLE_IMAGE=$container_image \

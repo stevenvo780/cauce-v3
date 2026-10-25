@@ -29,6 +29,7 @@ FAILURE_REASONS = {
     'stopped state is not observed': 'runtime_stop_unverified',
     'functional hook has not demonstrated its effect': 'provider_functional_proof_failed',
     'functional proof identity or nonce differs': 'provider_functional_proof_failed',
+    'terminal provisioning failed': 'terminal_provision_failed',
 }
 
 
