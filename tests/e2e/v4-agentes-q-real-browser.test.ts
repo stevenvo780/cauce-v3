@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
-import { apiGet, bodySnippet, type V4Locator } from './v4-console-real-browser.helpers.js';
+import { apiGet, bodySnippet, type IgnoredConsoleRule, type V4Locator } from './v4-console-real-browser.helpers.js';
 import { coverageCapture, createCoverageAgent, startCoverageFixture } from './v4-agentes-l-helpers.js';
 
 type CoverageFixture = Awaited<ReturnType<typeof startCoverageFixture>>;
@@ -11,6 +11,17 @@ let alias = '';
 let draftAlias = '';
 let container = '';
 const evidence: Record<string, unknown> = { section: 'Q', mocks: false };
+const fixtureRules: IgnoredConsoleRule[] = [
+  { id: 'coverage-terminal-inventories-404', reason: 'computer fixture has no terminal relay',
+    matches: (text, url) => text.includes('status of 404')
+      && ['/v3/console/terminal/sessions', '/v3/console/terminal/targets'].includes(new URL(url).pathname) },
+  { id: 'coverage-backups-404', reason: 'computer fixture does not configure the space backup service',
+    matches: (text, url) => text.includes('status of 404')
+      && /^\/v3\/console\/spaces\/hub-[a-f0-9]{32}\/quick[a-f0-9]{8}\/backups$/u.test(new URL(url).pathname) },
+  { id: 'coverage-native-admin-501', reason: 'computer fixture does not configure native administration',
+    matches: (text, url) => text.includes('status of 501')
+      && /^\/v3\/console\/tenants\/hub-[a-f0-9]{32}\/agents\/quick[a-f0-9]{8}\/native\/skill$/u.test(new URL(url).pathname) },
+];
 const active = () => { if (!fixture) throw new Error('quick actions fixture is unavailable'); return fixture; };
 
 async function operationCount(): Promise<number> {
@@ -41,8 +52,16 @@ async function unchanged(action: () => Promise<void>): Promise<void> {
   expect(await operationCount()).toBe(before);
 }
 
+async function retiredRuntime(): Promise<{ processes: number; credentials: boolean }> {
+  return JSON.parse(await docker(['exec', '--user', 'cauce', container, 'python3', '-c',
+    'import json,os,pathlib,sys;key=sys.argv[1];count=0\nfor pid in filter(str.isdigit,os.listdir("/proc")):\n'
+    + ' try:\n  env=pathlib.Path("/proc",pid,"environ").read_bytes().split(bytes([0]));count+=bytes("CAUCE_RUNTIME_KEY="+key,"utf8") in env\n'
+    + ' except OSError:pass\nprint(json.dumps({"processes":count,"credentials":(pathlib.Path("/run/cauce-credentials")/key).exists()}))',
+    `quick-${active().run}`])) as { processes: number; credentials: boolean };
+}
+
 beforeAll(async () => {
-  fixture = await startCoverageFixture('q', { extraSourceFiles: [
+  fixture = await startCoverageFixture('q', { ignoredConsoleRules: fixtureRules, extraSourceFiles: [
     'packages/store/src/device-authorization.ts', 'packages/store/src/device-authorization-authority.ts',
     'services/gateway/src/device-authorization.ts',
   ] });
@@ -59,6 +78,8 @@ afterAll(async () => {
   try {
     await writeFile(join(fixture.receipts, 'evidence.json'), JSON.stringify({
       ...evidence, run: fixture.run, browserErrors: fixture.errors.unexpected,
+      ignoredConsoleRules: Object.fromEntries(fixture.errors.ignored),
+      fixtureCapabilities: { terminalRelay: false, spaceBackups: false, nativeAdministration: false },
     }, null, 2) + '\n', { mode: 0o600 });
   } finally { await fixture.close(); }
 }, 300_000);
@@ -133,8 +154,12 @@ describe.sequential('acciones frecuentes de Agentes con Chromium y persistencia 
           .toBe(`${target.pathname}/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}`);
         expect(new URL(page.url()).search).toBe(target.query);
         await page.getByRole('heading', { name: target.heading, exact: true }).waitFor({ timeout: 30_000 });
+        if (target.id === 'Q02') await page.getByText('Canal PTY no disponible en este stack', { exact: true }).waitFor({ timeout: 20_000 });
         if (target.id === 'Q03') await page.getByLabel(`Mensaje para ${alias}`, { exact: true }).waitFor({ timeout: 20_000 });
-        if (target.id === 'Q04') await page.getByRole('region', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 20_000 });
+        if (target.id === 'Q04') {
+          await page.getByRole('region', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 20_000 });
+          await page.getByRole('alert').filter({ hasText: 'No se encontró el agente, su ubicación o el backup.' }).waitFor({ timeout: 20_000 });
+        }
         await capture(`${target.id}-enlace`);
       });
     }
@@ -183,14 +208,15 @@ describe.sequential('acciones frecuentes de Agentes con Chromium y persistencia 
       'SELECT enabled,retired_at IS NOT NULL AS retired FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantId, alias],
     )).rows[0];
     expect(row).toEqual({ enabled: false, retired: true });
-    await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    const observed = await retiredRuntime();
+    expect(observed).toEqual({ processes: 0, credentials: false });
     sheet = await openSheet();
     await sheet.getByRole('button', { name: `Eliminar agente ${tenantId}/${alias}`, exact: true }).click();
     await dialog.getByRole('region', { name: 'Recursos que se borrarán', exact: true }).waitFor({ timeout: 20_000 });
     expect(await dialog.getByRole('button', { name: 'Confirmar operación', exact: true }).isDisabled()).toBe(true);
     await capture('Q07-eliminar-definitivamente');
     expect(await operationCount()).toBe(before + 1);
-    evidence.removal = { draftRedirected: true, retireSucceeded: true, retiredRow: row, purgeOpened: true, purgeEnqueued: false };
+    evidence.removal = { draftRedirected: true, retireSucceeded: true, retiredRow: row, observed, purgeOpened: true, purgeEnqueued: false };
     active().errors.assertClean();
   }, 360_000);
 });

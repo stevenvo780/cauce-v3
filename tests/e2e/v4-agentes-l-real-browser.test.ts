@@ -61,7 +61,8 @@ async function changeRoom(): Promise<void> {
 beforeAll(async () => {
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
   fixture = await startCoverageFixture('l', { extraSourceFiles: ['packages/store/src/device-authorization.ts',
-    'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts'] });
+    'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts',
+    'services/gateway/src/fleet/space-backup.failure.ts'] });
   alias = `lifecycle${fixture.run}`; runtime = `lifecycle-${fixture.run}`;
   second = `zz-grupo-${fixture.run}`; emptyTenant = `zz-vacio-${fixture.run}`;
   await fixture.computer.pool.query('INSERT INTO rooms(id,tenant_id,display_name) VALUES($1,$2,$3)', [second, fixture.tenantId, 'Grupo secundario']);
@@ -99,7 +100,10 @@ describe('cobertura del panel operativo con PostgreSQL y runtime reales', () => 
       await panel.getByLabel('Alias operativo').fill(alias);
       await panel.getByLabel('Nombre visible operativo').fill(`Ciclo L ${active().run}`);
       await panel.getByLabel('Clave física de ejecución').fill(`inicial-${active().run}`);
+      await panel.getByLabel('Arnés operativo').selectOption('');
+      expect(await panel.getByLabel('Arnés operativo').inputValue()).toBe('');
       await panel.getByLabel('Arnés operativo').selectOption('codex');
+      expect(await panel.getByLabel('Arnés operativo').inputValue()).toBe('codex');
       for (const id of [room, second]) await panel.getByRole('checkbox', { name: new RegExp(`· "${id}"$`, 'u') }).check();
       await panel.getByLabel(`Rol en "${second}"`).selectOption('operator');
       await panel.getByLabel('Grupo primario').selectOption(room);
@@ -128,7 +132,11 @@ describe('cobertura del panel operativo con PostgreSQL y runtime reales', () => 
       await panel.getByRole('alert').filter({ hasText: 'no está permitido en el host' }).waitFor();
       await panel.getByLabel('Usuario operativo').selectOption('cauce');
       await panel.getByLabel('Usuario de supervisión systemd').selectOption('');
+      expect(await panel.getByLabel('Usuario de supervisión systemd').inputValue()).toBe('');
+      await preview(panel);
+      await panel.getByRole('alert').filter({ hasText: 'Selecciona una plantilla autorizada' }).waitFor();
       await panel.getByLabel('Usuario de supervisión systemd').selectOption('cauce');
+      expect(await panel.getByLabel('Usuario de supervisión systemd').inputValue()).toBe('cauce');
       await panel.getByLabel('Directorio personal operativo').fill('/no-autorizado');
       await preview(panel);
       await panel.getByRole('alert').filter({ hasText: 'Los directorios deben coincidir' }).waitFor();
@@ -153,8 +161,8 @@ describe('cobertura del panel operativo con PostgreSQL y runtime reales', () => 
       const jump = panel.getByRole('alert').getByRole('button');
       await jump.waitFor({ timeout: 30_000 }); await jump.click();
       expect(await enablePrimary.evaluate(element => element === document.activeElement)).toBe(true);
-      await enablePrimary.check();
       await record(['L29'], '03-error-grupo-primario-y-foco', { enabled: false, focused: true });
+      await enablePrimary.check();
 
       const before = await apiGet(page, '/v3/console/config');
       await changeRoom();
@@ -270,7 +278,7 @@ describe('cobertura del panel operativo con PostgreSQL y runtime reales', () => 
       await page.goto(`${baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Añadir agente', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: 'Añadir agente' });
-      await dialog.getByLabel('Espacio de trabajo', { exact: true }).selectOption(tenantId);
+      await dialog.getByLabel('Espacio de trabajo').selectOption(tenantId);
       await dialog.getByLabel('Alias', { exact: true }).fill(draftAlias);
       await dialog.getByLabel('Nombre visible', { exact: true }).fill(`Borrador L ${active().run}`);
       await dialog.getByRole('button', { name: 'Siguiente', exact: true }).click();

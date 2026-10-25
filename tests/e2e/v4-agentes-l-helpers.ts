@@ -10,7 +10,7 @@ import { FIXTURE_PROVIDER_IDENTITY, enrollComputer, startComputerHarness, type C
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, PATTERN_DEFECT_RULE,
-  syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
+  syntheticPerson, type IgnoredConsoleRule, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
@@ -39,7 +39,9 @@ async function certificates(directory: string): Promise<{ ca: string; key: strin
   return { ca, key, cert };
 }
 
-export async function startCoverageFixture(section: string, options: { providerLogin?: boolean; extraSourceFiles?: readonly string[] } = {}): Promise<CoverageFixture> {
+export async function startCoverageFixture(section: string, options: {
+  providerLogin?: boolean; extraSourceFiles?: readonly string[]; ignoredConsoleRules?: readonly IgnoredConsoleRule[];
+} = {}): Promise<CoverageFixture> {
   if (!/^[a-z]{1,4}$/u.test(section)) throw new Error('coverage section must contain one to four lowercase letters');
   const run = randomUUID().replaceAll('-', '').slice(0, 8);
   const prefix = `zz-canary-${COVERAGE_OWNER}-${section}-${run}`;
@@ -52,7 +54,8 @@ export async function startCoverageFixture(section: string, options: { providerL
   const baseUrl = `https://localhost:${String(ports.ports.frontend)}`;
   let computer: ComputerHarness | undefined, trusted: TrustedBrowser | undefined;
   let page: V4Page | undefined;
-  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+  const { ignoredConsoleRules = [], ...computerOptions } = options;
+  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE, ...ignoredConsoleRules]);
   let vite: { close(): Promise<void>; listen(): Promise<void> } | undefined;
   const close = async () => {
     const failures: unknown[] = [];
@@ -68,7 +71,7 @@ export async function startCoverageFixture(section: string, options: { providerL
     if (failures.length) throw new AggregateError(failures, 'agent coverage cleanup failed');
   };
   try {
-    computer = await startComputerHarness({ prefix, consoleOrigins: [baseUrl], workRoot: '/datos', resourceOwner: COVERAGE_OWNER, ...options });
+    computer = await startComputerHarness({ prefix, consoleOrigins: [baseUrl], workRoot: '/datos', resourceOwner: COVERAGE_OWNER, ...computerOptions });
     const server = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
       configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
       cacheDir: join(directory, 'vite-cache'), server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true, watch: null, hmr: false,

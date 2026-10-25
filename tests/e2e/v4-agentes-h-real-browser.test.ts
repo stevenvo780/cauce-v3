@@ -93,6 +93,7 @@ async function signIn(): Promise<V4Locator> {
   await dialog.waitFor({ timeout: 30_000 });
   await dialog.getByLabel('Terminal privada de autenticación', { exact: true }).waitFor({ timeout: 60_000 });
   await expect.poll(() => terminalOutput, { timeout: 60_000 }).toContain(`enter the code ${FIXTURE_DEVICE_CODE}`);
+  await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain('"type":"ready"');
   return dialog;
 }
 
@@ -100,7 +101,7 @@ beforeAll(async () => {
   fixture = await startCoverageFixture('oh', { providerLogin: true, extraSourceFiles: ['packages/store/src/device-authorization.ts',
     'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts',
     'packages/store/src/repository/fleet-operation-recovery.ts', 'ops/cli/fleet_executor_probe_cache.py',
-    'ops/cli/fleet_provider_capability_probe.py'] });
+    'ops/cli/fleet_provider_capability_probe.py', 'services/gateway/src/fleet/space-backup.failure.ts'] });
   alias = `auth${fixture.run}`; runtime = `auth-${fixture.run}`; container = `${fixture.prefix}-${runtime}`;
   fixture.page.on('websocket', candidate => {
     if (!new URL(candidate.url()).pathname.startsWith('/v3/console/provider-auth/sessions/')) return;
@@ -135,6 +136,7 @@ describe('login de una operación desde Chromium con CLI de prueba y autoridad p
       await coverageCapture(active(), 'h-o01-awaiting-auth');
       await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
       await computer.pool.query('UPDATE provider_accounts SET enabled=false WHERE id=$1', [accountId]);
+      active().errors.expectHttpError(`/v3/console/provider-auth/operations/${waiting.id}/scope`, 403);
       active().errors.expectHttpError(`/v3/console/provider-auth/operations/${waiting.id}/scope`, 403);
       await openExecution();
       await auth().getByRole('alert').filter({ hasText: 'No se pudo preparar el inicio de sesión de esta operación' }).waitFor({ timeout: 30_000 });
@@ -177,6 +179,7 @@ describe('login de una operación desde Chromium con CLI de prueba y autoridad p
       evidence.cancelled_login = { operation_id: released.id, version: released.version,
         release: cancellationRelease };
       await cancelled.getByRole('button', { name: 'Cerrar', exact: true }).click();
+      await openExecution();
       await auth().getByRole('button', { name: 'Iniciar sesión', exact: true }).waitFor({ timeout: 30_000 });
       const second = await signIn();
       await second.locator('.xterm-helper-textarea').type(FIXTURE_DEVICE_CODE);

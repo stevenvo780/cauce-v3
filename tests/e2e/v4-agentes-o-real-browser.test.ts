@@ -9,7 +9,7 @@ import { coverageCapture, coverageEnabled, coverageEnqueue, coverageOperations, 
 let fixture: CoverageFixture | undefined;
 let alias = '', runtime = '', container = '';
 let paused = false;
-const evidence: Record<string, unknown> = { section: 'O', states: [] };
+const evidence: Record<string, unknown> = { section: 'O', states: [], details: [] };
 const active = () => { if (!fixture) throw new Error('operation coverage fixture absent'); return fixture; };
 const card = () => active().page.getByRole('region', { name: 'Operación de flota', exact: true });
 
@@ -20,8 +20,12 @@ async function executor(action: 'start' | 'stop'): Promise<void> {
 }
 async function receipt(id: string, status: string): Promise<CoverageOperation> {
   let operation: CoverageOperation | undefined;
+  const mutationGrace = Date.now() + 10_000;
   await expect.poll(async () => {
     operation = (await coverageOperations(active(), alias)).find(row => row.id === id);
+    if (operation && operation.status !== status && ['failed', 'cancelled', 'awaiting_auth'].includes(operation.status) && Date.now() > mutationGrace) {
+      throw new Error(`operation ${id} reached ${operation.status} instead of ${status}: ${JSON.stringify(operation.error)}`);
+    }
     return operation?.status;
   }, { timeout: 240_000, interval: 1000 }).toBe(status);
   if (!operation) throw new Error('operation receipt absent');
@@ -33,6 +37,7 @@ async function state(operation: CoverageOperation, label: string, capture: strin
     'SELECT status,version,steps FROM fleet_operations WHERE id=$1', [operation.id])).rows[0];
   expect(durable?.status).toBe(operation.status);
   (evidence.states as unknown[]).push({ id: operation.id, status: operation.status, durable });
+  console.info('AGENTES_O_STATE', JSON.stringify({ id: operation.id, status: operation.status, version: durable?.version }));
   await coverageCapture(active(), capture);
 }
 async function prepare(): Promise<V4Locator> {
@@ -84,8 +89,8 @@ async function inspectDetails(operation: CoverageOperation): Promise<void> {
   const actor = response.body.actor as { tenant_id: string; alias: string; actor_subject?: string; display_name?: string };
   expect(actor).toMatchObject({ tenant_id: durable.actor_tenant, alias: durable.actor_alias });
   expect(actor.actor_subject ?? null).toBe(durable.actor_subject);
-  const actorName = durable.actor_subject?.startsWith('console:') ? durable.actor_name ?? 'Persona de la consola' : durable.actor_alias;
-  if (durable.actor_subject?.startsWith('console:') && durable.actor_name) expect(actor.display_name).toBe(durable.actor_name);
+  const actorName = durable.actor_subject?.startsWith('console:') ? actor.display_name ?? 'Persona de la consola' : durable.actor_alias;
+  if (actor.display_name) expect(actor.display_name).toBe(durable.actor_name);
   const rendered = await region.innerText();
   for (const text of [`ID: ${operation.id}`, `Versión: ${durable.version}`, `Huella: ${durable.request_hash}`,
     `Revisión esperada: ${durable.expected_revision}`, `Revisión deseada: ${durable.desired_revision ?? 'Sin publicar'}`,
@@ -99,31 +104,41 @@ async function inspectDetails(operation: CoverageOperation): Promise<void> {
     if (durable.error.step) expect(rendered).toContain(`Paso: ${durable.error.step}`);
   }
   const expected = operation.steps.map(step => ({ paso: step.name, estado: step.status, evidencia: step.evidence ?? null }));
-  expect(JSON.parse(await region.locator('details pre').innerText()) as unknown).toEqual(expected);
-  evidence.details = { operation_id: operation.id, durable, evidence_steps: expected };
-  await coverageCapture(active(), 'o08-detalles-evidencias');
+  if (operation.steps.some(step => step.evidence)) expect(JSON.parse(await region.locator('details pre').innerText()) as unknown).toEqual(expected);
+  else expect(await region.locator('details pre').count()).toBe(0);
+  (evidence.details as unknown[]).push({ operation_id: operation.id, durable, evidence_steps: expected });
+  await coverageCapture(active(), `o08-${operation.kind}-${operation.status}-detalles-evidencias`);
 }
 async function rejectAndRecoverRead(operation: CoverageOperation): Promise<void> {
   const { computer, page, errors } = active();
   await executor('stop');
   const lock = await computer.pool.connect();
+  let unlocking: Promise<void> | undefined;
+  const unlock = async () => {
+    unlocking ??= (async () => { try { await lock.query('ROLLBACK'); } finally { lock.release(); } })();
+    await unlocking;
+  };
+  const timer = setTimeout(() => { void unlock().catch((error: unknown) => { evidence.read_lock_error = String(error); }); }, 20_000);
+  timer.unref();
   try {
     await lock.query('BEGIN');
+    await lock.query("SET LOCAL lock_timeout='5s'");
+    await lock.query("SET LOCAL statement_timeout='10s'");
     await lock.query('LOCK TABLE fleet_operations IN ACCESS EXCLUSIVE MODE');
     errors.expectHttpError(`/v3/console/fleet/operations/${operation.id}`, 500);
     await page.getByRole('button', { name: 'Releer operación', exact: true }).click();
     let pid: number | undefined;
     await expect.poll(async () => {
-      pid = (await computer.pool.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity
+      pid = (await lock.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity
         WHERE datname=current_database() AND wait_event_type='Lock' AND query ILIKE '%fleet_operations%'
           AND pid<>pg_backend_pid() ORDER BY query_start DESC LIMIT 1`)).rows[0]?.pid;
       return pid !== undefined;
     }, { timeout: 20_000 }).toBe(true);
-    expect((await computer.pool.query<{ cancelled: boolean }>('SELECT pg_cancel_backend($1) AS cancelled', [pid])).rows[0]?.cancelled).toBe(true);
+    expect((await lock.query<{ cancelled: boolean }>('SELECT pg_cancel_backend($1) AS cancelled', [pid])).rows[0]?.cancelled).toBe(true);
     await card().getByText('No pudimos confirmar la última lectura de esta operación. Pulsa «Releer operación» para actualizarla antes de seguir.', { exact: true }).waitFor({ timeout: 30_000 });
     for (const label of ['Reintentar', 'Cancelar']) expect(await card().getByRole('button', { name: label, exact: true }).isDisabled()).toBe(true);
     await coverageCapture(active(), 'o05-lectura-no-confirmada');
-  } finally { await lock.query('ROLLBACK'); lock.release(); }
+  } finally { clearTimeout(timer); await unlock(); }
   await page.getByRole('button', { name: 'Releer operación', exact: true }).click();
   await coverageEnabled(card().getByRole('button', { name: 'Reintentar', exact: true }));
   expect((await receipt(operation.id, 'failed')).version).toBe(operation.version);
@@ -134,7 +149,7 @@ beforeAll(async () => {
   fixture = await startCoverageFixture('oh', { extraSourceFiles: ['packages/store/src/device-authorization.ts',
     'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts',
     'packages/store/src/repository/fleet-operation-recovery.ts', 'ops/cli/fleet_executor_probe_cache.py',
-    'ops/cli/fleet_provider_capability_probe.py'] });
+    'ops/cli/fleet_provider_capability_probe.py', 'services/gateway/src/fleet/space-backup.failure.ts'] });
   alias = `ops${fixture.run}`; runtime = `ops-${fixture.run}`; container = `${fixture.prefix}-${runtime}`;
 }, 900_000);
 afterAll(async () => {
@@ -142,7 +157,7 @@ afterAll(async () => {
   try {
     if (paused) await docker(['unpause', container]);
     evidence.operations = await coverageOperations(fixture, alias).catch(() => []);
-    evidence.journal = (await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-n', '100'])).stdout;
+    evidence.journal = (await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '--grep', 'operation_id=|step=|fleet effect'])).stdout;
     evidence.browser = { unexpected: fixture.errors.unexpected, trace: fixture.errors.trace };
     await writeFile(join(fixture.receipts, 'o-evidence.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
   } finally { await fixture.close(); }
@@ -166,9 +181,26 @@ describe('estados y controles de operaciones con Chromium, PostgreSQL y ejecutor
       await panel.getByLabel('¿Qué quieres hacer?').selectOption('update');
       await panel.getByLabel('Nombre visible operativo').fill(`Operaciones ${active().run} reintentada`);
       await docker(['pause', container]); paused = true;
-      const running = await coverageEnqueue(active(), panel, alias, 'update', ['running']);
-      await state(running, 'En curso', 'o01-running');
-      const failed = await receipt(running.id, 'failed');
+      await executor('stop');
+      const pending = await coverageEnqueue(active(), panel, alias, 'update', ['queued']);
+      const latch = await computer.pool.connect();
+      let unlocking: Promise<void> | undefined;
+      const unlock = async () => {
+        unlocking ??= (async () => { try { await latch.query('ROLLBACK'); } finally { latch.release(); } })();
+        await unlocking;
+      };
+      const timer = setTimeout(() => { void unlock().catch((error: unknown) => { evidence.latch_error = String(error); }); }, 20_000);
+      timer.unref();
+      try {
+        await latch.query('BEGIN');
+        await latch.query("SET LOCAL lock_timeout='5s'");
+        await latch.query("SET LOCAL statement_timeout='10s'");
+        await executor('start');
+        await expect.poll(async () => (await latch.query("SELECT id FROM fleet_operations WHERE id=$1 AND status='running' FOR SHARE", [pending.id])).rowCount,
+          { timeout: 30_000, interval: 10 }).toBe(1);
+        await state(await receipt(pending.id, 'running'), 'En curso', 'o01-running');
+      } finally { clearTimeout(timer); await unlock(); }
+      const failed = await receipt(pending.id, 'failed');
       await state(failed, 'Falló', 'o01-failed');
       expect(failed.steps.find(step => step.name === 'stop')?.status).toBe('failed');
       const done = failed.steps.filter(step => ['succeeded', 'compensated'].includes(step.status)).length;
