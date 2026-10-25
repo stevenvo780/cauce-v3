@@ -48,7 +48,7 @@ async function changedRoom(): Promise<{ current: CompanyTransferBundle; bundle: 
   return { current, bundle };
 }
 describe('human platform CLI and company transfer', () => {
-  it('keeps global catalogs outside the generic GUI and requires a durable platform person and a platform database connection', async () => {
+  it('keeps global catalogs outside the generic editor and lets only a durable platform person write through the runtime', async () => {
     const generic = new ConfigurationRepository(admin);
     await expect(generic.apply('Steven', 'kant', policy, false, 0,
       client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'kant', humanId: people.steven }))).rejects.toMatchObject({ code: 'forbidden' });
@@ -59,9 +59,15 @@ describe('human platform CLI and company transfer', () => {
     const runtime = createPool(await provisionTestLogin(admin, current.adminUrl, 'cauce_gateway', 'cauce_runtime'), { max: 1 });
     try {
       expect((await runtime.query('SELECT current_user AS role')).rows).toEqual([{ role: 'cauce_gateway' }]);
-      await expect(applyPlatformConfiguration(runtime, platform(), policy, false, 0)).rejects.toMatchObject({ code: '42501' });
+      expect((await applyPlatformConfiguration(runtime, platform(), policy, false, 0)).applied).toBe(true);
+      await expect(runtime.query("UPDATE role_policies SET allow_control=true WHERE role='transfer_role'"))
+        .rejects.toMatchObject({ code: '42501' });
     } finally { await runtime.end(); }
-    expect(await revisions()).toBe(0);
+    expect(await revisions()).toBe(1);
+    expect((await admin.query('SELECT scope,company_id,actor_human_id::text FROM config_revisions')).rows)
+      .toEqual([{ scope: 'platform', company_id: null, actor_human_id: people.steven }]);
+    expect((await admin.query("SELECT actor_human_id::text FROM audit_events WHERE action='config.change'")).rows)
+      .toEqual([{ actor_human_id: people.steven }]);
   });
   it('uses catalog preview, CAS, inverse rollback and human platform audit history', async () => {
     expect((await applyPlatformConfiguration(admin, platform(), policy, true, 0)).dry_run).toBe(true);

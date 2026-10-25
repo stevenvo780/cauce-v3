@@ -140,6 +140,7 @@ function registryTenantExists(snapshot: ConfigurationSnapshot, tenantId: string)
 
 export function registryHarnessOptions(snapshot: ConfigurationSnapshot): string[] {
   return [...new Set((snapshot.harness_definitions ?? []).flatMap((harness) => {
+    if (harness.enabled === false) return [];
     const id = typeof harness.id === 'string' ? harness.id : harness.harness_id;
     if (typeof id !== 'string' || !id.trim()) return [];
     const label = [harness.display_name, harness.label].filter((value) => typeof value === 'string').join(' ');

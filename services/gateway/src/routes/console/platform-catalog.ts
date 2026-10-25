@@ -2,11 +2,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   applyPlatformConfiguration, readPlatformConfiguration, withTransaction, ConfigurationError, StoreError,
-  type DatabaseClient, type DatabasePool, type PlatformActor,
+  type ConfigurationAuthorityResolver, type DatabaseClient, type DatabasePool, type PlatformActor,
 } from '@cauce/store';
 import { AuthorizationError, type AuthProvider } from '../../auth.js';
 import { consoleHumanAccess } from '../../console-human-authority.js';
-import { replyError } from '../shared.js';
+import { driverErrorCode, replyError } from '../shared.js';
 import { validatedConfigurationReceipt } from './helpers.js';
 
 const IDENTIFIER = /^[a-z][a-z0-9_-]{0,63}$/u;
@@ -108,6 +108,8 @@ export function spanishCatalogMessage(message: string): string {
       'El cambio dejaría a la plataforma sin su último administrador calificado. Asigná otro administrador antes de intentarlo.',
     'configuration change violates a durable constraint':
       'El cambio contradice una restricción guardada. Si estás borrando, revisá qué agentes o membresías todavía lo usan.',
+    'configuration resource has durable dependencies':
+      'No se puede borrar: agentes o membresías todavía usan este recurso. Resolvé las dependencias antes de intentarlo.',
     'authority is busy; reload and retry': 'La autoridad está ocupada por otro cambio; releé el catálogo y volvé a intentarlo.',
     'platform administrator authority is required':
       'Solo el administrador de plataforma puede ver y cambiar las definiciones de arnés y las políticas de rol.',
@@ -123,6 +125,13 @@ export function spanishCatalogMessage(message: string): string {
 function failed(reply: FastifyReply, error: unknown): void {
   if (error instanceof z.ZodError) {
     void reply.code(400).send({ error: 'invalid_input', message: spanishZodMessage(error) });
+    return;
+  }
+  const code = driverErrorCode(error);
+  if (['55P03', '40001', '40P01', '23503', '23505', '23514', '23P01'].includes(code ?? '')) {
+    const message = ['55P03', '40001', '40P01'].includes(code ?? '')
+      ? 'authority is busy; reload and retry' : 'configuration change violates a durable constraint';
+    replyError(reply, new ConfigurationError('conflict', spanishCatalogMessage(message)));
     return;
   }
   if (error instanceof ConfigurationError) {
@@ -144,12 +153,14 @@ function failed(reply: FastifyReply, error: unknown): void {
  */
 async function withPlatformAuthority<T>(
   provider: AuthProvider, pool: DatabasePool, request: FastifyRequest, reply: FastifyReply,
-  work: (client: DatabaseClient, actor: PlatformActor) => Promise<T>,
+  work: (client: DatabaseClient, actor: PlatformActor, revalidate: ConfigurationAuthorityResolver) => Promise<T>,
 ): Promise<T> {
   const access = await consoleHumanAccess(provider, request, reply, 'read');
   if (access === undefined) throw new AuthorizationError('Se requiere una sesión de consola verificada.');
   try {
     return await withTransaction(pool, async (client) => {
+      const mutating = request.method !== 'GET';
+      if (mutating) await client.query('SAVEPOINT platform_catalog_authority');
       const authority = await access.companyAuthority(client);
       if (authority.role !== 'platform_admin' || authority.humanId === null) {
         throw new StoreError(
@@ -161,7 +172,11 @@ async function withPlatformAuthority<T>(
         humanId: authority.humanId, tenant: authority.homeTenant,
         alias: authority.alias, companyId: authority.actingCompany,
       };
-      return work(client, actor);
+      if (mutating) {
+        await client.query('ROLLBACK TO SAVEPOINT platform_catalog_authority');
+        await client.query('RELEASE SAVEPOINT platform_catalog_authority');
+      }
+      return work(client, actor, (current) => access.companyAuthority(current));
     });
   } finally { access.close(); }
 }
@@ -178,7 +193,7 @@ export function registerPlatformCatalogRoutes(app: FastifyInstance, provider: Au
   app.post('/v3/console/platform/harnesses', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const input = HarnessCreate.parse(request.body);
         const mutation = {
           resource: 'harness' as const, action: 'create' as const, id: input.id,
@@ -187,16 +202,17 @@ export function registerPlatformCatalogRoutes(app: FastifyInstance, provider: Au
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
           },
         };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client);
-        return reply.code(201).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(201).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 
   app.patch<{ Params: { id: string } }>('/v3/console/platform/harnesses/:id', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const id = z.string().regex(IDENTIFIER).parse(request.params.id);
         const input = HarnessUpdate.parse(request.body);
         const mutation = {
@@ -207,29 +223,31 @@ export function registerPlatformCatalogRoutes(app: FastifyInstance, provider: Au
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
           },
         };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client);
-        return reply.code(200).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(200).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 
   app.delete<{ Params: { id: string } }>('/v3/console/platform/harnesses/:id', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const id = z.string().regex(IDENTIFIER).parse(request.params.id);
         const { expected_revision } = RevisionQuery.parse(request.query);
         const mutation = { resource: 'harness' as const, action: 'delete' as const, id };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, expected_revision, client);
-        return reply.code(200).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(200).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 
   app.post('/v3/console/platform/role-policies', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const input = RoleCreate.parse(request.body);
         const mutation = {
           resource: 'role_policy' as const, action: 'create' as const, role: input.role,
@@ -240,16 +258,17 @@ export function registerPlatformCatalogRoutes(app: FastifyInstance, provider: Au
             ...(input.allow_notify === undefined ? {} : { allow_notify: input.allow_notify }),
           },
         };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client);
-        return reply.code(201).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(201).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 
   app.patch<{ Params: { role: string } }>('/v3/console/platform/role-policies/:role', { bodyLimit: 8192 }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const role = z.string().regex(IDENTIFIER).parse(request.params.role);
         const input = RoleUpdate.parse(request.body);
         const mutation = {
@@ -261,22 +280,24 @@ export function registerPlatformCatalogRoutes(app: FastifyInstance, provider: Au
             ...(input.allow_notify === undefined ? {} : { allow_notify: input.allow_notify }),
           },
         };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client);
-        return reply.code(200).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, input.expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(200).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 
   app.delete<{ Params: { role: string } }>('/v3/console/platform/role-policies/:role', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     try {
-      return await withPlatformAuthority(provider, pool, request, reply, async (client, actor) => {
+      const receipt = await withPlatformAuthority(provider, pool, request, reply, async (client, actor, revalidate) => {
         const role = z.string().regex(IDENTIFIER).parse(request.params.role);
         const { expected_revision } = RevisionQuery.parse(request.query);
         const mutation = { resource: 'role_policy' as const, action: 'delete' as const, role };
-        const result = await applyPlatformConfiguration(pool, actor, mutation, false, expected_revision, client);
-        return reply.code(200).send(validatedConfigurationReceipt(result, false, null, mutation));
+        const result = await applyPlatformConfiguration(pool, actor, mutation, false, expected_revision, client, revalidate);
+        return validatedConfigurationReceipt(result, false, null, mutation);
       });
+      return await reply.code(200).send(receipt);
     } catch (error) { failed(reply, error); }
   });
 }

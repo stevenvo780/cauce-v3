@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { catalogAdversarialTests } from './v4-platform-catalog-adversarial.helpers.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type IgnoredConsoleRule, type V4Locator, type V4Page, type V4Person,
@@ -44,10 +45,15 @@ const errors = new BrowserErrorLog([
   expectedRoleForbidden('/v3/console/terminal/capability', 'operator-terminal-capability-403'),
   expectedRoleForbidden('/v3/console/fleet/capability', 'operator-fleet-capability-403'),
   expectedRoleForbidden('/v3/console/fleet/operations/recent', 'operator-fleet-history-403'),
+  ...['/v3/console/terminal/grants', '/v3/console/terminal/targets'].map(path => ({
+    id: `optional-${path}`, reason: 'la instancia hermética no monta el relay de terminal',
+    matches: (text: string, url: string) => text.includes('status of 404') && new URL(url).pathname === path,
+  })),
 ]);
 
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let plataformaPage: V4Page | undefined;
+let empresaPage: V4Page | undefined;
 
 const active = () => { if (!fixture) throw new Error('catalog fixture is not initialized'); return fixture; };
 const pool = () => active().database.pool;
@@ -146,6 +152,7 @@ afterAll(async () => { await fixture?.close(); }, 180_000);
 describe('CRUD web de definiciones de arnés y políticas de rol', () => {
   it('un admin de empresa sin autoridad de plataforma solo lee y recibe 403 al escribir', async () => {
     const page = await freshPage('empresa');
+    empresaPage = page;
     await step(page, 'registro de empresa', () => register(page, empresa));
     await step(page, 'arneses de solo lectura', async () => {
       await openConfig(page, 'arneses');
@@ -308,5 +315,33 @@ describe('CRUD web de definiciones de arnés y políticas de rol', () => {
       expect(stored.rowCount).toBe(0);
     });
     errors.assertClean();
+  });
+
+  catalogAdversarialTests({
+    fixture: active, platform: () => {
+      if (!plataformaPage) throw new Error('platform page is not initialized');
+      return plataformaPage;
+    }, owner: () => {
+      if (!empresaPage) throw new Error('owner page is not initialized');
+      return empresaPage;
+    }, email: plataforma.email, ownerEmail: empresa.email, errors,
+    evidence: join(process.cwd(), '.delegados/v4/recibos/r1-revision-087-1025'),
+  });
+
+  it('deshabilitar un arnés desde la web lo retira del siguiente alta', async () => {
+    const page = plataformaPage;
+    if (!page) throw new Error('platform page is not initialized');
+    try {
+      await openConfig(page, 'arneses');
+      await page.getByRole('button', { name: 'Editar arnés muse', exact: true }).click();
+      await page.getByLabel('Habilitado', { exact: true }).selectOption('false');
+      await page.getByRole('button', { name: 'Confirmar edición', exact: true }).click();
+      await page.getByText(/Aplicado en revisión/).waitFor({ timeout: 20_000 });
+      expect(await altaHarnessOptions(page)).not.toContain('muse');
+    } finally {
+      const catalog = await apiGet(page, '/v3/console/platform/catalog');
+      expect((await apiSend(page, 'PATCH', '/v3/console/platform/harnesses/muse',
+        { enabled: true, expected_revision: catalog.body.revision })).status).toBe(200);
+    }
   });
 });

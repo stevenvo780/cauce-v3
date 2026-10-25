@@ -3,7 +3,7 @@ import {
   assertKeepsCompanyAuthority, assertPlatformAdmin, companyRevision, lockCompanyAuthority, type CompanyAuthority,
 } from './company-authority.js';
 import { ConfigurationRepository } from './configuration.js';
-import { ConfigurationError, type ConfigurationChangeResult } from './configuration/contracts.js';
+import { ConfigurationError, type ConfigurationAuthorityResolver, type ConfigurationChangeResult } from './configuration/contracts.js';
 import { type DatabaseClient, type DatabasePool } from './db.js';
 import { withBoundConfigurationTransaction } from './configuration/transaction.js';
 
@@ -32,8 +32,9 @@ class PlatformConfigurationRepository extends ConfigurationRepository {
     }
   }
   protected override async execute(client: DatabaseClient, mutation: ConfigMutation, company: string): Promise<{ inverse: ConfigMutation; summary: string }> {
-    // Authority was asserted for this transaction before this point; the flag is what lets the
-    // database guard distinguish this write from a direct runtime write to the catalogs.
+    const previous = (await client.query<{ flag: string | null }>(
+      "SELECT current_setting('cauce.platform_catalog_write',true) AS flag",
+    )).rows[0]?.flag ?? '';
     await client.query("SELECT set_config('cauce.platform_catalog_write','on',true)");
     const result = await super.execute(client, mutation, company);
     if (mutation.resource === 'role_policy') {
@@ -41,6 +42,8 @@ class PlatformConfigurationRepository extends ConfigurationRepository {
         UNION SELECT human_id::text FROM company_admins WHERE role='owner' ORDER BY human_id`);
       for (const holder of holders.rows) await assertKeepsCompanyAuthority(client, holder.human_id);
     }
+    // Failed statements are restored by the transaction/savepoint rollback, before any reuse.
+    await client.query("SELECT set_config('cauce.platform_catalog_write',$1,true)", [previous]);
     return result;
   }
 }
@@ -51,7 +54,7 @@ export async function readPlatformConfiguration(pool: DatabasePool, actor: Platf
     const harnesses = await client.query('SELECT id,display_name,command,capabilities,enabled FROM harness_definitions ORDER BY id');
     const policies = await client.query('SELECT role,allow_route,allow_read,allow_control,allow_notify FROM role_policies ORDER BY role');
     const revisions = await client.query(`SELECT id::text,actor_tenant,actor_alias,actor_human_id::text,summary,created_at,
-      rolled_back_revision_id::text FROM config_revisions WHERE scope='platform' ORDER BY id DESC LIMIT 100`);
+      rolled_back_revision_id::text FROM config_revisions WHERE scope='platform' ORDER BY config_revisions.id DESC LIMIT 100`);
     return { company_id: actor.companyId, revision: await companyRevision(client, actor.companyId),
       harness_definitions: harnesses.rows, role_policies: policies.rows, revisions: revisions.rows };
   });
@@ -59,11 +62,22 @@ export async function readPlatformConfiguration(pool: DatabasePool, actor: Platf
 
 export async function applyPlatformConfiguration(
   pool: DatabasePool, actor: PlatformActor, input: unknown, dryRun: boolean, expectedRevision: number, bound?: DatabaseClient,
+  revalidate?: ConfigurationAuthorityResolver,
 ): Promise<ConfigurationChangeResult> {
   const mutation = ConfigMutationSchema.parse(input);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new ConfigurationError('invalid_input', 'expected revision is required');
   return new PlatformConfigurationRepository(pool, bound).apply(actor.tenant, actor.alias, mutation, dryRun, expectedRevision,
-    client => lockPlatformActor(client, actor));
+    async client => {
+      const authority = await lockPlatformActor(client, actor);
+      if (revalidate === undefined) return authority;
+      const current = await revalidate(client);
+      assertPlatformAdmin(current);
+      if (current.humanId !== actor.humanId || current.homeTenant !== actor.tenant
+        || current.alias !== actor.alias || current.actingCompany !== actor.companyId) {
+        throw new ConfigurationError('forbidden', 'the platform actor changed');
+      }
+      return current;
+    });
 }
 
 export async function rollbackPlatformConfiguration(

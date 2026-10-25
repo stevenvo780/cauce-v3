@@ -33,8 +33,10 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
   const roles = membershipRoleOptions(snapshot);
   const harnesses = registryHarnessOptions(snapshot);
   const options = (key: Parameters<typeof lifecycleOptions>[1]) => lifecycleOptions(snapshot, key, draft.tenantId)
-    .filter((option) => key !== 'harness_definitions' || harnesses.includes(option.id))
-    .map((option) => <option key={option.id} value={option.id}>{option.label} · {JSON.stringify(option.id)}</option>);
+    .filter((option) => key !== 'harness_definitions' || harnesses.includes(option.id) || option.id === existing?.harness_id)
+    .map((option) => <option key={option.id} value={option.id} disabled={key === 'harness_definitions' && !harnesses.includes(option.id)}>
+      {option.label} · {JSON.stringify(option.id)}{key === 'harness_definitions' && !harnesses.includes(option.id) ? ' · Deshabilitado' : ''}
+    </option>);
   return <div className="agent-lifecycle-fields">
     <fieldset disabled={disabled}><legend>Identidad y contexto</legend>
       <label>Espacio de trabajo operativo<select value={draft.tenantId} disabled={!!target}

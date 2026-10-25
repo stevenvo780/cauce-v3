@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type SyntheticEvent } from 'react';
 import { ApiError } from '../../api/client';
 import { useApi } from '../../api/context';
 import type { ConfigurationChangeResult } from '../../api/types';
@@ -40,14 +40,14 @@ function reciboValido(result: ConfigurationChangeResult, resource: string, actio
   return result.applied === true && result.dry_run === false
     && typeof result.revision === 'number' && Number.isSafeInteger(result.revision) && result.revision >= 1
     && typeof result.summary === 'string' && result.summary.length > 0
-    && result.mutation?.resource === resource && result.mutation?.action === action;
+    && result.mutation?.resource === resource && result.mutation.action === action;
 }
 
 function describePlatformError(error: unknown): { message: string; conflict: boolean } {
   if (error instanceof ApiError && error.dependencies.length > 0) {
     return {
       conflict: false,
-      message: `El servidor rechazó el cambio y no se aplicó nada: lo bloquean ${dependencySummary(error.dependencies)}. `
+      message: `El servidor rechazó el cambio y no se aplicó nada: lo bloquean ${dependencySummary(error.dependencies) ?? 'dependencias guardadas'}. `
         + 'Resolvé las dependencias primero (agentes o membresías que todavía lo usan) y volvé a intentarlo.',
     };
   }
@@ -59,32 +59,30 @@ function describePlatformError(error: unknown): { message: string; conflict: boo
 
 /**
  * Write channel of the platform catalog panels: one busy flag, the chained configuration
- * revision (CAS), the exact receipt check and the reread, shared by both catalogs.
+ * snapshot revision (CAS), the exact receipt check and the reread, shared by both catalogs.
  */
 function usePlatformCatalog(ctx: ConfigWrites) {
   const api = useApi();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<CatalogNotice>();
-  const [chained, setChained] = useState<number>();
   const snapshot = ctx.config.data;
-  const role = snapshot?.capabilities?.actor?.role;
+  const role = snapshot?.capabilities?.actor.role;
   const isPlatform = role === 'platform_admin';
-  const revision = chained !== undefined && (ctx.snapshotRevision === undefined || ctx.snapshotRevision < chained)
-    ? chained : ctx.snapshotRevision;
+  const revision = ctx.snapshotRevision;
   const canWrite = isPlatform && !ctx.soloLectura && revision !== undefined;
 
   async function run(
-    resource: 'harness' | 'role_policy', action: string,
+    resource: 'harness' | 'role_policy', action: string, expectedRevision: number | undefined,
     call: (expectedRevision: number) => Promise<ConfigurationChangeResult>,
   ): Promise<boolean> {
-    if (!canWrite || revision === undefined) {
+    if (!canWrite || expectedRevision === undefined) {
       setNotice({ tone: 'error', text: 'Cambio bloqueado: hace falta ser administrador de plataforma y tener la revisión actual del catálogo.' });
       return false;
     }
     setBusy(true);
     setNotice(undefined);
     try {
-      const result = await call(revision);
+      const result = await call(expectedRevision);
       if (!reciboValido(result, resource, action)) {
         await ctx.config.reload();
         setNotice({
@@ -94,7 +92,6 @@ function usePlatformCatalog(ctx: ConfigWrites) {
         });
         return false;
       }
-      setChained(result.revision as number);
       const reload = await ctx.config.reload();
       setNotice({
         tone: reload.error ? 'parcial' : 'success',
@@ -105,10 +102,10 @@ function usePlatformCatalog(ctx: ConfigWrites) {
     } catch (error) {
       const described = describePlatformError(error);
       if (described.conflict) {
-        setChained(undefined);
         await ctx.config.reload();
       }
-      setNotice({ tone: 'error', text: described.message });
+      setNotice({ tone: 'error', text: described.message
+        + (described.conflict ? ' Volvé a abrir la acción sobre la versión actual para continuar.' : '') });
       return false;
     } finally {
       setBusy(false);
@@ -138,6 +135,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
   const catalog = usePlatformCatalog(ctx);
   const rows = catalog.snapshot?.harness_definitions ?? undefined;
   const [draft, setDraft] = useState<HarnessDraft>();
+  const [baseRevision, setBaseRevision] = useState<number>();
   const [editing, setEditing] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<string>();
   const [formError, setFormError] = useState<string>();
@@ -146,6 +144,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
     .filter((id) => !existing.has(id));
 
   function openCreate() {
+    setBaseRevision(catalog.revision);
     setEditing(undefined);
     setPendingDelete(undefined);
     setFormError(undefined);
@@ -154,6 +153,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
   }
 
   function openEdit(row: Record<string, unknown>) {
+    setBaseRevision(catalog.revision);
     setEditing(text(row, 'id'));
     setPendingDelete(undefined);
     setFormError(undefined);
@@ -164,7 +164,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
     });
   }
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SyntheticEvent) {
     event.preventDefault();
     if (!draft) return;
     if (!draft.id) { setFormError('Id del arnés: elegí un arnés con descriptor publicado.'); return; }
@@ -172,11 +172,11 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
     if (draft.capabilities.length === 0) { setFormError('Capacidades: elegí al menos una capacidad.'); return; }
     setFormError(undefined);
     const applied = editing === undefined
-      ? await catalog.run('harness', 'create', (expected) => catalog.api.createPlatformHarness({
+      ? await catalog.run('harness', 'create', baseRevision, (expected) => catalog.api.createPlatformHarness({
         id: draft.id, display_name: draft.displayName.trim(), capabilities: draft.capabilities,
         enabled: draft.enabled, expected_revision: expected,
       }))
-      : await catalog.run('harness', 'update', (expected) => catalog.api.updatePlatformHarness(draft.id, {
+      : await catalog.run('harness', 'update', baseRevision, (expected) => catalog.api.updatePlatformHarness(draft.id, {
         display_name: draft.displayName.trim(), capabilities: draft.capabilities,
         enabled: draft.enabled, expected_revision: expected,
       }));
@@ -187,14 +187,14 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
     if (!pendingDelete) return;
     const id = pendingDelete;
     setPendingDelete(undefined);
-    await catalog.run('harness', 'delete', (expected) => catalog.api.deletePlatformHarness(id, expected));
+    await catalog.run('harness', 'delete', baseRevision, (expected) => catalog.api.deletePlatformHarness(id, expected));
   }
 
   return <SectionCard level={3} title="Definiciones de arnés"
     description="El catálogo que ofrece el alta de agente. Crear solo registra un arnés cuyo descriptor ya está publicado; el descriptor aprobado por digest no se edita desde la web."
     actions={rows ? <span className="text-xs text-muted tabular-nums">{rows.length} {rows.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
     {soloLectura(catalog, 'definiciones de arnés')}
-    {!catalog.snapshot ? catalogoNoLeido() : rows === undefined || rows === null
+    {!catalog.snapshot ? catalogoNoLeido() : rows === undefined
       ? <EmptyState>UNKNOWN: este gateway no publica las definiciones de arnés.</EmptyState>
       : <>
         {catalog.canWrite ? <div className="flex flex-wrap gap-2">
@@ -278,7 +278,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
                 <Button size="sm" disabled={catalog.busy} aria-label={`Editar arnés ${text(row, 'id')}`}
                   onClick={() => { openEdit(row); }}>Editar</Button>
                 <Button size="sm" disabled={catalog.busy} aria-label={`Eliminar arnés ${text(row, 'id')}`}
-                  onClick={() => { setPendingDelete(text(row, 'id')); setDraft(undefined); catalog.setNotice(undefined); }}>Eliminar</Button>
+                  onClick={() => { setBaseRevision(catalog.revision); setPendingDelete(text(row, 'id')); setDraft(undefined); catalog.setNotice(undefined); }}>Eliminar</Button>
               </div></td> : null}
             </tr>)}
           </tbody></table></div>}
@@ -302,11 +302,13 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
   const catalog = usePlatformCatalog(ctx);
   const rows = catalog.snapshot?.role_policies ?? undefined;
   const [draft, setDraft] = useState<RoleDraft>();
+  const [baseRevision, setBaseRevision] = useState<number>();
   const [editing, setEditing] = useState<string>();
   const [pendingDelete, setPendingDelete] = useState<string>();
   const [formError, setFormError] = useState<string>();
 
   function openCreate() {
+    setBaseRevision(catalog.revision);
     setEditing(undefined);
     setPendingDelete(undefined);
     setFormError(undefined);
@@ -315,6 +317,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
   }
 
   function openEdit(row: Record<string, unknown>) {
+    setBaseRevision(catalog.revision);
     setEditing(text(row, 'role'));
     setPendingDelete(undefined);
     setFormError(undefined);
@@ -325,7 +328,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
     });
   }
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SyntheticEvent) {
     event.preventDefault();
     if (!draft) return;
     if (editing === undefined && !ROLE_PATTERN.test(draft.role.trim())) {
@@ -338,10 +341,10 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
       allow_control: draft.allowControl, allow_notify: draft.allowNotify,
     };
     const applied = editing === undefined
-      ? await catalog.run('role_policy', 'create', (expected) => catalog.api.createPlatformRolePolicy({
+      ? await catalog.run('role_policy', 'create', baseRevision, (expected) => catalog.api.createPlatformRolePolicy({
         role: draft.role.trim(), ...value, expected_revision: expected,
       }))
-      : await catalog.run('role_policy', 'update', (expected) => catalog.api.updatePlatformRolePolicy(draft.role, {
+      : await catalog.run('role_policy', 'update', baseRevision, (expected) => catalog.api.updatePlatformRolePolicy(draft.role, {
         ...value, expected_revision: expected,
       }));
     if (applied) { setDraft(undefined); setEditing(undefined); }
@@ -351,7 +354,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
     if (!pendingDelete) return;
     const role = pendingDelete;
     setPendingDelete(undefined);
-    await catalog.run('role_policy', 'delete', (expected) => catalog.api.deletePlatformRolePolicy(role, expected));
+    await catalog.run('role_policy', 'delete', baseRevision, (expected) => catalog.api.deletePlatformRolePolicy(role, expected));
   }
 
   return <SectionCard level={3} title="Permisos por rol"
@@ -359,7 +362,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
     actions={rows ? <span className="text-xs text-muted tabular-nums">{rows.length} {rows.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
     {soloLectura(catalog, 'políticas de rol')}
     <p className="m-0 max-w-prose text-[13px] text-fg-2">{GUIA_DE_ROLES}</p>
-    {!catalog.snapshot ? catalogoNoLeido() : rows === undefined || rows === null
+    {!catalog.snapshot ? catalogoNoLeido() : rows === undefined
       ? <EmptyState>UNKNOWN: este gateway no publica las políticas de rol.</EmptyState>
       : <>
         {catalog.canWrite ? <div className="flex flex-wrap gap-2">
@@ -419,7 +422,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
                   <Button size="sm" disabled={catalog.busy} aria-label={`Editar rol ${role}`}
                     onClick={() => { openEdit(row); }}>Editar</Button>
                   <Button size="sm" disabled={catalog.busy} aria-label={`Eliminar rol ${role}`}
-                    onClick={() => { setPendingDelete(role); setDraft(undefined); catalog.setNotice(undefined); }}>Eliminar</Button>
+                    onClick={() => { setBaseRevision(catalog.revision); setPendingDelete(role); setDraft(undefined); catalog.setNotice(undefined); }}>Eliminar</Button>
                 </div></td> : null}
               </tr>;
             })}
