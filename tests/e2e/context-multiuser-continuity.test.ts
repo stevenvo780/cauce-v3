@@ -65,7 +65,9 @@ describe('continuidad multiusuario con ledger real y kernel CLI sintético', () 
     const witnessB = await readWitness(adapterB.witnessPath);
     expect(witnessA).toHaveLength(3);
     expect(witnessB).toHaveLength(1);
-    const [turnA1, turnA2, turnNew] = witnessA;
+    const turnA1 = witnessA.find((turn) => typeof turn.input === 'string' && turn.input.includes(a1Text));
+    const turnA2 = witnessA.find((turn) => typeof turn.input === 'string' && turn.input.includes(a2Text));
+    const turnNew = witnessA.find((turn) => typeof turn.input === 'string' && turn.input.includes(aNewText));
     const [turnB1] = witnessB;
     if (!turnA1 || !turnA2 || !turnNew || !turnB1) throw new Error('synthetic CLI witness set incomplete');
     expect(turnA1).toMatchObject({ resumed: false, home: adapterA.home, codex_home: adapterA.codexHome });
