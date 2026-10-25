@@ -365,6 +365,23 @@ describe('grants file', () => {
     expect(await store.grants(10_000)).toEqual([]);
   });
 
+  it('unions the file with database grants without narrowing either source', async () => {
+    await writeFile(path, JSON.stringify({
+      version: 1,
+      grants: [{ operator: 'steven', tenant_id: 'Steven', alias: 'jarvis', modes: ['shell'] }]
+    }));
+    const fromDatabase = async (operatorId: string, tenantId: string, alias: string, mode: string) =>
+      operatorId === 'miguel' && tenantId === 'Steven' && alias === 'jarvis' && mode === 'harness';
+    const store = new GrantStore(path, () => undefined, fromDatabase);
+    expect(await store.allows('steven', 'Steven', 'jarvis', 'shell', 1_000)).toBe(true);
+    expect(await store.allows('miguel', 'Steven', 'jarvis', 'harness', 1_000)).toBe(true);
+    expect(await store.allows('miguel', 'Steven', 'jarvis', 'shell', 1_000)).toBe(false);
+    await writeFile(path, JSON.stringify({ version: 1, grants: [] }));
+    expect(await store.allows('miguel', 'Steven', 'jarvis', 'harness', 10_000)).toBe(true);
+    const failing = new GrantStore(path, () => undefined, async () => { throw new Error('database unavailable'); });
+    expect(await failing.allows('miguel', 'Steven', 'jarvis', 'harness', 1_000)).toBe(false);
+  });
+
   it('SET RULE: a grant on iza alone does not open the ws-humanizar container', async () => {
     await writeFile(path, JSON.stringify({
       version: 1,

@@ -265,9 +265,7 @@ export function createRelayProxyContext(
       database ?? pool, actor.tenant_id, actor.alias, cohort,
     );
     if (!authority.allowed) return { allowed: false, reason: 'no_routing_authority' };
-    const grantStore = freshGrants
-      ? new GrantStore(config.grantsFile, (message) => { app.log.warn(message); })
-      : grants;
+    const grantStore = freshGrants ? grants.cloneFresh() : grants;
     if (!(await grantStore.allowsCohort(row.operator_id, cohort, row.mode))) {
       return { allowed: false, reason: 'no_grant' };
     }

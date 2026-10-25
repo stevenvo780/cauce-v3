@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
-  CauceRepository, type DatabaseClient, type DatabasePool,
+  CauceRepository, terminalGrantAllows, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import {
   AliasSchema, isCanonicalUuidV4, TenantSchema,
@@ -26,6 +26,7 @@ import {
   type DeleteSessionBody, type ExtendSessionBody, type OwnerRotationBody, type SessionRequestBody,
 } from './session-control.js';
 import { PasswordAuthProvider } from '../password-auth.js';
+import { registerTerminalGrantRoutes } from './grants-routes.js';
 import { hasCookie, scalarHeaderValue } from '../http-auth-primitives.js';
 import { TerminalSessionAuthority, authorityProof } from './session-authority.js';
 import { isTerminalMode, isWritableMode, type TerminalMode } from './types.js';
@@ -233,7 +234,8 @@ export async function registerTerminalControlPlane(
 ): Promise<void> {
   const { pool, authProvider, config } = options;
   const registry = options.registry ?? new AgentRegistry();
-  const grants = new GrantStore(config.grantsFile, (message) => { app.log.warn(message); });
+  const grants = new GrantStore(config.grantsFile, (message) => { app.log.warn(message); },
+    (operatorId, tenantId, alias, mode) => terminalGrantAllows(pool, operatorId, tenantId, alias, mode));
   const repository = options.repository ?? new CauceRepository(pool);
   const authority = new TerminalSessionAuthority(authProvider, config.ticketKey);
 
@@ -260,6 +262,7 @@ export async function registerTerminalControlPlane(
     return containerCohort(placements, tenantId, alias);
   }
 
+  registerTerminalGrantRoutes(app, { pool, authProvider });
   registerTerminalSessionControl(app, {
     pool,
     config,

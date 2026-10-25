@@ -146,14 +146,44 @@ function parseGrants(raw: string): TerminalGrant[] {
  * must shut the door in under a second without restarting anything.
  * Missing, unreadable or invalid file = ZERO grants. Fail closed, logged once per minute.
  */
+/** Database half of the grants union: a live row of `terminal_grants` for this operator. */
+export type DatabaseGrantChecker = (
+  operatorId: string, tenantId: string, alias: string, mode: TerminalMode,
+) => Promise<boolean>;
+
 export class GrantStore {
   private cached: { grants: TerminalGrant[]; loadedAt: number } | undefined;
   private lastFailureLogAt: number | undefined;
+  private lastDatabaseFailureLogAt: number | undefined;
 
   constructor(
     private readonly path: string,
-    private readonly onFailure: (message: string) => void = () => undefined
+    private readonly onFailure: (message: string) => void = () => undefined,
+    private readonly databaseGrants?: DatabaseGrantChecker,
   ) {}
+
+  /** Same sources with an empty file cache, so a revocation has no cache window. */
+  cloneFresh(): GrantStore {
+    return new GrantStore(this.path, this.onFailure, this.databaseGrants);
+  }
+
+  private async databaseAllows(
+    operatorId: string, tenantId: string, alias: string, mode: TerminalMode, now: number,
+  ): Promise<boolean> {
+    if (this.databaseGrants === undefined) return false;
+    try {
+      return await this.databaseGrants(operatorId, tenantId, alias, mode);
+    } catch (error) {
+      if (this.lastDatabaseFailureLogAt === undefined
+        || now - this.lastDatabaseFailureLogAt >= GRANTS_LOG_INTERVAL_MS) {
+        this.lastDatabaseFailureLogAt = now;
+        this.onFailure(
+          `terminal grants database is unavailable, denying its PTY targets: ${
+            error instanceof Error ? error.message : 'unknown error'}`);
+      }
+      return false;
+    }
+  }
 
   async grants(now: number = Date.now()): Promise<TerminalGrant[]> {
     if (this.cached && now - this.cached.loadedAt < GRANTS_CACHE_MS) return this.cached.grants;
@@ -178,14 +208,19 @@ export class GrantStore {
    * A grant matches on the exact operator, or via '*' when the mode is read-only. Alias '*' covers every
    * agent of that tenant (exact operator only), so agents created later from the console get a terminal
    * without editing this file; the tenant still has to match exactly.
+   *
+   * Union with the database: either source admitting is enough, so a row of `terminal_grants`
+   * never revokes what the file grants and emptying the file never revokes a database row.
+   * Fully closing the plane therefore clears both sources (docs/terminal-pty.md §3).
    */
   async allows(
     operatorId: string, tenantId: string, alias: string, mode: TerminalMode, now: number = Date.now()
   ): Promise<boolean> {
-    return (await this.grants(now)).some((grant) =>
+    const fromFile = (await this.grants(now)).some((grant) =>
       (grant.operator === operatorId || (grant.operator === '*' && !isWritableMode(mode))) &&
       grant.tenant_id === tenantId && (grant.alias === alias || (grant.alias === '*' && grant.operator === operatorId))
       && grant.modes.includes(mode));
+    return fromFile || this.databaseAllows(operatorId, tenantId, alias, mode, now);
   }
 
   /** Cohort form of `allows`: every alias sharing the container must be granted. */
