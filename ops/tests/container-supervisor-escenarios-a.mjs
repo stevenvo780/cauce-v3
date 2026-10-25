@@ -58,6 +58,7 @@ export async function escenariosA(ctx) {
   const stopUserIdx = stopCall.argv.indexOf("--user");
   assert(stopUserIdx >= 0 && stopCall.argv[stopUserIdx + 1] === "0", "stop must run as root");
   const final = calls.find(({ argv }) => argv[0] === "exec" && argv.includes("/usr/bin/env") && argv.includes("CAUCE_ALIAS=atlas"));
+  assert(calls.indexOf(spaceCall) < calls.indexOf(final), "space preparation must precede the real adapter exec");
   assert(final?.argv.includes("CAUCE_INSTANCE_ID=systemd-container-atlas"));
   assert(final?.argv.includes(`CAUCE_SPACE_ROOT=${aliasState.atlas}/space`), "the legacy supervisor must export CAUCE_SPACE_ROOT");
   assert(final?.argv.includes(`TMPDIR=${aliasState.atlas}/space/tmp`));
