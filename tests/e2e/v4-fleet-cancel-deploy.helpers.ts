@@ -72,6 +72,8 @@ export async function startCancelDeployFixture(): Promise<CancelDeployFixture> {
       resourceOwner: CANCEL_DEPLOY_OWNER, runtimeBundle: cancelDeployRuntime,
       extraSourceFiles: ['packages/store/src/repository/fleet-operation-recovery.ts', 'packages/protocol/src/context-retirement.ts', 'ops/cli/fleet_executor_probe_cache.py',
         'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
+        'packages/protocol/src/fleet-recovery.ts', 'services/gateway/src/fleet/recovery-host-command.ts',
+        'services/gateway/src/fleet/agent-recovery-preflight.ts',
         'ops/cli/fleet_provider_capability_probe.py', 'ops/cli/fleet_executor_terminal.py',
         'packages/store/src/device-authorization.ts', 'packages/store/src/device-authorization-authority.ts',
         'services/gateway/src/device-authorization.ts', 'services/gateway/src/fleet/space-backup.failure.ts',

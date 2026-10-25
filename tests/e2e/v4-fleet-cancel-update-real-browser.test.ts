@@ -54,7 +54,8 @@ async function probe(): Promise<{ running: boolean; processes: number; credentia
 }
 beforeAll(async () => { fixture = await startCancelFixture({ extraSourceFiles: ['ops/cli/fleet_executor_replacement.py',
   'packages/protocol/src/context-retirement.ts', 'packages/store/src/context-retirement.ts',
-  'packages/store/src/context-git-retirement.ts'] }); }, 900_000);
+  'packages/store/src/context-git-retirement.ts', 'packages/protocol/src/fleet-recovery.ts',
+  'services/gateway/src/fleet/recovery-host-command.ts', 'services/gateway/src/fleet/agent-recovery-preflight.ts'] }); }, 900_000);
 afterAll(async () => {
   if (paused) await docker(['unpause', container]);
   if (fixture) {
