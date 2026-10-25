@@ -29,6 +29,16 @@ const Template = z.record(z.string(), z.unknown());
 const Providers = z.array(Name).min(1).max(100).refine(values => new Set(values).size === values.length);
 const QuotaEnvironment = z.object({ image: ImageId,
   network: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u), providers: Providers }).strict();
+const LegacyBackupContainer = z.object({
+  runtime_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
+  systemd_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
+  home_directory: LoginPathSchema.refine(value => !value.endsWith('/') && !value.split('/').includes('..')),
+}).strict();
+const LegacyBackupHosts = z.record(Name, z.record(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u), LegacyBackupContainer)
+  .refine(value => Object.keys(value).length <= 100)).refine(value => Object.keys(value).length <= 100);
+const LegacyBackupContainers = z.record(Name, LegacyBackupHosts).refine(value => Object.keys(value).length <= 100);
+const BackupOnlyHosts = z.record(Name, z.array(Name).max(100).refine(value => new Set(value).size === value.length))
+  .refine(value => Object.keys(value).length <= 100);
 const Policy = z.object({
   container_templates: z.array(Template.and(z.object({ harness_id: Name }))).max(100).default([]),
   profile_templates: z.array(Template).max(100).default([]),
@@ -49,6 +59,8 @@ export const HostSetupConfigSchema = z.object({
   image: Served.extend({ name: z.literal('agent-image'), size: Size(MAX_IMAGE), id: ImageId }).strict().optional(),
   quota_image: Served.extend({ name: z.literal('quota-image'), size: Size(MAX_IMAGE), id: ImageId, providers: Providers }).strict().optional(),
   files: z.array(Served).max(16).default([]),
+  legacy_backup_containers: LegacyBackupContainers.optional(),
+  backup_only_hosts: BackupOnlyHosts.optional(),
   policy: Policy,
 }).strict().refine(value => new Set(['release', 'agent-image', 'quota-image', ...value.files.map(file => file.name)]).size === value.files.length + 3,
   { message: 'setup artifacts need distinct names' })
@@ -67,6 +79,8 @@ export const HostSetupFileSchema = z.object({
   signing_key_file: LoginPathSchema,
   release_directory: LoginPathSchema,
   files: z.array(z.object({ name: Name, path: LoginPathSchema }).strict()).max(16).default([]),
+  legacy_backup_containers: LegacyBackupContainers.optional(),
+  backup_only_hosts: BackupOnlyHosts.optional(),
   policy: z.record(z.string(), z.unknown()),
 }).strict();
 const PlainName = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
@@ -142,7 +156,7 @@ export async function resolveHostSetup(value: unknown): Promise<HostSetupConfig>
       sha256: image.sha256, size: image.size } }),
     ...(quotaImage === undefined ? {} : { quota_image: { name: 'quota-image', id: quotaImage.id,
       path: await declared(quotaImage.file, quotaImage.size), sha256: quotaImage.sha256, size: quotaImage.size, providers: quotaImage.providers } }),
-    files, policy });
+    files, policy, legacy_backup_containers: template.legacy_backup_containers, backup_only_hosts: template.backup_only_hosts });
 }
 
 /**
@@ -168,9 +182,15 @@ export class HostSetupPackager {
     return new HostSetupPackager(config, createPrivateKey(await privateBytes(config.signing_key_file)));
   }
 
+  isBackupOnlyHost(companyId: string, hostId: string): boolean {
+    return this.config.backup_only_hosts?.[companyId]?.includes(hostId) === true;
+  }
+
   build(scope: HostSetupScope, issuedAt = Date.now()): SignedHostSetupPackage {
     const enabled = new Set(scope.harnesses);
     const { policy, release, image, quota_image: quotaImage, files } = this.config;
+    const legacy = this.config.legacy_backup_containers?.[scope.company_id]?.[scope.host_id];
+    const backupOnly = this.isBackupOnlyHost(scope.company_id, scope.host_id);
     const bundles = Object.fromEntries(Object.entries(policy.bundles).filter(([harness]) => enabled.has(harness)));
     const narrowed = { ...policy, bundles,
       extensions_allowed: ExtensionsAllowedSchema.parse(scope.extensions_allowed ?? { types: [], mount_roots: [], networks: [] }),
@@ -180,14 +200,16 @@ export class HostSetupPackager {
       if (providers.length === 0) delete narrowed.quota_environments;
       else narrowed.quota_environments = { ...narrowed.quota_environments, providers };
     }
+    const selectedPolicy = backupOnly ? { execution_scope: 'backups', bundles: {}, hooks: {}, container_templates: [], profile_templates: [] } : narrowed;
     const signed = { version: 1, company_id: scope.company_id, host_id: scope.host_id, issued_at: issuedAt,
       release_revision: release.revision,
       artifacts: [{ name: release.name, kind: 'release', sha256: release.sha256, size: release.size },
-        ...(image === undefined ? [] : [{ name: image.name, kind: 'image', sha256: image.sha256, size: image.size, image_id: image.id }]),
-        ...(quotaImage === undefined ? [] : [{ name: quotaImage.name, kind: 'image', sha256: quotaImage.sha256, size: quotaImage.size, image_id: quotaImage.id }]),
+        ...(image === undefined || backupOnly ? [] : [{ name: image.name, kind: 'image', sha256: image.sha256, size: image.size, image_id: image.id }]),
+        ...(quotaImage === undefined || backupOnly ? [] : [{ name: quotaImage.name, kind: 'image', sha256: quotaImage.sha256, size: quotaImage.size, image_id: quotaImage.id }]),
         ...files.map(file => ({ name: file.name, kind: 'file', sha256: file.sha256, size: file.size }))],
-      policy: { ...substitute(narrowed, text => text.replaceAll('@host@', scope.host_id).replaceAll('@company@', scope.company_id)) as typeof narrowed,
-        extensions_allowed: narrowed.extensions_allowed } };
+      policy: { ...substitute(selectedPolicy, text => text.replaceAll('@host@', scope.host_id).replaceAll('@company@', scope.company_id)) as typeof selectedPolicy,
+        ...(legacy === undefined ? {} : { shared_containers: Object.fromEntries(Object.entries(legacy).map(([name, row]) => [name, { backup_only: true, ...row }])) }),
+        ...(backupOnly ? {} : { extensions_allowed: narrowed.extensions_allowed }) } };
     return { package: signed, signature: sign(null, Buffer.from(stableHostJson(signed)), this.key).toString('base64'),
       signer_public_key: this.signerPublicKey };
   }

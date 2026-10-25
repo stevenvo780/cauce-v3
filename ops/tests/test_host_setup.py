@@ -135,6 +135,54 @@ class HostSetupTests(unittest.TestCase):
                 policy = host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity)
                 self.assertEqual(policy['terminal'], {'required': required})
 
+    def test_signed_backup_approval_is_preserved_and_cannot_approve_lifecycle(self):
+        from fleet_executor_legacy import shared_placement, validate_shared_containers
+        from fleet_executor_policy import SafeFailure, approve_agent, load_policy
+        approval = {'backup_only': True, 'runtime_user': 'node', 'systemd_user': 'node', 'home_directory': '/home/node'}
+        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'shared_containers': {'ws-legacy': approval}}}
+        host_setup.setup(self.identity, self.install_base(), False)
+        policy = load_policy(self.install_base() / 'company-a/local-a/executor-policy.json')
+        self.assertEqual(policy['shared_containers'], {'ws-legacy': approval})
+        with self.assertRaisesRegex(SafeFailure, 'backup-only container rejects fleet placement'):
+            shared_placement(policy, {'container_name': 'ws-legacy'})
+        with self.assertRaises(SafeFailure):
+            approve_agent(policy, {'runtime_key': 'legacy', 'host_id': 'local-a', 'harness_id': 'codex'})
+        for field, value in [('backup_only', False), ('home_directory', '/'), ('home_directory', '/home/node/'),
+                             ('runtime_user', 'node;id'), ('command', '/bin/sh')]:
+            with self.subTest(field=field, value=value), self.assertRaises(SafeFailure):
+                validate_shared_containers({**policy, 'shared_containers': {'ws-legacy': {**approval, field: value}}})
+
+    def test_backup_only_setup_starts_without_runtime_templates_and_rejects_fleet_effects(self):
+        approval = {'backup_only': True, 'runtime_user': 'node', 'systemd_user': 'node', 'home_directory': '/home/node'}
+        self.package_overrides = {'policy': {'execution_scope': 'backups', 'hooks': {}, 'bundles': {},
+                                           'shared_containers': {'ws-legacy': approval}}}
+        self.capabilities = {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured',
+                             'execution_scope': 'backups', 'space_backup': True}
+        receipt = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertTrue(receipt['service_active'])
+        self.assertTrue(receipt['space_backup'])
+        self.assertEqual(receipt['templates'], 0)
+        status = host_setup.status(self.identity, self.install_base())
+        self.assertFalse(status['executor_ready'])
+        self.assertTrue(status['space_backup_ready'])
+        self.assertIsNone(status['reason'])
+        policy_file = self.install_base() / 'company-a/local-a/executor-policy.json'
+        policy = json.loads(policy_file.read_bytes())
+        self.assertEqual(policy['native'], [])
+        command = [sys.executable, str(pathlib.Path(host_setup.__file__).with_name('fleet-executor.py')), '--policy', str(policy_file)]
+        available = subprocess.run([*command, '--capabilities'], capture_output=True, check=False)
+        self.assertEqual(available.returncode, 0, available.stderr)
+        self.assertEqual(json.loads(available.stdout), self.capabilities)
+        for action in ('--binding', '--maintenance-guard', '--quota', '--recovery-preflight'):
+            rejected = subprocess.run([*command, action], input=b'{}', capture_output=True, check=False)
+            self.assertEqual(rejected.returncode, 2, rejected.stderr)
+            self.assertIn(b'backup-only executor rejects fleet effects', rejected.stderr)
+        policy['bundles'] = {'codex': {}}
+        policy_file.write_text(json.dumps(policy))
+        rejected = subprocess.run([*command, '--capabilities'], capture_output=True, check=False)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn(b'backup-only executor policy grants another execution scope', rejected.stderr)
+
     def artifacts(self) -> list[dict]:
         items = [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(), 'size': len(self.archive)}]
         if self.image:

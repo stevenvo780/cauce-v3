@@ -166,10 +166,7 @@ def stream_command(runtime, policy: dict, snapshot: dict) -> tuple[list, dict, d
         if agent['runtime_mode'] == 'container':
             agent, binding = runtime.read_container_binding(policy, agent)
     if binding is not None:
-        from fleet_executor_container import isolated_python
-        command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
-                   *isolated_python(str(runtime.path(agent['_placement']['python'])),
-                                    '/cauce/executor/space_backup_local.py', '--stream-local')]
+        command = runtime.container_command(agent, binding, '--stream-local')
     else:
         user = pwd.getpwnam(agent['runtime_user'])
         if user.pw_dir != agent['home_directory']:

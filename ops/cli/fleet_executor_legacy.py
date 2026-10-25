@@ -19,6 +19,16 @@ def absolute(value):
     return pathlib.Path(value)
 
 
+def validate_backup_container(row: dict):
+    if set(row) != {'backup_only', 'runtime_user', 'systemd_user', 'home_directory'} or row['backup_only'] is not True \
+            or any(not isinstance(row[key], str) or re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', row[key]) is None
+                   for key in ('runtime_user', 'systemd_user')) \
+            or not isinstance(row['home_directory'], str) or len(row['home_directory']) > 4096 \
+            or any(127 <= ord(character) <= 159 for character in row['home_directory']):
+        raise ValueError('invalid backup-only container identity')
+    absolute(row['home_directory'])
+
+
 def validate_shared_containers(policy: dict):
     from fleet_executor_policy import SafeFailure
     try:
@@ -30,7 +40,12 @@ def validate_shared_containers(policy: dict):
             'home_directory', 'state_root', 'control_root', 'python', 'mounts', 'aliases'}
         for name, row in containers.items():
             if not isinstance(name, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', name) is None \
-                    or name in policy['containers'] or not isinstance(row, dict) or set(row) != fields \
+                    or name in policy['containers'] or not isinstance(row, dict):
+                raise ValueError('invalid shared container identity')
+            if 'backup_only' in row:
+                validate_backup_container(row)
+                continue
+            if set(row) != fields \
                     or re.fullmatch(r'[a-f0-9]{64}', row.get('container_id', '')) is None \
                     or re.fullmatch(r'sha256:[a-f0-9]{64}', row.get('image', '')) is None \
                     or any(not isinstance(row[key], str) or re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,63}', row[key]) is None
@@ -98,6 +113,8 @@ def shared_placement(policy: dict, agent: dict) -> dict | None:
     if row is None:
         return None
     validate_shared_containers(policy)
+    if row.get('backup_only') is True:
+        raise SafeFailure('backup-only container rejects fleet placement')
     identity = row['aliases'].get(agent.get('runtime_key'))
     if not identity or any(identity[field] != agent.get(field) for field in ('tenant_id', 'alias', 'harness_id')) \
             or agent.get('primary_account_id') is not None and identity.get('account_id') != agent['primary_account_id']:
