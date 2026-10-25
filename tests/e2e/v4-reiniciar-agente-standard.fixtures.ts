@@ -64,7 +64,7 @@ while True:
  correlation=re.search(r'"cauce_correlation_id":"([a-f0-9]{64})"',text)
  if correlation: answer=json.dumps({'reply':answer,'messages':[],'status':'done','retryable':False,'artifacts':[],'cauce_correlation_id':correlation.group(1)})
  append({'type':'event_msg','payload':{'type':'task_complete','turn_id':turn,'last_agent_message':answer}})
- sys.stdout.write('\\r\\n'+answer+'\\r\\n› ');sys.stdout.flush()
+ sys.stdout.write('\\r\\n'+answer+'\\r\\n\\r\\n› ');sys.stdout.flush()
 `;
 
 export const standardRecoveryBundle: ComputerRuntimeBundle = {
