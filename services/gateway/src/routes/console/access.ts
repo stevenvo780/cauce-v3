@@ -64,7 +64,7 @@ export function registerConsoleAccessRoutes(
     try {
       const actor = await principal(request, options.authProvider);
       requirePermission(actor, 'read');
-      return visibleMessageList(await repository.listMessages(actor.tenant_id, actor.alias), actor);
+      return visibleMessageList(await repository.listMessages(actor.tenant_id, actor.alias, 100, actor.human_id), actor);
     } catch (error) { replyError(reply, error); }
   });
 }

@@ -37,7 +37,7 @@ import {
   runtimeContractFromVerification, validatedCancelReceipt, validatedDlqResolutionReceipt,
   validatedReplayReceipt,
 } from './console/helpers.js';
-import { consoleHumanAccess } from '../console-human-authority.js';
+import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import { registerConsoleReplyAttachmentRoutes } from './console/reply-attachments.js';
 import { registerConsoleAccessRoutes } from './console/access.js';
 import { registerConsoleMessageAttachmentRoutes } from './console/message-attachments.js';
@@ -123,6 +123,24 @@ export function registerConsoleRoutes(
   return registerConsoleAgentRoutes(app, context, publishHandler);
 }
 
+// The room list already shows a copied line to the human who started it. Detail must open that same row.
+async function humanVisibleDetail(
+  pool: DatabasePool, messageId: string, access: ConsoleHumanAccess, reader: ReturnType<typeof messageReader>,
+): Promise<Record<string, unknown>> {
+  const humans = new CauceRepository(pool);
+  try {
+    return await humans.getHumanMessage(messageId, access.options);
+  } catch (error) {
+    if (!(error instanceof StoreError) || error.code !== 'not_found') throw error;
+  }
+  try {
+    return await humans.getLegacyHumanMessage(messageId, access.options, reader);
+  } catch (error) {
+    if (!(error instanceof StoreError) || error.code !== 'not_found') throw error;
+  }
+  return humans.getVisibleHumanLineageMessage(messageId, access.options, reader);
+}
+
 function registerConsoleAgentRoutes(
   app: FastifyInstance,
   context: ConsoleRoutes,
@@ -139,13 +157,7 @@ function registerConsoleAgentRoutes(
       let detail: Record<string, unknown>;
       try {
         if (access) {
-          try { detail = await new CauceRepository(options.pool).getHumanMessage(request.params.messageId, access.options); }
-          catch (error) {
-            if (!(error instanceof StoreError) || error.code !== 'not_found') throw error;
-            detail = await new CauceRepository(options.pool).getLegacyHumanMessage(
-              request.params.messageId, access.options, messageReader(actor),
-            );
-          }
+          detail = await humanVisibleDetail(options.pool, request.params.messageId, access, messageReader(actor));
         } else detail = await repository.getMessage(request.params.messageId, actor.tenant_id, actor.alias, messageReader(actor));
       } finally { access?.close(); }
       const row = visibleMessage(detail, actor);

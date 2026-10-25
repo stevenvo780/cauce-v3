@@ -20,6 +20,7 @@ import {
   SYSTEM_GATE_PROBE_MESSAGE_TYPE,
   consolePublishIntentRequestedHash,
   consolePublishIntentSemanticHash,
+  isAnyUuid,
 } from '@cauce/protocol';
 import {
   CONSOLE_PUBLISH_CONFIRM_ACTION,
@@ -48,6 +49,7 @@ import { PublishIntentExpiredError, PublishIntentReconciliationRequired } from '
 import { MessagePublishingRepository } from './messages/publishing.js';
 import { reconstructCommittedConsoleIntentReceipt } from './messages/receipts.js';
 import { assertHumanMessageRoot, lockHumanMessageRoute, withHumanMessageTransaction } from './messages/human-authority.js';
+import { loadHumanMessageInitiator } from './messages/human-initiators.js';
 import type { HumanMessageOptions } from './messages/contracts.js';
 import type { MessageListRow } from './visibility-rows.js';
 import { MESSAGE_AUTHOR_SQL, withMessageAuthor } from './messages/author.js';
@@ -86,6 +88,24 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
     return withAbortableTransaction(this.pool, options.signal, async (client) => {
       const human = await humanMessageAuthority(client, options);
       const row = await loadMessageDetail(client, messageId, human.tenantId, human.actorAlias, 'legacy-human');
+      const view = reader === undefined || row.tenant_id !== human.tenantId || row.actor_alias !== human.actorAlias
+        ? undefined : await senderView(client, messageId, reader);
+      return messageDetailWithReplies(row, view);
+    });
+  }
+
+  // A copied line keeps the source root id, so the root check cannot open it. Only its initiating human can.
+  async getVisibleHumanLineageMessage(
+    messageId: string, options: HumanMessageOptions, reader?: MessageReader,
+  ): Promise<Record<string, unknown>> {
+    return withAbortableTransaction(this.pool, options.signal, async (client) => {
+      const human = await humanMessageAuthority(client, options);
+      const owner = await loadHumanMessageInitiator(client, messageId);
+      if (owner?.humanId !== human.humanId || owner.tenantId !== human.tenantId
+          || owner.messageTenantId !== human.tenantId || owner.rootMessageId === messageId) {
+        throw new StoreError('not_found', 'message not found or not owned');
+      }
+      const row = await loadMessageDetail(client, messageId, human.tenantId, human.actorAlias);
       const view = reader === undefined || row.tenant_id !== human.tenantId || row.actor_alias !== human.actorAlias
         ? undefined : await senderView(client, messageId, reader);
       return messageDetailWithReplies(row, view);
@@ -602,12 +622,15 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
       };
     });
   }
-  async listMessages(actorTenant: Tenant, actorAlias: string, limit = 100): Promise<Record<string, unknown>> {
+  async listMessages(
+    actorTenant: Tenant, actorAlias: string, limit = 100, humanId?: string,
+  ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'read');
+    if (humanId !== undefined && !isAnyUuid(humanId)) throw new StoreError('invalid_input', 'human viewer is invalid');
     const result = await this.pool.query<MessageListRow & { attachments: unknown }>(
       `WITH page AS MATERIALIZED (
          SELECT visible.id FROM messages visible
-         WHERE EXISTS (SELECT 1 FROM memberships source_member
+         WHERE (EXISTS (SELECT 1 FROM memberships source_member
                        WHERE source_member.tenant_id=$1 AND source_member.room_id=visible.room_id
                          AND source_member.alias=$2 AND source_member.enabled AND visible.tenant_id=$1)
             OR (EXISTS (SELECT 1 FROM deliveries participant
@@ -616,7 +639,11 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
                 AND (visible.tenant_id=$1 OR EXISTS (
                   SELECT 1 FROM acl_edges edge WHERE edge.from_tenant=$1 AND edge.to_tenant=visible.tenant_id
                     AND edge.enabled AND edge.allow_read
-                )))
+                ))))
+           AND ($4::uuid IS NULL OR NOT EXISTS (
+             SELECT 1 FROM human_message_initiators foreign_owner
+             WHERE foreign_owner.message_id=visible.id
+               AND foreign_owner.initiating_human_id IS DISTINCT FROM $4::uuid))
          ORDER BY visible.created_at DESC LIMIT $3
        )
        SELECT m.id AS message_id,m.request_id,m.trace_id,m.tenant_id,m.room_id,m.actor_alias,
@@ -653,7 +680,7 @@ export abstract class MessagesRepository extends MessagePublishingRepository {
                    AND source_member.alias=$2 AND source_member.enabled AND m.tenant_id=$1)
          OR (d.recipient_tenant=$1 AND d.recipient_alias=$2)
        )
-       GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit]
+       GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3`, [actorTenant, actorAlias, limit, humanId ?? null]
     );
     return { items: result.rows.map((row) => withMessageAuthor({
       ...row, deliveries: withValidatedConsumptionTimeline(row.deliveries),

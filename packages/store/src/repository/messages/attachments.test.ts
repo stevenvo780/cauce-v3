@@ -42,7 +42,8 @@ describe('message attachment SQL wiring', () => {
     expect(sql).toContain('a.attempt=d.attempt AND a.claim_token=d.claim_token');
     expect(sql).toContain('a.instance_id=d.consumer_instance_id AND a.epoch=d.consumer_epoch');
     expect(sql).toContain('GROUP BY m.id ORDER BY m.created_at DESC LIMIT $3');
-    expect(query.mock.calls[1]?.[1]).toEqual(['Steven', 'kant', 20]);
+    expect(sql).toContain('human_message_initiators foreign_owner');
+    expect(query.mock.calls[1]?.[1]).toEqual(['Steven', 'kant', 20, null]);
   });
 
   it('never queries message metadata when read permission is denied', async () => {
