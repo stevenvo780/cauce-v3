@@ -63,9 +63,15 @@ await mkdir(dir,{recursive:true,mode:0o700});
 const file=join(dir,'session.jsonl');
 const rec=(payloadType,payload)=>JSON.stringify({stream:{kind:'session',id:SID},payload_type:payloadType,payload})+'\\n';
 await writeFile(file,rec('runtime.session',{kind:'session',event:{kind:'started'}}),{mode:0o600});
-process.stdout.write('Muse listo\\n> ');
+let buffer='',processing=false,skipLf=false,lastOutput='Muse listo';
+const composerRule='─'.repeat(60);
+const composer=()=>process.stdout.write('\\x1b[2J\\x1b[H'+lastOutput+'\\r\\n'+composerRule+'\\r\\n> '
+  +buffer.replaceAll('\\x1b[200~','').replaceAll('\\x1b[201~','').replace(/\\r\\n?/gu,'\\n')
+    .replace(/[\\x00-\\x09\\x0b-\\x1f\\x7f]/gu,'�').replaceAll('\\n','\\r\\n')
+  +'\\x1b7\\r\\n'+composerRule+'\\x1b8');
+process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');
+process.stdout.write('\\x1b[?2004h');composer();
 setInterval(()=>{},60000);
-let buffer='';let timer;
 async function turn(prompt){
   debug('turn '+prompt.length);
   const marker=prompt.includes(${JSON.stringify(markerNuevo)})?${JSON.stringify(markerNuevo)}:prompt.includes(${JSON.stringify(markerV3)})?${JSON.stringify(markerV3)}:prompt.includes(${JSON.stringify(markerV2)})?${JSON.stringify(markerV2)}:prompt.includes(${JSON.stringify(markerV1)})?${JSON.stringify(markerV1)}:'';
@@ -75,23 +81,40 @@ async function turn(prompt){
   if(prompt.includes(${JSON.stringify(falla)})){
     const failTerm=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'terminal',terminal:'failed'}});
     await appendFile(file,intent+failTerm,{mode:0o600});
-    process.stdout.write('error\\n> ');
+    lastOutput='error';composer();
     return;
   }
   const msg=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'assistant_message_committed',text:answer}});
   const term=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'terminal',terminal:'completed'}});
   await appendFile(file,intent+msg+term,{mode:0o600});
-  process.stdout.write(answer+'\\n> ');
+  lastOutput=answer;composer();
+}
+function submission(){
+  if(skipLf&&buffer){if(buffer.startsWith('\\n'))buffer=buffer.slice(1);skipLf=false;}
+  const start=buffer.indexOf('\\x1b[200~'),newline=buffer.search(/[\\r\\n]/u);
+  let end,consumed,prompt;
+  if(start>=0&&(newline<0||start<newline)){
+    end=buffer.indexOf('\\x1b[201~',start+6);
+    if(end<0||!/[\\r\\n]/u.test(buffer[end+6]??''))return;
+    prompt=buffer.slice(0,start)+buffer.slice(start+6,end);consumed=end+7;
+  }else{
+    if(newline<0)return;
+    prompt=buffer.slice(0,newline);consumed=newline+1;
+  }
+  skipLf=buffer[consumed-1]==='\\r';
+  if(skipLf&&buffer[consumed]==='\\n'){consumed+=1;skipLf=false;}
+  buffer=buffer.slice(consumed);
+  return prompt.replace(/\\r\\n?/gu,'\\n');
+}
+async function drain(){
+  if(processing)return;
+  processing=true;
+  try{let prompt;while((prompt=submission())!==undefined){if(prompt.trim())await turn(prompt);}}
+  finally{processing=false;composer();}
 }
 process.stdin.on('data',(chunk)=>{
   debug('stdin '+chunk.length);
-  buffer+=chunk.toString('utf8');
-  clearTimeout(timer);
-  timer=setTimeout(()=>{
-    const prompt=buffer.replaceAll('\\x1b[200~','').replaceAll('\\x1b[201~','').replace(/\\r+$/u,'');
-    buffer='';
-    if(prompt.trim().length>0)void turn(prompt);
-  },400);
+  buffer+=chunk;composer();void drain();
 });
 `, { mode: 0o700 });
   const kernelSha = createHash('sha256').update(await readFile(kernel)).digest('hex');

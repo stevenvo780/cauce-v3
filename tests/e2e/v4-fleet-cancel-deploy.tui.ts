@@ -8,6 +8,7 @@ import { cancelDeployCapture, type CancelDeployFixture } from './v4-fleet-cancel
 import { observeAdmittedCancelDeploy } from './v4-fleet-cancel-deploy.materialize.js';
 import { deployCancelRelease } from './v4-fleet-cancel-deploy.release.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
+import { IDLE_PLACEHOLDER } from './s2d-provider.js';
 
 const provider = `#!/usr/local/bin/python3
 import json,os,pathlib,re,sys,tty,uuid
@@ -24,30 +25,47 @@ def append(kind,payload):
   stream.write(json.dumps({'type':kind,'payload':payload})+'\\n');stream.flush();os.fsync(stream.fileno())
 if not transcript.exists():append('session_meta',{'id':native,'source':'cli'})
 tty.setraw(sys.stdin.fileno())
-sys.stdout.write('\\x1b[?2004h› ');sys.stdout.flush()
-pending=''
+pending='';skip_lf=False
+def render_idle():
+ if pending:raise RuntimeError('a draft cannot be rendered as an idle composer')
+ sys.stdout.write('\\r\\n› \\x1b[2m'+${JSON.stringify(IDLE_PLACEHOLDER)}+'\\x1b[22m\\r\\x1b[2C');sys.stdout.flush()
+def render_composer():
+ if not pending:render_idle();return
+ visible=pending.replace('\\x1b[200~','').replace('\\x1b[201~','').replace('\\r\\n','\\n').replace('\\r','\\n')
+ sys.stdout.write('\\r\\x1b[2K› '+visible.replace('\\n','\\r\\n'));sys.stdout.flush()
+sys.stdout.write('\\x1b[?2004h');sys.stdout.flush();render_idle()
 while True:
  chunk=os.read(sys.stdin.fileno(),65536).decode(errors='replace')
  if not chunk:break
+ if skip_lf:
+  if chunk.startswith('\\n'):chunk=chunk[1:]
+  skip_lf=False
+  if not chunk:continue
  pending+=chunk
  if len(pending.encode())>1048576:raise RuntimeError('native terminal input exceeds its bound')
- first=pending.find('\\x1b[200~');last=pending.find('\\x1b[201~')
- if first<0 or last<first or not any(char in pending[last+6:] for char in '\\r\\n'):continue
- text=pending[first+6:last].replace('\\r\\n','\\n').replace('\\r','\\n');pending=''
- nonce=re.search(r'CAUCE_BOOTSTRAP_[a-f0-9]{64}',text)
- if nonce:answer=nonce.group(0)
- else:
-  marker=re.search(r'FLEET-DEPLOY-DELIVERY-[a-f0-9-]+',text)
-  correlation=re.search(r'"cauce_correlation_id"\\s*:\\s*"([a-f0-9]{64})"',text)
-  if marker is None or correlation is None:raise RuntimeError('native delivery lacks its marker or correlation')
-  answer=json.dumps({'reply':'DELIVERED:'+marker.group(0),'messages':[],'status':'done','retryable':False,
-    'artifacts':[],'cauce_correlation_id':correlation.group(1)})
- turn=str(uuid.uuid4())
- append('event_msg',{'type':'task_started','turn_id':turn})
- append('response_item',{'type':'message','role':'user','content':[{'type':'input_text','text':text}],
-   'internal_chat_message_metadata_passthrough':{'turn_id':turn}})
- append('event_msg',{'type':'task_complete','turn_id':turn,'last_agent_message':answer})
- sys.stdout.write('\\r\\n'+answer+'\\r\\n› ');sys.stdout.flush()
+ while True:
+  first=pending.find('\\x1b[200~');last=pending.find('\\x1b[201~',first+6)
+  ending=re.search(r'[\\r\\n]',pending[last+6:]) if last>=0 else None
+  if first!=0 or last<first or ending is None:break
+  text=pending[first+6:last].replace('\\r\\n','\\n').replace('\\r','\\n');pending=pending[last+6+ending.end():]
+  if ending.group(0)=='\\r':
+   if pending.startswith('\\n'):pending=pending[1:]
+   elif not pending:skip_lf=True
+  nonce=re.search(r'CAUCE_BOOTSTRAP_[a-f0-9]{64}',text)
+  if nonce:answer=nonce.group(0)
+  else:
+   marker=re.search(r'FLEET-DEPLOY-DELIVERY-[a-f0-9-]+',text)
+   correlation=re.search(r'"cauce_correlation_id"\\s*:\\s*"([a-f0-9]{64})"',text)
+   if marker is None or correlation is None:raise RuntimeError('native delivery lacks its marker or correlation')
+   answer=json.dumps({'reply':'DELIVERED:'+marker.group(0),'messages':[],'status':'done','retryable':False,
+     'artifacts':[],'cauce_correlation_id':correlation.group(1)})
+  turn=str(uuid.uuid4())
+  append('event_msg',{'type':'task_started','turn_id':turn})
+  append('response_item',{'type':'message','role':'user','content':[{'type':'input_text','text':text}],
+    'internal_chat_message_metadata_passthrough':{'turn_id':turn}})
+  append('event_msg',{'type':'task_complete','turn_id':turn,'last_agent_message':answer})
+  sys.stdout.write('\\r\\n'+answer+'\\r\\n');sys.stdout.flush()
+ render_composer()
 `;
 
 export const cancelDeployTuiRuntime: ComputerRuntimeBundle = { ...cancelDeployRuntime, providerCli: provider, sharedTui: true };

@@ -77,22 +77,40 @@ def append(kind, payload):
 if not transcript.exists():
     append("session_meta", {"id": native, "source": "cli", "cwd": os.getcwd()})
 tty.setraw(sys.stdin.fileno())
-sys.stdout.write("\x1b[?2004hA18C_TUI_READY\r\n› ")
+sys.stdout.write("\x1b[?2004hA18C_TUI_READY\r\n")
 sys.stdout.flush()
 pending = ""
+
+
+def render_idle():
+    if pending:
+        raise RuntimeError("a draft cannot be rendered as an idle composer")
+    sys.stdout.write("\r\n› \x1b[2mAsk owned provider...\x1b[22m\r\x1b[2C")
+    sys.stdout.flush()
+
+
+render_idle()
 while True:
     chunk = os.read(sys.stdin.fileno(), 65536).decode(errors="replace")
     if not chunk:
         break
+    if not pending:
+        sys.stdout.write("\r\x1b[2K› ")
+        sys.stdout.flush()
     pending += chunk
     if len(pending.encode()) > 1048576:
         raise RuntimeError("owned terminal input exceeds its bound")
+    sys.stdout.write(chunk.replace("\x1b[200~", "").replace("\x1b[201~", "").replace("\n", "\r\n"))
+    sys.stdout.flush()
     first = pending.find("\x1b[200~")
     last = pending.find("\x1b[201~")
-    if first < 0 or last < first or not any(char in pending[last + 6:] for char in "\r\n"):
+    if first < 0 or last < first:
+        continue
+    submitted = re.search(r"\r\n|\r|\n", pending[last + 6:])
+    if submitted is None:
         continue
     prompt = pending[first + 6:last].replace("\r\n", "\n").replace("\r", "\n")
-    pending = ""
+    pending = pending[last + 6 + submitted.end():]
     turn = str(uuid.uuid4())
     append("event_msg", {"type": "task_started", "turn_id": turn})
     append("response_item", {"type": "message", "role": "user",
@@ -100,5 +118,11 @@ while True:
                             "internal_chat_message_metadata_passthrough": {"turn_id": turn}})
     answer = response(prompt)
     append("event_msg", {"type": "task_complete", "turn_id": turn, "last_agent_message": answer})
-    sys.stdout.write("\r\n" + answer + "\r\n› ")
+    sys.stdout.write("\r\n" + answer + "\r\n")
     sys.stdout.flush()
+    if pending:
+        draft = pending.replace("\x1b[200~", "").replace("\x1b[201~", "").replace("\r\n", "\n").replace("\r", "\n")
+        sys.stdout.write("\r\n› " + draft.replace("\n", "\r\n"))
+        sys.stdout.flush()
+    else:
+        render_idle()

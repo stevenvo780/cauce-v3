@@ -9,6 +9,7 @@ import { PasteSessionRunner } from '../../packages/adapter-sdk/src/shared-sessio
 import { codexTranscript } from '../../packages/adapter-sdk/src/shared-session/rollout.js';
 import { inputDigest } from '../../packages/adapter-sdk/src/shared-session/consumption.js';
 import { CliTmux } from '../../packages/adapter-sdk/src/shared-session/tmux.js';
+import { IDLE_PLACEHOLDER } from './s2d-provider.js';
 
 // Only the provider kernel is synthetic; terminal transport, transcript parsing and fenced ACKs are real.
 export async function ackCanonicalConsumption(
@@ -45,13 +46,20 @@ const line=(type,payload)=>JSON.stringify({type,payload});
 appendFileSync(file,line('session_meta',{id:sid,source:'cli'})+'\\n',{mode:0o600,flag:'wx'});
 if(!process.stdin.isTTY)throw new Error('Synthetic kernel requires a real terminal');
 process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');
-process.stdout.write('\\x1b[?2004h› ');
+process.stdout.write('\\x1b[?2004h');
 let received='',finished=false;
+const visible=value=>value.replace(/\\x1b\\[(?:200|201)~/gu,'').replace(/\\r\\n?/gu,'\\r\\n').replace(/[\\x00-\\x09\\x0b\\x0c\\x0e-\\x1f\\x7f]/gu,'�');
+const renderComposer=()=>process.stdout.write('\\r\\n› '+(received?visible(received):'\\x1b[2m'+${JSON.stringify(IDLE_PLACEHOLDER)}+'\\x1b[22m\\r\\x1b[2C'));
+renderComposer();
 for await(const chunk of process.stdin){
- if(finished)continue;
+ if(!received)process.stdout.write('\\r\\x1b[2K› ');
  received+=chunk;if(Buffer.byteLength(received)>1048576)throw new Error('Native input budget exceeded');
+ process.stdout.write(visible(chunk));
+ if(finished)continue;
  const start=received.indexOf('\\x1b[200~'),end=received.indexOf('\\x1b[201~');
- if(start<0||end<start||!/[\\r\\n]/u.test(received.slice(end+6)))continue;
+ const enter=/\\r\\n|\\r|\\n/u.exec(received.slice(end+6));
+ if(start<0||end<start||enter===null)continue;
+ const remaining=received.slice(end+6+enter.index+enter[0].length);
  const text=received.slice(start+6,end).replace(/\\r\\n?/gu,'\\n'),original=text.split('\\n')[0];
  if(createHash('sha256').update(original).digest('hex')!==${JSON.stringify(inputDigest(input))})throw new Error('Native terminal input differs from the claimed delivery');
  const delivery=JSON.parse(original),correlation=/"cauce_correlation_id":"([a-f0-9]{64})"/u.exec(text)?.[1];
@@ -59,7 +67,7 @@ for await(const chunk of process.stdin){
  const final=JSON.stringify({reply:'respuesta con consumo comprobado '+delivery.body.text,messages:[],notify:[],status:'done',retryable:false,artifacts:[],cauce_correlation_id:correlation});
  appendFileSync(file,[line('event_msg',{type:'task_started',turn_id:turn}),line('response_item',{type:'message',role:'user',content:[{type:'input_text',text}],internal_chat_message_metadata_passthrough:{turn_id:turn}}),line('event_msg',{type:'task_complete',turn_id:turn,last_agent_message:final})].join('\\n')+'\\n');
  writeFileSync(${JSON.stringify(submitted)},JSON.stringify({input_sha256:${JSON.stringify(inputDigest(input))},correlation}),{mode:0o600,flag:'wx'});
- finished=true;process.stdout.write('\\r\\n› ');
+ finished=true;received=remaining;process.stdout.write('\\r\\n'+final+'\\r\\n');renderComposer();
 }
 `, { mode: 0o700, flag: 'wx' });
     const notices: string[] = [];

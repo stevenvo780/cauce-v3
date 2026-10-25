@@ -66,19 +66,22 @@ const fs=require('node:fs');const path=require('node:path');const crypto=require
 if(process.argv.includes('--version')){console.log('2.1.0 controlled-lab');process.exit(0);}
 const home=process.env.HOME;const config=process.env.CLAUDE_CONFIG_DIR||path.join(home,'.claude');
 const dir=path.join(config,'projects',process.cwd().replace(/\//g,'-'));fs.mkdirSync(dir,{recursive:true});
-const session=crypto.randomUUID();const transcript=path.join(dir,session+'.jsonl');let buffer='',paste='';
+const session=crypto.randomUUID();const transcript=path.join(dir,session+'.jsonl');let buffer='',paste='',typed='',lastOutput='';
 let submits=0;const stateFile=path.join(home,'controlled-tui-state.json');
 const state=value=>fs.writeFileSync(stateFile,JSON.stringify({submits,bufferLength:buffer.length,pasteLength:paste.length,...value}));
-const screen=()=>process.stdout.write('\x1b[2J\x1b[H❯ ');
+const screen=()=>{const draft=(paste+typed+buffer).replaceAll('\x1b[200~','').replaceAll('\x1b[201~','');
+const lines=draft.replace(/\r\n?/g,'\n').split('\n');const column=(lines.length===1?2:0)+lines.at(-1).length;
+process.stdout.write('\x1b[2J\x1b[H'+(lastOutput?lastOutput+'\r\n':'')+'─'.repeat(60)+'\r\n❯ '+lines.join('\r\n')
++'\r\n'+'─'.repeat(60)+'\x1b[1A\r'+(column?'\x1b['+column+'C':''));};
 function append(value){fs.appendFileSync(transcript,JSON.stringify(value)+'\n');}
 function submit(){if(!paste)return;submits+=1;const text=paste;paste='';const user=crypto.randomUUID();
 append({type:'user',uuid:user,parentUuid:null,isSidechain:false,promptSource:'typed',sessionId:session,message:{role:'user',content:text}});
 const error=fs.existsSync(path.join(home,'api-error'));const id=/"cauce_correlation_id":"([a-f0-9]{64})"/.exec(text)?.[1];
 const output=error?'PRIVATE_PROVIDER_ERROR':JSON.stringify({reply:'LIVE_RELEASE_CANARY_DONE',messages:[],status:'done',retryable:false,artifacts:[],cauce_correlation_id:id});
 append({type:'assistant',uuid:crypto.randomUUID(),parentUuid:user,isSidechain:false,sessionId:session,
-...(error?{isApiErrorMessage:true}:{}),message:{role:'assistant',stop_reason:error?'stop_sequence':'end_turn',content:[{type:'text',text:output}]}});state({correlationFound:!!id,stopReason:error?'stop_sequence':'end_turn'});screen();}
+...(error?{isApiErrorMessage:true}:{}),message:{role:'assistant',stop_reason:error?'stop_sequence':'end_turn',content:[{type:'text',text:output}]}});state({correlationFound:!!id,stopReason:error?'stop_sequence':'end_turn'});typed='';lastOutput=output;}
 process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');process.stdin.resume();process.stdout.write('\x1b[?2004h');screen();state({ready:true});
-process.stdin.on('data',chunk=>{buffer+=chunk;state({inputReceived:true});while(buffer.length){if(buffer.startsWith('\x1b[200~')){const end=buffer.indexOf('\x1b[201~');if(end<0)return;paste=buffer.slice(6,end).replace(/\r\n?/g,'\n');buffer=buffer.slice(end+6);state({pasteReceived:true});continue;}if(buffer.startsWith('\x1b')&&buffer.length<6)return;const c=buffer[0];buffer=buffer.slice(1);if(c==='\r'||c==='\n')submit();}});
+process.stdin.on('data',chunk=>{buffer+=chunk;state({inputReceived:true});while(buffer.length){if(buffer.startsWith('\x1b[200~')){const end=buffer.indexOf('\x1b[201~');if(end<0)break;paste=buffer.slice(6,end).replace(/\r\n?/g,'\n');buffer=buffer.slice(end+6);state({pasteReceived:true});continue;}if(buffer.startsWith('\x1b')&&buffer.length<6)break;const c=buffer[0];buffer=buffer.slice(1);if(c==='\r'||c==='\n')submit();else typed+=c;}screen();});
 `;
 
 const OPENCLAW_AGENT = `import { existsSync } from 'node:fs';
@@ -166,6 +169,7 @@ export async function startLiveAdapterFixture(options: { harness?: 'claude' | 'o
       'scripts/secure_path.py', 'scripts/pin-container-release.py', 'scripts/validate-container-mount.py',
       'scripts/alias-lock-exec.py', 'scripts/verify-hermes-runtime.py', 'container-runtime/cauce-container-runtime.py',
       'container-runtime/cauce_container_base.py', 'container-runtime/cauce_container_proc.py',
+      'container-runtime/cauce_container_lease.py',
       'container-runtime/cauce_container_tree.py', 'container-runtime/cauce_container_adoption.py',
       'container-runtime/cauce_container_restart.py', 'container-runtime/podar-releases.py'];
     for (const file of opsFiles) { await mkdir(join(roots.ops, file, '..'), { recursive: true }); await copyFile(join(ROOT, 'ops', file), join(roots.ops, file)); }

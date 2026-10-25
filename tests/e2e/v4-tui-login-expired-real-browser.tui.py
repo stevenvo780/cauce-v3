@@ -22,7 +22,8 @@ sys.stdout.write('\x1b[?2004h')
 sys.stdout.flush()
 mode = ''
 pending = ''
-pasting = False
+busy = False
+history = ''
 
 
 def append(path: pathlib.Path, value: dict) -> None:
@@ -32,35 +33,63 @@ def append(path: pathlib.Path, value: dict) -> None:
         os.fsync(stream.fileno())
 
 
+def render() -> None:
+    if mode == 'expired':
+        frame = 'Login expired · Please run /login\r\nPaste code here if prompted >\r\n'
+    elif busy:
+        frame = 'CLAUDE_CANARY_BUSY\r\nEsc to interrupt\r\n'
+    else:
+        draft = pending.replace('\x1b[200~', '').replace('\x1b[201~', '').replace('\r\n', '\n').replace('\r', '\n')
+        draft = ''.join(char if char == '\n' or char >= ' ' and char != '\x7f' else '�' for char in draft)
+        lines = draft.split('\n')
+        header = 'CLAUDE_CANARY_READY' + ('\r\n' + history if history else '')
+        rule = '─' * max(3, os.get_terminal_size(sys.stdout.fileno()).columns - 1)
+        composer = '\r\n'.join(('  ' if index else '❯ ') + line for index, line in enumerate(lines))
+        frame = header + '\r\n' + rule + '\r\n' + composer + '\x1b7\r\n' + rule + '\x1b8'
+    sys.stdout.write('\x1b[2J\x1b[H' + frame)
+    sys.stdout.flush()
+
+
+def submission() -> tuple[str, str] | None:
+    first = pending.find('\x1b[200~')
+    offset = 0
+    if first >= 0:
+        last = pending.find('\x1b[201~', first + 6)
+        if last < 0:
+            return None
+        offset = last + 6
+    enter = re.search(r'\r\n|\r|\n', pending[offset:])
+    if enter is None:
+        return None
+    boundary = offset + enter.start()
+    return pending[:boundary], pending[offset + enter.end():]
+
+
 while True:
     current = (profile / 'double-mode').read_text().strip()
     if current != mode:
         mode = current
-        frame = ('Login expired · Please run /login\r\nPaste code here if prompted >\r\n'
-                 if mode == 'expired' else 'CLAUDE_CANARY_READY\r\n❯ ')
-        sys.stdout.write('\x1b[2J\x1b[H' + frame)
-        sys.stdout.flush()
-    if not select.select([sys.stdin], [], [], 0.1)[0]:
+        busy = False
+        render()
+    ready = submission()
+    if ready is None:
+        if not select.select([sys.stdin], [], [], 0.1)[0]:
+            continue
+        chunk = os.read(sys.stdin.fileno(), 65536).decode(errors='replace')
+        if not chunk:
+            break
+        append(profile / 'double-input.jsonl', {'mode': mode, 'bytes': len(chunk.encode()), 'sha256': hashlib.sha256(chunk.encode()).hexdigest()})
+        pending += chunk
+        render()
         continue
-    chunk = os.read(sys.stdin.fileno(), 65536).decode(errors='replace')
-    if not chunk:
-        break
-    append(profile / 'double-input.jsonl', {'mode': mode, 'bytes': len(chunk.encode()), 'sha256': hashlib.sha256(chunk.encode()).hexdigest()})
-    pending += chunk
-    if '\x1b[200~' in pending:
-        pasting = True
-    if '\x1b[201~' in pending:
-        pasting = False
-    if pasting or not pending.endswith(('\r', '\n')):
-        continue
-    raw = pending[:-1].replace('\x1b[200~', '').replace('\x1b[201~', '')
+    raw, pending = ready
+    raw = raw.replace('\x1b[200~', '').replace('\x1b[201~', '')
     text = raw.replace('\r\n', '\n').replace('\r', '\n')
     append(profile / 'double-normalization.jsonl', {
         'raw_sha256': hashlib.sha256(raw.encode()).hexdigest(),
         'normalized_sha256': hashlib.sha256(text.encode()).hexdigest(),
         'raw_cr': raw.count('\r'), 'normalized_cr': text.count('\r'), 'normalized_lf': text.count('\n'),
     })
-    pending = ''
     if mode == 'expired':
         continue
     user = str(uuid.uuid4())
@@ -71,8 +100,8 @@ while True:
     if hold and (not held.exists() or held.read_text() != hold.group(0)):
         held.write_text(hold.group(0))
         held.chmod(0o600)
-        sys.stdout.write('\x1b[2J\x1b[HCLAUDE_CANARY_BUSY\r\nEsc to interrupt\r\n')
-        sys.stdout.flush()
+        busy = True
+        render()
         continue
     marker = re.search(r'H8C_OK_[a-f0-9-]+', text) or hold
     correlation = re.search(r'"cauce_correlation_id"\s*:\s*"([a-f0-9]{64})"', text)
@@ -83,5 +112,6 @@ while True:
     reply = json.dumps(answer)
     append(transcript, {'type': 'assistant', 'uuid': str(uuid.uuid4()), 'parentUuid': user, 'sessionId': native,
                         'message': {'role': 'assistant', 'stop_reason': 'end_turn', 'content': [{'type': 'text', 'text': reply}]}})
-    sys.stdout.write('\r\n' + reply + '\r\n❯ ')
-    sys.stdout.flush()
+    busy = False
+    history = reply
+    render()

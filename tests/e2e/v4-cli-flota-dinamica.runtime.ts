@@ -91,7 +91,7 @@ export function createFleetCliRuntimeBundle(candidateSource: string, options: { 
   if (!isAbsolute(candidateSource)) throw new Error('the candidate source archive must have an absolute path');
   const source = resolve(candidateSource);
   return {
-    providerCli: options.canonicalComposer ? canonicalComposerProvider() : provider,
+    providerCli: options.canonicalComposer === false ? provider : canonicalComposerProvider(),
     sharedTui: true,
     async stage(directory) {
       const stage = dirname(directory);

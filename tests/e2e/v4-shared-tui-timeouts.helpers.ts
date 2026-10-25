@@ -31,11 +31,22 @@ let sequence = 0;
 let paints = 0;
 let submittedAt = 0;
 let finishedAt;
+let draft = '';
+let generating = false;
+let lastReply = '';
 function state() {
   fs.writeFileSync(stateFile, JSON.stringify({ submits: sequence, submittedAt, finishedAt, paints }));
 }
-function screen(generating) {
-  process.stdout.write('\x1b[2J\x1b[H' + (generating ? '✻ Working… (esc to interrupt)\r\n' : 'Controlled TUI ready\r\n') + '❯ ');
+function screen(nextGenerating = generating) {
+  generating = nextGenerating;
+  const content = (draft + buffer).replace(/\x1b\[(?:200|201)~/gu, '').replace(/\r\n?/gu, '\n')
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/gu, '�');
+  const lines = content.split('\n');
+  const header = generating ? '✻ Working… (esc to interrupt)' : 'Controlled TUI ready' + (lastReply ? '\r\n' + lastReply : '');
+  const rule = '─'.repeat(Math.max(3, (process.stdout.columns || 80) - 1));
+  const composer = lines.map((line, index) => (index ? '  ' : '❯ ') + line).join('\r\n');
+  const cursor = '\x1b[' + (header.split('\r\n').length + lines.length + 1) + ';' + (lines.at(-1).length + 3) + 'H';
+  process.stdout.write('\x1b[2J\x1b[H' + header + '\r\n' + rule + '\r\n' + composer + '\r\n' + rule + cursor);
 }
 function entry(type, uuid, parentUuid, content) {
   return { type, uuid, parentUuid, isSidechain: false, sessionId,
@@ -50,6 +61,7 @@ function submit() {
   submittedAt = Date.now();
   const prompt = pasted;
   pasted = '';
+  draft = '';
   const id = /"cauce_correlation_id":"([a-f0-9]{64})"/u.exec(prompt)?.[1];
   if (!id) throw new Error('Controlled TUI did not receive correlated bracketed paste');
   const userId = crypto.randomUUID();
@@ -77,6 +89,7 @@ function submit() {
       reply, messages: [], status: 'done', retryable: false, artifacts: [], cauce_correlation_id: id,
     })));
     finishedAt = Date.now();
+    lastReply = reply;
     screen(false);
     state();
   }, sequence > 1 ? 80 : scenario === 'late' ? 2_200 : 1_800);
@@ -92,16 +105,25 @@ process.stdin.on('data', chunk => {
   while (buffer.length > 0) {
     if (buffer.startsWith('\x1b[200~')) {
       const end = buffer.indexOf('\x1b[201~');
-      if (end < 0) return;
+      if (end < 0) { screen(); return; }
       pasted = buffer.slice(6, end).replace(/\r\n?/gu, '\n');
+      draft += pasted;
       buffer = buffer.slice(end + 6);
+      screen();
       continue;
     }
-    if (buffer.startsWith('\x1b') && buffer.length < 6) return;
+    if (buffer.startsWith('\x1b') && buffer.length < 6) { screen(); return; }
     const character = buffer[0];
     buffer = buffer.slice(1);
     if (character === '\r' || character === '\n') submit();
+    else {
+      if (character === '\x7f') draft = draft.slice(0, -1);
+      else if (character === '\x15') draft = '';
+      else draft += character;
+      if (pasted) pasted = draft;
+    }
   }
+  screen();
 });
 `;
 

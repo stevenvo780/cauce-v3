@@ -107,14 +107,27 @@ if headless:
 signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
 print("POLICY_READY:" + native, flush=True)
 tty.setraw(sys.stdin.fileno())
-sys.stdout.write("\x1b[?2004h\r\n› ")
+sys.stdout.write("\x1b[?2004h")
 sys.stdout.flush()
 pending = ""
 pasting = False
+
+
+def render_idle():
+    if pending:
+        raise RuntimeError("a draft cannot be rendered as an idle composer")
+    sys.stdout.write("\r\n› \x1b[2mAsk owned provider...\x1b[22m\r\x1b[2C")
+    sys.stdout.flush()
+
+
+render_idle()
 while True:
     chunk = os.read(sys.stdin.fileno(), 4096).decode(errors="replace")
     if not chunk:
         break
+    if not pending:
+        sys.stdout.write("\r\x1b[2K› ")
+        sys.stdout.flush()
     pending += chunk
     if "\x1b[200~" in pending:
         pasting = True
@@ -126,5 +139,6 @@ while True:
         continue
     text = pending.replace("\x1b[200~", "").replace("\x1b[201~", "").replace("\r", "\n").strip()
     pending = ""
-    sys.stdout.write("\r\n" + answer(text) + "\r\n› ")
+    sys.stdout.write("\r\n" + answer(text) + "\r\n")
     sys.stdout.flush()
+    render_idle()
