@@ -223,15 +223,38 @@ class RestartGuardTests(unittest.TestCase):
             with self.subTest(pane=repr(pane)):
                 assert_empty_composer(pane, 2, 0)
 
+    def test_idle_harness_layouts_with_history_and_status_footers(self):
+        # Idle composers as each TUI drew them on 25-oct, with their history replaced.
+        codex = ("• Ran the last command\n  Worked for 1h 27m\n\n\n"
+                 "\x1b[1m\x1b[38;2;186;130;255m»\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n"
+                 "  \x1b[38;2;246;226;183mGPT ultra\x1b[39m · \x1b[38;2;242;181;144mContext 67% left\x1b[39m · branch\n"
+                 "  \x1b[1m?\x1b[0m for shortcuts\n")
+        grok = ("     Worked for 11m18s\n\n  \x1b[38;2;80;80;88m╭────────────────╮\n"
+                "  \x1b[38;2;80;80;88m│\x1b[38;2;225;225;225m \x1b[38;2;200;200;200m❯ \x1b[38;2;225;225;225m"
+                "            \x1b[38;2;80;80;88m│\n"
+                "  \x1b[38;2;80;80;88m╰──────────── \x1b[38;2;128;128;128mGrok 4.7 (xhigh)\n\n"
+                "  \x1b[1mShift+Tab\x1b[0m:mode  │  \x1b[1mCtrl+x\x1b[0m:shortcuts\n")
+        gemini = ("> previous request\n\x1b[90m────────────\n\x1b[94m>\x1b[39m\n\x1b[90m────────────\n"
+                  "? for shortcuts\x1b[39m        \x1b[2mGemini · high\n")
+        muse = ("◆ Worked for 1h 26m\n\x1b[2m\x1b[38;2;103;108;116m──────────────\n"
+                "\x1b[0m\x1b[38;2;251;191;36m❯ \x1b[39m\n\x1b[2m──────────────\n\x1b[0m  muse-wonder · max · YOLO\n")
+        synthetic = "STANDARD_READY:0000\n\n›\n\n\n"
+        for harness, pane, x, y in (("codex", codex, 2, 4), ("grok", grok, 6, 3), ("gemini", gemini, 2, 2),
+                                    ("muse", muse, 2, 2), ("synthetic", synthetic, 2, 2)):
+            with self.subTest(harness=harness):
+                assert_empty_composer(pane, x, y)
+
     def test_drafts_and_unknown_states_hold_without_disclosing_text(self):
         cases = [("❯ owned unsent text\n", 2, 0),
                  ("› \x1b[2mplaceholder\x1b[22mowned draft\n", 2, 0),
                  ("❯ \n  owned wrapped draft\n", 2, 0),
                  ("❯ first line\n  \n", 2, 1),
                  ("❯ owned draft\n› \n", 2, 1),
-                 ("❯ owned draft\n──────\n› \n", 2, 2),
+                 ("╭──────╮\n│ ❯ │\n│   owned │\n╰──────╯\n", 4, 1),
                  ("────────\nowned draft\n› \n", 2, 2),
                  ("owned wrapped input\n› \n", 2, 1),
+                 ("› owned quote\n  \n  > \n", 4, 2),
+                 ("› \n\n  owned second paragraph\n", 2, 0),
                  ("old response\n", 2, 0), ("\n", 0, 0),
                  ("❯ \n", 5, 0), ("❯ \n", 2, 3),
                  ("❯ [Pasted text #1]\n", 2, 0),

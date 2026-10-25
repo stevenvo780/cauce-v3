@@ -14,7 +14,12 @@ from cauce_container_base import IDENTITY_ENV_KEYS, PermanentError
 from cauce_container_proc import expected_environment, matched_fs_credentials, open_pidfd, pidfd_matches_starttime
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
-PROMPT = re.compile(r"^\s*(?:│\s*)?([❯›»>])(?:\s|$)")
+# The composer prompt sits at column 0 or right inside a box edge; drafts indent their continuation lines.
+PROMPT = re.compile(r"^(?:\s*│\s?)?([❯›»>])(?:\s|$)")
+# A drawn rule or box edge, which may carry a status label after its run of strokes.
+RULE = re.compile(r"^\s*[─━═╭╰┌└][─━═]{2,}")
+FOOTER = re.compile(r"context left|context \d+% left|\d+% context left|\? for shortcuts|bypass permissions|shift\+tab"
+                    r"|permissions on|accept edits", re.I)
 HOOK_NAME = re.compile(r"[a-z][a-z0-9-]*")
 GUARD_COMMANDS = {"show-hooks", "show-options", "list-panes", "capture-pane", "if-shell", "set-option", "select-pane"}
 PROC = "/proc"
@@ -63,8 +68,8 @@ def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int) -> None:
     prompt = PROMPT.match(plain[cursor_y])
     if prompt is None or any(PROMPT.match(line) for line in plain[cursor_y + 1:]):
         hold("PROMPT_UNKNOWN")
-    # Scrolled or multiline input cannot be distinguished from history here.
-    if any(line.strip() for line in plain[:cursor_y]):
+    # The prompt line opens the composer, so history may sit above it only past a blank line or a drawn rule.
+    if cursor_y and plain[cursor_y - 1].strip() and not RULE.match(plain[cursor_y - 1]):
         hold("COMPOSER_CONTINUATION_UNKNOWN")
     prefix = plain[cursor_y][:prompt.end()]
     if cursor_x != len(prefix.rstrip()) + 1:
@@ -74,12 +79,12 @@ def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int) -> None:
     mark_at = raw.find(prompt.group(1))
     if content and not dim_text(raw, mark_at + 1):
         hold("COMPOSER_NOT_EMPTY")
-    for raw_line, line in zip(lines[cursor_y + 1:], plain[cursor_y + 1:], strict=True):
-        if not line.strip(" │─━═╭╮╰╯┌┐└┘"):
-            continue
-        # Only dim status footers are distinguishable from a wrapped draft here.
-        if not dim_text(raw_line) or not re.search(
-            r"(?:context left|\? for shortcuts|bypass permissions|shift\+tab|permissions on|accept edits)", line, re.I):
+    # A draft continues right below the prompt. A drawn rule closes the composer; past a blank line, which a draft
+    # may also hold, only recognised status footers may follow.
+    for index, line in enumerate(plain[cursor_y + 1:]):
+        if RULE.match(line):
+            return
+        if line.strip() and (index == 0 or not FOOTER.search(line)):
             hold("COMPOSER_CONTINUATION_UNKNOWN")
 
 
