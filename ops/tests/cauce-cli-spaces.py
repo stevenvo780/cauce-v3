@@ -121,8 +121,8 @@ class SpacesCliTests(unittest.TestCase):
         self.thread.join()
         self.temporary.cleanup()
 
-    def run_cli(self, command, *options, json_output=True):
-        flags = [command, '--session-file', str(self.session), '--tenant', 'Alpha', '--alias', 'canary']
+    def run_cli(self, command, *options, json_output=True, alias='canary'):
+        flags = [command, '--session-file', str(self.session), '--tenant', 'Alpha', '--alias', alias]
         if json_output:
             flags.append('--json')
         if command != 'list':
@@ -146,6 +146,15 @@ class SpacesCliTests(unittest.TestCase):
                 self.assertEqual((code, result), (1, None))
                 self.assertIn('No hay una sesión de consola guardada', error)
                 self.assertIn('cauce login --gateway', error)
+        self.assertEqual(Handler.observed, [])
+
+    def test_create_rejects_reserved_cli_aliases_without_contacting_the_gateway(self):
+        for alias in ('spaces', 'hosts', 'platform', 'login'):
+            with self.subTest(alias=alias):
+                for options in ((), ('--registry-only',)):
+                    code, result, error = self.run_cli('create', '--idempotency-key', 'create-reserved', *options, alias=alias)
+                    self.assertEqual((code, result), (1, None))
+                    self.assertIn('reservado para un subcomando', error)
         self.assertEqual(Handler.observed, [])
 
     def test_create_defaults_to_preview_and_sends_cookie_csrf_scope(self):

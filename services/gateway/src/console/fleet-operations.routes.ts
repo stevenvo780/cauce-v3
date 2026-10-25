@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   ConsoleFleetOperationSchema, FleetCapabilitySchema, FleetTargetSchema, FleetOperationControlSchema, FleetOperationPreviewSchema,
-  FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, sha256Hex,
+  FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, RESERVED_ALIAS_MESSAGE, sha256Hex,
   type ConsoleFleetOperation, type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
 import { FleetOperationError, StoreError, type CompanyAuthoritySource } from '@cauce/store';
@@ -83,7 +83,8 @@ function fleetError(reply: FastifyReply, error: unknown): void {
     return;
   }
   if (error instanceof z.ZodError) {
-    void reply.code(400).send({ error: 'invalid_request', message: 'invalid fleet operation request' });
+    const reserved = error.issues.some(issue => issue.message === RESERVED_ALIAS_MESSAGE);
+    void reply.code(400).send({ error: 'invalid_request', message: reserved ? RESERVED_ALIAS_MESSAGE : 'invalid fleet operation request' });
     return;
   }
   void reply.code(500).send({ error: 'operation_unverified', message: 'fleet operation could not be verified' });

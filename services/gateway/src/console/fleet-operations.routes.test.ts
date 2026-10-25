@@ -76,6 +76,19 @@ describe('durable fleet operation routes', () => {
     expect(close).toHaveBeenCalledOnce();
     for (const [key, method] of Object.entries(repository)) if (key !== 'forAuthority') expect(method).not.toHaveBeenCalled();
   });
+  it.each(['spaces', 'hosts', 'platform', 'login'])('rechaza la previsualización con el alias reservado %s sin llamar al repositorio', async (alias) => {
+    const { app, repository } = await fixture();
+    const create: FleetOperationRequest = { kind: 'create', target: { resource: 'agent', tenant_id: 'Steven', alias },
+      expected_revision: 0, idempotency_key: `reserved-${alias}-1025`, parameters: { runtime_key: 'atlas-rt', harness_id: 'codex',
+        primary_room_id: 'sala', memberships: [{ room_id: 'sala', role: 'agent' }],
+        placement: { host_id: 'h1', mode: 'native', runtime_user: 'runner', home_directory: '/home/runner', state_directory: '/state/x' } } };
+    const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: create });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('reservado');
+    expect(repository.preview).not.toHaveBeenCalled();
+    expect(repository.enqueue).not.toHaveBeenCalled();
+  });
+
   it('returns a validated preview for the authenticated actor without enqueueing', async () => {
     const { app, repository } = await fixture();
     const response = await app.inject({ method: 'POST', url: `${PATH}/preview`, headers: HEADERS, payload: input });

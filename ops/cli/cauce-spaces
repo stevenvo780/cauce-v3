@@ -20,6 +20,9 @@ ContextFailure, read_scoped = context_client.ContextFailure, context_client.read
 
 CONFIG = '/v3/console/config'
 OPERATIONS = '/v3/console/fleet/operations'
+RESERVED_ALIAS_MESSAGE = 'Ese alias está reservado para un subcomando del CLI de Cauce; elige otro.'
+RESERVED_CLI_ALIASES = frozenset({'platform', 'hosts', 'context', 'ver', 'quota', 'spaces', 'companies', 'login', 'fleet',
+                                  'diag', 'fleet-diag', 'doctor', 'recover', 'diagnose', 'tui', 'terminal', 'terminales'})
 IDENTITY = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
 IDEMPOTENCY = re.compile(r'[A-Za-z0-9_-]{8,128}\Z')
 PARAMETER_KEYS = frozenset({'runtime_key', 'harness_id', 'display_name', 'primary_room_id', 'memberships',
@@ -447,6 +450,8 @@ def main(argv=None) -> int:
     try:
         if not IDENTITY.fullmatch(args.tenant) or args.alias is not None and not IDENTITY.fullmatch(args.alias):
             raise ContextFailure('Tenant y alias deben ser identificadores explícitos válidos.')
+        if args.command == 'create' and args.alias is not None and args.alias.lower() in RESERVED_CLI_ALIASES:
+            raise ContextFailure(RESERVED_ALIAS_MESSAGE)
         if args.command != 'list' and args.expected_revision < 0:
             raise ContextFailure('--expected-revision debe ser una revisión no negativa.')
         module = runpy.run_path(str(CLI / 'cauce-login'), run_name='cauce_console_session')

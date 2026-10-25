@@ -58,6 +58,14 @@ describe('public configuration receipt validation', () => {
 });
 
 describe('public configuration receipt transport', () => {
+  it.each(['spaces', 'hosts', 'platform', 'login'])('rechaza crear un agente con el alias reservado %s sin tocar el repositorio', async (alias) => {
+    const { app, repository } = route(receipt);
+    const response = await app.inject({ method: 'POST', url: '/v3/console/config/changes', headers,
+      payload: { mutation: { resource: 'agent', action: 'create', tenant_id: 'Steven', alias }, dry_run: false, expected_revision: 6 } });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toContain('reservado');
+    expect(repository.applyConfigurationChange).not.toHaveBeenCalled();
+  });
   it.each(['55P03', '40001', '40P01'])('returns HTTP 409 for mapped SQL contention %s', async code => {
     const f = route(receipt);
     f.repository.applyConfigurationChange.mockImplementation(async () => databaseError({ code, message: 'private driver details' }));

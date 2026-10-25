@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ConfigMutationSchema, FleetOperationRequestSchema, RESERVED_CLI_ALIASES, isReservedAlias } from '../src/index.js';
+import { ConfigMutationSchema, FleetOperationRequestSchema, RESERVED_ALIAS_MESSAGE, RESERVED_CLI_ALIASES, isReservedAlias } from '../src/index.js';
 
 const script = readFileSync(new URL('../../../ops/cli/cauce', import.meta.url), 'utf8');
 
@@ -60,5 +60,19 @@ describe('reserved CLI aliases', () => {
   it('rejects a fleet create whose runtime_key is a subcommand and accepts a normal one', () => {
     expect(fleetCreate('atlas', 'hosts').success).toBe(false);
     expect(fleetCreate('atlas', 'atlas-rt').success).toBe(true);
+  });
+
+  it.each(['spaces', 'hosts', 'platform', 'login'])('rechaza el alias reservado %s al crear agente, membresía y operación de flota', (alias) => {
+    const agentResult = ConfigMutationSchema.safeParse({ resource: 'agent', action: 'create', tenant_id: 'nuevo', alias });
+    expect(agentResult.success).toBe(false);
+    if (!agentResult.success) expect(JSON.stringify(agentResult.error.issues)).toContain(RESERVED_ALIAS_MESSAGE);
+    const membershipResult = ConfigMutationSchema.safeParse({
+      resource: 'membership', action: 'create', tenant_id: 'nuevo', room_id: 'sala', alias,
+    });
+    expect(membershipResult.success).toBe(false);
+    if (!membershipResult.success) expect(JSON.stringify(membershipResult.error.issues)).toContain(RESERVED_ALIAS_MESSAGE);
+    const fleetResult = fleetCreate(alias, 'atlas-rt');
+    expect(fleetResult.success).toBe(false);
+    if (!fleetResult.success) expect(JSON.stringify(fleetResult.error.issues)).toContain(RESERVED_ALIAS_MESSAGE);
   });
 });
