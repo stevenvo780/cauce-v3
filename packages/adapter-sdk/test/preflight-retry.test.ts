@@ -51,7 +51,7 @@ async function ejecutar(
     store: await freshStore(name),
   });
   try {
-    await adapter.execute({ prompt: "hacé el trabajo", timeoutMs: 2_000, signal });
+    await adapter.execute({ prompt: "haz el trabajo", timeoutMs: 2_000, signal });
   } catch (error) {
     assert.ok(error instanceof AdapterError, `se esperaba un AdapterError, llegó ${String(error)}`);
     return error;
@@ -127,7 +127,7 @@ test("R1b: la sesión nativa que ya no existe se OLVIDA, para que el reintento n
 
   await assert.rejects(
     adapter.execute({
-      prompt: "hacé el trabajo",
+      prompt: "haz el trabajo",
       timeoutMs: 2_000,
       signal: new AbortController().signal,
       sessionKey: "shared:kratos",

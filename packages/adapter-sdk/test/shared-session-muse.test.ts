@@ -45,7 +45,7 @@ const IDLE_PANE = [
   "  Model set to muse-spark-1.3-contributor",
   "  ⎿  Your content, including inter-session messages, may be used for product improvement.",
   "",
-  "❯ respondé solo con la palabra PERA",
+  "❯ responde solo con la palabra PERA",
   "",
   "◆ PERA",
   "",
@@ -56,11 +56,11 @@ const IDLE_PANE = [
 ].join("\n");
 
 const WORKING_PANE = [
-  "❯ Contá del 1 al 30, un número por línea.",
+  "❯ Cuenta del 1 al 30, un número por línea.",
   "◇ Thinking (11s · esc to interrupt)",
   "  Evaluating whether to run a 30-step sleep loop versus providing the count without delays.",
   "• Queued input",
-  "  ↳ Segundo pedido: decí solo MANZANA.",
+  "  ↳ Segundo pedido: di solo MANZANA.",
   "─".repeat(130),
   "❯",
   "─".repeat(130),
@@ -258,7 +258,7 @@ test("muse: la salida sintetizada la entiende el parser de muse exec --json", ()
   assert.match(parsed, /s-1/u);
 });
 
-test("muse: el inventario lista sólo conversaciones, sin vistas ni subagentes", async () => {
+test("muse: el inventario lista solo conversaciones, sin vistas ni subagentes", async () => {
   const { museData, log } = await museWorkspace("muse-inventario");
   assert.deepEqual(await museSessionFiles(museData), [log.file]);
   assert.equal(await museConversationHistoryState(museData), "present");

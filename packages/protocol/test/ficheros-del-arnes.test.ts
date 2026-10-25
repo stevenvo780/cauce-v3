@@ -96,7 +96,7 @@ test("cada cara del perfil cae en SU fichero y NO en los demás", () => {
       if (fichero.nombre === duenno) continue;
       assert.doesNotMatch(
         fichero.texto, marcador,
-        `${String(marcador)} se coló en ${fichero.nombre}; sólo pertenece a ${duenno}`,
+        `${String(marcador)} se coló en ${fichero.nombre}; solo pertenece a ${duenno}`,
       );
     }
   }
@@ -117,7 +117,7 @@ test("lo que escribió una persona sobrevive byte a byte, antes y después del b
   assert.match(soul, /PROPOSITO-SOUL/);
 });
 
-test("el editor manual sólo puede cambiar bytes fuera de los bloques gestionados", () => {
+test("el editor manual solo puede cambiar bytes fuera de los bloques gestionados", () => {
   const current = [
     "# Manual anterior",
     MARCA_INICIO,

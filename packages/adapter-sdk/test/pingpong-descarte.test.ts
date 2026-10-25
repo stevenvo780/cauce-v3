@@ -78,12 +78,12 @@ test("si el trabajo vivia solo en el mensaje al remitente, se pliega en el reply
 test("una delegacion a un tercero legitimo queda intacta", () => {
   const entrada = validateStructuredOutput(salida({
     reply: "Delego la verificación y te aviso.",
-    messages: [{ to: "socrates", body: "verificá el resultado de forma independiente" }],
+    messages: [{ to: "socrates", body: "verifica el resultado de forma independiente" }],
   }));
   const output = validateDeliveryOutput(entrada, contexto());
 
   assert.equal(output.status, "done");
-  assert.deepEqual(output.messages, [{ to: "socrates", body: "verificá el resultado de forma independiente" }]);
+  assert.deepEqual(output.messages, [{ to: "socrates", body: "verifica el resultado de forma independiente" }]);
   const reply = output.reply ?? "";
   assert.equal(reply, "Delego la verificación y te aviso.");
   assert.doesNotMatch(reply, /\[Cauce\]/u);

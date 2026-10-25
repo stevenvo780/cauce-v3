@@ -243,11 +243,11 @@ test("los artifacts de un mensaje delegado sobreviven, y la ausencia sigue siend
     messages: [
       {
         to: "socrates",
-        body: "segui vos con esto",
+        body: "segui tú con esto",
         artifacts: [{ name: "a.pdf", uri: PDF_DATA_URI, inventado: true }],
         inventado: "si",
       },
-      { to: "seneca", body: "y vos con esto otro" },
+      { to: "seneca", body: "y tú con esto otro" },
     ],
     notify: [],
     status: "done",
@@ -257,7 +257,7 @@ test("los artifacts de un mensaje delegado sobreviven, y la ausencia sigue siend
 
   assert.deepEqual(salida.messages[0], {
     to: "socrates",
-    body: "segui vos con esto",
+    body: "segui tú con esto",
     artifacts: [{ name: "a.pdf", uri: PDF_DATA_URI }],
   });
   assert.deepEqual(Object.keys(salida.messages[1] ?? {}), ["to", "body"],

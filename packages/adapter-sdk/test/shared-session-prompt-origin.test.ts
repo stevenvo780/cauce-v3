@@ -22,7 +22,7 @@ import { FakeTmux, assistantEntry, claudeRunner, freshState, userEntry } from ".
  */
 
 const BUS_PROMPT = correlateEnvelopePrompt("--- BEGIN REQUEST ---\nrevisá el disco\n--- END REQUEST ---", "c".repeat(64), true);
-const HUMAN_PROMPT = "mandale a zeus que revise el disco";
+const HUMAN_PROMPT = "mándale a zeus que revise el disco";
 
 async function claudeFile(name: string): Promise<{ home: string; workspace: string; file: string; sessionId: string }> {
   const { home, workspace } = await freshState(name);
@@ -117,7 +117,7 @@ test("codex: bus prompts and wakes are Cauce's, the preamble is skipped, goal tu
   const later = new Date(Date.now() + 60_000);
   await utimes(subagent, later, later);
   assert.equal(await lastPromptOrigin(reader), "human", "a newer sub-agent rollout is not the TUI conversation");
-  await appendFile(cli, `${codexUser('<codex_internal_context source="goal">seguí</codex_internal_context>')}\n`);
+  await appendFile(cli, `${codexUser('<codex_internal_context source="goal">sigue</codex_internal_context>')}\n`);
   assert.equal(await lastPromptOrigin(reader), undefined);
 });
 

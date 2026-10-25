@@ -219,7 +219,7 @@ test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera 
   assert.equal(resultado.ficheros[0]?.estado, "ocupado-por-otro-alias");
 });
 
-test("el disco real sólo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
+test("el disco real solo traduce ENOENT a ausencia y rechaza symlink/no-regular", (t) => {
   const raiz = mkdtempSync(join(tmpdir(), "cauce-perfil-lectura-"));
   t.after(() => { rmSync(raiz, { recursive: true, force: true }); });
 

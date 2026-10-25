@@ -70,7 +70,7 @@ test("grok: el dueño corta el turno del bus que esperaba a sus subagentes y el 
 
   const adapter = await adapterFor(grokRunner({ grokHome, tmux, sleep: delay, turnTimeoutMs: 4_000 }), state, "hades", "grok");
   const output = await adapter.execute({
-    prompt: "revisá con subagentes", sessionKey: "auth-v2:prueba", timeoutMs: 5_000,
+    prompt: "revisa con subagentes", sessionKey: "auth-v2:prueba", timeoutMs: 5_000,
     signal: new AbortController().signal, emissionOutput: () => deposited,
   });
 

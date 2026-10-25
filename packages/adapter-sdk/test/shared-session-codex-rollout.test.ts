@@ -128,7 +128,7 @@ test("el turno del bus entra por la caja de codex y el sobre sale de su rollout"
   assert.equal(rolloutSessionId(rollout), sessionId);
 });
 
-test("codex ignora un rollout headless ajeno y rescata sólo el sobre con su nonce", async () => {
+test("codex ignora un rollout headless ajeno y rescata solo el sobre con su nonce", async () => {
   const { state, codexHome, rollout } = await codexWorkspace("codex-multifile-headless");
   const headlessSessionId = randomUUID();
   const headless = join(

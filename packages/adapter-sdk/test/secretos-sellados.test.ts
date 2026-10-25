@@ -108,7 +108,7 @@ async function turnoConSecretos(
 function conSecreto(id: string, ref: SecretHandoffRef): Delivery {
   return {
     ...delivery(id),
-    body: { prompt: "usá la credencial que te pasaron", timeout_ms: 2_000, secrets_v1: [ref] },
+    body: { prompt: "usa la credencial que te pasaron", timeout_ms: 2_000, secrets_v1: [ref] },
   };
 }
 
@@ -134,7 +134,7 @@ test("writeOwnerOnlyFile crea 0600, no pisa lo existente y no sigue un enlace", 
   assert.equal(await readFile(path, "utf8"), VALUE);
 });
 
-test("materializeSecrets deja el valor en un 0600 dentro del 0700 y sólo devuelve la ruta", async () => {
+test("materializeSecrets deja el valor en un 0600 dentro del 0700 y solo devuelve la ruta", async () => {
   const directory = await scratch("secretos-dir");
   await chmod(directory, 0o700);
   const keyPath = join(await scratch("secretos-clave"), "sealing.key");
@@ -183,7 +183,7 @@ test("el prompt del turno lleva la ruta y el id del secreto, nunca su valor", as
     assert.ok(stdin.includes(payload.id));
     assert.ok(stdin.includes(payload.label));
     assert.ok(!stdin.includes(VALUE), "el valor jamás entra al prompt");
-    assert.match(stdin, /sólo para este turno/u);
+    assert.match(stdin, /solo para este turno/u);
     assert.equal(turno.events.at(-1)?.phase, "done");
     await assert.rejects(access(path), { code: "ENOENT" });
   } finally {
@@ -295,7 +295,7 @@ test("un sobre que nombra otra llave de sellado se cierra antes de descifrar", a
  * plaintext under `MIN_SCRUBBED_LENGTH` and one that is not valid UTF-8 leave NO value to strike
  * out of prose. Their digest still travels, which is why the `data:` reading has to be exact.
  */
-test("un secreto binario o más corto que el suelo de scrub sólo deja digest", async () => {
+test("un secreto binario o más corto que el suelo de scrub solo deja digest", async () => {
   const binario = Buffer.from([0xff, 0xfe, 0x01, 0x02, 0x41, 0x42, 0x43, 0x44]);
   for (const plaintext of [binario, Buffer.from("abc", "utf8")]) {
     const directory = await scratch("secretos-sin-scrub");

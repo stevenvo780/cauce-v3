@@ -176,7 +176,7 @@ test("grok: un depósito MCP sin texto final cierra la entrega en turn_completed
 test("grok: texto a medio escribir en la caja degrada sin pegar ni ejecutar nada", async () => {
   const { state, grokHome } = await grokWorkspace("grok-caja-ocupada");
   const tmux = new GrokTmux();
-  tmux.paneContent = grokFrame({ footer: "typed", box: "respondé solo: ho" });
+  tmux.paneContent = grokFrame({ footer: "typed", box: "responde solo: ho" });
 
   const runner = grokRunner({ grokHome, tmux });
   const error = await expectSharedTuiUnavailable(execute(await adapterFor(runner, state, "hades", "grok")));
@@ -234,7 +234,7 @@ test("grok: si la TUI muere en pleno turno la entrega termina con error, sin rei
   assert.match(outcome.stderr, /desapareció o cambió/u);
 });
 
-test("grok: cancelar manda Ctrl+C (nunca Escape) sólo mientras el turno corre, y el cancelled lo cierra", async () => {
+test("grok: cancelar manda Ctrl+C (nunca Escape) solo mientras el turno corre, y el cancelled lo cierra", async () => {
   const { grokHome, log } = await grokWorkspace("grok-cancela");
   const tmux = new GrokTmux();
   const controller = new AbortController();
@@ -292,7 +292,7 @@ test("grok: un turno cortado por stop_reason distinto de end_turn es un fallo de
   assert.match(outcome.stderr, /max_tokens/u);
 });
 
-test("grok: el lector sólo lista updates.jsonl de carpetas de sesión, de todos los cwd y en orden temporal", async () => {
+test("grok: el lector solo lista updates.jsonl de carpetas de sesión, de todos los cwd y en orden temporal", async () => {
   const { grokHome, log, sessionLog } = await grokWorkspace("grok-listado");
   const older = await sessionLog("00000000-0000-4000-8000-36ca2d9fce2a", "%2Fhome%2Fclaw%2Fclawd");
   await older.append(older.user("vieja"));

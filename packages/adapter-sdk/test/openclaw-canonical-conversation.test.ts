@@ -95,7 +95,7 @@ test("control negativo: sin dueño ni SHARED_HUMANS el alias OpenClaw conserva e
   assert.equal(store.getSession(POINTER)?.native_id, dm, "sin la regla, el último turno humano del arnés principal mueve el puntero");
 });
 
-test("un dueño que pertenece a otro tenant no entra por su UUID: sólo el dueño del propio tenant o un tenant:uuid listado", async (t) => {
+test("un dueño que pertenece a otro tenant no entra por su UUID: solo el dueño del propio tenant o un tenant:uuid listado", async (t) => {
   const { session } = await scenario(t, "other-tenant", { CAUCE_OWNER_HUMAN_ID: OWNER });
   assert.notEqual(await session(console_("owner-uuid-other-tenant", OWNER, "Miguel")), CANONICAL);
   assert.notEqual(await session(humanDelivery({ id: "unlisted", humanId: LISTED, tenantId: "Miguel" })), CANONICAL);

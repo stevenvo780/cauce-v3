@@ -379,7 +379,7 @@ test("si delete y scrub no se acreditan el aborto falla cerrado y pone la genera
 });
 
 test(
-  "tmux real: aborto tras load y delete fallido deja sólo el marcador inocuo acreditado",
+  "tmux real: aborto tras load y delete fallido deja solo el marcador inocuo acreditado",
   async () => {
     const socket = `cauce-test-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
     const base = new CliTmux(socket);

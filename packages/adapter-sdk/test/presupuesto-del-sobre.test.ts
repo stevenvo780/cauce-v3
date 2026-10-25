@@ -50,14 +50,14 @@ test("el andamiaje FIJO del sobre no crece sin que nadie se entere", () => {
   assert.ok(
     andamiaje <= TOPE_ANDAMIAJE_FIJO,
     `El texto fijo que viaja en CADA entrega mide ${String(andamiaje)} caracteres y el tope es ` +
-      `${String(TOPE_ANDAMIAJE_FIJO)}. Si lo subiste a propósito, subí el tope en el mismo commit y ` +
-      `explicá por qué ese texto tiene que ir en cada turno en vez de en el fichero del arnés.`,
+      `${String(TOPE_ANDAMIAJE_FIJO)}. Si lo subiste a propósito, sube el tope en el mismo commit y ` +
+      `explica por qué ese texto tiene que ir en cada turno en vez de en el fichero del arnés.`,
   );
 });
 
 test("el sobre completo, con rol al tope y 13 destinos, no crece sin que nadie se entere", () => {
   const sobre = protocolPrompt(
-    "Revisa el estado del gateway y decime si hay entregas muertas.",
+    "Revisa el estado del gateway y dime si hay entregas muertas.",
     ORIGEN,
     contextoReal({ self_role: "R".repeat(1200) }),
   );
@@ -85,7 +85,7 @@ test("CONTROL NEGATIVO: el medidor reacciona, no devuelve siempre lo mismo", () 
  * Verifies that the scaffolding/request ratio stays bounded.
  */
 test("la proporción andamiaje/pedido queda escrita, para poder verla bajar", () => {
-  const pedido = "Revisa el estado del gateway y decime si hay entregas muertas.";
+  const pedido = "Revisa el estado del gateway y dime si hay entregas muertas.";
   const sobre = protocolPrompt(pedido, ORIGEN, contextoReal({ self_role: "R".repeat(1097) }));
   const ratio = Math.round((sobre.length - pedido.length) / pedido.length);
   assert.ok(

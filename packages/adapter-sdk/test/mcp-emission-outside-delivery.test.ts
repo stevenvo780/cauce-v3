@@ -55,7 +55,7 @@ test("with no turn and no delivery, cauce_send publishes exactly one root in the
   const { calls, gateway } = recordingGateway();
   const f = await runtimeWith(gateway);
   try {
-    const result = await f.runtime.call("cauce_send", { to: "zeus", body: "revisá el disco" });
+    const result = await f.runtime.call("cauce_send", { to: "zeus", body: "revisa el disco" });
     assert.equal(result.isError, undefined, textOf(result));
     assert.equal(calls.length, 1);
     const [call] = calls;
@@ -65,7 +65,7 @@ test("with no turn and no delivery, cauce_send publishes exactly one root in the
     const body = call.body as Record<string, unknown>;
     assert.deepEqual({ ...body, idempotency_key: undefined }, {
       room_id: "grp.steven", recipients: [{ tenant_id: "Steven", alias: "zeus" }],
-      body: { text: "revisá el disco" }, lane: "interactive", idempotency_key: undefined,
+      body: { text: "revisa el disco" }, lane: "interactive", idempotency_key: undefined,
     });
     assert.match(String(body.idempotency_key), /^tui:[0-9a-f-]{36}$/u);
     assert.match(textOf(result), new RegExp(MESSAGE_ID, "u"));
@@ -141,7 +141,7 @@ test("a delivery in flight in the engine, or no engine to ask, blocks the root",
       const result = await f.runtime.call("cauce_send", { to: "zeus", body: "hola" });
       assert.equal(result.isError, true);
       assert.match(textOf(result), inFlight === 1
-        ? /^Hay una entrega de Cauce en curso en este adaptador; no se envió nada\. Reintentá cauce_send cuando termine\.$/u
+        ? /^Hay una entrega de Cauce en curso en este adaptador; no se envió nada\. Reintenta cauce_send cuando termine\.$/u
         : /no tiene una terminal compartida/u);
       assert.doesNotMatch(textOf(result), /wait for a Cauce delivery/u);
       assert.deepEqual(calls, []);
@@ -212,7 +212,7 @@ test("the open-roots limit becomes an error that lists what the alias is waiting
   try {
     const result = await f.runtime.call("cauce_send", { to: "kant", body: "otra más" });
     assert.equal(result.isError, true);
-    assert.match(textOf(result), /Ya tenés 8 mensajes abiertos; esperá a que terminen \(cauce_result\)/u);
+    assert.match(textOf(result), /Ya tienes 8 mensajes abiertos; espera a que terminen \(cauce_result\)/u);
     assert.match(textOf(result), new RegExp(`${MESSAGE_ID} -> zeus \\(started\\)`, "u"));
   } finally { await f.close(); }
 });

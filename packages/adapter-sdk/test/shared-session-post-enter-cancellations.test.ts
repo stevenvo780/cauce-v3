@@ -389,7 +389,7 @@ test("quarantine-pending sobrevive restart si disco, tmux y kill se cuelgan post
   assert.equal(tmux.submittedCount, 1);
 });
 
-test("restart reconcilia pending sólo con sobre terminal válido del mismo nonce", async () => {
+test("restart reconcilia pending solo con sobre terminal válido del mismo nonce", async () => {
   const { state, home, workspace } = await freshState("pending-terminal-restart");
   const quarantineFile = join(state, "quarantine");
   const correlationId = "d".repeat(64);

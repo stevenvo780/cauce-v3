@@ -28,7 +28,7 @@ test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; oc
   for (const frame of [
     grokFrame({ footer: "running", spinner: THINKING }),
     grokFrame({ footer: "tool", spinner: TOOL_RUNNING }),
-    grokFrame({ footer: "queued", spinner: THINKING, queue: "respondé solo: encolado" }),
+    grokFrame({ footer: "queued", spinner: THINKING, queue: "responde solo: encolado" }),
     grokFrame({ footer: "running" }),
     withoutFooter(grokFrame({ footer: "running", spinner: THINKING })),
   ]) assert.equal(turnInFlight(frame), true, frame);
@@ -36,7 +36,7 @@ test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; oc
   // is conversation text (a quoted spinner kept the bus out of an idle TUI)
   for (const frame of [
     grokFrame(),
-    grokFrame({ footer: "typed", box: "respondé solo: ho" }),
+    grokFrame({ footer: "typed", box: "responde solo: ho" }),
     grokFrame({ footer: "quit" }),
     grokFrame({ footer: "idle", spinner: THINKING }),
   ]) {

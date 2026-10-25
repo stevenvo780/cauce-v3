@@ -129,7 +129,7 @@ function conSecreto(id: string, ref: SecretHandoffRef): Delivery {
   return {
     ...delivery(id),
     routing_targets: [{ tenant_id: "Steven", alias: "seneca", online: true }],
-    body: { prompt: "usá la credencial que te pasaron", timeout_ms: 2_000, secrets_v1: [ref] },
+    body: { prompt: "usa la credencial que te pasaron", timeout_ms: 2_000, secrets_v1: [ref] },
   };
 }
 
@@ -181,7 +181,7 @@ test("el fichero del secreto delegado a otro agente tampoco viaja", async () => 
     const payload = await sealedHandoff(keyPath, randomUUID());
     const runner = new RunnerExfiltrador((path) => ({
       reply: "delegado", notify: [], status: "done", retryable: false, artifacts: [],
-      messages: [{ to: "seneca", body: "mirá esto", artifacts: [{ name: "nota.txt", uri: `file://${path}` }] }],
+      messages: [{ to: "seneca", body: "mira esto", artifacts: [{ name: "nota.txt", uri: `file://${path}` }] }],
     }));
     const contexto = await turno("secreto-delegado", runner, async () => payload);
 
@@ -199,7 +199,7 @@ test("el valor copiado a la respuesta o a un mensaje delegado sale redactado", a
     const payload = await sealedHandoff(keyPath, randomUUID());
     const runner = new RunnerExfiltrador((_path, value) => ({
       reply: `la credencial es ${value}`,
-      messages: [{ to: "seneca", body: `usá ${value}` }],
+      messages: [{ to: "seneca", body: `usa ${value}` }],
       notify: [], status: "done", retryable: false,
       artifacts: [{ name: `copia-de-${value}.txt`, uri: "cauce:not-sent" }],
     }));
@@ -210,7 +210,7 @@ test("el valor copiado a la respuesta o a un mensaje delegado sale redactado", a
     const output = publishedOutput(contexto.events);
     assert.equal(contexto.events.at(-1)?.phase, "done");
     assert.equal(output.reply, `la credencial es ${REDACTION_MARK}`);
-    assert.equal(output.messages[0]?.body, `usá ${REDACTION_MARK}`);
+    assert.equal(output.messages[0]?.body, `usa ${REDACTION_MARK}`);
     assert.equal(output.artifacts[0]?.name, `copia-de-${REDACTION_MARK}.txt`);
     assert.ok(!serialized(contexto.events).includes(VALUE));
   });
@@ -251,8 +251,8 @@ test("borrar el fichero no desarma la redacción del valor pegado en la respuest
       await rm(path, { force: true });
       return {
         reply: `la credencial es ${value}`,
-        messages: [{ to: "seneca", body: `usá ${value}` }],
-        notify: [{ to: "steven.dm", kind: "task_complete" as const, body: `guardá ${value}` }],
+        messages: [{ to: "seneca", body: `usa ${value}` }],
+        notify: [{ to: "steven.dm", kind: "task_complete" as const, body: `guarda ${value}` }],
         status: "done", retryable: false, artifacts: [],
       };
     });
@@ -263,8 +263,8 @@ test("borrar el fichero no desarma la redacción del valor pegado en la respuest
     const output = publishedOutput(contexto.events);
     assert.equal(contexto.events.at(-1)?.phase, "done");
     assert.equal(output.reply, `la credencial es ${REDACTION_MARK}`);
-    assert.equal(output.messages[0]?.body, `usá ${REDACTION_MARK}`);
-    assert.equal(output.notify[0]?.body, `guardá ${REDACTION_MARK}`);
+    assert.equal(output.messages[0]?.body, `usa ${REDACTION_MARK}`);
+    assert.equal(output.notify[0]?.body, `guarda ${REDACTION_MARK}`);
     assert.ok(!serialized(contexto.events).includes(VALUE));
   });
 });
@@ -334,7 +334,7 @@ test("un data: armado por el modelo con los bytes exactos del secreto no viaja",
       return {
         reply: "te lo paso", notify: [], status: "done", retryable: false,
         artifacts: [{ name: "copia.txt", uri }],
-        messages: [{ to: "seneca", body: "mirá esto", artifacts: [{ name: "copia.txt", uri }] }],
+        messages: [{ to: "seneca", body: "mira esto", artifacts: [{ name: "copia.txt", uri }] }],
       };
     });
     const contexto = await turno("secreto-data-uri", runner, async () => payload);
@@ -350,7 +350,7 @@ test("un data: armado por el modelo con los bytes exactos del secreto no viaja",
   });
 });
 
-test("un turno que sólo prometía el fichero retenido no cierra en done", async () => {
+test("un turno que solo prometía el fichero retenido no cierra en done", async () => {
   await conKeyPath("secreto-solo-fichero", async (keyPath) => {
     const payload = await sealedHandoff(keyPath, randomUUID());
     const runner = new RunnerExfiltrador((_path, value) => ({

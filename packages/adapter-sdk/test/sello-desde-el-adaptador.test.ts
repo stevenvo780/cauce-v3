@@ -35,7 +35,7 @@ function contexto(alias: string): HarnessRequestContext {
     agent_message: true,
     message_type: "agent.message",
     routing_targets: [{ tenant_id: "Steven", alias: "kant", online: true }],
-    self_role: `Sos ${alias}.`,
+    self_role: `Eres ${alias}.`,
   };
 }
 

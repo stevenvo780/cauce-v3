@@ -22,7 +22,7 @@ test("el sobre se localiza sin ascendencia, y un mensaje intermedio no cuenta", 
   const duenio = randomUUID();
   const correlationId = randomUUID();
   const entries = [
-    JSON.parse(userEntry(duenio, null, "seguí", sessionId)),
+    JSON.parse(userEntry(duenio, null, "sigue", sessionId)),
     JSON.parse(assistantEntry(
       randomUUID(),
       duenio,
