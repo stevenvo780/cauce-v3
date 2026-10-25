@@ -8,9 +8,12 @@ export const owner = 'h8b-tui-v4-produccion-1025';
 export const runId = randomUUID();
 export const evidence = join(process.cwd(), '.delegados/v4/recibos', owner, runId);
 export const digest = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex');
+export interface V4TestContext { owner: string; evidence: string; runId: string }
+export const defaultContext: V4TestContext = { owner, evidence, runId };
 export interface V4Image { tag: string; id: string; recipe: Record<string, string>; sourceDateEpoch: string; versions: string }
 
-export async function realV4Image(): Promise<V4Image> {
+export async function realV4Image(context = defaultContext): Promise<V4Image> {
+  const { owner, evidence, runId } = context;
   if (!process.env.HOME?.startsWith('/tmp/cauce-e2e-home-')) throw new Error('use the versioned lab runner');
   await mkdir(evidence, { recursive: true, mode: 0o700 });
   const sources = ['ops/agent-runtime/Dockerfile', 'ops/container-runtime/muse-cauce',
@@ -19,7 +22,11 @@ export async function realV4Image(): Promise<V4Image> {
   const recipe = Object.fromEntries(sources.map((path, index) => [path, digest(bodies[index] ?? '')]));
   const recipeHash = digest(Buffer.concat(bodies));
   const tag = `zz-canary-${owner}:${recipeHash.slice(0, 16)}`;
-  const ledger = join(process.cwd(), '.delegados/v4/recibos', owner, 'image-cache', recipeHash);
+  const daemonId = (await browserDocker(['info', '--format', '{{.ID}}'])).stdout.trim();
+  if (!/^[A-Za-z0-9:._-]{1,256}$/u.test(daemonId)) throw new Error('Docker daemon identity is unavailable');
+  const daemonHash = digest(daemonId);
+  const cacheRoot = join(process.cwd(), '.delegados/v4/recibos', owner, 'image-cache');
+  const ledger = join(cacheRoot, daemonHash, recipeHash);
   await mkdir(ledger, { recursive: true, mode: 0o700 });
   const inspect = async (): Promise<string | undefined> => {
     try {
@@ -28,11 +35,23 @@ export async function realV4Image(): Promise<V4Image> {
       return value[0];
     } catch (error) { if (/No such image/iu.test(browserErrorStderr(error))) return undefined; throw error; }
   };
-  const previous = await readFile(join(ledger, 'manifest.json'), 'utf8').then(text => JSON.parse(text) as V4Image, () => undefined);
+  let previous = await readFile(join(ledger, 'manifest.json'), 'utf8').then(text => JSON.parse(text) as V4Image, () => undefined);
   let id = await inspect();
-  if (id && (previous?.id !== id || JSON.stringify(previous.recipe) !== JSON.stringify(recipe))) throw new Error('cached V4 image has no matching recipe receipt');
   const sourceDateEpoch = (await browserExec('git', ['log', '-1', '--format=%ct', '--', ...sources])).stdout.trim();
   if (!/^\d+$/u.test(sourceDateEpoch)) throw new Error('canonical image timestamp is unavailable');
+  let migrated = false;
+  if (id && !previous) {
+    const legacy = await readFile(join(cacheRoot, recipeHash, 'manifest.json'), 'utf8').then(text => JSON.parse(text) as V4Image, () => undefined);
+    if (legacy?.id === id && legacy.tag === tag && legacy.sourceDateEpoch === sourceDateEpoch
+      && JSON.stringify(legacy.recipe) === JSON.stringify(recipe)) {
+      previous = legacy;
+      migrated = true;
+      await writeFile(join(ledger, 'manifest.json'), JSON.stringify(legacy, null, 2));
+    }
+  }
+  await writeFile(join(evidence, 'image-cache-binding.json'), JSON.stringify({ daemon_sha256: daemonHash, ledger, legacy_migrated: migrated,
+    local_image_id: id, receipt_image_id: previous?.id }, null, 2));
+  if (id && (previous?.id !== id || JSON.stringify(previous.recipe) !== JSON.stringify(recipe))) throw new Error('cached V4 image has no matching recipe receipt');
   if (id && previous?.sourceDateEpoch !== sourceDateEpoch) throw new Error('cached V4 image timestamp differs from its verified receipt');
   if (!id) {
     const work = await mkdtemp(join(tmpdir(), `zz-canary-${owner}-image-`));

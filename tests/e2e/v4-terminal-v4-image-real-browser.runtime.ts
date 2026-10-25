@@ -4,19 +4,20 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { browserDocker, browserExec, browserErrorStderr } from './browser-owned-lifecycle.js';
-import { evidence, owner, digest, type V4Image } from './v4-terminal-v4-image-real-browser.image.js';
+import { defaultContext, digest, type V4Image, type V4TestContext } from './v4-terminal-v4-image-real-browser.image.js';
 import { startV4Infrastructure, stopProcess } from './v4-terminal-v4-image-real-browser.infra.js';
 import { TMUX_SOCKET } from '../../packages/adapter-sdk/src/shared-session/types.js';
 
-export type V4Harness = 'openclaw' | 'muse' | 'grok';
+export type V4Harness = 'openclaw' | 'muse' | 'grok' | 'claude';
 interface Binding {
   container_id: string; image_id: string; started_at: string; generation: string; command: string; native_command: string;
   files: Record<string, string>; state: string; profile: string; adapter_pid: number;
   openclaw_help?: { legacy: Record<string, unknown>; measured: { exit?: number; session_flag?: boolean; local_flag?: boolean; history_limit_flag?: boolean } };
 }
 
-export async function packageSdk(): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'zz-canary-h8b-sdk-'));
+export async function packageSdk(context = defaultContext): Promise<string> {
+  const { evidence, owner } = context;
+  const directory = await mkdtemp(join(tmpdir(), `zz-canary-${owner.split('-')[0] ?? 'h8b'}-sdk-`));
   const target = join(directory, 'packages/adapter-sdk');
   try {
   await browserExec('pnpm', ['--filter', '@cauce/adapter-sdk', 'deploy', '--legacy', '--prod', target], { timeout: 120_000, maxBuffer: 256 * 1024 });
@@ -51,19 +52,23 @@ export async function packageSdk(): Promise<string> {
   }
 }
 
-export async function startV4Runtime(image: V4Image, sdk: string, harness: V4Harness) {
-  const key = `h8b-${harness}-${randomBytes(5).toString('hex')}`;
+export async function startV4Runtime(image: V4Image, sdk: string, harness: V4Harness,
+  options: { context?: V4TestContext; driverPath?: string } = {}) {
+  const context = options.context ?? defaultContext;
+  const { owner, evidence } = context;
+  const prefix = owner.split('-')[0] ?? 'h8b';
+  const key = `${prefix}-${harness}-${randomBytes(5).toString('hex')}`;
   const alias = `tui${randomBytes(6).toString('hex')}`;
   const name = `zz-canary-${owner}-${key}`;
-  const directory = await mkdtemp(join(tmpdir(), `zz-canary-h8b-${harness}-`));
+  const directory = await mkdtemp(join(tmpdir(), `zz-canary-${prefix}-${harness}-`));
   await chmod(directory, 0o755);
   let infra: Awaited<ReturnType<typeof startV4Infrastructure>>;
-  try { infra = await startV4Infrastructure(alias, key, harness); }
+  try { infra = await startV4Infrastructure(alias, key, harness, context); }
   catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
   const requestFile = join(directory, 'request.json');
   const request = { directory, harness, alias, runtime_key: key, name, image_id: image.id, sdk, sdk_root: join(sdk, '../..'),
     room: infra.room, relay_url: `${infra.gatewayUrl.replace('https:', 'wss:')}/v3/ws`, cert: infra.pki.agentCert, key: infra.pki.agentKey, ca: infra.pki.caCert };
-  const driver = async (action: string) => browserExec('python3', ['tests/e2e/v4-terminal-v4-image-real-browser.driver.py', action, requestFile], { timeout: 120_000, maxBuffer: 128 * 1024 });
+  const driver = async (action: string) => browserExec('python3', [options.driverPath ?? 'tests/e2e/v4-terminal-v4-image-real-browser.driver.py', action, requestFile], { timeout: 120_000, maxBuffer: 128 * 1024 });
   let launcher: ReturnType<typeof spawn> | undefined;
   let launcherLog = '';
   let lastNative = '';
@@ -83,6 +88,11 @@ export async function startV4Runtime(image: V4Image, sdk: string, harness: V4Har
     if (failures.length) throw new AggregateError(failures, 'V4 runtime cleanup failed');
   };
   try {
+    if (options.driverPath !== undefined) {
+      const human = (await infra.database.pool.query<{ id: string }>('SELECT id::text FROM console_users WHERE email=$1', [infra.email])).rows[0];
+      if (!human) throw new Error('canary console human is unavailable');
+      Object.assign(request, { owner_human_id: human.id });
+    }
     await writeFile(requestFile, JSON.stringify(request), { mode: 0o600 });
     canaryMayExist = true;
     binding = JSON.parse((await driver('prepare')).stdout) as Binding;

@@ -19,7 +19,7 @@ import { startTestDatabase } from '../helpers/postgres.js';
 import { startTrustedBrowser, type BrowserContext, type BrowserPage, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { browserDocker, browserExec as execute } from './browser-owned-lifecycle.js';
-import { evidence, runId } from './v4-terminal-v4-image-real-browser.image.js';
+import { defaultContext } from './v4-terminal-v4-image-real-browser.image.js';
 const TENANT = 'Steven';
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 interface Pki {
@@ -135,8 +135,10 @@ async function stopProcess(child: ChildProcess, label: string): Promise<void> {
   }
 }
 
-export async function startV4Infrastructure(alias: string, runtimeKey: string, harness: string) {
-  const directory = await mkdtemp(join(tmpdir(), 'zz-canary-h8b-infra-'));
+export async function startV4Infrastructure(alias: string, runtimeKey: string, harness: string, context = defaultContext) {
+  const { evidence, runId, owner } = context;
+  const prefix = owner.split('-')[0] ?? 'h8b';
+  const directory = await mkdtemp(join(tmpdir(), `zz-canary-${prefix}-infra-`));
   const actions: { label: string; run: () => Promise<void> }[] = [];
   const resources: { kind: 'container' | 'network' | 'image'; reference: string }[] = [];
   const contexts: BrowserContext[] = [];
@@ -173,8 +175,8 @@ export async function startV4Infrastructure(alias: string, runtimeKey: string, h
     if (errors.length) throw new AggregateError(errors, 'PostgreSQL cleanup failed');
   } });
   const pki = await makePki(directory, alias, runtimeKey);
-  const room = `h8b-${randomUUID()}`;
-  const email = `h8b-${randomUUID()}@cauce.test`;
+  const room = `${prefix}-${randomUUID()}`;
+  const email = `${prefix}-${randomUUID()}@cauce.test`;
   const password = randomBytes(24).toString('base64url');
   const operator = `op${randomBytes(4).toString('hex')}`;
   await database.pool.query('INSERT INTO tenants(id) VALUES($1) ON CONFLICT DO NOTHING', [TENANT]);
