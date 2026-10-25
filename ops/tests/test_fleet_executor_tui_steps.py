@@ -103,13 +103,27 @@ class CanonicalTuiStepTest(unittest.TestCase):
                 self.desired = {**self.previous, field: value}
                 self.current = self.executor('update')
                 self.current.stop()
-                self.assertEqual(self.close.call_args.args[1], self.previous)
+                closed = self.close.call_args.args[1]
+                self.assertEqual({key: closed[key] for key in self.previous}, self.previous)
         calls = self.close.call_count
         self.desired = {**self.previous, 'display_name': 'Changed label'}
         self.context['operation_id'] = str(uuid.uuid4())
         self.current = self.executor('update')
         self.current.stop()
         self.assertEqual(self.close.call_count, calls)
+
+    def test_previous_tui_uses_the_current_operation_account_authority(self):
+        account = {'id': 'owned-account', 'provider': 'codex', 'external_account_id': 'owned-fixture',
+            'payer_tenant_id': 'OwnedTenant', 'shared_with_pool': False, 'enabled': True}
+        self.context['trusted_accounts'] = [account]
+        self.previous['_trusted_accounts'] = [{'id': 'stale-account'}]
+        self.desired['reasoning_effort'] = 'high'
+        self.current = self.executor('update')
+        self.current.close_previous_tui(self.previous, capture=True)
+        for call in (self.observe.call_args, self.close.call_args):
+            self.assertEqual(call.args[1]['_trusted_accounts'], [account])
+            self.assertTrue(call.args[1]['_trusted_accounts_present'])
+        self.assertEqual(self.previous['_trusted_accounts'], [{'id': 'stale-account'}])
 
     def test_migration_and_native_stop_do_not_reset_their_canonical_tui(self):
         self.current = self.executor('update')

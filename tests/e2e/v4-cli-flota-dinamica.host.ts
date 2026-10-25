@@ -275,15 +275,18 @@ export async function startFleetCliFixture(options: { candidateSource: string })
     };
     const runtimeFor = async (alias: string): Promise<FleetCliRuntime> => {
       if (!grantedAliases.has(alias)) {
-        const grantStatus = await ownerPage.evaluate(async argument => {
-          const state = await fetch('/v3/auth/session', { credentials: 'same-origin' }).then(response => response.json()) as { csrf_token: string };
-          const result = await fetch('/v3/console/terminal/grants', { method: 'POST', credentials: 'same-origin',
-            headers: { 'content-type': 'application/json', 'x-csrf-token': state.csrf_token },
-            body: JSON.stringify({ tenant_id: argument.tenantId, alias: argument.alias, grantee_human_id: argument.ownerId,
-              modes: ['shell', 'harness', 'harness_rw'], note: 'Canario CLI del dueño' }) });
-          return result.status;
+        const grant = await ownerPage.evaluate(async argument => {
+          const result = await fetch('/v3/console/terminal/grants', { credentials: 'same-origin', cache: 'no-store' });
+          if (!result.ok) return { status: result.status, verified: false };
+          const body = await result.json() as { items: { tenant_id: string; alias: string; grantee_human_id: string;
+            granted_by_human_id: string; modes: string[]; expired: boolean; expires_at: string | null }[] };
+          const matches = body.items.filter(row => row.tenant_id === argument.tenantId && row.alias === argument.alias
+            && row.grantee_human_id === argument.ownerId && row.granted_by_human_id === argument.ownerId
+            && !row.expired && row.expires_at === null
+            && ['shell', 'harness', 'harness_rw'].every(mode => row.modes.includes(mode)));
+          return { status: result.status, verified: matches.length === 1 };
         }, { tenantId, alias, ownerId });
-        if (grantStatus !== 201) throw new Error(`the owner could not grant its terminal through the product API (${String(grantStatus)})`);
+        if (grant.status !== 200 || !grant.verified) throw new Error('the product did not grant its creator the exact owned terminal');
         grantedAliases.add(alias);
       }
       const row = (await active.pool.query<RuntimeRow>(`SELECT runtime_key,container_name,home_directory,state_directory,host_id

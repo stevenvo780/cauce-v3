@@ -173,6 +173,8 @@ class Executor:
                 return
         elif kind not in {'retire', 'purge'}:
             return
+        row = {**row, '_trusted_accounts': self.context.get('trusted_accounts', []),
+               '_trusted_accounts_present': 'trusted_accounts' in self.context}
         fields = ('tenant_id', 'alias', 'runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name',
                   'runtime_user', 'home_directory', 'state_directory', 'model_id', 'reasoning_effort')
         binding = {'operation_id': self.context['operation_id'], 'request_sha256': self.request_hash,
