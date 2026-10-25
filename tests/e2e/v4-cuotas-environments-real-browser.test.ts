@@ -6,11 +6,12 @@ import { promisify } from 'node:util';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, type V4Page } from './v4-console-real-browser.helpers.js';
 import { quotaCanaryPerson, startQuotaDockerHost, type QuotaDockerImage } from './v4-quota-environments-real-browser.fixtures.js';
+import { prepareFake2QuotaImage } from './v4-cuotas-fake2.fixtures.js';
 
 vi.stubEnv('CAUCE_PLAZOS_FACTOR', process.env.CAUCE_PLAZOS_FACTOR ?? '3');
 const { newTrustedPage, startConsoleFunctionalFixture } = await import('./console-functional-browser.fixtures.js');
 const execute = promisify(execFile);
-const task = 'e2e-a7-commit-1025';
+const task = 'e2e-a7-sigue-1025';
 const run = randomUUID().slice(0, 8);
 const prefix = `zz-canary-${task}-${run}`;
 const owner = quotaCanaryPerson(`${task}-environment`, run);
@@ -32,7 +33,7 @@ const secondaryLabel = `${prefix}-secondary`;
 
 interface Environment { id: string; label: string; account_id: string; status: string; refresh_status: string; version: number }
 interface Snapshot { environments: Environment[]; operations: { environment_id: string; action: string; status: string }[] }
-type ObservationMode = 'normal' | 'invalid-json' | 'provider-error' | 'exhausted' | 'model-dependent' | 'automatic-pause' | 'verification-delay';
+type ObservationMode = 'normal' | 'invalid-json' | 'provider-error' | 'exhausted' | 'model-dependent' | 'automatic-pause' | 'verification-delay' | 'stale';
 
 function active() { if (!fixture) throw new Error('quota cycle fixture unavailable'); return fixture; }
 function runtime() { if (!host) throw new Error('quota cycle host unavailable'); return host; }
@@ -87,97 +88,6 @@ function authStreamReady(): Promise<void> {
     });
   });
 }
-async function prepareImage(): Promise<QuotaDockerImage> {
-  const directory = join(evidence, 'fake2-image');
-  await mkdir(directory, { recursive: true });
-  const double = `#!/usr/bin/python3
-import datetime, json, pathlib, sys, time
-home = pathlib.Path('/home/node')
-session = home / '.fake2-session'
-updated = home / '.fake2-updated'
-if '--version' in sys.argv:
-    print('fake2-cli 2.0.0' if updated.exists() else 'fake2-cli 1.0.0')
-elif 'login' in sys.argv:
-    print('fake2: escribe APROBAR para autorizar https://example.invalid/fake2', flush=True)
-    if input().strip() == 'APROBAR':
-        session.write_text('fake2-owned-subscription')
-        print('fake2: sesion autorizada', flush=True)
-        time.sleep(300)
-elif 'quota' in sys.argv:
-    if not session.exists():
-        print(json.dumps({'ok': False, 'error_code': 'not_authenticated', 'error': 'sin credencial', 'windows': []}))
-        sys.exit(1)
-    mode_file = home / '.fake2-mode'
-    mode = mode_file.read_text() if mode_file.exists() else 'normal'
-    if mode == 'invalid-json':
-        print('fake2: unreadable quota response')
-        sys.exit(0)
-    if mode == 'provider-error':
-        print(json.dumps({'ok': False, 'error_code': 'network', 'error': 'fake2 network failure', 'windows': []}))
-        sys.exit(1)
-    if mode == 'verification-delay':
-        time.sleep(3)
-    windows = [
-        {'key': 'five-hour', 'label': 'Cinco horas fake2', 'remainingPercent': 72, 'usedPercent': 28, 'windowMinutes': 300},
-        {'key': 'seven-day', 'label': 'Semana fake2', 'remainingPercent': 91, 'usedPercent': 9, 'windowMinutes': 10080}]
-    if mode in ('exhausted', 'model-dependent', 'automatic-pause'):
-        windows[0].update({'remainingPercent': 0, 'usedPercent': 100})
-    if mode == 'automatic-pause':
-        windows[0]['resetAt'] = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=1)).isoformat()
-    if mode == 'model-dependent':
-        windows[0]['model'] = 'fake2-small'
-        windows[1]['model'] = 'fake2-large'
-    print(json.dumps({'ok': True, 'available': True, 'account_id': session.read_text(),
-        'source': 'fake2', 'effectiveRemainingPercent': 0 if mode in ('exhausted', 'model-dependent', 'automatic-pause') else 72, 'windows': windows}))
-else:
-    sys.exit(2)
-`;
-  const update = '#!/bin/sh\nset -eu\nmkdir -p /home/node/.local/bin\ncp /usr/local/bin/claude /home/node/.local/bin/claude\ntouch /home/node/.fake2-updated\n';
-  const launcher = `#include <errno.h>
-#include <stdlib.h>
-#include <sys/wait.h>
-#include <unistd.h>
-int main(int argc, char **argv) {
-    char **command = calloc((size_t)argc + 2, sizeof(char *));
-    if (!command) return 111;
-    command[0] = "/usr/bin/python3";
-    command[1] = "/usr/local/lib/cauce-fake2.py";
-    for (int index = 1; index < argc; index++) command[index + 1] = argv[index];
-    pid_t child = fork();
-    if (child < 0) return 111;
-    if (child == 0) { execv(command[0], command); _exit(127); }
-    int status;
-    while (waitpid(child, &status, 0) < 0) if (errno != EINTR) return 111;
-    free(command);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-}
-`;
-  const runnerDockerfile = await readFile(join(process.cwd(), 'tests/e2e/lab-runner/Dockerfile'));
-  const baseImage = `cauce-e2e-lab-runner:${sha(runnerDockerfile).slice(0, 12)}`;
-  await writeFile(join(directory, 'fake2'), double, { mode: 0o755 });
-  await writeFile(join(directory, 'npm'), update, { mode: 0o755 });
-  await writeFile(join(directory, 'launcher.c'), launcher);
-  await writeFile(join(directory, 'Dockerfile'), `FROM ${baseImage} AS compiler\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*\nCOPY launcher.c /tmp/launcher.c\nRUN cc -O2 -Wall -Wextra -Werror /tmp/launcher.c -o /tmp/claude\nFROM ${baseImage}\nUSER root\nCOPY --from=compiler --chmod=0555 /tmp/claude /usr/local/bin/claude\nCOPY --chmod=0555 fake2 /usr/local/lib/cauce-fake2.py\nCOPY --chmod=0555 npm /usr/local/bin/npm\nUSER node\nWORKDIR /home/node\nENV HOME=/home/node\nCMD ["sleep", "infinity"]\n`);
-  const tag = `${prefix}:fake2`;
-  const built = await execute('docker', ['build', '--pull=false', '--label', `cauce.e2e.owner=${task}`, '-t', tag, directory], { timeout: 300_000 });
-  await writeFile(join(evidence, 'fake2-build.log'), `${built.stdout}${built.stderr}`);
-  const imageId = (await execute('docker', ['image', 'inspect', '--format', '{{.Id}}', tag])).stdout.trim();
-  const bundle = join(evidence, 'fake2-bundle');
-  const descriptors = join(bundle, 'packages/adapter-sdk/dist/descriptors');
-  await mkdir(descriptors, { recursive: true });
-  const descriptor = JSON.stringify({ schema_version: 1, harness: 'claude',
-    operations: { install: 'runtime-package', execute: 'native-execution', authenticate: 'provider-login', quota: 'quota-collector', update: 'provider-update' },
-    context: { native_document: 'AGENTS.md', max_bytes: 65536 },
-    provider: { authenticate_argv: ['/usr/local/bin/claude', 'login'], quota_argv: ['/usr/local/bin/claude', 'quota'],
-      verify_argv: ['/usr/local/bin/claude', 'quota'], update_package: '@cauce/fake2', fleet_module: null } });
-  await writeFile(join(descriptors, 'claude.json'), descriptor);
-  const digest = (await execute('/usr/bin/python3', ['-B', '-c',
-    'import sys;sys.path.insert(0,sys.argv[1]);from fleet_executor_runtime import bundle_digest;print(bundle_digest(sys.argv[2]))',
-    join(process.cwd(), 'ops/cli'), bundle])).stdout.trim();
-  return { image: imageId, tag, providers: ['claude'], bundle_digest: digest, versions: { claude: 'fake2-cli 1.0.0' },
-    bundles: { claude: { directory: bundle, digest, executable: '/usr/bin/true', executable_sha256: sha(await readFile('/usr/bin/true')),
-      argv: [], descriptor_sha256: sha(descriptor) } } };
-}
 async function createEnvironment(label: string): Promise<string> {
   const form = page.getByRole('form', { name: 'Crear entorno de cuotas', exact: true });
   await form.locator('select').nth(0).selectOption(accountId);
@@ -196,7 +106,7 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true });
   await record('source', { sha: (await execute('git', ['rev-parse', 'HEAD'])).stdout.trim(),
     suite_sha256: sha(await readFile(join(process.cwd(), 'tests/e2e/v4-cuotas-environments-real-browser.test.ts'))) });
-  image = await prepareImage();
+  image = await prepareFake2QuotaImage(evidence, prefix, task);
   await record('image', { image: image.image, tag: image.tag });
   fixture = await startConsoleFunctionalFixture();
   page = asV4Page(await newTrustedPage(fixture, { width: 1440, height: 900 }));
@@ -444,6 +354,27 @@ describe('cuotas con doble fake2 en descriptor aprobado y Chromium, gateway, Pos
     expect(retried.result).toMatchObject({ observation_status: 'ok', cli_version: 'fake2-cli 2.0.0' });
     await assertVisibleWindows();
     await capture('reader-retried');
+
+    await observationMode('stale');
+    const stale = await queryPrimary();
+    expect(stale.result).toMatchObject({ observation_status: 'ok', provider_report: { windows: [{ status: 'stale' }, { status: 'stale' }] } });
+    const stored = (await active().database.pool.query<{ status: string }>(
+      'SELECT status FROM quota_window_state WHERE company_id=$1 AND account_id=$2 ORDER BY window_key', [owner.company.slug, accountId])).rows;
+    expect(stored).toEqual([{ status: 'stale' }, { status: 'stale' }]);
+    const read = await apiGet(page, '/v3/console/quota-accounts');
+    expect(read.status).toBe(200);
+    expect((read.body as unknown as { accounts: { id: string; observation_status: string; remaining_percent: number | null }[] }).accounts.find(value => value.id === accountId))
+      .toMatchObject({ observation_status: 'stale', remaining_percent: null });
+    await account.getByText('Datos antiguos', { exact: true }).waitFor({ timeout: 20_000 });
+    expect(await account.getByText('Disponible', { exact: true }).count()).toBe(0);
+    for (const name of ['5 h', 'Semanal']) {
+      expect(await account.getByRole('meter', { name: `Restante ${name}`, exact: true }).evaluate(element => element.classList.contains('opacity-50'))).toBe(true);
+    }
+    await record('stale-windows', { operation: stale.id, stored });
+    await capture('reader-stale');
+    await observationMode('normal');
+    await queryPrimary();
+    await assertVisibleWindows();
 
     for (const [mode, label] of [['exhausted', 'Sin disponibilidad'], ['model-dependent', 'Varía por modelo']] as const) {
       await observationMode(mode);
