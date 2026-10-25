@@ -74,7 +74,7 @@ describe('quién hizo el cambio', () => {
 });
 
 describe('la instantánea que se restaura', () => {
-  it('lleva los siete campos, no sólo el rol', () => {
+  it('lleva los siete campos, no solo el rol', () => {
     expect(camposDeRevision(revision())).toEqual({
       purpose: 'Coordinar la flota.',
       role_summary: 'PMO de la flota.',
@@ -157,7 +157,7 @@ describe('el diff línea a línea', () => {
 });
 
 describe('comparar dos revisiones del perfil', () => {
-  it('devuelve los siete campos aunque sólo cambie uno', () => {
+  it('devuelve los siete campos aunque solo cambie uno', () => {
     const comparacion = compararRevisiones(revision(), revision({ role_summary: 'Otro rol.' }));
     expect(comparacion).toHaveLength(7);
     expect(camposCambiados(comparacion).map((campo) => campo.campo)).toEqual(['role_summary']);
