@@ -144,6 +144,11 @@ createServer(client => {
 
 export interface CommandResult { code: number; stdout: string; stderr: string }
 export interface DockerInventory { containers: string; volumes: string; images: string }
+export interface ComputerRuntimeBundle {
+  readonly providerCli: string;
+  readonly sharedTui: boolean;
+  stage(directory: string): Promise<readonly string[]>;
+}
 /** The runtime the computer's single container template approves; the executor derives each agent from it. */
 export const COMPUTER_RUNTIME = { user: 'cauce', home: '/home/cauce', stateRoot: '/home/cauce/.cauce' } as const;
 
@@ -236,11 +241,12 @@ throw new Error('Agent transport did not become ready: '+JSON.stringify({expecte
   await docker(['exec', '--user', transport.user, transport.container, '/usr/local/bin/node', '--input-type=module', '-e', readiness, String(listenPort)]);
 }
 
-async function buildRelease(work: string, tree: string, agentImage: string, providers: string[]) {
+async function buildRelease(work: string, tree: string, agentImage: string, providers: string[], runtimeBundle?: ComputerRuntimeBundle) {
   const stage = join(work, 'stage');
   for (const part of RELEASE_PARTS) await cp(join(tree, part), join(stage, part), { recursive: true });
   await cp(join(tree, 'packages/adapter-sdk/descriptors'), join(stage, 'adapter/packages/adapter-sdk/dist/descriptors'), { recursive: true });
-  await writeFile(join(stage, 'adapter/provider-cli.py'), PROVIDER_CLI, { mode: 0o755 });
+  const providerCli = runtimeBundle?.providerCli ?? PROVIDER_CLI;
+  await writeFile(join(stage, 'adapter/provider-cli.py'), providerCli, { mode: 0o755 });
   const runtime = join(work, 'bootstrap-runtime.ts');
   await writeFile(runtime, `import { bootstrapOnStartup } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts'))};
 import { SpawnCommandRunner } from ${JSON.stringify(join(ROOT, 'packages/adapter-sdk/src/sdk/process-runner.ts'))};
@@ -253,6 +259,7 @@ setInterval(()=>{},60000);
 `);
   await execute(join(ROOT, 'node_modules/.bin/esbuild'), [runtime, '--bundle', '--platform=node', '--format=esm', '--target=node22',
     '--log-level=error', `--outfile=${join(stage, 'adapter/bootstrap-runtime.mjs')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`]);
+  const argv = runtimeBundle === undefined ? ['@release@/adapter/bootstrap-runtime.mjs'] : await runtimeBundle.stage(join(stage, 'adapter'));
   await mkdir(join(stage, 'services/gateway/dist/fleet'), { recursive: true });
   await execute(join(ROOT, 'node_modules/.bin/esbuild'), [join(tree, 'services/gateway/src/fleet/main.ts'), '--bundle', '--platform=node',
     '--format=esm', '--target=node22', '--external:pg-native', '--log-level=error', `--outfile=${join(stage, 'services/gateway/dist/fleet/main.js')}`,
@@ -263,10 +270,10 @@ setInterval(()=>{},60000);
   const directory = join(work, 'host-release');
   const packed = await execute('python3', [join(ROOT, 'ops/scripts/host-release.py'), 'pack', '--stage', stage, '--out', directory,
     '--revision', revision, '--image', agentImage, ...providers.flatMap(item => ['--provider', item]),
-    '--pin', `provider_cli_sha256=${hash(PROVIDER_CLI)}`], { maxBuffer: 1024 * 1024 });
+    '--pin', `provider_cli_sha256=${hash(providerCli)}`], { maxBuffer: 1024 * 1024 });
   const manifest = JSON.parse(packed.stdout) as { release: { sha256: string }; image: { id: string; sha256: string; size: number };
     pins: Record<string, string> };
-  return { directory, revision, manifest };
+  return { directory, revision, manifest, argv };
 }
 
 async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, gatewayAddress?: string) {
@@ -343,14 +350,15 @@ async function closeOwned(owned: Owned, prefix: string): Promise<DockerInventory
 }
 
 /** Builds the computer image; with the login fixture, its context carries the logged-out provider CLI. */
-async function buildComputerImage(work: string, image: string, providerLogin: boolean): Promise<string | undefined> {
+async function buildComputerImage(work: string, image: string, providerLogin: boolean, sharedTui: boolean): Promise<string | undefined> {
+  const recipe = sharedTui ? COMPUTER_IMAGE.replace('systemd-sysv dbus', 'systemd-sysv tmux dbus') : COMPUTER_IMAGE;
   if (!providerLogin) {
-    const built = await command('docker', ['build', '-q', '-t', image, '-'], COMPUTER_IMAGE);
+    const built = await command('docker', ['build', '-q', '-t', image, '-'], recipe);
     if (built.code !== 0) throw new Error(`computer image build failed: ${built.stderr}`);
     return undefined;
   }
   const context = join(work, 'computer-image'); await mkdir(context);
-  await writeFile(join(context, 'Dockerfile'), COMPUTER_IMAGE + LOGIN_IMAGE_LAYER);
+  await writeFile(join(context, 'Dockerfile'), recipe + LOGIN_IMAGE_LAYER);
   await writeFile(join(context, 'provider-cli.py'), LOGIN_PROVIDER_CLI);
   await writeFile(join(context, 'login.c'), LOGIN_CLI_SOURCE);
   await execute('/usr/bin/cc', ['-static', '-O2', '-o', join(context, 'cauce-fixture-codex'), join(context, 'login.c')], { timeout: 60_000 });
@@ -363,15 +371,21 @@ export async function startComputerHarness(options: {
   prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string };
   workRoot?: string; dockerSocket?: string; hostDirectories?: readonly string[];
   resourceOwner?: string;
+  runtimeBundle?: ComputerRuntimeBundle;
+  extraSourceFiles?: readonly string[];
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
-    const work = await mkdtemp(join(options.workRoot ?? '/var/tmp', `${prefix}-`)); owned.work = work;
+    const work = await mkdtemp(join(options.workRoot ?? '/tmp', `${prefix}-`)); owned.work = work;
     await chmod(work, 0o755); await mkdir(join(work, 'install'));
     const tree = join(work, 'tree'); await mkdir(tree);
     const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
     const deleted = new Set((await execute('git', ['-C', ROOT, 'ls-files', '--deleted', '-z', '--', ...TREE])).stdout.split('\0'));
-    for (const part of tracked.filter(part => !deleted.has(part))) {
+    const extra = options.extraSourceFiles ?? [];
+    if (extra.some(part => part.includes('..') || !TREE.some(root => part.startsWith(`${root}/`)))) {
+      throw new Error('extra fixture source must belong to the approved release tree');
+    }
+    for (const part of [...new Set([...tracked, ...extra])].filter(part => !deleted.has(part))) {
       await mkdir(dirname(join(tree, part)), { recursive: true }); await cp(join(ROOT, part), join(tree, part));
     }
     await execute('chmod', ['-R', 'u=rwX,go=rX', join(tree, 'ops/cli')]);
@@ -380,7 +394,7 @@ export async function startComputerHarness(options: {
     let loginCli: string | undefined;
     const images = async () => {
       owned.image = `${prefix}:computer`;
-      loginCli = await buildComputerImage(work, owned.image, options.providerLogin === true);
+      loginCli = await buildComputerImage(work, owned.image, options.providerLogin === true, options.runtimeBundle?.sharedTui === true);
       // Its own layer makes `docker load` import data, not only a configuration over layers the computer already has.
       const agent = await command('docker', ['build', '-q', '-t', `${prefix}:agent`, '-'],
         `FROM ${owned.image}\nRUN printf '%s\\n' '${prefix}' > /etc/cauce-agent-image\n`);
@@ -392,7 +406,7 @@ export async function startComputerHarness(options: {
     const transport = options.agentNetwork === undefined ? undefined : await createAgentTransport(work, prefix, built.computer, options.agentNetwork.name);
     const authority = await signedAuthority(work, pool, owned, transport?.address);
     // With the login fixture the pack measures the provider CLI inside the agent image, as the real build does.
-    const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`]);
+    const release = await buildRelease(work, tree, built.agent, loginCli === undefined ? [] : [`codex=${LOGIN_CLI}`], options.runtimeBundle);
     const imageReference = `cauce-host-image:${release.manifest.image.id.replace(/^sha256:/u, '')}`;
     const previous = await command('docker', ['image', 'inspect', imageReference]);
     if (previous.code !== 0) {
@@ -417,7 +431,8 @@ export async function startComputerHarness(options: {
       release_directory: release.directory, files: [{ name: 'fleet-ca', path: authority.caFile }],
       policy: {
         bundles: { codex: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
-          executable_sha256: null, argv: ['@release@/adapter/bootstrap-runtime.mjs'] } },
+          executable_sha256: null, argv: release.argv,
+          ...(options.runtimeBundle?.sharedTui === false ? { shared_tui: false } : {}) } },
         // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
         // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
         container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: '@pin:image@', runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',

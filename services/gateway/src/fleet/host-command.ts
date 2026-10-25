@@ -23,6 +23,10 @@ export async function performHostCommand(
 
 export async function performHostCompensation(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal) {
   const result = await runHostCommand(config, 'compensate', execution, signal);
+  if (execution.request.kind === 'recover') {
+    if (result.awaiting_auth || result.evidence.recovery_compensated !== true) throw unverified();
+    return { recovery_compensated: true };
+  }
   const restored = canRestoreFleetUpdate(execution.operation, execution.request, execution.previous_agents ?? [])
     && result.evidence.runtime_digest !== undefined;
   if (result.awaiting_auth || (!restored && result.evidence.stopped_verified !== true)

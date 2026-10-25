@@ -22,7 +22,7 @@ from cauce_container_base import bundle_digest  # noqa: E402
 
 class PhysicalExecutorTest(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix='cauce-physical-executor-', dir='/var/tmp')
+        self.temporary = tempfile.TemporaryDirectory(prefix='cauce-physical-executor-', dir='/tmp')
         self.root = pathlib.Path(self.temporary.name)
         self.user = pwd.getpwuid(os.geteuid()).pw_name
         self.roots = {name: self.root / name for name in ('state', 'runtime', 'pki', 'tokens', 'identities')}

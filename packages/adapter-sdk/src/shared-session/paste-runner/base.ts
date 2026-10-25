@@ -11,6 +11,7 @@ import { inputBoxState, turnInFlight } from "../pane.js";
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
 import { tuiProfile } from "../tui-profile.js";
+import { selectedPaneArgumentsMatch } from "../session/selection.js";
 import type { SharedSessionDegradation, TranscriptReader, TurnOutcome } from "../types.js";
 import {
   announceDegradation,
@@ -57,6 +58,7 @@ export abstract class PasteSessionRunnerBase<E> {
   protected lastPanePid: string | undefined;
   /** Conversation session ID from the previous turn, to detect restarts or context clears. */
   protected lastSessionId: string | undefined;
+  protected pendingPaneRestart: { previousPid: string; pid: string; sessionId: string } | undefined;
   /** Compaction events already announced, to avoid repeating the notice on every poll of the same turn. */
   protected readonly reportedBoundaries = new Set<string>();
   /** `$N` proven for this call; notices also cannot be dropped by a name-based replacement. */
@@ -443,21 +445,33 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
-  /** Detects changes in the TUI process PID between turns. */
-  protected async notePaneIdentity(pid: string | undefined): Promise<void> {
+  /** A resumed process still needs a correlated turn in the previous native conversation. */
+  protected async notePaneIdentity(pid: string | undefined, command: string): Promise<void> {
     if (pid === undefined) return;
     if (this.lastPanePid !== undefined && this.lastPanePid !== pid) {
-      await this.note({
-        reason: "context_reset",
-        detail: `el panel pasó del proceso ${this.lastPanePid} al ${pid}`,
-        occurredAt: new Date().toISOString(),
-        fellBack: false,
-      });
-      // The new TUI conversation has nothing to do with the previous one: comparing its identity to
-      // the prior one would yield a clear that nobody performed.
-      this.lastSessionId = undefined;
+      const resume = this.options.harness === 'claude' || this.options.harness === 'grok' ? '--resume' : 'resume';
+      if (this.lastSessionId !== undefined && selectedPaneArgumentsMatch(command,
+        this.options.commandPins?.command, [resume, this.lastSessionId])) {
+        this.pendingPaneRestart = { previousPid: this.lastPanePid, pid, sessionId: this.lastSessionId };
+      } else {
+        await this.notePaneRestart(this.lastPanePid, pid);
+      }
     }
     this.lastPanePid = pid;
+  }
+
+  protected async finishPaneRestart(sessionId?: string): Promise<void> {
+    const restart = this.pendingPaneRestart;
+    this.pendingPaneRestart = undefined;
+    if (restart !== undefined && restart.sessionId !== sessionId) {
+      await this.notePaneRestart(restart.previousPid, restart.pid);
+    }
+  }
+
+  private async notePaneRestart(previousPid: string, pid: string): Promise<void> {
+    await this.note({ reason: 'context_reset', detail: `el panel pasó del proceso ${previousPid} al ${pid}`,
+      occurredAt: new Date().toISOString(), fellBack: false });
+    this.lastSessionId = undefined;
   }
 
   protected acquireWait(requestTimeoutMs: number, noProgress = false): AcquireWait {
@@ -555,6 +569,7 @@ export abstract class PasteSessionRunnerBase<E> {
    * keep believing they are on the same thread.
    */
   protected async noteTranscriptIdentity(sessionId: string | undefined): Promise<void> {
+    await this.finishPaneRestart(sessionId);
     if (sessionId === undefined) return;
     if (this.lastSessionId !== undefined && this.lastSessionId !== sessionId) {
       await this.note({

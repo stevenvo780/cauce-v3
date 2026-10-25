@@ -55,6 +55,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
   }
 
   async run(request: CommandRunRequest): Promise<CommandRunResult> {
+    try {
+      return await this.execute(request);
+    } finally {
+      await this.finishPaneRestart();
+    }
+  }
+
+  private async execute(request: CommandRunRequest): Promise<CommandRunResult> {
     await assertCommandPins(this.options.command ?? this.options.harness, this.options.commandPins);
     this.pending = undefined;
     this.exactSessionId = undefined;
@@ -537,7 +545,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       this.lastSessionId = undefined;
       return { ok: true, sessionId: ensure.sessionId, identity };
     }
-    await this.notePaneIdentity(ensure.pid);
+    await this.notePaneIdentity(ensure.pid, identity.paneStartCommand);
     if (signalAborted(signal)) return { ok: false, cancelled: true };
     return { ok: true, sessionId: ensure.sessionId, identity };
   }

@@ -56,7 +56,8 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
         import fleet_executor_runtime as runtime
         row = {'tenant': 'Miguel', 'user': 'node', 'runtimeStateDirectory': '/home/node/.cauce/gaia', 'enabled': True,
                'room': 'grp.miguel', **row_extra}
-        policy = {'roots': {'state': '/nonexistent'}, 'transport': {'gateway_url': 'https://gateway.example'}}
+        policy = {'roots': {'state': '/nonexistent'}, 'transport': {'gateway_url': 'https://gateway.example'},
+                  'bundles': {harness: {'shared_tui': False}}}
         agent = {'tenant_id': 'Miguel', 'alias': 'gaia', 'runtime_key': 'gaia', 'runtime_user': 'node',
                  'state_directory': '/home/node/.cauce/gaia', 'harness_id': harness}
         with mock.patch('fleet_runtime_materialization.load_desired_fleet', return_value={'generation': 'g'}), \
