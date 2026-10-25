@@ -175,7 +175,28 @@ def original_start(agent):
                 entries.append(value)
             else:
                 entries = []
-    if pending or len(entries) != 1 or not entries[0].startswith("/") or "\x00" in entries[0]:
+    if pending or len(entries) != 1 or "\x00" in entries[0]:
+        fail("SPACE_ORIGINAL_EXECSTART_UNREPRESENTABLE")
+    executable = re.match(r'''(?:"(/[A-Za-z0-9._/-]+)"|'(/[A-Za-z0-9._/-]+)'|(/[A-Za-z0-9._/-]+))(?=$|[ \t])''', entries[0])
+    if executable is None:
+        fail("SPACE_ORIGINAL_EXECSTART_UNREPRESENTABLE")
+    canonical(next(value for value in executable.groups() if value is not None))
+    quoted = None
+    escaped = False
+    for offset, character in enumerate(entries[0]):
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif quoted:
+            if character == quoted:
+                quoted = None
+        elif character in {"'", '"'}:
+            quoted = character
+        elif character == ";" and (offset == 0 or entries[0][offset - 1].isspace()) \
+                and (offset + 1 == len(entries[0]) or entries[0][offset + 1].isspace()):
+            fail("SPACE_ORIGINAL_EXECSTART_UNREPRESENTABLE")
+    if quoted or escaped:
         fail("SPACE_ORIGINAL_EXECSTART_UNREPRESENTABLE")
     return entries[0]
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { expect } from 'vitest';
@@ -23,6 +23,8 @@ const SOURCE_FILES = ['tests/e2e/s2-espacio-estandar.test.ts', 'tests/e2e/s2-esp
   'tests/e2e/s2b-espacio-estandar-prod.test.ts', '.delegados/v4/espacio-estandar.sh',
   '.delegados/v4/espacio-estandar.py', '.delegados/v4/espacio-estandar.remoto.py',
   '.delegados/v4/live_adapter.py', '.delegados/v4/live_adapter_probe.py', ...HARNESS_SOURCE_FILES];
+const PREPARATION_FILES = ['tests/e2e/s2b-espacio-estandar-preparado.test.ts',
+  '.delegados/v4/espacio-estandar-preparar.sh', '.delegados/v4/espacio-estandar-preparar.py'];
 type Save = (name: string, value: unknown) => Promise<void>;
 async function command(file: string, args: string[], input?: string) {
   const running = execute(file, args, { timeout: 240_000, maxBuffer: 4 * 1024 * 1024 });
@@ -73,10 +75,15 @@ interface Configuration {
   root: string; directory: string; owner: string; run: string; release: string; bundleDigest: string;
   computer: ComputerHarness; pool: DatabasePool; runtimes: Runtime[]; consoleAuth: Awaited<ReturnType<typeof prepareRehearsalAuth>>;
   gateway: string; certificate: string; save: Save;
+  preparedCommit?: string;
 }
 export interface Rehearsal {
-  configuration: Configuration; ops: string; opsDigest: string; releaseRoot: string; session: string;
+  configuration: Configuration; ops: string; opsDigest: string; sdk: string; sdkDigest: string; releaseRoot: string; session: string;
   sources: Record<string, string>;
+}
+interface PreparedSources {
+  version: number; commit: string; inventory_path: string; ops_release: string; ops_sha256: string;
+  sdk_release: string; sdk_sha256: string;
 }
 interface ToolReceipt {
   version: number; status: string; phase: string;
@@ -85,19 +92,35 @@ interface ToolReceipt {
   reverted?: { process: { layout: Record<string, unknown> } };
   revert_probe?: ToolReceipt['probe'];
 }
-async function files(root: string, relative = ''): Promise<string[]> {
+async function files(root: string, relative = '', sealed = false): Promise<string[]> {
+  if (sealed) expect((await stat(join(root, relative))).mode & 0o222).toBe(0);
   const result: string[] = [];
   for (const entry of await readdir(join(root, relative), { withFileTypes: true })) {
     const name = join(relative, entry.name);
     assert.notEqual(entry.name, 'private'); assert.equal(entry.isSymbolicLink(), false);
-    if (entry.isDirectory()) result.push(...await files(root, name));
-    else { assert.ok(entry.isFile()); result.push(name); }
+    if (entry.isDirectory()) result.push(...await files(root, name, sealed));
+    else {
+      assert.ok(entry.isFile());
+      if (sealed) expect((await stat(join(root, name))).mode & 0o222).toBe(0);
+      result.push(name);
+    }
   }
   return result.sort();
 }
-async function sourceHashes(root: string): Promise<Record<string, string>> {
-  return Object.fromEntries(await Promise.all(SOURCE_FILES.map(async (file): Promise<[string, string]> =>
+async function sourceHashes(root: string, prepared = false): Promise<Record<string, string>> {
+  return Object.fromEntries(await Promise.all([...SOURCE_FILES, ...(prepared ? PREPARATION_FILES : [])].map(async (file): Promise<[string, string]> =>
     [file, hash(await readFile(join(root, file)))])));
+}
+function deploymentTarget(configuration: Configuration, runtime: Runtime, releaseRoot: string) {
+  return { alias: runtime.alias, kind: runtime.native ? 'native' : 'container', transport: 'docker',
+    host: configuration.computer.container, manager: 'cauce', uid: 1500,
+    unit: runtime.unit, state_directory: runtime.state, runtime_user: runtime.user, runtime_uid: runtime.uid, harness: runtime.harness,
+    tenant_id: 'Steven', room_id: 'grp.steven', expected_instance_id: (runtime.native ? 'systemd-' : 'systemd-container-') + runtime.alias,
+    release_root: releaseRoot, preserve_paths: [...new Set([runtime.state, runtime.cwd, runtime.providerCwd])]
+      .flatMap(path => [path, path + '/legacy.marker', path + '/legacy.link']),
+    node_executable: '/usr/local/bin/node', ...(runtime.native ? {} : { container: runtime.container }),
+    bundle_root: '/home/cauce/s2b/bundles', config_root: '/home/cauce/s2b/config', ops_root: '/home/cauce/s2b/previous-ops',
+    owner: configuration.owner, namespace: configuration.run };
 }
 export async function configureRehearsal(configuration: Configuration): Promise<Rehearsal> {
   const { root, directory, computer, runtimes, consoleAuth, gateway, certificate } = configuration;
@@ -151,18 +174,46 @@ export async function configureRehearsal(configuration: Configuration): Promise<
   await docker(['exec', computer.container, 'chown', '1500:1500', unitPath]);
   const native = runtimes.find(runtime => runtime.rehearsal && runtime.native); assert.ok(native?.unit);
   const legacyDropin = '/home/cauce/.config/systemd/user/' + native.unit + '.d/zzzzzzzz-adaptador-vivo.conf';
+  const legacyContent = ['[Service]', 'Environment=CAUCE_LEGACY_WITNESS=owned', 'ExecStart=',
+    'ExecStart="/usr/local/bin/node" "--conditions=owned extra argument" ' + native.home +
+      '/s2-release/packages/adapter-sdk/dist/src/bin/codex.js --alias ' + native.alias, ''].join('\n');
   const legacy = await computer.onComputer(['python3', '-I', '-B', '-c',
-    'import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.parent.mkdir(mode=0o775);p.parent.chmod(0o775);p.write_text("[Service]\\nEnvironment=CAUCE_LEGACY_WITNESS=owned\\n");p.chmod(0o664)', legacyDropin]);
+    'import pathlib,sys;p=pathlib.Path(sys.argv[1]);p.parent.mkdir(mode=0o775);p.parent.chmod(0o775);p.write_text(sys.argv[2]);p.chmod(0o664)',
+    legacyDropin, legacyContent]);
   expect(legacy.code, legacy.stderr).toBe(0);
   const reload = await computer.onComputer(['systemctl', '--user', 'daemon-reload']); expect(reload.code, reload.stderr).toBe(0);
   const session = join(directory, 'rehearsal-session.json');
   await command('python3', ['-B', join(root, 'ops/cli/cauce-login'), '--gateway', gateway, '--origin', consoleAuth.origin,
     '--ca-file', certificate, '--email', consoleAuth.email, '--password-stdin', '--session-file', session], consoleAuth.password + '\n');
   expect((await stat(session)).mode & 0o777).toBe(0o600);
-  const sources = await sourceHashes(root);
+  const sources = await sourceHashes(root, configuration.preparedCommit !== undefined);
+  let ops = sourceOps, approvedOpsDigest = opsDigest, sdk = configuration.release, sdkDigest = configuration.bundleDigest;
+  let preparation: PreparedSources | null = null;
+  if (configuration.preparedCommit !== undefined) {
+    const inventory = join(directory, 'preparation.inventory.json'), output = join(directory, 'prepared');
+    await writeFile(inventory, JSON.stringify({ version: 1, agents: runtimes.filter(runtime => runtime.rehearsal)
+      .map(runtime => deploymentTarget(configuration, runtime, releaseRoot)) }) + '\n', { mode: 0o600 });
+    await command('bash', [join(root, '.delegados/v4/espacio-estandar-preparar.sh'), configuration.preparedCommit,
+      '--salida', output, '--inventario', inventory, '--laboratorio']);
+    const receipt = join(output, 'recibo.json'); expect((await stat(receipt)).mode & 0o777).toBe(0o600);
+    preparation = JSON.parse(await readFile(receipt, 'utf8')) as PreparedSources;
+    expect(preparation).toMatchObject({ version: 1, commit: configuration.preparedCommit, inventory_path: inventory });
+    for (const path of [preparation.ops_release, preparation.sdk_release]) {
+      expect(await realpath(path)).toBe(path); expect(path.startsWith(output + '/')).toBe(true);
+      await files(path, '', true); await expect(stat(join(path, '.git'))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect((await stat(join(preparation.sdk_release, 'packages/adapter-sdk/dist/src/context/space-layout.js'))).isFile()).toBe(true);
+    expect(await digest(preparation.ops_release)).toBe(preparation.ops_sha256);
+    expect(await digest(preparation.sdk_release)).toBe(preparation.sdk_sha256);
+    expect(await sourceHashes(root, true), 'preparation source changed while building the approved artifacts').toEqual(sources);
+    ops = preparation.ops_release; approvedOpsDigest = preparation.ops_sha256;
+    sdk = preparation.sdk_release; sdkDigest = preparation.sdk_sha256;
+    await configuration.save('deployment-preparation', preparation);
+  }
   await configuration.save('deployment-source', { previous_ops_revision: PREVIOUS_OPS, previous_ops_digest: previousOpsDigest,
-    ops_digest: opsDigest, sdk_digest: configuration.bundleDigest, source_sha256: sources });
-  return { configuration, ops: sourceOps, opsDigest, releaseRoot, session, sources };
+    ops_digest: approvedOpsDigest, sdk_digest: sdkDigest, approved_artifacts_origin: preparation ? 'git archive' : 'fixture',
+    legacy_cli_sdk_digest: configuration.bundleDigest, preparation_receipt: preparation, source_sha256: sources });
+  return { configuration, ops, opsDigest: approvedOpsDigest, sdk, sdkDigest, releaseRoot, session, sources };
 }
 
 interface Driver {
@@ -210,33 +261,29 @@ async function renewedLease(rehearsal: Rehearsal, runtime: Runtime) {
   return { epoch: Number(row.epoch), connected_at: row.connected_at, token_rotated: true };
 }
 async function runRehearsalSteps(rehearsal: Rehearsal, runtime: Runtime, driver: Driver) {
-  const { configuration } = rehearsal, { computer, owner, run, directory, root, release, bundleDigest, consoleAuth, gateway, certificate } = configuration;
+  const { configuration } = rehearsal, { directory, root, consoleAuth, gateway, certificate } = configuration;
   const kind = runtime.native ? 'native' : 'container';
   const baselineLegacy = await driver.inspectLegacy(runtime);
   const firstLease = await driver.start(runtime), before = await driver.inspect(runtime);
   expect(before.environment).toEqual({ CAUCE_SPACE_ROOT: null, TMPDIR: null }); expect(before.layout).toEqual({});
   const originalArgv = await argv(runtime, before), originalUnit = await unit(rehearsal, runtime);
-  if (runtime.native) expect(originalArgv).toContain('--conditions=owned extra argument');
+  if (runtime.native) {
+    expect(originalArgv).toContain('--conditions=owned extra argument');
+    expect(originalUnit).toContain('ExecStart="/usr/local/bin/node" "--conditions=owned extra argument" ');
+  }
   const legacyBefore = await legacyDropin(rehearsal, runtime);
   if (legacyBefore) expect(legacyBefore).toMatchObject({
     directory: { uid: 1500, gid: 1500, mode: '0o775', directory: true, symlink: false },
     file: { uid: 1500, gid: 1500, mode: '0o664', directory: false, symlink: false }, managed: [] });
   const inventory = join(directory, 'deployment-' + kind + '.inventory.json');
-  const target = { alias: runtime.alias, kind, transport: 'docker', host: computer.container, manager: 'cauce', uid: 1500,
-    unit: runtime.unit, state_directory: runtime.state, runtime_user: runtime.user, runtime_uid: runtime.uid, harness: runtime.harness,
-    tenant_id: 'Steven', room_id: 'grp.steven', expected_instance_id: (runtime.native ? 'systemd-' : 'systemd-container-') + runtime.alias,
-    release_root: rehearsal.releaseRoot, preserve_paths: [...new Set([runtime.state, runtime.cwd, runtime.providerCwd])]
-      .flatMap(path => [path, path + '/legacy.marker', path + '/legacy.link']),
-    node_executable: '/usr/local/bin/node', ...(runtime.native ? {} : { container: runtime.container }),
-    bundle_root: '/home/cauce/s2b/bundles', config_root: '/home/cauce/s2b/config', ops_root: '/home/cauce/s2b/previous-ops',
-    owner, namespace: run };
+  const target = deploymentTarget(configuration, runtime, rehearsal.releaseRoot);
   await writeFile(inventory, JSON.stringify({ version: 1, agents: [target] }) + '\n', { mode: 0o600 });
   const receipt = join(directory, 'deployment-' + kind + '.receipt.json');
   const common = ['--inventario', inventory, '--ops-release', rehearsal.ops, '--ops-sha256', rehearsal.opsDigest,
-    '--sdk-release', release, '--sdk-sha256', bundleDigest, '--recibo', receipt, '--laboratorio',
+    '--sdk-release', rehearsal.sdk, '--sdk-sha256', rehearsal.sdkDigest, '--recibo', receipt, '--laboratorio',
     '--sesion', rehearsal.session, '--gateway', gateway, '--origin', consoleAuth.origin, '--ca-file', certificate, '--timeout', '180'];
   const tool = async (args: string[]) => {
-    expect(await sourceHashes(root), 'rehearsal or deployment tool source changed during the run').toEqual(rehearsal.sources);
+    expect(await sourceHashes(root, configuration.preparedCommit !== undefined), 'rehearsal or deployment tool source changed during the run').toEqual(rehearsal.sources);
     return command('bash', [join(root, '.delegados/v4/espacio-estandar.sh'), ...args, ...common]);
   };
   const localFiles = async () => (await command('find', ['-P', directory, '-printf', '%P\\0%y\\0%l\\0'])).stdout;

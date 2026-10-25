@@ -19,10 +19,12 @@ import { addRehearsalRuntimes, configureRehearsal, HARNESS_SOURCE_FILES, prepare
 const execute = promisify(execFile);
 const ROOT = process.cwd();
 const REHEARSAL = process.env.CAUCE_S2_DEPLOYMENT_REHEARSAL === '1';
+const PREPARED_COMMIT = process.env.CAUCE_S2_PREPARED_COMMIT;
 const OWNER = REHEARSAL ? 's2b-espacio-estandar-prod-1025' : 's2-espacio-estandar-1025';
+const CAMPAIGN = PREPARED_COMMIT === undefined ? OWNER : 's2c-ventana-produccion-1025';
 const RUN = randomUUID().replaceAll('-', '').slice(0, 12);
 const PREFIX = 'zz-canary-' + OWNER + '-' + RUN;
-const EVIDENCE = join(ROOT, '.delegados/v4/recibos', OWNER, RUN);
+const EVIDENCE = join(ROOT, '.delegados/v4/recibos', CAMPAIGN, RUN);
 const CONTROL = '/run/zz-canary-s2-supervisor';
 const SOURCE = join(ROOT, 'packages/adapter-sdk');
 const SUPERVISOR = join(ROOT, 'ops/scripts/container-adapter-supervisor.sh');
@@ -61,7 +63,7 @@ const pool = () => { if (!databasePool) throw new Error('owned legacy PostgreSQL
 
 async function save(name: string, value: unknown) {
   await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
-  await writeFile(join(EVIDENCE, name + '.json'), JSON.stringify({ owner: OWNER, run: RUN, value },
+  await writeFile(join(EVIDENCE, name + '.json'), JSON.stringify({ owner: OWNER, campaign: CAMPAIGN, run: RUN, value },
     (key, entry: unknown) => REHEARSAL && key === 'environment' && entry !== null && typeof entry === 'object'
       ? Object.keys(entry) : entry, 2) + '\n', { mode: 0o600 });
 }
@@ -339,7 +341,8 @@ beforeAll(async () => {
     }
   }
   if (consoleAuth) rehearsal = await configureRehearsal({ root: ROOT, directory, owner: OWNER, run: RUN, release,
-    bundleDigest, computer: active(), pool: pool(), runtimes, consoleAuth, gateway: origin, certificate: publisherTls.cert_path, save });
+    bundleDigest, computer: active(), pool: pool(), runtimes, consoleAuth, gateway: origin, certificate: publisherTls.cert_path, save,
+    ...(PREPARED_COMMIT === undefined ? {} : { preparedCommit: PREPARED_COMMIT }) });
 }, 900_000);
 
 async function start(runtime: Runtime) {

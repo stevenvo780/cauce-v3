@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "agents": [
+    {
+      "alias": "socrates",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-socrates.service",
+      "state_directory": "/home/dev/.local/state/cauce-v3/socrates",
+      "runtime_user": "dev",
+      "runtime_uid": 1000,
+      "harness": "codex",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/workspace"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "ws-prizma",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "jarvis",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-jarvis.service",
+      "state_directory": "/home/claw/.openclaw/cauce-v3/jarvis",
+      "runtime_user": "claw",
+      "runtime_uid": 1000,
+      "harness": "openclaw",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/home/claw/clawd"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "claw",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "kratos",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-kratos.service",
+      "state_directory": "/home/dev/.local/state/cauce-v3/kratos",
+      "runtime_user": "dev",
+      "runtime_uid": 1000,
+      "harness": "claude",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/workspace"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "ws-humanizar",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "atlas",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-atlas.service",
+      "state_directory": "/home/dev/.local/state/cauce-v3/atlas",
+      "runtime_user": "dev",
+      "runtime_uid": 1000,
+      "harness": "codex",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/workspace"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "ws-humanizar",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "janus",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-janus.service",
+      "state_directory": "/home/claw/.openclaw/cauce-v3/janus",
+      "runtime_user": "claw",
+      "runtime_uid": 1000,
+      "harness": "openclaw",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/home/claw/clawd"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "claw-miguel",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "iza",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-iza.service",
+      "state_directory": "/home/claw/.openclaw/cauce-v3/iza",
+      "runtime_user": "claw",
+      "runtime_uid": 1000,
+      "harness": "openclaw",
+      "tenant_id": "Miguel",
+      "room_id": "grp.miguel",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/home/claw/clawd"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "claw-iza",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "salva",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "server2",
+      "ssh_user": "server",
+      "manager": "server",
+      "uid": 1000,
+      "unit": "cauce-v3-container-salva.service",
+      "state_directory": "/home/dev/.local/state/cauce-v3/salva",
+      "runtime_user": "dev",
+      "runtime_uid": 1000,
+      "harness": "claude",
+      "tenant_id": "Isa",
+      "room_id": "grp.isa",
+      "release_root": "/home/server/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/workspace"
+      ],
+      "verification_scope": "process_lease",
+      "container": "ws-isa",
+      "bundle_root": "/home/server/.local/share/cauce-v3-adapter",
+      "config_root": "/home/server/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/server/.local/share/cauce-v3-release-tools/fc30f85e-compartidos/ops"
+    },
+    {
+      "alias": "zeus",
+      "kind": "container",
+      "transport": "ssh",
+      "host": "root@167.114.118.213",
+      "ssh_user": "root",
+      "manager": "stev",
+      "uid": 1000,
+      "unit": "cauce-v3-container-zeus.service",
+      "state_directory": "/home/dev/.local/state/cauce-v3/zeus",
+      "runtime_user": "dev",
+      "runtime_uid": 1000,
+      "harness": "claude",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "release_root": "/home/stev/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/workspace/cauce-v3"
+      ],
+      "verification_scope": "roundtrip",
+      "container": "ws-zeus",
+      "bundle_root": "/home/stev/.local/share/cauce-v3-adapter",
+      "config_root": "/home/stev/.config/cauce-v3/container-aliases",
+      "ops_root": "/home/stev/.local/share/cauce-v3/ops"
+    },
+    {
+      "alias": "kant",
+      "kind": "native",
+      "transport": "ssh",
+      "host": "server2",
+      "ssh_user": "server",
+      "manager": "server",
+      "uid": 1000,
+      "unit": "cauce-v3-host-kant.service",
+      "state_directory": "/home/server/estado/cauce-v3/kant",
+      "runtime_user": "server",
+      "runtime_uid": 1000,
+      "harness": "claude",
+      "tenant_id": "Steven",
+      "room_id": "grp.steven",
+      "release_root": "/home/server/.local/share/cauce-v3-space-releases",
+      "preserve_paths": [
+        "/home/server/red-servidores"
+      ],
+      "verification_scope": "roundtrip",
+      "node_executable": "/home/server/.local/bin/node"
+    }
+  ],
+  "excluded": {
+    "astra": {
+      "reason": "t3b completion marker absent; requires verified KillMode=process before inclusion",
+      "gate": ".delegados/v4/hechas/t3b-adaptadores-v3-astra-1025.fin"
+    }
+  }
+}
