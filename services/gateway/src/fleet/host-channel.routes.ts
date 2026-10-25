@@ -79,7 +79,12 @@ async function maintenanceCommand(repository: FleetOperationsRepository, client:
   const fleet = repository.forTransaction(client);
   if (command.action === 'defer') return fleet.deferMaintenance(claim, command.reason);
   if (command.action === 'skip') return fleet.skipMaintenance(claim, command.reason);
-  try { await fleet.prepare(claim); return { prepared: true }; }
+  try {
+    const prepared = await fleet.prepare(claim);
+    await client.query('INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,$2,$3,$4::jsonb)',
+      [claim.operation.id, prepared.operation.version, 'step_completed', JSON.stringify({ maintenance_resume_sha256: command.resume_sha256 })]);
+    return { prepared: true };
+  }
   catch (error) {
     if (error instanceof MaintenanceDeferredError) {
       await fleet.deferMaintenance(claim, error.reason); return { prepared: false };

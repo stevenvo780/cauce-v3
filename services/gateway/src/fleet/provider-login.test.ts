@@ -16,6 +16,19 @@ const operationId = '74000000-0000-4000-8000-000000000001';
 const runtimeDriftLine = 'fleet effect failed: container image or ownership labels differ';
 const temporary: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const path of temporary) await rm(path, { recursive: true, force: true }); temporary.length = 0; });
+describe('bounded helper cleanup', () => {
+  it('allows a timed out helper to remove its resources before the process group is killed', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'h13b-helper-cleanup-')); temporary.push(directory);
+    const marker = join(directory, 'removed');
+    const program = 'import pathlib,signal,sys,time\n'
+      + 'def stop(*_):\n pathlib.Path(sys.argv[1]).write_text("clean")\n raise SystemExit(0)\n'
+      + 'signal.signal(signal.SIGTERM,stop)\ntime.sleep(60)\n';
+    await expect(boundedProviderReceipt('/usr/bin/python3', ['-c', program, marker], '{}',
+      new AbortController().signal, 1_000, 2_000)).rejects.toMatchObject({ code: 'HOST_UNAVAILABLE' });
+    expect(await readFile(marker, 'utf8')).toBe('clean');
+  });
+});
+
 function zeroHash(size: number): string {
   const hash = createHash('sha256'); const block = Buffer.alloc(65_536);
   for (let remaining = size; remaining > 0; remaining -= block.length) hash.update(block.subarray(0, Math.min(remaining, block.length)));

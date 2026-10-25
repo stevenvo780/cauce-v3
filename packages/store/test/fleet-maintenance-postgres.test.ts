@@ -1,7 +1,9 @@
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { enqueueHostMaintenance, FleetOperationsRepository, HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority,
-  withTransaction, type DatabasePool, type FleetOperationClaim, type HostMaintenanceIdentity } from '../src/index.js';
+import { CauceRepository, enqueueHostMaintenance, FleetOperationsRepository, HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority,
+  withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationClaim, type HostMaintenanceIdentity } from '../src/index.js';
+import { insertDelivery } from '../src/repository/messages/_insert.js';
+import { agentContextReconcileLockKey } from '../src/repository/agent-context-lock.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -60,6 +62,40 @@ const agent = async () => (await pool.query<{ enabled: boolean; lifecycle_state:
   "SELECT enabled,lifecycle_state,primary_account_id,model_id FROM agents WHERE tenant_id='Steven' AND alias='maintenance_agent'")).rows[0];
 const foreignRevision = () => pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
   VALUES('Steven','maintenance_operator','{}','{}','unrelated configuration change')`);
+const publication = () => ({ version: '3.0' as const, request_id: randomUUID(), trace_id: randomUUID(),
+  tenant_id: 'Steven', room_id: 'maintenance-room', actor_alias: 'maintenance_operator',
+  recipients: [{ tenant_id: 'Steven', alias: 'maintenance_agent' }], body: { text: 'Owned maintenance race' },
+  idempotency_key: randomUUID(), lane: 'interactive' as const, priority: 1 });
+async function blockedBy(pid: number): Promise<number> {
+  let blocked: number | undefined;
+  await expect.poll(async () => {
+    blocked = (await pool.query<{ pid: number }>(`SELECT pid FROM pg_stat_activity
+      WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) LIMIT 1`, [pid])).rows[0]?.pid;
+    return blocked;
+  }, { timeout: 5_000, interval: 10 }).toBeTypeOf('number');
+  if (blocked === undefined) throw new Error('expected a blocked PostgreSQL backend');
+  return blocked;
+}
+async function messageWithoutDelivery(): Promise<string> {
+  const message = (await pool.query<{ id: string }>(`INSERT INTO messages(request_id,trace_id,tenant_id,room_id,actor_alias,body,lane)
+    VALUES(gen_random_uuid(),gen_random_uuid(),'Steven','maintenance-room','maintenance_operator','{}','interactive') RETURNING id`)).rows[0];
+  if (!message) throw new Error('owned fixture message absent');
+  return message.id;
+}
+async function terminalSession(client: Pick<DatabaseClient, 'query'>, revoked = false, mode: 'shell' | 'harness' | 'harness_rw' = 'shell'): Promise<string> {
+  const id = randomUUID(); const hash = Buffer.alloc(32, 1);
+  await client.query(`INSERT INTO terminal_sessions(id,operator_id,attributed,console_subject,tenant_id,alias,
+    container,runtime_user,mode,ticket_sha256,reason,issued_at,expires_at,consumed_at,revoked_at,
+    request_id,request_sha256,browser_owner_sha256,browser_owner_generation,
+    relay_instance_id,relay_boot_id,relay_claim_sha256,relay_claim_epoch,relay_claimed_at,relay_claim_expires_at)
+    VALUES($1,'maintenance-operator',true,'owned-maintenance-fixture','Steven','maintenance_agent',
+    'cauce-maintenance-agent','dev',$7,$2,'owned fixture',clock_timestamp()-interval '11 minutes',
+    clock_timestamp()-interval '10 minutes',clock_timestamp()-interval '630 seconds',
+    CASE WHEN $3::boolean THEN clock_timestamp() ELSE NULL END,$4,$2,$2,1,$5,$6,$2,1,
+    clock_timestamp()-interval '630 seconds',clock_timestamp()+interval '150 seconds')`,
+  [id, hash, revoked, randomUUID(), 'a'.repeat(64), randomUUID(), mode]);
+  return id;
+}
 
 describe('durable host maintenance', () => {
   it('builds one exact canonical update and attributes its real signed host', async () => {
@@ -168,5 +204,138 @@ describe('durable host maintenance', () => {
   it('does not disable a live agent when an unprepared maintenance operation fails', async () => {
     await enqueue(); const operation = await claim(); await repository.fail(operation, { code: 'HOST_UNAVAILABLE', retryable: true });
     expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+  });
+  it('waits for an already validated agent publication and defers before fencing its new delivery', async () => {
+    await enqueue(); const operation = await claim();
+    const barrier = await pool.connect(); const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await barrier.query('BEGIN');
+      const pid = (await barrier.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('barrier backend absent');
+      await barrier.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['cauce:agent-root:Steven/maintenance_operator']);
+      const published = new CauceRepository(pool).publish(publication(), { agentRoot: true });
+      settlements.push(published); void published.catch(() => undefined);
+      const publisherPid = await blockedBy(pid);
+      const prepared = repository.prepare(operation);
+      settlements.push(prepared); void prepared.catch(() => undefined);
+      await blockedBy(publisherPid);
+      expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+      expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
+      await barrier.query('COMMIT');
+      committed = true;
+      expect((await published).delivery_ids).toHaveLength(1);
+      await expect(prepared).rejects.toMatchObject({ reason: 'pending_deliveries' });
+      expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+      expect((await pool.query('SELECT status FROM deliveries')).rows).toEqual([{ status: 'pending' }]);
+    } finally {
+      if (!committed) await barrier.query('ROLLBACK');
+      await Promise.allSettled(settlements); barrier.release();
+    }
+  });
+  it('revalidates a waiting publication after maintenance commits its fence', async () => {
+    await enqueue(); const operation = await claim();
+    const preparation = await pool.connect(); const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await preparation.query('BEGIN');
+      const pid = (await preparation.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('preparation backend absent');
+      await repository.forTransaction(preparation).prepare(operation);
+      const published = new CauceRepository(pool).publish(publication());
+      settlements.push(published); void published.catch(() => undefined);
+      await blockedBy(pid);
+      expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
+      await preparation.query('COMMIT');
+      committed = true;
+      await expect(published).rejects.toMatchObject({ code: 'no_route' });
+      expect(await agent()).toMatchObject({ enabled: false, lifecycle_state: 'provisioning' });
+      expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
+    } finally {
+      if (!committed) await preparation.query('ROLLBACK');
+      await Promise.allSettled(settlements); preparation.release();
+    }
+  });
+  it('rejects internal delivery insertion without waiting on an exclusive recipient context fence', async () => {
+    const messageId = await messageWithoutDelivery(); const fence = await pool.connect();
+    try {
+      await fence.query('BEGIN');
+      await fence.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [agentContextReconcileLockKey('Steven', 'maintenance_agent')]);
+      await expect(withTransaction(pool, async client => {
+        await client.query("SET LOCAL statement_timeout='1000ms'");
+        return insertDelivery(client, { messageId, recipientTenant: 'Steven', recipientAlias: 'maintenance_agent' });
+      })).rejects.toMatchObject({ code: 'conflict', message: 'recipient context is being reconciled; retry the delivery' });
+      expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
+    } finally { await fence.query('ROLLBACK'); fence.release(); }
+  });
+  it('rejects every internal delivery producer after preparation has committed', async () => {
+    const messageId = await messageWithoutDelivery(); await enqueue(); const operation = await claim(); await repository.prepare(operation);
+    await expect(withTransaction(pool, client => insertDelivery(client,
+      { messageId, recipientTenant: 'Steven', recipientAlias: 'maintenance_agent' })))
+      .rejects.toMatchObject({ code: 'conflict', message: 'recipient runtime maintenance is prepared; retry after admission' });
+    expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
+  });
+  it.each([false, true])('defers a consumed live relay claim even with an expired ticket and revoked=%s', async revoked => {
+    await enqueue(); const operation = await claim(); const session = await terminalSession(pool, revoked);
+    await expect(repository.prepare(operation)).rejects.toMatchObject({ reason: 'preflight_unavailable' });
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+    await pool.query('UPDATE terminal_sessions SET closed_at=clock_timestamp() WHERE id=$1', [session]);
+    expect(typeof (await repository.prepare(operation)).operation.desired_revision).toBe('number');
+  });
+  it('permits maintenance after the revoked relay claim expires without requiring a remote close receipt', async () => {
+    await enqueue(); const operation = await claim(); const session = await terminalSession(pool, true);
+    await pool.query("UPDATE terminal_sessions SET relay_claim_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1", [session]);
+    expect(typeof (await repository.prepare(operation)).operation.desired_revision).toBe('number');
+  });
+  it('does not defer for a read-only harness viewer with a live relay claim', async () => {
+    await enqueue(); const operation = await claim(); await terminalSession(pool, false, 'harness');
+    expect(typeof (await repository.prepare(operation)).operation.desired_revision).toBe('number');
+  });
+  it('defers a revoked writable harness relay while its input claim remains live', async () => {
+    await enqueue(); const operation = await claim(); await terminalSession(pool, true, 'harness_rw');
+    await expect(repository.prepare(operation)).rejects.toMatchObject({ reason: 'preflight_unavailable' });
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+  });
+  it('waits for terminal SHARE authority to commit and then observes its live relay claim before fencing', async () => {
+    await enqueue(); const operation = await claim(); const terminal = await pool.connect();
+    const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await terminal.query('BEGIN'); await terminal.query('LOCK TABLE agents IN SHARE MODE');
+      const pid = (await terminal.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('terminal backend absent');
+      await terminalSession(terminal);
+      const prepared = repository.prepare(operation); settlements.push(prepared); void prepared.catch(() => undefined);
+      await blockedBy(pid);
+      expect(await agent()).toMatchObject({ enabled: true });
+      await terminal.query('COMMIT'); committed = true;
+      await expect(prepared).rejects.toMatchObject({ reason: 'preflight_unavailable' });
+      expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+    } finally {
+      if (!committed) await terminal.query('ROLLBACK');
+      await Promise.allSettled(settlements); terminal.release();
+    }
+  });
+  it('holds terminal SHARE authority behind maintenance until the target is durably disabled', async () => {
+    await enqueue(); const operation = await claim();
+    const preparation = await pool.connect(); const terminal = await pool.connect();
+    const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await preparation.query('BEGIN'); await repository.forTransaction(preparation).prepare(operation);
+      const pid = (await preparation.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('preparation backend absent');
+      await terminal.query('BEGIN');
+      const grant = (async () => {
+        await terminal.query('LOCK TABLE agents IN SHARE MODE');
+        const enabled = (await terminal.query<{ enabled: boolean }>(
+          "SELECT enabled FROM agents WHERE tenant_id='Steven' AND alias='maintenance_agent'")).rows[0]?.enabled;
+        if (enabled !== true) return false;
+        await terminalSession(terminal); return true;
+      })();
+      settlements.push(grant); void grant.catch(() => undefined); await blockedBy(pid);
+      await preparation.query('COMMIT'); committed = true;
+      expect(await grant).toBe(false); await terminal.query('COMMIT');
+      expect((await pool.query('SELECT id FROM terminal_sessions')).rowCount).toBe(0);
+    } finally {
+      if (!committed) await preparation.query('ROLLBACK');
+      await Promise.allSettled(settlements); await terminal.query('ROLLBACK'); preparation.release(); terminal.release();
+    }
   });
 });

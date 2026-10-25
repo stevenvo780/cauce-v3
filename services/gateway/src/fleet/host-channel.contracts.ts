@@ -45,7 +45,8 @@ export const HostMaintenanceCommandSchema = z.discriminatedUnion('action', [
     release_sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict(),
   z.object({ resource: z.literal('host_maintenance'), action: z.literal('defer'), claim: FleetFence,
     reason: MaintenanceDeferReasonSchema }).strict(),
-  z.object({ resource: z.literal('host_maintenance'), action: z.literal('prepare'), claim: FleetFence }).strict(),
+  z.object({ resource: z.literal('host_maintenance'), action: z.literal('prepare'), claim: FleetFence,
+    resume_sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict(),
   z.object({ resource: z.literal('host_maintenance'), action: z.literal('skip'), claim: FleetFence,
     reason: z.enum(['runtime_current', 'release_changed']).optional() }).strict(),
 ]);

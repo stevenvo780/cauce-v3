@@ -36,6 +36,7 @@ function fixture(duplicate = false, failAudit = false) {
     if (schema) return schema;
     let rows: Record<string, unknown>[] = [];
     if (sql.includes('INSERT INTO idempotency_keys')) rows = duplicate ? [] : [{ idempotency_key: command.idempotency_key }];
+    else if (sql.includes('pg_try_advisory_xact_lock_shared')) rows = [{ acquired: true }];
     else if (sql.includes('INSERT INTO messages')) rows = [{ id: messageId }];
     else if (sql.includes('INSERT INTO deliveries')) rows = [{ id: deliveryId }];
     else if (sql.includes('SELECT request_hash,response,message_id FROM idempotency_keys')) rows = [{
@@ -49,7 +50,8 @@ function fixture(duplicate = false, failAudit = false) {
       if (failAudit) throw new Error('audit unavailable');
       expect(values?.slice(0, 5)).toEqual(['Steven', 'kant', command.request_id, messageId, command.trace_id]);
     } else if (!['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql) && !sql.includes('INSERT INTO adapter_outbox')
-        && !sql.includes('SELECT pg_notify') && !sql.includes('UPDATE idempotency_keys')) throw new Error(`unexpected query: ${sql}`);
+        && !sql.includes('SELECT pg_notify') && !sql.includes('UPDATE idempotency_keys')
+        && !sql.includes('pg_advisory_xact_lock_shared') && !sql.includes('FROM fleet_operations operation')) throw new Error(`unexpected query: ${sql}`);
     return { rows, rowCount: rows.length };
   });
   const pool = { connect: async () => ({ query, release: vi.fn(), on: vi.fn(), off: vi.fn() }) } as unknown as DatabasePool;

@@ -99,6 +99,8 @@ export async function assertHostMaintenanceAuthority(client: DatabaseClient, row
 }
 export async function assertHostMaintenanceIdle(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   if (!isMaintenanceOperation(row) || row.target.resource !== 'agent' || row.request.kind !== 'update') return;
+  // Terminal issuance and relay renewal hold SHARE on agents before granting input authority.
+  await client.query('LOCK TABLE agents IN ROW EXCLUSIVE MODE');
   const params = [row.target.tenant_id, row.target.alias];
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [agentContextReconcileLockKey(row.target.tenant_id, row.target.alias)]);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`connection-lease:${row.target.tenant_id}:${row.target.alias}`]);
@@ -107,6 +109,11 @@ export async function assertHostMaintenanceIdle(client: DatabaseClient, row: Fle
   if ((await client.query(`SELECT 1 FROM deliveries WHERE recipient_tenant=$1 AND recipient_alias=$2
     AND status IN ('pending','retry','leased','accepted','started') LIMIT 1`, params)).rowCount) {
     throw new MaintenanceDeferredError('pending_deliveries');
+  }
+  if ((await client.query(`SELECT 1 FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2
+    AND mode IN ('shell','harness_rw') AND consumed_at IS NOT NULL AND closed_at IS NULL
+    AND relay_claim_expires_at>clock_timestamp() LIMIT 1`, params)).rowCount) {
+    throw new MaintenanceDeferredError('preflight_unavailable');
   }
   const reservations = (await client.query<{ reservation: { cohort?: unknown; state?: unknown } }>(
     `SELECT reservation.metadata->'provider_auth' AS reservation FROM fleet_operations operation

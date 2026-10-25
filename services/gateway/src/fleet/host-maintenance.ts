@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { z } from 'zod';
-import { beginMaintenanceGuard, MaintenanceDeferReasonSchema, type MaintenanceGuard } from './host-maintenance-guard.js';
+import { beginMaintenanceGuard, proveMaintenanceResume, MaintenanceDeferReasonSchema, type MaintenanceGuard } from './host-maintenance-guard.js';
 import type { FleetExecution } from './executor.js';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { SignedHostChannel } from './signed-source.js';
@@ -59,9 +59,25 @@ export class HostMaintenance {
       if (first.state === 'runtime_current' && execution.operation.desired_revision === null) {
         await this.request('skip', { claim: fence }, signal); return false;
       }
-      if (first.state !== 'ready' && first.state !== 'stopped') throw new Error('Maintenance did not acquire a restart guard');
+      if (first.state === 'stopped' && execution.operation.desired_revision === null) {
+        await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal); return false;
+      }
+      if (first.state === 'stopped' && execution.operation.steps.some(step => step.name === 'prepare' && step.status === 'succeeded')
+          && this.currentStop(execution, claim)) {
+        this.held = { operation: execution.operation.id, claimToken: claim.claim_token, epoch: claim.epoch, guard };
+        finished = true;
+        return true;
+      }
+      if (first.state !== 'ready') throw new Error('Maintenance did not acquire a restart guard');
+      let resumeSha256: string;
+      try { resumeSha256 = await proveMaintenanceResume(this.config.command, execution, claim, first, signal); }
+      catch (error) {
+        if (execution.operation.desired_revision !== null || signal.aborted) throw error;
+        await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal);
+        return false;
+      }
       const response = z.object({ prepared: z.boolean() }).strict()
-        .parse(await this.request('prepare', { claim: fence }, signal));
+        .parse(await this.request('prepare', { claim: fence, resume_sha256: resumeSha256 }, signal));
       if (!response.prepared) return false;
       this.held = { operation: execution.operation.id, claimToken: claim.claim_token, epoch: claim.epoch, guard };
       finished = true;
@@ -73,17 +89,21 @@ export class HostMaintenance {
   async stop(execution: FleetExecution, claim: FleetOperationClaim): Promise<void> {
     if (!maintenance(execution)) return;
     const held = this.held;
-    const scope = execution.fleet_scope;
-    if (execution.operation.status !== 'running' || held?.operation !== execution.operation.id
+    if (held?.operation !== execution.operation.id
         || held.claimToken !== claim.claim_token || held.epoch !== claim.epoch
-        || execution.operation.id !== claim.operation.id || scope?.operation_id !== execution.operation.id
-        || scope.host_id !== this.config.host || scope.claim_token !== claim.claim_token || scope.claim_epoch !== claim.epoch
-        || scope.worker_id !== claim.worker_id || scope.prepared_revision !== execution.operation.desired_revision
-        || !execution.operation.steps.some(step => step.name === 'stop' && step.status === 'running')) {
+        || !this.currentStop(execution, claim)) {
       throw new Error('Maintenance stop requires its current durable host claim and running step');
     }
     this.held = undefined;
     await held.guard.finish(true);
+  }
+  private currentStop(execution: FleetExecution, claim: FleetOperationClaim): boolean {
+    const scope = execution.fleet_scope;
+    return execution.operation.status === 'running' && execution.operation.desired_revision !== null
+      && execution.operation.id === claim.operation.id && scope?.operation_id === execution.operation.id
+      && scope.host_id === this.config.host && scope.claim_token === claim.claim_token && scope.claim_epoch === claim.epoch
+      && scope.worker_id === claim.worker_id && scope.prepared_revision === execution.operation.desired_revision
+      && execution.operation.steps.some(step => step.name === 'stop' && step.status === 'running');
   }
   async finish(claim: FleetOperationClaim): Promise<void> {
     const held = this.held;

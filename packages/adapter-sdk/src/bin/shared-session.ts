@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
+import { createHash } from 'node:crypto';
 import { CliTmux, type TmuxController } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
 import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
@@ -10,6 +11,7 @@ import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
 import { applySessionRecovery, previewSessionRecovery } from '../shared-session/recovery.js';
+import { assertCommandPins } from '../sdk/command-pins.js';
 
 /**
  * CLI to inspect and ensure the state of the shared session.
@@ -29,7 +31,7 @@ interface Options {
 
 function usage(): never {
   process.stderr.write(
-    "uso: shared-session.js <ensure|status|degradations|seed|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
+    "uso: shared-session.js <ensure|status|degradations|seed|resume-proof|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
     + " [--workspace /workspace] [--state DIR] [--native-id ID] [--expected-fingerprint SHA256] [--force 0|1] [--expires-at UNIX_MS]\n",
   );
   process.exit(2);
@@ -72,7 +74,7 @@ function parse(argv: readonly string[]): Options {
   };
 }
 
-function spec(options: Options, home: string): SharedSessionSpec {
+function spec(options: Options, home: string, environment: NodeJS.ProcessEnv = process.env): SharedSessionSpec {
   const harness = options.harness;
   if (!isSharedSessionHarness(harness)) {
     process.stderr.write(`el harness '${options.harness}' no tiene sesión compartida\n`);
@@ -86,7 +88,7 @@ function spec(options: Options, home: string): SharedSessionSpec {
     options.alias,
     options.workspace,
     home,
-    process.env,
+    environment,
     options.stateDirectory,
   );
 }
@@ -94,6 +96,19 @@ function spec(options: Options, home: string): SharedSessionSpec {
 async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
+  if (options.command === 'resume-proof') {
+    const sessionSpec = spec(options, home, { ...process.env, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '1' });
+    await assertCommandPins(sessionSpec.command ?? sessionSpec.harness, sessionSpec.commandPins);
+    const plan = await sessionSpec.resume?.resolveLaunch?.();
+    const resumable = plan?.state === 'launch' && plan.resumed;
+    const fingerprint = resumable ? createHash('sha256').update(JSON.stringify({
+      alias: options.alias, harness: sessionSpec.harness, state: options.stateDirectory,
+      workspace: sessionSpec.workspace, args: plan.args,
+    })).digest('hex') : null;
+    process.stdout.write(`${JSON.stringify({ resumable, fingerprint })}\n`);
+    process.exitCode = resumable ? 0 : 1;
+    return;
+  }
   const recovery = options.command.startsWith('recovery-');
   const tmux = new CliTmux(undefined, process.env, recovery ? 1000 : 10_000);
   // This timer MUST NOT be `unref()`-ed: there is no other pending work keeping the event

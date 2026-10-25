@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FleetExecution } from './executor.js';
 import type { HostCommandConfig } from './host-command.js';
 import type { FleetOperationClaim } from '@cauce/store';
+import { boundedProviderReceipt } from './provider-login.js';
 
 export const MaintenanceDeferReasonSchema = z.enum(['pending_deliveries', 'provider_login', 'composer_busy',
   'turn_active', 'tui_unreadable', 'preflight_unavailable']);
@@ -18,17 +19,36 @@ export interface MaintenanceGuard {
 }
 const unavailable = () => new Error('Host maintenance guard could not be verified');
 
-export async function beginMaintenanceGuard(config: HostCommandConfig, execution: FleetExecution,
-  claim: FleetOperationClaim, signal: AbortSignal): Promise<MaintenanceGuard> {
+function maintenancePacket(execution: FleetExecution, claim: FleetOperationClaim): Record<string, unknown> {
   const target = execution.request.target;
   const agents = z.array(z.record(z.string(), z.unknown())).parse(execution.snapshot?.agents);
   const selected = agents.filter(agent => target.resource === 'agent'
     && agent.tenant_id === target.tenant_id && agent.alias === target.alias);
-  if (selected.length !== 1 || config.transport !== undefined || signal.aborted
+  if (selected.length !== 1) throw unavailable();
+  return { operation_id: execution.operation.id, agent: selected[0], trusted_accounts: execution.trusted_accounts ?? [],
+    claim: { claim_token: claim.claim_token, consumer_epoch: claim.epoch } };
+}
+
+export async function proveMaintenanceResume(config: HostCommandConfig, execution: FleetExecution,
+  claim: FleetOperationClaim, ready: MaintenanceGuardEvent, signal: AbortSignal): Promise<string> {
+  if (ready.state !== 'ready' || ready.operation_id !== execution.operation.id || config.transport !== undefined
       || ![config.python, config.executable, config.policyFile].every(path => path.startsWith('/')
         && !path.split('/').includes('..') && !/[\p{Cc}]/u.test(path))) throw unavailable();
-  const packet = JSON.stringify({ operation_id: execution.operation.id, agent: selected[0],
-    trusted_accounts: execution.trusted_accounts ?? [], claim: { claim_token: claim.claim_token, consumer_epoch: claim.epoch } });
+  const packet = JSON.stringify({ ...maintenancePacket(execution, claim),
+    expected_runtime: { container_id: ready.container_id, generation: ready.generation } });
+  if (Buffer.byteLength(packet) > 1_048_576) throw unavailable();
+  const proof = z.object({ resumable: z.literal(true), fingerprint: Hash }).strict().parse(await boundedProviderReceipt(
+    config.python, ['-B', config.executable, '--policy', config.policyFile, '--maintenance-resume-proof'],
+    packet, signal, 20_000, 5_000));
+  return proof.fingerprint;
+}
+
+export async function beginMaintenanceGuard(config: HostCommandConfig, execution: FleetExecution,
+  claim: FleetOperationClaim, signal: AbortSignal): Promise<MaintenanceGuard> {
+  if (config.transport !== undefined || signal.aborted
+      || ![config.python, config.executable, config.policyFile].every(path => path.startsWith('/')
+        && !path.split('/').includes('..') && !/[\p{Cc}]/u.test(path))) throw unavailable();
+  const packet = JSON.stringify(maintenancePacket(execution, claim));
   if (Buffer.byteLength(packet) > 1_048_576) throw unavailable();
   const child = spawn(config.python, ['-B', config.executable, '--policy', config.policyFile, '--maintenance-guard'], {
     detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH ?? '/usr/bin:/bin',

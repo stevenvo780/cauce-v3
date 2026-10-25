@@ -78,6 +78,7 @@ def main() -> int:
     action.add_argument('--recovery-preview', action='store_true')
     action.add_argument('--recovery-preflight', action='store_true')
     action.add_argument('--maintenance-guard', action='store_true')
+    action.add_argument('--maintenance-resume-proof', action='store_true')
     action.add_argument('--retire-replacement', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
@@ -114,6 +115,11 @@ def main() -> int:
         raise SafeFailure('execution payload exceeds its limit')
     for termination in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(termination, cancelled)
+    if args.maintenance_resume_proof:
+        from fleet_executor_resume import maintenance_resume_preflight
+        receipt = maintenance_resume_preflight(policy, json.loads(encoded))
+        print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
+        return 0
     if args.quota or args.quota_auth_verify:
         from quota_runtime import perform as quota_perform
         from quota_runtime import verify_authentication

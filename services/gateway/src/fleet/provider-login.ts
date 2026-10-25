@@ -178,14 +178,24 @@ function kill(child: ChildProcessWithoutNullStreams): void {
   if (child.pid === undefined) return;
   try { process.kill(-child.pid, 'SIGKILL'); } catch { /* The helper process group may already be gone. */ }
 }
-export async function boundedProviderReceipt(python: string, argv: string[], body: string, signal: AbortSignal, timeoutMs = 60_000): Promise<unknown> {
-  if (signal.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) throw unavailable();
+export async function boundedProviderReceipt(python: string, argv: string[], body: string, signal: AbortSignal,
+  timeoutMs = 60_000, cleanupGraceMs = 0): Promise<unknown> {
+  if (signal.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000
+      || !Number.isSafeInteger(cleanupGraceMs) || cleanupGraceMs < 0 || cleanupGraceMs > 10_000) throw unavailable();
   return new Promise((resolve, reject) => {
     const child = spawnPrivate(python, argv); const chunks: Buffer[] = []; let length = 0; let invalid = false;
-    let stderrText = ''; let rejected = false;
-    const stop = () => { invalid = true; kill(child); };
+    let stderrText = ''; let rejected = false; let force: NodeJS.Timeout | undefined;
+    const stop = () => {
+      if (invalid) return;
+      invalid = true;
+      if (cleanupGraceMs === 0) { kill(child); return; }
+      if (child.pid !== undefined) {
+        try { process.kill(-child.pid, 'SIGTERM'); } catch { /* The bounded helper may have exited. */ }
+      }
+      force = setTimeout(() => { kill(child); }, cleanupGraceMs);
+    };
     const timer = setTimeout(stop, timeoutMs); signal.addEventListener('abort', stop, { once: true });
-    const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', stop); };
+    const finish = () => { clearTimeout(timer); if (force) clearTimeout(force); signal.removeEventListener('abort', stop); };
     const rejectStep = () => {
       if (rejected) return; rejected = true;
       const runtimeReason = providerRuntimeFailureReason(stderrText);

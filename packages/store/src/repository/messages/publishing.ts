@@ -48,6 +48,7 @@ import {
 } from './agent-roots.js';
 import { loadMessageDetail, messageDetailWithReplies } from './message-detail.js';
 import { loadHumanInboxPage, type HumanInboxPage, type HumanInboxQuery } from './human-inbox.js';
+import { agentContextReconcileLockKey } from '../agent-context-lock.js';
 
 // The BUS writes this, not the agent: first person made it a lie through an 8 h outage.
 const telegramRelayAcknowledgement = 'Recibido por el bus; en cola para el agente.';
@@ -184,7 +185,16 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
     if (uniqueRecipients.length !== input.recipients.length) {
       throw new StoreError('conflict', 'recipient list contains duplicates');
     }
+    const orderedRecipients = [...uniqueRecipients].sort((left, right) => (
+      `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
+    ));
     const work = async (client: DatabaseClient): Promise<PublishResult> => {
+      // Acquire the maintenance fence before reading route authority and retain it through delivery commit.
+      for (const recipient of orderedRecipients) {
+        await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [
+          agentContextReconcileLockKey(recipient.tenant_id, recipient.alias),
+        ]);
+      }
       if (systemGateProbe) await assertSystemGatePrincipal(client, input);
       const human = await humanPublicationAuthority(client, input, options);
       await lockClientMailboxes(client, uniqueRecipients);
@@ -294,10 +304,7 @@ export abstract class MessagePublishingRepository extends ConfigRepository {
 
       const authenticated = input.authenticated_context;
       if ((authenticated?.channel ?? input.channel) === 'human-mcp') {
-        const recipients = [...uniqueRecipients].sort((left, right) => (
-          `${left.tenant_id}\u0000${left.alias}`.localeCompare(`${right.tenant_id}\u0000${right.alias}`)
-        ));
-        for (const recipient of recipients) {
+        for (const recipient of orderedRecipients) {
           await client.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [
             `connection-lease:${recipient.tenant_id}:${recipient.alias}`,
           ]);

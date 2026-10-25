@@ -8,8 +8,10 @@ import type { FleetHostConfig } from './main.js';
 import type { SignedHostChannel } from './signed-source.js';
 
 const beginGuard = vi.hoisted(() => vi.fn());
+const proveResume = vi.hoisted(() => vi.fn());
 vi.mock('./host-maintenance-guard.js', async original => ({
   ...await original<typeof import('./host-maintenance-guard.js')>(), beginMaintenanceGuard: beginGuard,
+  proveMaintenanceResume: proveResume,
 }));
 const RELEASE = 'b'.repeat(64);
 const OPERATION = '71000000-0000-4000-8000-000000000001';
@@ -30,6 +32,7 @@ function fixture() {
   const guard: MaintenanceGuard = { first: { state: 'ready', operation_id: OPERATION,
     container_id: 'c'.repeat(64), generation: 'd'.repeat(64), guard_id: 'e'.repeat(32) }, finish };
   beginGuard.mockImplementation(async () => { calls.push('hold'); return guard; });
+  proveResume.mockImplementation(async () => { calls.push('proof'); return 'f'.repeat(64); });
   const channelRequest = vi.fn(async (_method: string, _path: string, packet: { action: string }) => {
     if (packet.action === 'prepare') {
       calls.push('prepare'); operation = { ...operation, desired_revision: 1,
@@ -48,7 +51,7 @@ function fixture() {
   return { maintenance, channelRequest, execution, calls, claim, guard, finish,
     update: (next: Partial<FleetOperation>) => { operation = { ...operation, ...next }; } };
 }
-beforeEach(() => { beginGuard.mockReset(); });
+beforeEach(() => { beginGuard.mockReset(); proveResume.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('automatic host maintenance', () => {
@@ -67,7 +70,9 @@ describe('automatic host maintenance', () => {
       finish: claim => f.maintenance.finish(claim), perform: async (_step, execution, _signal, claim) => {
         await f.maintenance.stop(execution, claim); f.calls.push('perform:stop'); return { evidence: { stopped_verified: true } };
       } }).runOnce();
-    expect(f.calls).toEqual(['hold', 'prepare', 'start:stop', 'commit', 'perform:stop', 'complete:stop', 'settle']);
+    expect(f.calls).toEqual(['hold', 'proof', 'prepare', 'start:stop', 'commit', 'perform:stop', 'complete:stop', 'settle']);
+    expect(f.channelRequest).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel',
+      expect.objectContaining({ action: 'prepare', resume_sha256: 'f'.repeat(64) }), expect.any(AbortSignal));
     expect(repository.prepare).not.toHaveBeenCalled(); expect(repository.fail).not.toHaveBeenCalled();
   });
   it('aborts the retained guard after shutdown before the durable stop effect', async () => {
@@ -82,7 +87,7 @@ describe('automatic host maintenance', () => {
     await new FleetExecutor(repository, { host: 'test-host', worker: 'worker', signal: abort.signal,
       prepare: (execution, claim, signal) => f.maintenance.prepare(execution, claim, signal),
       finish: claim => f.maintenance.finish(claim), perform }).runOnce();
-    expect(f.calls).toEqual(['hold', 'prepare', 'abort']); expect(perform).not.toHaveBeenCalled();
+    expect(f.calls).toEqual(['hold', 'proof', 'prepare', 'abort']); expect(perform).not.toHaveBeenCalled();
     expect(repository.fail).not.toHaveBeenCalled();
   });
   it('rejects stop with an unprepared, pending or foreign claim without committing its guard', async () => {
@@ -98,6 +103,54 @@ describe('automatic host maintenance', () => {
     expect(f.channelRequest).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel',
       expect.objectContaining({ action: 'defer', reason: 'composer_busy' }), expect.any(AbortSignal));
     expect(f.calls).toEqual(['hold', 'abort']);
+  });
+  it('defers a runtime without an exact resume proof before preparation and restores the retained input guard', async () => {
+    const f = fixture(); proveResume.mockRejectedValueOnce(new Error('missing native pointer'));
+    expect(await f.maintenance.prepare(f.execution(), f.claim, new AbortController().signal)).toBe(false);
+    expect(f.channelRequest).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel',
+      expect.objectContaining({ action: 'defer', reason: 'preflight_unavailable' }), expect.any(AbortSignal));
+    expect(f.calls).toEqual(['hold', 'abort']); expect(f.execution().operation.desired_revision).toBeNull();
+    expect(f.finish).toHaveBeenCalledExactlyOnceWith(false);
+  });
+  it('never prepares an unobserved stopped runtime as if a native conversation had been protected', async () => {
+    const f = fixture(); f.guard.first = { state: 'stopped' };
+    expect(await f.maintenance.prepare(f.execution(), f.claim, new AbortController().signal)).toBe(false);
+    expect(proveResume).not.toHaveBeenCalled(); expect(f.calls).toEqual(['hold', 'abort']);
+    expect(f.execution().operation.desired_revision).toBeNull();
+  });
+  it('replays the exact running stop after a crash between its physical effect and durable receipt', async () => {
+    const f = fixture(); f.guard.first = { state: 'stopped' };
+    f.update({ desired_revision: 1, steps: [{ name: 'prepare', status: 'succeeded' }, { name: 'stop', status: 'running' }] });
+    const repository = {
+      claim: async () => f.claim, renew: async () => true, execution: async () => f.execution(),
+      prepare: vi.fn(async () => ({ operation: f.execution().operation, fenced_targets: [] })),
+      startStep: async () => f.execution().operation,
+      completeStep: async () => { f.update({ steps: [{ name: 'prepare', status: 'succeeded' }, { name: 'stop', status: 'succeeded' }] }); return f.execution().operation; },
+      awaitAuth: async () => f.execution().operation, fail: vi.fn(async () => f.execution().operation),
+      compensate: async () => f.execution().operation, settle: async () => f.execution().operation,
+    };
+    const perform = vi.fn(async (_step: string, execution: FleetExecution, _signal: AbortSignal, claim: FleetOperationClaim) => {
+      await f.maintenance.stop(execution, claim); return { evidence: { stopped_verified: true } };
+    });
+    await new FleetExecutor(repository, { host: 'test-host', worker: 'worker',
+      prepare: (execution, claim, signal) => f.maintenance.prepare(execution, claim, signal),
+      finish: claim => f.maintenance.finish(claim), perform }).runOnce();
+    expect(repository.prepare).toHaveBeenCalledExactlyOnceWith(f.claim);
+    expect(repository.fail).not.toHaveBeenCalled(); expect(perform).toHaveBeenCalledTimes(1);
+    expect(proveResume).not.toHaveBeenCalled(); expect(f.channelRequest).not.toHaveBeenCalled();
+    expect(f.calls).toEqual(['hold', 'commit']);
+    expect(f.execution().operation.steps.find(step => step.name === 'stop')?.status).toBe('succeeded');
+  });
+  it('rejects a stopped prepared runtime without its exact running stop authority', async () => {
+    const f = fixture(); f.guard.first = { state: 'stopped' }; f.update({ desired_revision: 1 });
+    await expect(f.maintenance.prepare(f.execution(), f.claim, new AbortController().signal)).rejects.toThrow('restart guard');
+    f.update({ steps: [{ name: 'prepare', status: 'succeeded' }, { name: 'stop', status: 'running' }] });
+    const execution = f.execution();
+    if (!execution.fleet_scope) throw new Error('prepared scope missing');
+    execution.fleet_scope.claim_token = 'foreign';
+    await expect(f.maintenance.prepare(execution, f.claim, new AbortController().signal)).rejects.toThrow('restart guard');
+    expect(proveResume).not.toHaveBeenCalled(); expect(f.channelRequest).not.toHaveBeenCalled();
+    expect(f.finish).toHaveBeenCalledTimes(2); expect(f.finish).toHaveBeenLastCalledWith(false);
   });
   it('does not classify a prepared busy runtime as a harmless deferral', async () => {
     const f = fixture(); f.update({ desired_revision: 1 }); f.guard.first = { state: 'deferred', reason: 'tui_unreadable' };
