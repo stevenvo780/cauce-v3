@@ -202,7 +202,8 @@ export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescrip
     process.stdout.write(`E2E browser descriptor: ${JSON.stringify(expected)}\n`);
     createIssued = true;
     // A shell as PID 1 ignores SIGTERM, so without an init every stop would spend its whole grace period.
-    const receipt = (await docker(['create', '--pull=never', '--rm', '--init', '--network', expected.networkName,
+    // Renderers inherit the daemon soft nofile (1024). Past it, shared-memory creation fails with EMFILE and the page target dies.
+    const receipt = (await docker(['create', '--pull=never', '--rm', '--init', '--ulimit', 'nofile=65536:65536', '--network', expected.networkName,
       '--mount', `type=bind,source=${expected.directory},target=/qa-browser-transport,readonly`, '--name', expected.name,
       '--label', 'cauce.e2e.owner=ui-functional', '--label', `io.cauce.qa.browser=${expected.owner}`,
       '--entrypoint', 'sh', expected.imageId, '-lc', `sleep ${String(lifetimeSeconds)}`], { timeout: BROWSER_DOCKER_TIMEOUT_MS })).stdout.trim();
