@@ -17,6 +17,7 @@ interface Inventory {
 interface Observation {
   running: boolean; labels: Record<string, string>; credentials: boolean | null;
   runtime_processes: number;
+  native_session_present: boolean | null;
   processes: { model: string | null; effort: string | null; bootstrap: string | null }[];
 }
 
@@ -124,11 +125,11 @@ async function startOwnedAgent(): Promise<void> {
 async function observeRuntime(): Promise<Observation> {
   const name = `${active().prefix}-${runtimeKey}`;
   const present = await docker(['ps', '-a', '--format', '{{.Names}}', '--filter', `name=^/${name}$`]);
-  if (!present) return { running: false, labels: {}, credentials: null, processes: [], runtime_processes: 0 };
+  if (!present) return { running: false, labels: {}, credentials: null, processes: [], runtime_processes: 0, native_session_present: false };
   const running = await docker(['inspect', '--format', '{{.State.Running}}', name]) === 'true';
   const labels = JSON.parse(await docker(['inspect', '--format', '{{json .Config.Labels}}', name])) as Record<string, string>;
-  if (!running) return { running, labels, credentials: null, processes: [], runtime_processes: 0 };
-  const probe = `import json,os,pathlib,sys
+  if (!running) return { running, labels, credentials: null, processes: [], runtime_processes: 0, native_session_present: null };
+  const probe = `import json,os,pathlib,stat,subprocess,sys
 processes=[];runtime_processes=0
 for pid in filter(str.isdigit,os.listdir('/proc')):
  try:
@@ -139,9 +140,21 @@ for pid in filter(str.isdigit,os.listdir('/proc')):
   if env.get('CAUCE_RUNTIME_KEY')==sys.argv[1] and any(arg.endswith('/adapter/src/bin/codex.js') for arg in argv):
    processes.append({'model':env.get('CAUCE_MODEL_ID'),'effort':env.get('CAUCE_REASONING_EFFORT'),'bootstrap':env.get('CAUCE_BOOTSTRAP')})
  except OSError: pass
-print(json.dumps({'credentials':(pathlib.Path('/run/cauce-credentials')/sys.argv[1]).exists(),'processes':processes,'runtime_processes':runtime_processes}))`;
-  const observed = JSON.parse(await docker(['exec', '--user', COMPUTER_RUNTIME.user, name, 'python3', '-B', '-c', probe, runtimeKey])) as
-    Pick<Observation, 'processes' | 'credentials' | 'runtime_processes'>;
+socket=pathlib.Path(sys.argv[2])/('tmux-'+str(os.getuid()))/'cauce'
+target='cauce-'+sys.argv[1]
+try: details=socket.lstat()
+except FileNotFoundError: native_present=False
+else:
+ if not stat.S_ISSOCK(details.st_mode) or details.st_uid!=os.getuid(): raise SystemExit('canonical native socket identity failed')
+ native=subprocess.run(['/usr/bin/tmux','-S',str(socket),'has-session','-t','='+target],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,timeout=5)
+ absent={"can't find session: "+target+'\\n','no server running on '+str(socket)+'\\n'}
+ if native.returncode==0: native_present=True
+ elif native.returncode==1 and native.stderr in absent: native_present=False
+ else: raise SystemExit('canonical native session observation failed')
+print(json.dumps({'credentials':(pathlib.Path('/run/cauce-credentials')/sys.argv[1]).exists(),'processes':processes,'runtime_processes':runtime_processes,'native_session_present':native_present}))`;
+  const observed = JSON.parse(await docker(['exec', '--user', COMPUTER_RUNTIME.user, name, 'python3', '-B', '-c', probe,
+    runtimeKey, `${COMPUTER_RUNTIME.stateRoot}/${runtimeKey}`])) as
+    Pick<Observation, 'processes' | 'credentials' | 'runtime_processes' | 'native_session_present'>;
   return { running, labels, ...observed };
 }
 async function assertTerminalReleased(checkTmux = true): Promise<void> {
@@ -360,10 +373,11 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     const state = (await active().computer.pool.query('SELECT enabled,lifecycle_state,retired_at IS NOT NULL AS retired FROM agents WHERE tenant_id=$1 AND alias=$2', [active().tenantId, alias])).rows[0] as unknown;
     expect(state).toEqual({ enabled: false, lifecycle_state: 'retired', retired: true });
     const observed = await observeRuntime();
+    await receipt('07-retire', { operations, database: state, runtime: observed });
     expect(observed.processes).toEqual([]);
     expect(observed.runtime_processes).toBe(0);
+    if (observed.running) expect(observed.native_session_present).toBe(false);
     if (observed.running) expect(observed.credentials).toBe(false);
-    await receipt('07-retire', { operations, database: state, runtime: observed });
   }, 360_000);
 
   it('rechaza la sesión nominal revocada por cambio de contraseña mediante la API del dueño', async () => {

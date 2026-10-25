@@ -116,6 +116,22 @@ for entry in json.load(sys.stdin):
 print('terminal bootstrap material installed privately')
 `;
 
+function deliveryReplyDiagnostic(reply: string | null, expected: string): Record<string, unknown> {
+  const text = typeof reply === 'string' ? reply : '';
+  const tokens: readonly string[] = text.match(/(?:STORED|RECALLED):[A-Za-z0-9-]{1,128}/gu) ?? [];
+  const allowedKeys = new Set(['reply', 'messages', 'notify', 'status', 'retryable', 'artifacts', 'cauce_correlation_id']);
+  let json: unknown;
+  try { json = JSON.parse(text) as unknown; } catch { /* Reply bodies stay private even when they are not JSON. */ }
+  const object = json !== null && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : undefined;
+  return { reply_type: reply === null ? 'null' : typeof reply, reply_length: text.length,
+    format: object ? 'json_object' : json === undefined ? 'text' : 'json_nonobject',
+    json_keys: object ? Object.keys(object).filter(key => allowedKeys.has(key)).sort() : [],
+    json_unknown_key_count: object ? Object.keys(object).filter(key => !allowedKeys.has(key)).length : 0,
+    own_token_count: tokens.length, own_token_matches_expected: tokens.includes(expected),
+    known_cauce_notice: text.includes('[Cauce]'), starts_with_expected: text.startsWith(expected),
+    json_inner_reply_matches: object?.reply === expected };
+}
+
 export async function startFleetCliFixture(options: { candidateSource: string }): Promise<FleetCliFixture> {
   await mkdir(fleetCliReceipts, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(join(tmpdir(), 'cauce-cli-flota-'));
@@ -315,7 +331,12 @@ export async function startFleetCliFixture(options: { candidateSource: string })
         const row = (await active.pool.query<{ status: string; reply: string | null }>(`SELECT status,result->'output'->>'reply' AS reply
           FROM deliveries WHERE message_id=$1 AND recipient_tenant=$2 AND recipient_alias=$3`, [delivery.message_id, tenantId, alias])).rows[0];
         if (row?.status === 'done') {
-          if (row.reply !== expectedReply) throw new Error('the canonical SDK delivery did not verify its owned marker');
+          if (row.reply !== expectedReply) {
+            await writeFile(join(fleetCliReceipts, 'terminal-delivery-reply-mismatch.json'), JSON.stringify({
+              code: 'CANONICAL_SDK_MARKER_MISMATCH', action, ...deliveryReplyDiagnostic(row.reply, expectedReply),
+            }, null, 2) + '\n', { mode: 0o600 });
+            throw new Error('the canonical SDK delivery did not verify its owned marker');
+          }
           delivered = true;
         } else if (row && ['dead', 'failed'].includes(row.status)) throw new Error('the canonical SDK preparation delivery failed');
         else await new Promise<void>(resolve => { setTimeout(resolve, 250); });
