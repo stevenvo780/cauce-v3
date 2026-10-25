@@ -72,13 +72,21 @@ mirror() {
   local ignored want
   [[ -n $host ]] || { printf 'el contexto %s no es ssh://\n' "$ctx" >&2; exit 3; }
   ignored=$(mktemp)
-  # What git ignores stays out (secrets, local state, receipts), except the build outputs the suites import.
-  git -C "$ROOT" ls-files --others --ignored --exclude-standard --directory \
-    | grep -Ev '(^|/)(dist|node_modules)/?$' | sed 's#^#/#' > "$ignored"
+  # What git ignores stays out (secrets, local state, receipts), except the build outputs the suites import. The list
+  # travels NUL-separated with rsync wildcards escaped, so an unusual file name cannot slip past its exclusion. .git
+  # is mirrored: suites record `git rev-parse HEAD` in their receipts.
+  git -C "$ROOT" ls-files -z --others --ignored --exclude-standard --directory | python3 -I -c '
+import re, sys
+for path in sys.stdin.buffer.read().split(b"\0"):
+    if not path or re.search(rb"(^|/)(dist|node_modules)/?$", path):
+        continue
+    if re.search(rb"[*?[]", path):
+        path = re.sub(rb"([*?[\\])", rb"\\\1", path)
+    sys.stdout.buffer.write(b"/" + path + b"\0")' > "$ignored"
   exec 8>"/tmp/cauce-e2e-espejo-$ctx.lock"
   flock 8  # one sync per mirror at a time; the runs themselves overlap freely
   on_vm mkdir -p "$ROOT"
-  quiet rsync -a --delete --exclude=node_modules --exclude=/.e2e-node-modules --exclude-from="$ignored" \
+  quiet rsync -a --delete --exclude=node_modules --exclude=/.e2e-node-modules --from0 --exclude-from="$ignored" \
     "$ROOT/" "$host:$ROOT/"
   want=$(sha256sum "$ROOT/pnpm-lock.yaml" | cut -c1-16)
   if [[ $(on_vm cat "$ROOT/.e2e-node-modules" 2>/dev/null || true) != "$want" ]]; then
