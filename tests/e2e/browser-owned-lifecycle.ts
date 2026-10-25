@@ -99,6 +99,70 @@ function absentContainer(error: unknown, reference: string): boolean {
 
 /** Cleanup outlasts the daemon's own stop path: a SIGKILL may wait 10 s for a task in uninterruptible I/O before forcing it. */
 export const BROWSER_CLEANUP_TIMEOUT_MS = plazo(30_000);
+export const BROWSER_IMAGE_CLEANUP_TIMEOUT_MS = plazo(90_000);
+
+export async function removeOwnedBrowserImage(docker: Docker, image: {
+  image: string; imageId: string; owned: boolean; container?: { id: string; owner: string };
+}, timing = {
+  now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
+}): Promise<void> {
+  if (!image.owned) return;
+  if (!/^sha256:[a-f0-9]{64}$/u.test(image.imageId)) throw new Error('Owned browser image lacks an exact SHA');
+  if (image.container && !/^[a-f0-9]{64}$/u.test(image.container.id)) throw new Error('Owned browser image lacks an exact container CID');
+  const deadline = timing.now() + BROWSER_IMAGE_CLEANUP_TIMEOUT_MS;
+  const budget = (maximum = BROWSER_DOCKER_TIMEOUT_MS) => {
+    const remaining = Math.floor(deadline - timing.now());
+    if (remaining <= 0) throw new Error(`owned image tag ${image.image} cleanup remains unresolved`);
+    return Math.min(maximum, remaining);
+  };
+  const inspect = async () => {
+    let current: string;
+    try {
+      current = (await docker(['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', image.image],
+        { timeout: budget() })).stdout.trim();
+    } catch (error) {
+      let cause = error;
+      let code: unknown;
+      while (cause !== null && typeof cause === 'object') {
+        if ('code' in cause) code = cause.code;
+        cause = 'cause' in cause ? cause.cause : undefined;
+      }
+      const absent = [`Error response from daemon: No such image: ${image.image}`, `Error: No such image: ${image.image}`];
+      if (code === 1 && absent.includes(browserErrorStderr(error).trim())) return false;
+      throw error;
+    }
+    if (current !== `${image.imageId} ui-functional`) throw new Error(`owned image tag ${image.image} changed identity/ownership; refusing to remove it`);
+    return true;
+  };
+  const waitUnused = async () => {
+    const container = image.container;
+    if (!container) return;
+    for (;;) {
+      let current: string;
+      try {
+        current = (await docker(['inspect', '--format', '{{.Id}} {{.Image}} {{index .Config.Labels "io.cauce.qa.browser"}} {{index .Config.Labels "cauce.e2e.owner"}}',
+          container.id], { timeout: budget() })).stdout.trim();
+      } catch (error) {
+        if (absentContainer(error, container.id)) return;
+        throw error;
+      }
+      if (current !== `${container.id} ${image.imageId} ${container.owner} ui-functional`) throw new Error('Owned browser container identity changed before image cleanup');
+      await timing.wait(Math.min(250, budget()));
+    }
+  };
+  let removalError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!await inspect()) return;
+    await waitUnused();
+    if (!await inspect()) return;
+    try { await docker(['image', 'rm', image.image], { timeout: budget(plazo(60_000)) }); }
+    catch (error) { removalError = error; }
+    // A cancelled CLI can leave a completed removal; reconcile the exact tag before retrying.
+    if (!await inspect()) return;
+    if (attempt === 0) await timing.wait(Math.min(250, budget()));
+  }
+  throw new Error(`owned image tag ${image.image} remains after cleanup`, { cause: removalError });
+}
 
 export function ownedBrowserLifecycle(docker: Docker, descriptor: BrowserDescriptor, timing = {
   now: () => performance.now(), wait: (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),

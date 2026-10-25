@@ -17,7 +17,7 @@ import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 import { ChatLatencyCapture } from './browser-delivery-diagnostics.js';
 import { mountedSocketMatches } from './browser-socket-identity.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
-import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserLifetimeSeconds, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
+import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, removeOwnedBrowserImage, browserLifetimeSeconds, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
 import { plazo } from '../helpers/plazos.js';
 
 const require = createRequire(join(process.cwd(), 'console/package.json'));
@@ -63,13 +63,8 @@ async function inspectImage(image: string): Promise<string | undefined> {
   }
 }
 
-async function removeBrowserImage(runtime: BrowserRuntime): Promise<void> {
-  if (!runtime.owned) return;
-  const current = await inspectImage(runtime.image);
-  if (current === undefined) return;
-  if (current !== `${runtime.imageId} ui-functional`) throw new Error(`owned image tag ${runtime.image} changed identity/ownership; refusing to remove it`);
-  await docker(['image', 'rm', runtime.image]);
-  if (await inspectImage(runtime.image) !== undefined) throw new Error(`owned image tag ${runtime.image} remains after cleanup`);
+async function removeBrowserImage(runtime: BrowserRuntime, container?: { id: string; owner: string }): Promise<void> {
+  await removeOwnedBrowserImage(docker, { ...runtime, ...(container === undefined ? {} : { container }) });
 }
 
 async function cleanPartialBrowserImage(image: string, playwrightVersion: string, cause: unknown, buildLog: string): Promise<void> {
@@ -161,7 +156,7 @@ RUN playwright install --with-deps chromium
   }
 }
 
-async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[], lifetimeSeconds?: number): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; closeNetwork(): Promise<void>; closeContainer: () => Promise<void> }> {
+async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime, ports: readonly number[], lifetimeSeconds?: number): Promise<{ browser: ConnectedBrowser; container: string; containerId: string; containerOwner: string; closeNetwork(): Promise<void>; closeContainer: () => Promise<void> }> {
   const owner = randomUUID();
   const container = `cauce-ui-browser-${owner}`;
   const network = await isolatedBrowserNetwork(docker, ports);
@@ -217,7 +212,7 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     const websocket = new URL(version.webSocketDebuggerUrl);
     if (websocket.hostname !== '127.0.0.1' || websocket.port !== String(cdp.port)) throw new Error('Published CDP websocket address differs from its private host binding');
     const browser = await chromium.connectOverCDP(endpoint, { timeout: plazo(10_000) });
-    return { browser, container, containerId, closeContainer: lifecycle.close, closeNetwork: async () => {
+    return { browser, container, containerId, containerOwner: owner, closeContainer: lifecycle.close, closeNetwork: async () => {
       const errors: Error[] = [];
       await attemptCleanup(errors, 'private CDP publication', () => cdp?.close() ?? Promise.resolve());
       await attemptCleanup(errors, 'owned browser network', closeNetwork);
@@ -267,7 +262,8 @@ export async function startTrustedBrowser(caCertPath: string, directory: string,
         await attemptCleanup(errors, 'CDP browser', () => isolated.browser.close());
         await attemptCleanup(errors, 'owned browser container', isolated.closeContainer);
         await attemptCleanup(errors, 'owned browser network', () => isolated.closeNetwork());
-        if (!browserResourcesRetained(new AggregateError(errors))) await attemptCleanup(errors, 'owned browser image', () => removeBrowserImage(runtime));
+        if (!browserResourcesRetained(new AggregateError(errors))) await attemptCleanup(errors, 'owned browser image',
+          () => removeBrowserImage(runtime, { id: isolated.containerId, owner: isolated.containerOwner }));
         if (errors.length > 0) throw new AggregateError(errors, 'trusted browser cleanup was incomplete');
       },
     };
@@ -453,7 +449,8 @@ export async function startConsoleFunctionalFixture(options: FunctionalFixtureOp
         if (app) await attemptCleanup(cleanupErrors, 'gateway server', () => app?.close() ?? Promise.resolve());
         if (database) await attemptCleanup(cleanupErrors, 'database pool', () => database?.pool.end() ?? Promise.resolve());
         if (database) await attemptCleanup(cleanupErrors, 'owned PostgreSQL container', () => database?.container.stop() ?? Promise.resolve());
-        if (!browserResourcesRetained(new AggregateError(cleanupErrors))) await attemptCleanup(cleanupErrors, 'owned browser image', () => removeBrowserImage(runtime));
+        if (!browserResourcesRetained(new AggregateError(cleanupErrors))) await attemptCleanup(cleanupErrors, 'owned browser image',
+          () => removeBrowserImage(runtime, { id: isolatedBrowser.containerId, owner: isolatedBrowser.containerOwner }));
         await attemptCleanup(cleanupErrors, 'fixture temporary directory', () => rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }));
         if (cleanupErrors.length > 0) throw new AggregateError(cleanupErrors, 'functional E2E cleanup was incomplete');
       },
