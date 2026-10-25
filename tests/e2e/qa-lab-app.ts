@@ -98,7 +98,13 @@ export async function startQaLabApplication(options: {
     const gatewayUrl = await gateway.listen({ host: '127.0.0.1', port: ports.gateway });
     transport = new Agent({ cert: await readFile(pki.console.cert), key: await readFile(pki.console.key),
       ca: await readFile(pki.ca), rejectUnauthorized: true });
-    const healthPlugin = { name: 'qa-lab-health', configureServer(server: QaViteServer) {
+    const relayPath = `/v3/console/terminal/relays/${pki.relayId}/ws`;
+    const healthPlugin = { name: 'qa-lab-health',
+      configResolved(config: { server: { proxy?: Record<string, unknown> } }) {
+        const proxy = config.server.proxy;
+        if (proxy) config.server.proxy = { [relayPath]: proxy[relayPath], ...proxy };
+      },
+      configureServer(server: QaViteServer) {
       server.middlewares.use('/__qa/status', (request, response) => {
         void (async () => {
           let ready = false;
@@ -123,7 +129,7 @@ export async function startQaLabApplication(options: {
       plugins: [healthPlugin],
       cacheDir: join(directory, 'vite-cache'), server: { host: '0.0.0.0', port: 4443, strictPort: true, watch: null, hmr: false,
         https: { key: await readFile(frontend.key), cert: await readFile(frontend.cert) },
-        proxy: { [`/v3/console/terminal/relays/${pki.relayId}/ws`]: {
+        proxy: { [relayPath]: {
           target: `https://127.0.0.1:${String(ports.browser)}`, agent: transport, secure: true, changeOrigin: false, ws: true },
         '/v3': { target: gatewayUrl, agent: transport, secure: true, changeOrigin: false, ws: true } } } });
     } finally { process.chdir(projectRoot); }
