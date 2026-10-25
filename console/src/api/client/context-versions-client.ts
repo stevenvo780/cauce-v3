@@ -7,7 +7,7 @@ export interface VersionedContextSnapshot {
   sync: { state: 'pending' | 'synced' | 'error'; git_commit: string | null; pushed_at: string | null; last_error: string | null };
   application: { state: 'pending' | 'applied' | 'error'; last_error: string | null };
 }
-export interface ContextVersionEntry { version: number; source: string; restored_from: number | null; created_at: string; actor_human_id: string | null; actor_alias: string; digest: string }
+export interface ContextVersionEntry { version: number; source: string; restored_from: number | null; created_at: string; actor_human_id: string | null; actor_alias: string; actor_name?: string | null; digest: string }
 export interface ContextVersions { entries: ContextVersionEntry[]; next_cursor: number | null }
 export interface ContextVersionDiff { from: number; to: number; files: { path: string; before: string | null; after: string | null; change: 'added' | 'modified' | 'deleted' }[] }
 export interface ContextVersionsClient {

@@ -23,6 +23,8 @@ interface RevisionCruda {
   operating_rules: string[];
   actor_tenant: string | null;
   actor_alias: string | null;
+  actor_human_id?: string | null;
+  actor_name?: string | null;
   changed_at: string;
 }
 
@@ -49,7 +51,9 @@ const REVISION_VIEJA = revision(1, {
   role_summary: 'Hub de coordinación.',
   responsibilities: ['Coordinar'],
   actor_tenant: 'Steven',
-  actor_alias: 'zeus',
+  actor_alias: 'kant',
+  actor_human_id: '11111111-1111-4111-8111-111111111111',
+  actor_name: 'Persona Steven',
 });
 
 const REVISION_NUEVA = revision(2);
@@ -102,7 +106,8 @@ beforeEach(() => {
       {
         id: '2', tenant_id: 'Steven', alias: 'kant', kind: String(params.kind),
         path: '/home/dev/.claude/CLAUDE.md', sha256: 'b'.repeat(64), bytes: 300,
-        actor_tenant: 'Steven', actor_alias: 'zeus', written_at: '2026-08-31T10:00:00.000Z',
+        actor_tenant: 'Steven', actor_alias: 'kant', actor_human_id: null, actor_name: null,
+        written_at: '2026-08-31T10:00:00.000Z',
       },
       {
         id: '1', tenant_id: 'Steven', alias: 'kant', kind: String(params.kind),
@@ -123,7 +128,8 @@ it('enseña las revisiones del perfil, la más nueva arriba, con quién y cuánd
 
   // The one that was attributed says who; the one that was not says so, and is not attributed
   // to the operator who is watching.
-  expect(within(dialogo).getByText('Steven/zeus')).toBeInTheDocument();
+  expect(within(dialogo).getByText('Persona Steven')).toBeInTheDocument();
+  expect(within(dialogo).queryByText('11111111-1111-4111-8111-111111111111')).not.toBeInTheDocument();
   expect(within(dialogo).getAllByText(/no consta quién/i).length).toBeGreaterThan(0);
 }, 25_000);
 
@@ -273,6 +279,7 @@ it('el diario de un fichero enseña huella y tamaño, y declara que el texto no 
   await user.click(await within(dialogo).findByRole('tab', { name: /CLAUDE\.md/i }));
 
   expect(await within(dialogo).findByText('bbbbbbbbbbbb')).toBeInTheDocument();
+  expect(within(dialogo).getByText('agente kant')).toBeInTheDocument();
   expect(within(dialogo).getByText(/300 bytes/)).toBeInTheDocument();
   expect(within(dialogo).getByText(/la huella cambió y el fichero creció 60 bytes/i))
     .toBeInTheDocument();

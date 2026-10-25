@@ -67,7 +67,8 @@ describe('native context ingest with real PostgreSQL and Git bare remote', () =>
       { source: 'ui', actor_alias: 'owner', actor_human_id: target().human_id },
       { source: 'native', actor_alias: 'director', actor_human_id: null }]);
     const history = await store.history(source, target().tenant_id, target().alias);
-    expect(history.entries[0]).toMatchObject({ version: 2, source: 'native', actor_alias: 'director', actor_human_id: null });
+    expect(history.entries[0]).toMatchObject({ version: 2, source: 'native', actor_alias: 'director', actor_human_id: null, actor_name: null });
+    expect(history.entries[1]).toMatchObject({ version: 1, source: 'ui', actor_alias: 'owner', actor_name: 'Synthetic owner' });
 
     directory = await mkdtemp(join(tmpdir(), 'zz-canary-native-ingest-')); await chmod(directory, 0o700);
     await execute('git', ['init', '--initial-branch=main', directory]);

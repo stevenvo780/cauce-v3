@@ -132,7 +132,13 @@ describe('versioned context HTTP authority with real PostgreSQL and signed human
     expect((await write()).statusCode).toBe(202);
     expect((await write(0)).statusCode).toBe(409);
     expect((await write(1, [{ path: 'context/mission.md', content: 'Changed mission.' }])).statusCode).toBe(202);
-    expect((await request('GET', '/history')).json()).toMatchObject({ entries: [{ version: 2 }, { version: 1 }], next_cursor: null });
+    const history = await request('GET', '/history');
+    expect(history.json()).toMatchObject({ entries: [
+      { version: 2, actor_alias: 'owner', actor_name: 'Synthetic owner' },
+      { version: 1, actor_alias: 'owner', actor_name: 'Synthetic owner' },
+    ], next_cursor: null });
+    expect(history.body).not.toContain('context_alpha@dev.example');
+    expect(history.body).not.toContain('cauce.invalid');
     expect((await request('GET', '/history?before=2')).json()).toMatchObject({ entries: [{ version: 1 }] });
     expect((await request('GET', '/diff?from=1&to=2')).json()).toMatchObject({ from: 1, to: 2,
       files: [{ path: 'context/mission.md', before: 'Scoped mission.', after: 'Changed mission.', change: 'modified' }] });

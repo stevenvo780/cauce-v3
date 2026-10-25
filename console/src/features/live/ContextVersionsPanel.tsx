@@ -11,6 +11,14 @@ import { applicationNotice, contextRequestMessage, synchronizationMessage } from
 
 const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
 
+function autorDeVersion(entry: { actor_alias: string; actor_human_id: string | null; actor_name?: string | null }): string {
+  const name = entry.actor_name?.trim() ?? '';
+  if (name.length > 0) return name;
+  if (typeof entry.actor_human_id === 'string' && entry.actor_human_id.length > 0) return 'persona';
+  const alias = entry.actor_alias.trim();
+  return alias.length > 0 ? `agente ${alias}` : 'sin autor registrado';
+}
+
 export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: string; alias: string; canWrite: boolean }) {
   const api = useApi();
   const identity = `${tenantId}/${alias}`;
@@ -136,7 +144,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
     <section aria-label="Historial de versiones"><h3>Historial</h3>
       {history.loading ? <p role="status">Leyendo historial…</p> : null}
       <ul className="m-0 grid list-none gap-2 p-0">{[...history.data?.entries ?? [], ...older?.entries ?? []].map(entry => <li key={entry.version} className="grid gap-2 border-b border-line py-2">
-        <span>Versión {entry.version} · {ORIGEN[entry.source] ?? entry.source} · {entry.actor_alias || 'sin autor registrado'} · <Time value={entry.created_at} />{entry.restored_from == null ? '' : ` · restaurada de ${String(entry.restored_from)}`}</span>
+        <span>Versión {entry.version} · {ORIGEN[entry.source] ?? entry.source} · {autorDeVersion(entry)} · <Time value={entry.created_at} />{entry.restored_from == null ? '' : ` · restaurada de ${String(entry.restored_from)}`}</span>
         <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy || !snapshot} onClick={() => { void compare(entry.version); }}>Ver diferencias de versión {entry.version}</Button>
           <Button size="sm" disabled={!writable || !!draft} onClick={() => { setRestoring(entry.version); }}>Restaurar versión {entry.version}</Button></div></li>)}</ul>
       {history.data && !history.data.entries.length ? <p>Aún no hay cambios registrados.</p> : null}

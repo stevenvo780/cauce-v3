@@ -306,11 +306,11 @@ function registerConsoleAgentRoutes(
     const perfiles = agentProfiles;
     const autorizarPerfil = async (
       request: unknown, permission: 'read' | 'control'
-    ): Promise<{ tenant_id: Tenant; alias: string }> => {
+    ): Promise<{ tenant_id: Tenant; alias: string; human_id: string | null }> => {
       const actor = await principal(request as FastifyRequest, options.authProvider);
       if (permission === 'read') requirePermission(actor, 'read');
       else requireOperatorPermission(actor, 'control');
-      return { tenant_id: actor.tenant_id, alias: actor.alias };
+      return { tenant_id: actor.tenant_id, alias: actor.alias, human_id: actor.human_id ?? null };
     };
     const autorizarDestino = async (
       actor: { tenant_id: string; alias: string },

@@ -38,13 +38,22 @@ export const CLASES_DE_OPERACION: Readonly<Record<PerfilRevision['operation'], s
 interface ActorDeRevision {
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
+  readonly actor_human_id?: string | null;
+  readonly actor_name?: string | null;
 }
 
 /**
- * Who made the change. Both columns arrive NULL for anything the gateway did not attribute, and
- * that is shown as «no consta quién»: it is never filled with the operator who is watching.
+ * Who made the change. A recorded person is the visible name. An explicit null person is the
+ * agent alias. Columns that were never stored stay «no consta quién», never the watcher.
  */
 export function actorDeRevision(entrada: ActorDeRevision): string | undefined {
+  const name = entrada.actor_name?.trim() ?? '';
+  if (name.length > 0) return name;
+  if (typeof entrada.actor_human_id === 'string' && entrada.actor_human_id.length > 0) return 'persona';
+  if (entrada.actor_human_id === null) {
+    const agent = entrada.actor_alias?.trim() ?? '';
+    return agent.length > 0 ? `agente ${agent}` : undefined;
+  }
   const tenant = entrada.actor_tenant?.trim() ?? '';
   const alias = entrada.actor_alias?.trim() ?? '';
   if (tenant.length > 0 && alias.length > 0) return `${tenant}/${alias}`;

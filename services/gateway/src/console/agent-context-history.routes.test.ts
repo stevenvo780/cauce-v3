@@ -26,6 +26,8 @@ const PERFIL = {
   operating_rules: ['acuse corto'],
   actor_tenant: 'Steven',
   actor_alias: 'zeus',
+  actor_human_id: '11111111-1111-4111-8111-111111111111',
+  actor_name: 'Steven',
   changed_at: '2026-09-01T10:00:00.000Z',
 };
 
@@ -82,6 +84,8 @@ describe('GET .../perfil/revisions', () => {
     expect(entry.revision).toBe(4);
     expect(entry.operation).toBe('update');
     expect(entry.actor_alias).toBe('zeus');
+    expect(entry.actor_name).toBe('Steven');
+    expect(JSON.stringify(entry)).not.toContain('@');
   });
 
   it('asks the journal for the requested page size and refuses one out of range', async () => {

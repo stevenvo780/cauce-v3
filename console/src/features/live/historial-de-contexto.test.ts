@@ -57,6 +57,20 @@ describe('quién hizo el cambio', () => {
     expect(actorDeRevision({ actor_tenant: null, actor_alias: 'zeus' })).toBe('zeus');
     expect(actorDeRevision({ actor_tenant: 'Steven', actor_alias: null })).toBe('Steven');
   });
+
+  it('una persona se muestra por su nombre y un agente por el alias', () => {
+    expect(actorDeRevision({
+      actor_tenant: 'Steven', actor_alias: 'kant', actor_human_id: '11111111-1111-4111-8111-111111111111',
+      actor_name: 'Steven',
+    })).toBe('Steven');
+    expect(actorDeRevision({
+      actor_tenant: 'Steven', actor_alias: 'kant', actor_human_id: '11111111-1111-4111-8111-111111111111',
+      actor_name: '  ',
+    })).toBe('persona');
+    expect(actorDeRevision({
+      actor_tenant: 'Steven', actor_alias: 'kant', actor_human_id: null, actor_name: null,
+    })).toBe('agente kant');
+  });
 });
 
 describe('la instantánea que se restaura', () => {

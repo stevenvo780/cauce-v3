@@ -32,7 +32,7 @@ export type { TopeSuperado } from './agent-profile/write-gates.js';
 export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
     authorize(
     request: unknown, permission: 'read' | 'control'
-  ): Promise<{ tenant_id: string; alias: string }>;
+  ): Promise<{ tenant_id: string; alias: string; human_id?: string | null }>;
     authorizeTarget(
     actor: { tenant_id: string; alias: string },
     targetTenantId: string,
@@ -55,7 +55,7 @@ export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
   replaceProfile?(
     profile: AgentProfile,
     expectedRevision: number | null,
-    actor: { tenant_id: string; alias: string },
+    actor: { tenant_id: string; alias: string; humanId?: string | null },
     source?: AgentProfileSourceGuard,
   ): Promise<{
     source_receipt?: AgentProfileSourceReceipt;
@@ -129,6 +129,14 @@ export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
     revision: number;
     applied_revision: number | null;
   }>;
+}
+
+function profileActor(actor: { tenant_id: string; alias: string; human_id?: string | null }): {
+  tenant_id: string; alias: string; humanId?: string;
+} {
+  return actor.human_id
+    ? { tenant_id: actor.tenant_id, alias: actor.alias, humanId: actor.human_id }
+    : { tenant_id: actor.tenant_id, alias: actor.alias };
 }
 
 export interface ProfileRuntimeAck {
@@ -670,7 +678,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           try {
             const priorExpectation = await deps.readWriteExpectation(tenantId, alias);
             await deps.withProfileWriteTransaction(async (client) => {
-              const desired = await replaceInTx(client, profile, expectedRevision, actor);
+              const desired = await replaceInTx(client, profile, expectedRevision, profileActor(actor));
               if (desired.revision !== newRevision || desired.source_receipt !== undefined) {
                 throw new Error('profile_revision_mismatch');
               }
@@ -723,7 +731,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           name: doc.name, path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha,
         })),
         updateDesired: async (client) => {
-          const desired = await replaceInTransaction(client, profile, expectedRevision, actor);
+          const desired = await replaceInTransaction(client, profile, expectedRevision, profileActor(actor));
           if (desired.revision !== newRevision || desired.source_receipt !== undefined) throw new Error('profile_revision_mismatch');
           await recordAuditInTransaction(client, {
             tenant_id: actor.tenant_id, actor_alias: actor.alias, action: 'agent_profile.write', decision: 'allow',
@@ -743,7 +751,8 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
             expectation: { revision: newRevision, generation: proof.writer.runtimeGeneration,
               documents: proof.documents.map((doc) => ({ name: doc.name, path: doc.path, sha: doc.sha ?? '' })) },
             documentRevisions: effect.acknowledgements.map((ack) => ({ path: ack.path,
-              sha256: ack.sha, bytes: ack.bytes, actorTenant: actor.tenant_id, actorAlias: actor.alias })),
+              sha256: ack.sha, bytes: ack.bytes, actorTenant: actor.tenant_id, actorAlias: actor.alias,
+              actorHumanId: actor.human_id ?? null })),
             resultAudit: { tenantId: actor.tenant_id, actorAlias: actor.alias, traceId: randomUUID(),
               metadata: perfilAuditMetadata(escritura, { revision: newRevision, state: 'pending_session_refresh' }) },
           };

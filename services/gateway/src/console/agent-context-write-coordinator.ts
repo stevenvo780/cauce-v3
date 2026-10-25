@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   reserveAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite,
   type DatabasePool, type DatabaseClient, type ContextWriteDocument, type ContextWriterQuiescence,
-  type ContextWriteDescriptor, type ContextWriterIdentity, canonicalProfileRuntimeContract, StoreError,
+  type ContextWriteDescriptor, type ContextWriterIdentity, canonicalProfileRuntimeContract, contextHumanId, StoreError,
 } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import type { AgentFactsProbe, AgentDocumentsDeps, GovernanceWritePrecondition } from './agent-documents.routes.js';
@@ -63,7 +63,7 @@ export async function coordinateDocumentRequest(
     tenantId: Tenant; alias: string; kind: string; path: string; content: string;
     precondition: GovernanceWritePrecondition;
     facts: import('./agent-documents/catalog.js').RuntimeFacts;
-    actor: { tenant_id: string; alias: string };
+    actor: { tenant_id: string; alias: string; human_id?: string | null };
     auditMetadata: (sha: string, bytes: number) => Readonly<Record<string, unknown>>;
   },
 ): Promise<CoordinateResult<{ sha: string; bytes: number }>> {
@@ -114,6 +114,7 @@ export async function coordinateDocumentRequest(
       await persist(client, {
         tenantId: input.tenantId, alias: input.alias, kind: input.kind, path: input.path,
         sha256: effect.sha, bytes: effect.bytes, actorTenant: input.actor.tenant_id, actorAlias: input.actor.alias,
+        actorHumanId: contextHumanId(input.actor.human_id) ?? null,
       }, { tenant_id: input.actor.tenant_id, actor_alias: input.actor.alias,
         action: 'agent_document.write', decision: 'allow', metadata: input.auditMetadata(effect.sha, effect.bytes) }, input.content);
     },

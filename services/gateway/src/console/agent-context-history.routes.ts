@@ -27,6 +27,8 @@ export interface ProfileRevisionView {
   /** NULL means "not recorded", never "nobody". */
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
+  readonly actor_human_id?: string | null;
+  readonly actor_name?: string | null;
   readonly changed_at: string;
 }
 
@@ -41,6 +43,8 @@ export interface DocumentRevisionView {
   readonly bytes: number;
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
+  readonly actor_human_id?: string | null;
+  readonly actor_name?: string | null;
   readonly written_at: string;
 }
 
