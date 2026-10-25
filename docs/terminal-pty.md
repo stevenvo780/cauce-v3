@@ -191,6 +191,25 @@ inodo viejo para siempre. Montado el archivo, una revocación no llegaría jamá
 Montado el directorio, el gateway relee la ruta en cada request y ve la lista
 nueva sin reiniciar nada.
 
+**Segunda fuente: la tabla `terminal_grants` (migración `086`).** Las concesiones
+también se administran desde la consola (Ajustes → Acceso → Concesiones de
+terminal): alta por persona, agente y modos (`shell`, `harness`, `harness_rw`),
+caducidad opcional y revocación con confirmación. Solo el dueño o un admin de la
+empresa del agente concede sobre sus agentes; el admin de plataforma, sobre
+cualquiera. Cada alta, cambio y baja queda en `audit_events`
+(`terminal.grant.create|update|revoke`) con su actor, y revocar corta las
+sesiones abiertas de esa concesión en la misma transacción.
+
+**Precedencia: ninguna fuente prevalece; vale la UNIÓN.** Una sesión se admite
+si la concede el archivo **o** una fila viva de la tabla (no revocada y sin
+caducar), sobre cada alias de la cohorte del contenedor. Se eligió la unión para
+que la transición no deje a nadie fuera: lo que hoy concede `grants.json` sigue
+valiendo sin migrar filas, y lo que la consola concede no exige tocar el archivo.
+La contrapartida, asumida: revocar en una fuente **no** revoca la otra. Para
+quitar un acceso hay que mirar las dos, y el kill switch 1 de §3 cierra las dos.
+Un error de parseo del archivo sigue anulando solo la fuente del archivo; la
+tabla no depende de ese fichero.
+
 ## 2. Encendido, en el orden correcto
 
 Precondiciones, todas verificadas antes de empezar:
@@ -325,6 +344,11 @@ Para el canal PTY el rollback barato no es ese: es vaciar `grants.json`
 
 ### Paso 4 — la primera fila en `grants.json`
 
+La vía normal ya no es esta: se concede desde la consola (Ajustes → Acceso →
+Concesiones de terminal), que escribe en `terminal_grants` sin SSH. El archivo
+sigue valiendo por la unión de §1.4 y este paso queda para el encendido inicial
+o cuando la consola no está disponible.
+
 Recién ahora se abre la puerta, y se abre para un alias:
 
 ```sh
@@ -362,11 +386,11 @@ casi nunca se usa.
 
 | # | Acción | Tiempo | Alcance | Qué NO toca |
 |---|---|---|---|---|
-| 1 | Vaciar `grants.json` por rename atómico | instantáneo | nadie puede pedir una terminal nueva; las sesiones abiertas se cortan solas | no reinicia nada, no ejecuta SQL, no toca el bus ni la consola |
+| 1 | Vaciar `grants.json` por rename atómico **y** revocar las filas vivas de `terminal_grants` | instantáneo | nadie puede pedir una terminal nueva; las sesiones abiertas se cortan solas | no reinicia nada, no toca el bus ni la consola |
 | 2 | `docker stop cauce-v3-prod-terminal-relay-1` | ~1 s | mata todas las shells de golpe | no toca el bus: los adaptadores siguen entregando y la consola sigue entera, con el canal PTY marcado como no disponible |
 | 3 | `CAUCE_TERMINAL_ENABLED=0` + reinicio del gateway | minutos | el gateway deja de emitir tickets y vuelve al 501 de hoy | reinicia el gateway, con todo el riesgo del paso 3 de §2 |
 
-Kill switch 1:
+Kill switch 1 (las DOS fuentes, porque vale la unión de §1.4):
 
 ```sh
 umask 027
@@ -374,7 +398,13 @@ tmp=$(mktemp /etc/cauce-v3/terminal/.grants.json.XXXXXX)
 printf '{"version":1,"grants":[]}\n' > "$tmp"
 chown 1000:1000 "$tmp"; chmod 0440 "$tmp"
 mv -f "$tmp" /etc/cauce-v3/terminal/grants.json
+# Y la tabla: revocar desde Ajustes → Acceso → Concesiones, o por SQL en la misma ventana:
+docker exec -i cauce-v3-prod-postgres-1 psql -U cauce -d cauce -c \
+  "UPDATE terminal_grants SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL"
 ```
+
+Vaciar solo el archivo ya no basta: una fila viva de `terminal_grants` seguiría
+abriendo terminales. Los kill switches 2 y 3 cortan todo sin mirar fuentes.
 
 Efecto esperado: pedidos nuevos rechazados en menos de un segundo (el gateway
 relee el archivo en cada request) y las sesiones ya abiertas cortadas en menos
@@ -424,7 +454,7 @@ orden (`services/gateway/src/terminal/session-control.ts`). Cada denegación esc
 | 2 | Permiso canónico `control` del principal, y visibilidad del alias destino **y de todos los que comparten su contenedor** | `control_permission_required` (403) · `target_unavailable` (404) |
 | 3 | Atribución: operador **nombrado** (no `unattributed:console-basic-auth`) y atribuido, sobre el destino y sobre toda la cohorte | `writable_requires_named_operator` · `writable_requires_attribution` · `attribution_required` (403) |
 | 4 | Autoridad de ruteo sobre **cada** alias del contenedor, réplica del camino de publicación | `no_routing_authority` (403) |
-| 5 | `grants.json` releído del disco, con el modo `harness_rw`, sobre **toda** la cohorte | `no_grant_for_operator` (403) |
+| 5 | Concesión con el modo `harness_rw` sobre **toda** la cohorte: `grants.json` releído del disco **o** fila viva de `terminal_grants` (unión de §1.4) | `no_grant_for_operator` (403) |
 | 6 | Un agente PTY vivo en ese contenedor que anuncie `harness_rw` en su hello | `no_recognized_mode` · `agent_offline` (409) |
 
 La regla de cohorte de las compuertas 2, 3, 4 y 5 es la misma de siempre (`containerCohort` en
