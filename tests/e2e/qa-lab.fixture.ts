@@ -15,6 +15,28 @@ import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 
 const OWNER = 'qa0-entorno-exploracion-1025';
 
+const qaRuntime = {
+  ...cancelDeployRuntime,
+  providerCli: cancelDeployRuntime.providerCli + `
+import os,pathlib
+if nonce is None:
+ home=pathlib.Path(os.environ['CODEX_HOME'])
+ directory=home/'sessions'
+ directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+ transcript=directory/('rollout-qa-'+native+'.jsonl')
+ turn=str(uuid.uuid4())
+ entries=[] if transcript.exists() else [{'type':'session_meta','payload':{'id':native,'cwd':os.getcwd(),'source':'exec'}}]
+ entries.extend([
+  {'type':'response_item','payload':{'type':'message','role':'user','content':[{'type':'input_text','text':prompt}],
+   'internal_chat_message_metadata_passthrough':{'turn_id':turn}}},
+  {'type':'event_msg','payload':{'type':'task_complete','turn_id':turn,'last_agent_message':answer}}
+ ])
+ fd=os.open(transcript,os.O_WRONLY|os.O_APPEND|os.O_CREAT,0o600)
+ with os.fdopen(fd,'a') as stream:
+  for entry in entries: stream.write(json.dumps(entry)+'\\n')
+`,
+};
+
 async function untrackedReleaseSources(): Promise<string[]> {
   const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
   const { stdout } = await promisify(execFile)('git', ['-C', projectRoot, 'ls-files', '--others', '--exclude-standard', '-z', '--',
@@ -150,7 +172,7 @@ async function main(): Promise<void> {
     const origins = [url, 'https://localhost:4443'];
     stage = 'computer_harness';
     computer = await startComputerHarness({ prefix, consoleOrigins: origins, resourceOwner: OWNER,
-      dockerSocket: proxy.socket, workRoot, runtimeBundle: cancelDeployRuntime, extraSourceFiles: await untrackedReleaseSources(),
+      dockerSocket: proxy.socket, workRoot, runtimeBundle: qaRuntime, extraSourceFiles: await untrackedReleaseSources(),
       terminal: { masterFile, masterSha256: sha256(master), relayHost: '127.0.0.1', relayPort: ports.ports.agent, serverName: 'localhost' } });
     checkStop();
     const email = `${prefix}@example.test`, password = `Qa-${randomBytes(24).toString('hex')}`;

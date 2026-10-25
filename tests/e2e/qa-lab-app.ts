@@ -83,12 +83,15 @@ export async function startQaLabApplication(options: {
     const auth = new PasswordAuthProvider({ users: new PostgresConsoleUserStore(computer.pool), signingKey: Buffer.alloc(32, 61),
       fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identities)) });
     const config: TerminalConfig = { wsPath: '/v3/console/terminal/ws', ticketKey, relayToken,
+      relayUrl: `https://127.0.0.1:${String(ports.browser)}`, relayCaFile: pki.ca,
+      relayClientCertFile: pki.console.cert, relayClientKeyFile: pki.console.key,
       relayInstanceIds: new Set([pki.relayId]), grantsFile, ticketTtlSeconds: 60, sessionTtlSeconds: 900,
       claimLeaseSeconds: 150, maxSessionsPerOperator: 2, operatorHeader: 'x-cauce-operator', operators: new Set([email]),
       writableTuiEnabled: true, controlHoldSeconds: 300 };
     const uid = process.geteuid?.() ?? 0;
     gateway = await buildGateway({ pool: computer.pool, repository: new CauceRepository(computer.pool), logger: false,
       consoleOrigins: origins, authProvider: auth, hostSetup: computer.packager,
+      agentProviderAuthBroker: computer.agentProviderAuthBroker,
       fleetOperationsRepository: new FleetOperationsRepository(computer.pool),
       signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(authority, 'signed.sock'), { ownerUid: uid, peerUid: uid }),
       https: { key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca),
