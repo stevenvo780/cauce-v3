@@ -104,7 +104,7 @@ export function HudAlerts({ items, selectedKey, onOpen }: { items: readonly Aler
   return (
     <section aria-labelledby="atencion-titulo" className={cn(HUD_PANEL, 'pointer-events-auto flex max-w-full items-center gap-1.5 self-start p-1')}>
       <h2 id="atencion-titulo" className={cn(HUD_TEXT, 'm-0 shrink-0 px-1 text-[10px] text-[#ef7d57]')}>Necesitan atención</h2>
-      <ul className="m-0 flex min-w-0 list-none gap-1 overflow-x-auto p-0 [scrollbar-width:none]">
+      <ul className="m-0 flex min-w-0 flex-wrap list-none gap-1 p-0">
         {items.map((item) => (
           <li key={item.key} className="shrink-0">
             <button

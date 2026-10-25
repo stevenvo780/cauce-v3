@@ -77,6 +77,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const bottomRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const partyRef = useRef<HTMLDivElement>(null);
+  const sideRef = useRef<HTMLDivElement>(null);
   const promptRef = useRef<HTMLButtonElement>(null);
   const mapRef = useRef<HTMLCanvasElement>(null);
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
@@ -89,6 +90,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
   const bottomHeight = useHeight(bottomRef);
   const cardHeight = useHeight(cardRef);
   const partyWidth = useWidth(partyRef);
+  const sideWidth = useWidth(sideRef);
   const night = useNight();
 
   const ordered = useMemo(() => [...agents].sort((a, b) => a.id.localeCompare(b.id)), [agents]);
@@ -352,35 +354,39 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
       </ContextMenu.Root>
 
       <p className="sr-only" aria-live="polite">{campus ? 'Estás en el campus.' : `Estás en ${slots.find((slot) => slot.id === level)?.name ?? 'un edificio'}.`}</p>
-      <div ref={topRef} className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5">{hud}</div>
-      {chrome ? <div className="pointer-events-none absolute right-2 z-10 flex flex-col items-end gap-1.5" style={{ top: topHeight + 12, bottom: bottomHeight + 12 }}>
-        <CampusMap canvasRef={mapRef} open={showMap} engine={engine} level={level} stats={stats} onGo={go} kick={kick} />
-        {narrow && !showTubes ? null : (
-          <TubeFeed feed={feed} names={names} open={showTubes} now={now} onToggle={() => { setTubesOpen(!showTubes); }} onPick={(id) => { onSelect(id); }} />
-        )}
-        <div className="mt-auto">
-          <OfficeControls
-            canZoomIn={!edges.atMax}
-            canZoomOut={!edges.atMin}
-            paseo={paseo}
-            campus={campus}
-            map={showMap}
-            compact={narrow}
-            tubes={narrow ? { open: showTubes, onToggle: () => { setTubesOpen(!showTubes); } } : undefined}
-            onZoomIn={() => { input.zoomTo(stepZoom(engine.target.zoom, 1, engine.limits)); }}
-            onZoomOut={() => { input.zoomTo(stepZoom(engine.target.zoom, -1, engine.limits)); }}
-            onFit={() => { engine.fit(); kick(); }}
-            onCenterMe={() => { engine.centerMe(); kick(); }}
-            onTogglePaseo={() => { setPaseo(!paseo); }}
-            onToggleMap={() => { setMapOpen(!showMap); }}
-            maximized={maximized}
-            onToggleMaximized={toggleMaximized}
-          />
-        </div>
-      </div> : null}
-      <div className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-4.5rem)] flex-col items-start gap-1.5"
-        style={{ top: topHeight + 12, bottom: bottomHeight + 12 + (cardHeight ? cardHeight + 6 : 0) }}>
+      <div ref={topRef} className="pointer-events-none absolute inset-x-2 top-2 z-10 flex flex-col items-stretch gap-1.5">
+        {hud}
         {chrome && hint && !talk ? <OfficeHint touch={coarse} onClose={dismissHint} /> : null}
+      </div>
+      <div ref={sideRef} className="pointer-events-none absolute right-2 z-10 flex flex-col items-end gap-1.5" style={{ top: topHeight + 12, bottom: bottomHeight + 12 }}>
+        {chrome ? <>
+          <CampusMap canvasRef={mapRef} open={showMap} engine={engine} level={level} stats={stats} onGo={go} kick={kick} />
+          {narrow && !showTubes ? null : (
+            <TubeFeed feed={feed} names={names} open={showTubes} now={now} onToggle={() => { setTubesOpen(!showTubes); }} onPick={(id) => { onSelect(id); }} />
+          )}
+          <div className="mt-auto">
+            <OfficeControls
+              canZoomIn={!edges.atMax}
+              canZoomOut={!edges.atMin}
+              paseo={paseo}
+              campus={campus}
+              map={showMap}
+              compact={narrow}
+              tubes={narrow ? { open: showTubes, onToggle: () => { setTubesOpen(!showTubes); } } : undefined}
+              onZoomIn={() => { input.zoomTo(stepZoom(engine.target.zoom, 1, engine.limits)); }}
+              onZoomOut={() => { input.zoomTo(stepZoom(engine.target.zoom, -1, engine.limits)); }}
+              onFit={() => { engine.fit(); kick(); }}
+              onCenterMe={() => { engine.centerMe(); kick(); }}
+              onTogglePaseo={() => { setPaseo(!paseo); }}
+              onToggleMap={() => { setMapOpen(!showMap); }}
+              maximized={maximized}
+              onToggleMaximized={toggleMaximized}
+            />
+          </div>
+        </> : null}
+      </div>
+      <div className="pointer-events-none absolute left-2 z-10 flex flex-col items-start gap-1.5"
+        style={{ top: topHeight + 12, bottom: bottomHeight + 12 + (cardHeight ? cardHeight + 6 : 0), maxWidth: `calc(100% - ${String(sideWidth + 24)}px)` }}>
         <div ref={partyRef} className="flex min-h-0 max-w-full flex-col">
           {talk ? null : <PartyPanel agents={ordered} quotas={quotaBars} reading={quotaReading} selectedId={selectedId} narrow={narrow} onPick={onSelect} />}
         </div>

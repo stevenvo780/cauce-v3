@@ -118,7 +118,7 @@ export function OfficeHint({ touch, onClose }: { touch: boolean; onClose: () => 
     ? ['Tocá un edificio para entrar', 'arrastrá para mirar', 'pellizcá para acercar']
     : ['Clic en un edificio para entrar', '1–9 cambian de edificio', 'arrastrá o WASD para mirar', 'P: paseo'];
   return (
-    <p role="status" className={cn(HUD_PANEL, HUD_TEXT, 'pointer-events-auto m-0 flex max-w-full items-center gap-2 py-1 pr-1 pl-2.5 text-[10px] text-[#c5d3dc]')}>
+    <p role="status" className={cn(HUD_PANEL, HUD_TEXT, 'pointer-events-auto m-0 flex max-w-full items-center gap-2 self-start py-1 pr-1 pl-2.5 text-[10px] text-[#c5d3dc]')}>
       <span className="min-w-0">{tips.join(' · ')}</span>
       <button type="button" aria-label="Ocultar la ayuda" onClick={onClose} className={cn(HUD_BUTTON, 'size-6 pointer-coarse:size-10')}>
         <X size={12} aria-hidden="true" />

@@ -203,6 +203,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent, now }: {
           const identity = officeRoomKey(room.tenant_id, room.room_id);
           const roomInfo = rooms.find(value => officeRoomKey(value.tenant, value.id) === identity);
           const roomAgents = roomInfo?.agents ?? [];
+          const partTop = Math.min(room.height - 8, ...room.parts.filter(part => part.y > 48).map(part => part.y - 4));
           return <section key={identity} aria-label={`Sala ${room.tenant_id}/${roomInfo?.label ?? room.room_id}`}
             onClick={() => { setRoomKey(identity); }}
             className={`absolute cursor-pointer overflow-hidden rounded-lg border-2 bg-surface p-2 ${identity === roomKey ? 'border-brand' : 'border-line-strong'}`} style={{ left: room.x - left, top: room.y - top, width: room.width, height: room.height }}>
@@ -214,6 +215,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent, now }: {
               <span title={room.tenant_id} className="ml-auto max-w-[45%] shrink truncate text-[10px] text-muted">{room.tenant_id}</span>
             </Button>
             <div className="relative z-10 mt-2 flex max-h-[calc(100%-2.75rem)] flex-wrap content-start gap-1 overflow-y-auto"
+              style={{ maxHeight: Math.max(40, partTop - 44) }}
               onClick={(event) => { event.stopPropagation(); }}>
               {roomAgents.map(agentButton)}
               {!roomAgents.length ? <p className="m-0 text-[11px] text-muted">Sin agentes en esta sala.</p> : null}
