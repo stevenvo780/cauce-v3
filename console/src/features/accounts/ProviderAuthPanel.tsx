@@ -13,7 +13,7 @@ interface Props {
   autoStart?: boolean;
 }
 const active = (value: ProviderAuthSnapshot) => ['opening', 'awaiting_login', 'verifying'].includes(value.status);
-const runtimeDriftMessage = 'El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.';
+const runtimeDriftMessage = 'El contenedor del agente quedó con una imagen anterior. Cierra este inicio de sesión y vuelve a abrirlo para preparar el contenedor e iniciar sesión con la configuración actual.';
 const hostUnavailableMessage = (hostId: string) => `El ordenador ${hostId} no está disponible. Revisa su estado y su conexión antes de volver a iniciar sesión.`;
 const stopReasons: Record<ProviderAuthDriftReason, string> = {
   CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT: 'La imagen o las etiquetas de propiedad del contenedor no coinciden con la configuración aprobada.',

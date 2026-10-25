@@ -72,7 +72,7 @@ El asistente también ofrece **Solo preparar, sin desplegar**. Una operación en
 
 Si el agente estaba pausado y su grupo principal quedó deshabilitado, al reprepararlo la propia ficha marca ese grupo para que lo habilites: el aviso «Para activar el agente su grupo principal debe quedar habilitado» señala la casilla **Habilitar membresía** que hay que marcar, y los rechazos conocidos de la preparación se muestran ya traducidos con la acción siguiente en lugar del mensaje crudo del servidor.
 
-Si tras un despliegue la operación muestra **Requiere preparación**, el contenedor quedó con una imagen anterior y esa operación ya no se puede reanudar. Pulsa **Recrear contenedor e iniciar sesión** en la propia operación: la consola cancela la operación desfasada, comprueba la preparación, encola la recreación, sigue sus pasos y abre el inicio de sesión en un solo camino, conservando volúmenes, sesión y ampliaciones. Si un paso falla, el camino se detiene en ese paso y **Reintentar** lo retoma desde ahí con la misma solicitud; cancelar el camino guiado solo cancela la operación desfasada, sin recrear nada.
+Si tras un despliegue el contenedor quedó con una imagen anterior, la operación puede registrar `RUNTIME_DRIFT` mientras espera autenticación (`awaiting_auth`). Pulsa **Iniciar sesión**: el login prepara o recrea el contenedor antes de abrir el terminal, conservando volúmenes, sesión del proveedor y ampliaciones. Completa el login y verifica la cuenta para que la ficha reanude la operación. Si usas el panel de la operación y pide **Reanudar**, púlsalo después de verificar la cuenta.
 
 ## Crear una sala
 

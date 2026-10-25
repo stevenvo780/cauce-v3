@@ -7,9 +7,9 @@ import { useApi } from '../../api/context';
 import { ProviderAuthPanel } from '../accounts/ProviderAuthPanel';
 import { ProviderSignInDialog } from '../accounts/ProviderSignIn';
 
-interface Props { operation: FleetOperation; allowed: boolean; onRefreshed: (value: FleetOperation) => void; autoOpen?: boolean }
+interface Props { operation: FleetOperation; allowed: boolean; onRefreshed: (value: FleetOperation) => void }
 interface Scope { key: string; request?: ProviderAuthRequest; error?: string }
-export function AuthOperationPanel({ operation, allowed, onRefreshed, autoOpen = false }: Props) {
+export function AuthOperationPanel({ operation, allowed, onRefreshed }: Props) {
   const api = useApi();
   const identity = JSON.stringify([operation.id, operation.kind, operation.target, operation.request_sha256]);
   const key = JSON.stringify([identity, operation.status, allowed]);
@@ -65,13 +65,6 @@ export function AuthOperationPanel({ operation, allowed, onRefreshed, autoOpen =
     if (open || !permitted || !request || request.expected_operation_version >= operation.version) return;
     setRetry(value => value + 1);
   }, [open, permitted, request, operation.version]);
-  const autoOpenedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!autoOpen || !request || open) return;
-    if (autoOpenedFor.current === identity) return;
-    autoOpenedFor.current = identity;
-    setOpen(true);
-  }, [autoOpen, request, open, identity]);
   return <section aria-label="Autenticación de la operación" className="grid gap-2">
     <p className="m-0 text-sm">Falta iniciar sesión para que la operación pueda seguir.</p>
     {!allowed ? <p className="m-0 text-sm">Tu permiso no permite conectar la cuenta de esta operación.</p> : null}

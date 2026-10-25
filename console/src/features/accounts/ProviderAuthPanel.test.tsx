@@ -150,7 +150,7 @@ describe('provider auth panel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(error === 'RUNTIME_DRIFT'
-      ? 'El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.'
+      ? 'El contenedor del agente quedó con una imagen anterior. Cierra este inicio de sesión y vuelve a abrirlo para preparar el contenedor e iniciar sesión con la configuración actual.'
       : 'El ordenador kratos no está disponible. Revisa su estado y su conexión');
     expect(done).not.toHaveBeenCalled();
   });
@@ -159,7 +159,7 @@ describe('provider auth panel', () => {
     render(<ProviderAuthPanel request={request} client={providerAuthClient(fetcher)} />);
     fireEvent.click(screen.getByRole('button', { name: 'Conectar cuenta' }));
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión.');
+    expect(alert).toHaveTextContent('Cierra este inicio de sesión y vuelve a abrirlo para preparar el contenedor e iniciar sesión con la configuración actual.');
     expect(alert.textContent).not.toContain('SYNTHETIC_PRIVATE_TOKEN');
   });
   it('cancels and removes the previous sensitive session when its target identity changes', async () => {

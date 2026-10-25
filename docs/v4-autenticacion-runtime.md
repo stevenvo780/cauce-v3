@@ -16,7 +16,7 @@ El login ya no cae en un genérico «no se pudo verificar». La sesión de prove
 | `SESSION_CONFLICT` | Otra sesión o una versión más nueva ocupa el mismo perfil u operación. |
 | `INVALID_REQUEST` | La petición no cumple el contrato cerrado. |
 | `HOST_UNAVAILABLE` | El ordenador no respondió o el helper del host falló sin acreditar deriva de imagen. |
-| `RUNTIME_DRIFT` | El contenedor quedó con una imagen anterior a la aprobada. No se reanuda: hay que recrearlo. |
+| `RUNTIME_DRIFT` | El contenedor quedó con una imagen anterior a la aprobada. Si la operación espera autenticación, pulsa **Iniciar sesión** para que el login lo prepare o recree antes de abrir el terminal. |
 | `STOP_UNCONFIRMED` | No se confirmó la parada del login anterior; el perfil sigue reservado. |
 | `IDENTITY_MISMATCH` | La cuenta conectada no es la identidad autorizada. |
 | `FUNCTIONAL_CHECK_FAILED` | La cuenta aún no pasó una llamada funcional. |
@@ -31,7 +31,7 @@ Motivos de deriva (`reason`, solo con `RUNTIME_DRIFT` o `STOP_UNCONFIRMED`):
 | `CONTAINER_RESOURCE_LIMITS_DRIFT` | Los límites de recursos (memoria, CPU, procesos) no coinciden con la forma aprobada, incluidas las ampliaciones `resources` declaradas. |
 | `CONTAINER_ISOLATION_DRIFT` | El aislamiento difiere: capacidades, redes, dispositivos o GPU, entorno del sidecar, ampliaciones declaradas, montajes, usuario de ejecución o huella del ejecutable. |
 
-En la operación de flota, la deriva se guarda como `error.code = RUNTIME_DRIFT` con `step = authenticate` y `retryable = false`. La consola la muestra con la etiqueta **Requiere preparación** y el texto «El contenedor del agente quedó con una imagen anterior. Cancela esta operación y pulsa Preparar para recrearlo; luego inicia sesión». Una operación con deriva no es reanudable (`resumable` es falso); sí es cancelable. El flujo guiado **Recrear contenedor e iniciar sesión** hace ese camino en un solo recorrido (ver [Guía](v4-guia.md)).
+En la operación de flota, la deriva se guarda como `error.code = RUNTIME_DRIFT` con `step = authenticate` y `retryable = false`. La operación permanece en `awaiting_auth` y permite **Iniciar sesión**. El login prepara o recrea el contenedor conservando volúmenes, sesión del proveedor y ampliaciones antes de abrir el terminal. Tras autenticar y verificar la cuenta, la ficha reanuda la operación; en el panel de la operación puede ser necesario pulsar **Reanudar** (ver [Guía](v4-guia.md)).
 
 El helper del host traduce su salida estándar de error a estos motivos con una tabla cerrada: solo las frases exactas `fleet effect failed: …` conocidas producen un `reason`; cualquier otra salida queda como fallo del helper, sin filtrar texto libre a la consola ni a los eventos.
 
@@ -81,7 +81,7 @@ La acción `ready` comprueba el emisor fijado, su política y el par de claves s
 
 ### Dónde mirar, en este orden
 
-1. **La operación en la consola.** En la ficha del agente, pestaña **Ejecución** (el rótulo visible; el identificador interno sigue siendo `operacion`), la operación en `awaiting_auth` muestra su estado, el paso `authenticate` y, si hay deriva, la etiqueta **Requiere preparación**. El panel de conexión del proveedor muestra el código y el motivo ya traducidos. Es la primera fuente: dice qué hacer sin abrir ningún diario.
+1. **La operación en la consola.** En la ficha del agente, pestaña **Ejecución** (el rótulo visible; el identificador interno sigue siendo `operacion`), la operación en `awaiting_auth` muestra su estado y el paso `authenticate`, y permite **Iniciar sesión**, también cuando registra `RUNTIME_DRIFT`. El panel de conexión del proveedor muestra el código y el motivo ya traducidos. Es la primera fuente: dice qué hacer sin abrir ningún diario.
 2. **Los eventos de la operación.** Cada reserva y liberación deja eventos `step_started` y `step_completed` del paso `authenticate` con el estado de la reserva (`reserved`, `releasing`, `released`) en su metadato, y la deriva confirmada deja un evento `step_completed` con el recibo de reconciliación. La operación guarda además `error.code`, `error.step` y `error.retryable`. Se leen desde el historial de operaciones de la propia ficha; no hace falta acceder a la base de datos para el diagnóstico habitual.
 3. **El diario del executor en el ordenador del agente.** El proceso del host escribe en su error estándar una línea por comando fallido con el motivo cerrado, del tipo `Agent provider authentication command=<tipo> failed: <motivo>`, y `provider auth helper failed: <motivo>` cuando falla el helper dentro del contenedor. La reconciliación que no se puede verificar deja `Agent runtime reconciliation could not be verified`. En el ordenador se consulta con el diario de usuario del servicio del executor (`journalctl --user` sobre la unidad del executor de esa empresa y ordenador, filtrando por `provider authentication`). El diario nunca debe contener códigos del proveedor, tokens ni contenido del terminal: si aparece algo así, trátalo como incidente y no lo copies a un informe.
 
@@ -89,7 +89,7 @@ La acción `ready` comprueba el emisor fijado, su política y el par de claves s
 
 | Lo que ves | Significa | Qué hacer |
 |---|---|---|
-| **Requiere preparación** (`RUNTIME_DRIFT`) | El contenedor corre una imagen anterior a la aprobada tras un despliegue o un cambio de release. La operación no se puede reanudar. | Cancela la operación desfasada y pulsa **Recrear contenedor e iniciar sesión** (o **Preparar** y luego inicia sesión). La recreación conserva volúmenes, sesión del proveedor y ampliaciones. No intentes reanudar la operación anterior. |
+| `awaiting_auth` con `RUNTIME_DRIFT` | El contenedor corre una imagen anterior a la aprobada tras un despliegue o un cambio de release. La operación sigue esperando autenticación. | Pulsa **Iniciar sesión**: el login prepara o recrea el contenedor antes de abrir el terminal y conserva volúmenes, sesión del proveedor y ampliaciones. Tras verificar la cuenta, la ficha reanuda la operación; si el panel pide **Reanudar**, púlsalo. |
 | `CONTAINER_IMAGE_OR_OWNERSHIP_DRIFT` | La imagen o las etiquetas del contenedor no son las aprobadas. | Es la causa habitual de la deriva: recrea como en la fila anterior. Si se repite tras recrear, el ordenador no cargó la imagen aprobada: repite la preparación del ordenador y comprueba su diario. |
 | `CONTAINER_RESOURCE_LIMITS_DRIFT` | Los límites observados no son los aprobados, incluidas las ampliaciones `resources`. | Revisa las ampliaciones del agente: un límite cambiado a mano en Docker no se adopta. Quita o declara la ampliación y recrea desde la consola. |
 | `CONTAINER_ISOLATION_DRIFT` | Capacidades, redes, montajes, usuario o ejecutable difieren de la forma aprobada. | No corrijas el contenedor a mano. Cancela y recrea desde la consola; si persiste, revisa en el diario del executor qué validación falló y la política del ordenador. |
@@ -106,4 +106,3 @@ La acción `ready` comprueba el emisor fijado, su política y el par de claves s
 
 - No detengas ni borres el contenedor a mano para «arreglar» una deriva: el executor lo detecta como una diferencia más y la operación sigue sin poder acreditar su forma.
 - No borres el volumen de perfiles para desbloquear un `STOP_UNCONFIRMED`: ahí vive la sesión del proveedor y borrarlo obliga a autenticar de nuevo sin resolver la reserva.
-- No reanudes una operación marcada **Requiere preparación**: está marcada como no reintentable a propósito, porque su contenedor ya no es el que la operación preparó.

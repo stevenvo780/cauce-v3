@@ -7,13 +7,11 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusPill } from './AgentFleetOperation';
-import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, guidedDriftHeadline, isStaleResume, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, isStaleResume, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
 import { focusPrimaryMembershipCheckbox, isPrimaryMembershipError, translateFleetOperationError } from './fleet-operation-error-translations';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { lifecycleLabel } from './agent-view';
 import { useAgentLifecycle } from './use-agent-lifecycle';
-import { isGuidedDrift } from './guided-recreate';
-import { useGuidedRecreate } from './use-guided-recreate';
 import './agent-lifecycle.css';
 
 type Kind = Exclude<FleetOperationRequest['kind'], 'recover'>;
@@ -59,18 +57,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const input = prepared.request;
   currentFingerprint.current = JSON.stringify(input);
   const samePreview = !!input && !!validated && JSON.stringify(input) === JSON.stringify(validated.input);
-  const guidedKind: 'create' | 'update' = draftAgent ? 'create' : 'update';
-  const guidedPrepared = target?.resource === 'agent'
-    ? agentLifecycleRequest(draft, snapshot, flow.capability, guidedKind, key, target)
-    : { error: 'El camino guiado solo recrea agentes.' };
-  const guided = useGuidedRecreate({
-    client: api, operation: flow.operation,
-    buildRequest: () => guidedPrepared.request ? { request: guidedPrepared.request } : { error: guidedPrepared.error },
-    accept: (operation) => flow.accept(operation),
-    translateError: (message) => translateFleetOperationError(message, draft.primaryRoomId) ?? fleetErrorText(message, flow.operation, guidedKind),
-  });
-  const driftGuided = isGuidedDrift(flow.operation);
-  const busy = sending || flow.busy || guided.busy;
+  const busy = sending || flow.busy;
   const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
   const blocked = !!blockingOperation(flow.operation, kind);
   const aliasConfirmed = kind !== 'purge' || target?.resource !== 'agent' || typedAlias === target.alias;
@@ -179,7 +166,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
       </div>
       {flow.operation && needsAttention(flow.operation) ? <div className="notice grid gap-1" role="status" aria-label="Operación en curso">
         <span className="flex flex-wrap items-center gap-2"><OperationStatusPill operation={flow.operation} /><strong className="text-sm">{operationTitle(flow.operation)}</strong></span>
-        <span className="text-sm">{driftGuided ? guidedDriftHeadline() : operationHeadline(flow.operation)}</span>
+        <span className="text-sm">{operationHeadline(flow.operation)}</span>
       </div> : null}
       {fixedKind ? null : <p className="m-0 text-[13px] text-fg-2">Elige qué hacer y pulsa «Previsualizar operación» para ver qué va a cambiar. Nada cambia hasta que pulses «Confirmar operación».</p>}
       {agent ? <p>{typeof agent.lifecycle_state === 'string'
@@ -210,13 +197,11 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
             generation.current += 1; setValidated(undefined); setKey(newKey()); setTypedAlias(event.target.value);
           }} /></label>
       </section> : null}
-      {driftGuided ? <p className="notice" role="note">El contenedor quedó desfasado. Usa «Recrear contenedor e iniciar sesión» en la operación de abajo: cancela la operación anterior, reprepara el agente con la intención de arriba y abre el inicio de sesión en un solo camino.</p> : <>
-        <div className="flex flex-wrap items-center gap-2"><Button disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
-          aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</Button>
-          <Button variant="primary" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
-            onClick={() => { void enqueue(); }}>Confirmar operación</Button></div>
-        {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder confirmarla.</p> : null}
-      </>}
+      <div className="flex flex-wrap items-center gap-2"><Button disabled={busy || inProgress || blocked || !canWrite || !available || !aliasConfirmed || !!scopeGap} title={previewBlock}
+        aria-busy={previewing} onClick={() => { void preview(); }}>{previewing ? 'Previsualizando…' : 'Previsualizar operación'}</Button>
+        <Button variant="primary" disabled={busy || inProgress || blocked || !canWrite || !available || !samePreview || !validated.receipt.can_apply || !aliasConfirmed || !!scopeGap} title={enqueueBlock}
+          onClick={() => { void enqueue(); }}>Confirmar operación</Button></div>
+      {!samePreview && !blocked && !previewing ? <p className="m-0 text-xs text-muted">Previsualiza la operación para poder confirmarla.</p> : null}
       {error ? (isPrimaryMembershipError(error)
         ? <p className="notice" role="alert"><Button onClick={() => { focusPrimaryMembershipCheckbox(); }}>{error} Ir a la casilla «Habilitar membresía».</Button></p>
         : <p className="notice" role="alert">{error}</p>) : null}
@@ -224,7 +209,6 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         <details><summary>Detalles técnicos de la solicitud</summary><pre>{JSON.stringify(validated.input, null, 2)}</pre></details></> : null}
       {flow.operation ? <><AgentFleetOperation operation={flow.operation} busy={busy} current={!flow.readError && canWrite && !!flow.capability?.available}
         onAuthRefreshed={flow.accept} intended={kind} stale={flow.stale} hostId={draft.hostId || undefined}
-        guided={{ state: guided.state, onStart: guided.start, onRetry: guided.retry }}
         control={(action) => { void flow.control(action); }} />
         {flow.readError ? <p className="notice" role="alert">{flow.readError}</p> : null}
         <div className="flex flex-wrap items-center gap-2">
