@@ -9,7 +9,7 @@ import { replyFor, threadRows, typingState, type ThreadRow } from './thread-mode
 const SETTLED = new Set(['done', 'failed', 'dead']);
 import type { CanonicalReply } from './use-canonical-reply';
 
-const SUGGESTIONS = ['¿En qué estás trabajando?', 'Resumime tu último turno', '¿Qué te bloquea?'];
+const SUGGESTIONS = ['¿En qué estás trabajando?', 'Resume tu último turno', '¿Qué te bloquea?'];
 
 function EmptyThread({ seed, alias, state, onSuggestion }: {
   seed: string; alias: string; state?: LiveState; onSuggestion?: (text: string) => void;

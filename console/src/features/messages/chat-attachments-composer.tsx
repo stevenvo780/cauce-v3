@@ -185,7 +185,7 @@ export function ChatAttachmentsComposer({
         ) : null}
         <textarea ref={(node) => { textarea.current = node; if (inputRef) inputRef.current = node; }} id={`messenger-input-${agentId}`} value={text} onChange={(event) => { onTextChange(event.target.value); }}
           onKeyDown={handleKeyDown} onPaste={handlePaste} rows={1} maxLength={8_000}
-          placeholder={canSend ? `Escribile a ${agentAlias}…` : 'No puedes escribir en esta conversación'} disabled={!canSend}
+          placeholder={canSend ? `Escribe a ${agentAlias}…` : 'No puedes escribir en esta conversación'} disabled={!canSend}
           className="block max-h-[40dvh] min-h-12 w-full min-w-0 flex-1 resize-none in-data-[keyboard-open]:min-h-11 in-data-[keyboard-open]:pt-2.5 in-data-[keyboard-open]:pb-2.5 border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-6 text-fg shadow-none outline-none placeholder:text-muted focus:shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-none disabled:cursor-not-allowed max-[760px]:text-base" />
         <div className="flex items-center gap-1 px-2 pb-2 in-data-[keyboard-open]:shrink-0 in-data-[keyboard-open]:gap-0.5 in-data-[keyboard-open]:pr-1.5 in-data-[keyboard-open]:pb-1">
           <input ref={fileInput} className="hidden" type="file" multiple tabIndex={-1}
