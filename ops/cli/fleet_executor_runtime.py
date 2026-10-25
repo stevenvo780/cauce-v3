@@ -228,8 +228,10 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         values['CAUCE_REASONING_EFFORT'] = effort
     shared = row.get('sharedHumanIds')
     if shared is not None:
-        if agent['harness_id'] != 'openclaw' or not isinstance(shared, list) or not 1 <= len(shared) <= 32 \
-                or any(not isinstance(entry, str) or SHARED_HUMAN.fullmatch(entry) is None for entry in shared):
+        if agent['harness_id'] not in {'openclaw', 'claude', 'codex', 'grok', 'muse'} \
+                or not isinstance(shared, list) or not 1 <= len(shared) <= 32 \
+                or any(not isinstance(entry, str) or SHARED_HUMAN.fullmatch(entry) is None for entry in shared) \
+                or len(set(shared)) != len(shared):
             raise SafeFailure('shared human session list is not approved')
         values['CAUCE_SHARED_HUMAN_IDS'] = ','.join(shared)
     return values

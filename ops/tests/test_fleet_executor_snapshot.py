@@ -53,7 +53,7 @@ class ProviderMetadataSnapshotTest(unittest.TestCase):
 class SharedHumanEnvironmentTest(unittest.TestCase):
     ENTRY = 'Steven:' + 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
 
-    def environment(self, harness, row_extra):
+    def environment(self, harness, row_extra, observed=None):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         import fleet_executor_runtime as runtime
         row = {'tenant': 'Miguel', 'user': 'node', 'runtimeStateDirectory': '/home/node/.cauce/gaia', 'enabled': True,
@@ -66,7 +66,10 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
         receipt = {'generation': 'g', 'snapshotSha256': hashlib.sha256(snapshot).hexdigest()}
         with mock.patch('fleet_runtime_materialization.load_desired_fleet', return_value=receipt), \
                 mock.patch('fleet_executor_pki.checked_file', return_value=snapshot):
-            return runtime.sdk_environment(policy, agent, False, 'op')
+            expected = runtime.sdk_environment(policy, agent, False, 'op')
+            if observed is not None:
+                runtime.sdk_environment_proof(policy, agent, observed, False, 'op')
+            return expected
 
     def materialized(self, snapshot):
         import fleet_runtime_materialization as materialization
@@ -127,13 +130,43 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
         with self.assertRaises((runtime.SafeFailure, ValueError)):
             runtime.materialized_sdk_identity_absent(policy, {'runtime_key': 'physical-one'})
 
-    def test_openclaw_gets_the_shared_human_list_and_other_harnesses_are_refused(self):
-        self.assertEqual(self.environment('openclaw', {'sharedHumanIds': [self.ENTRY]})['CAUCE_SHARED_HUMAN_IDS'], self.ENTRY)
-        self.assertNotIn('CAUCE_SHARED_HUMAN_IDS', self.environment('openclaw', {}))
+    def test_supported_shared_tui_harnesses_preserve_the_exact_shared_human_list(self):
+        humans = sorted([self.ENTRY, 'Miguel:' + 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12])
+        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
+            with self.subTest(harness=harness):
+                expected = self.environment(harness, {'sharedHumanIds': humans})
+                self.assertEqual(expected['CAUCE_SHARED_HUMAN_IDS'], ','.join(humans))
+                self.assertEqual(self.environment(harness, {'sharedHumanIds': humans}, expected), expected)
+                self.assertNotIn('CAUCE_SHARED_HUMAN_IDS', self.environment(harness, {}))
+
+    def test_unknown_harnesses_and_malformed_shared_human_lists_are_rejected(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         from fleet_executor_policy import SafeFailure
-        with self.assertRaises(SafeFailure):
-            self.environment('codex', {'sharedHumanIds': [self.ENTRY]})
+        for harness in ('gemini', 'unknown'):
+            with self.subTest(harness=harness), self.assertRaises(SafeFailure):
+                self.environment(harness, {'sharedHumanIds': [self.ENTRY]})
+        invalid = ([], self.ENTRY, [123], [{}], ['Miguel:not-a-uuid'], [self.ENTRY, self.ENTRY], [self.ENTRY] * 33)
+        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
+            for humans in invalid:
+                with self.subTest(harness=harness, humans=humans), self.assertRaises(SafeFailure):
+                    self.environment(harness, {'sharedHumanIds': humans})
+
+    def test_shared_human_proof_rejects_missing_removed_added_and_reordered_entries(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        humans = sorted([self.ENTRY, 'Miguel:' + 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12])
+        extra = 'Isa:' + 'c' * 8 + '-cccc-cccc-cccc-' + 'c' * 12
+        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
+            with self.subTest(harness=harness):
+                expected = self.environment(harness, {'sharedHumanIds': humans})
+                for value in (None, '', humans[0], ','.join([*humans, extra]), ','.join(reversed(humans))):
+                    observed = dict(expected)
+                    if value is None:
+                        observed.pop('CAUCE_SHARED_HUMAN_IDS')
+                    else:
+                        observed['CAUCE_SHARED_HUMAN_IDS'] = value
+                    with self.subTest(value=value), self.assertRaises(runtime.NamespaceMismatch):
+                        self.environment(harness, {'sharedHumanIds': humans}, observed)
 
     def test_a_stale_shared_human_list_is_drift_even_when_none_is_expected(self):
         from unittest import mock
