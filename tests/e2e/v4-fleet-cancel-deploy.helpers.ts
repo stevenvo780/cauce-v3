@@ -16,7 +16,8 @@ import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import { installCancelDeploySetup, type CancelDeploySetup } from './v4-fleet-cancel-deploy.setup.js';
 
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
-export const CANCEL_DEPLOY_OWNER = 'f4e-hades-1025';
+export const CANCEL_DEPLOY_OWNER = process.env.HOME?.match(/^\/tmp\/cauce-e2e-home-(f4f-hades-sin-fila-1025)-[0-9]+$/u)?.[1]
+  ?? 'f4e-hades-1025';
 export const cancelDeployRun = randomUUID().replaceAll('-', '').slice(0, 8);
 export const cancelDeployPrefix = `zz-canary-${CANCEL_DEPLOY_OWNER}-${cancelDeployRun}`;
 export const cancelDeployReceipts = join(process.cwd(), '.delegados/v4/recibos', CANCEL_DEPLOY_OWNER, cancelDeployRun);
@@ -69,7 +70,8 @@ export async function startCancelDeployFixture(): Promise<CancelDeployFixture> {
   try {
     computer = await startComputerHarness({ prefix: cancelDeployPrefix, consoleOrigins: [baseUrl], workRoot: '/datos',
       resourceOwner: CANCEL_DEPLOY_OWNER, runtimeBundle: cancelDeployRuntime,
-      extraSourceFiles: ['packages/store/src/repository/fleet-operation-recovery.ts', 'ops/cli/fleet_executor_probe_cache.py',
+      extraSourceFiles: ['packages/store/src/repository/fleet-operation-recovery.ts', 'packages/protocol/src/context-retirement.ts', 'ops/cli/fleet_executor_probe_cache.py',
+        'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
         'ops/cli/fleet_provider_capability_probe.py', 'ops/cli/fleet_executor_terminal.py',
         'packages/store/src/device-authorization.ts', 'packages/store/src/device-authorization-authority.ts',
         'services/gateway/src/device-authorization.ts', 'services/gateway/src/fleet/space-backup.failure.ts',

@@ -1,10 +1,11 @@
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { bodySnippet, type V4Locator } from './v4-console-real-browser.helpers.js';
 import { cancelCapture, cancelOperations, cancelPrefix, cancelReceipts, cancelRun, startCancelFixture,
   type CancelFixture, type CancelOperation } from './v4-fleet-cancel.helpers.js';
+import { materializeDisabledCancelDeploy } from './v4-fleet-cancel-deploy.materialize.js';
 
 const alias = `cancel${cancelRun}`;
 const runtime = `cancel-${cancelRun}`;
@@ -51,7 +52,9 @@ async function probe(): Promise<{ running: boolean; processes: number; credentia
     + 'print(json.dumps({"processes":len(found),"credentialGeneration":json.loads(p.read_text())["generation"] if p.exists() else None}))', runtime]);
   return { running, ...JSON.parse(result) as { processes: number; credentialGeneration: string | null } };
 }
-beforeAll(async () => { fixture = await startCancelFixture({ extraSourceFiles: ['ops/cli/fleet_executor_replacement.py'] }); }, 900_000);
+beforeAll(async () => { fixture = await startCancelFixture({ extraSourceFiles: ['ops/cli/fleet_executor_replacement.py',
+  'packages/protocol/src/context-retirement.ts', 'packages/store/src/context-retirement.ts',
+  'packages/store/src/context-git-retirement.ts'] }); }, 900_000);
 afterAll(async () => {
   if (paused) await docker(['unpause', container]);
   if (fixture) {
@@ -101,6 +104,10 @@ describe('cancelación física de una actualización fallida', () => {
       expect(failed.steps.find(step => step.name === 'stop')?.status).toBe('failed');
       evidence.failed = failed;
       await cancelCapture(page, 'failed-stop');
+      const lifecycle = await docker(['inspect', '--format', '{{range .Mounts}}{{if eq .Destination "/cauce/lifecycle"}}{{.Source}}{{end}}{{end}}', container]);
+      expect(lifecycle.endsWith('/ops/container-runtime')).toBe(true);
+      evidence.materialized_disabled = await materializeDisabledCancelDeploy(active().computer, tenantId, alias, runtime,
+        dirname(dirname(lifecycle)));
       const reread = panel.getByRole('button', { name: 'Releer operación', exact: true });
       await waitEnabled(reread); await reread.click();
       const card = page.getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: failed.id });
@@ -126,7 +133,7 @@ describe('cancelación física de una actualización fallida', () => {
       expect(cancelled.id).toBe(failed.id);
       const after = await probe();
       evidence.cancelled = { operation: cancelled, observed: after };
-      expect(after.running).toBe(true); expect(after.processes).toBeGreaterThan(0);
+      expect(after.running).toBe(true); expect(after.processes).toBe(0);
       expect(after.credentialGeneration).toBe(before.credentialGeneration);
       await cancelCapture(page, 'cancelled');
       active().errors.assertClean();

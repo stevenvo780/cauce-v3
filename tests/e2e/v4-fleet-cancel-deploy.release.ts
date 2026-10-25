@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { expect } from 'vitest';
 import { command, docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { HostReleaseManifestSchema, HostSetupConfigSchema } from '../../services/gateway/src/fleet/host-setup.js';
-import type { CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
+import { CANCEL_DEPLOY_OWNER, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import type { CancelDeploySetup } from './v4-fleet-cancel-deploy.setup.js';
 
 const execute = promisify(execFile);
@@ -44,7 +44,7 @@ export async function deployCancelRelease(fixture: CancelDeployFixture, setup: C
     fixture.deploymentImages.set(base, options.image);
     await docker(['image', 'tag', options.image, base]);
     expect(await docker(['image', 'inspect', '--format', '{{.Id}}', base])).toBe(options.image);
-    const built = await command('docker', ['build', '-q', '--pull=false', '--label', 'cauce.e2e.owner=f4e-hades-1025', '-t', reference, '-'],
+    const built = await command('docker', ['build', '-q', '--pull=false', '--label', `cauce.e2e.owner=${CANCEL_DEPLOY_OWNER}`, '-t', reference, '-'],
       `FROM ${base}\nRUN printf '%s\\n' '${phase}' > /etc/cauce-deployment-image\n`);
     if (built.code !== 0) throw new Error(`approved deployment image build failed: ${built.stderr}`);
     image = built.stdout.trim();
@@ -52,7 +52,7 @@ export async function deployCancelRelease(fixture: CancelDeployFixture, setup: C
     imageSource = reference;
     expect(image).not.toBe(options.image);
     expect(await docker(['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', reference]))
-      .toBe(`${image} f4e-hades-1025`);
+      .toBe(`${image} ${CANCEL_DEPLOY_OWNER}`);
     expect(await docker(['image', 'inspect', '--format', '{{.Id}}', base])).toBe(options.image);
   }
   const directory = join(work, `${phase}-release`);

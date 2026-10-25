@@ -5,6 +5,7 @@ import { command } from '../../services/gateway/src/fleet/host-computer.fixtures
 import { cancelOperations } from './v4-fleet-cancel.helpers.js';
 import { bodySnippet } from './v4-console-real-browser.helpers.js';
 import { assertCancelDeployLive } from './v4-fleet-cancel-deploy.delivery.js';
+import { runStopDeployScenario } from './v4-fleet-stop-deploy.flow.js';
 import { createCancelDeployActor, runCancelDeployScenario } from './v4-fleet-cancel-deploy.flow.js';
 import { cancelDeployCapture, cancelDeployPrefix, cancelDeployReceipts, cancelDeployRun, startCancelDeployFixture,
   type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
@@ -100,4 +101,14 @@ describe('cancelación con despliegue aprobado durante una actualización', () =
       });
     });
   }, 1_200_000);
+
+  it('reintenta la misma parada tras un despliegue sin refrescar hasta Arrancar y entregar', async () => {
+    await runCase('stop-deployment', async (fixture, observed) => {
+      await runStopDeployScenario(fixture, observed, async (actor, phase) => {
+        const live: Record<string, unknown> = {};
+        observed[phase] = live;
+        await assertCancelDeployLive(actor, phase, live);
+      });
+    });
+  }, 900_000);
 });

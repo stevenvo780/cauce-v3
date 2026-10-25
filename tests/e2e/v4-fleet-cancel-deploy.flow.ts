@@ -5,13 +5,14 @@ import { cancelOperations, type CancelOperation } from './v4-fleet-cancel.helper
 import { bodySnippet, type V4Locator } from './v4-console-real-browser.helpers.js';
 import { cancelDeployCapture, cancelDeployPrefix, cancelDeployRun, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import { deployCancelRelease, replaceBoundBundle } from './v4-fleet-cancel-deploy.release.js';
+import { materializeDisabledCancelDeploy, observeAdmittedCancelDeploy } from './v4-fleet-cancel-deploy.materialize.js';
 
 export interface CancelDeployActor {
   fixture: CancelDeployFixture; alias: string; runtime: string; container: string;
 }
 export interface CancelDeployObservation {
   id: string; image: string; running: boolean; release: string; volumes: string[];
-  bundleDigest: string | null; pid: number | null; adapterAlive: boolean; credentialGeneration: string | null;
+  bundleDigest: string | null; pid: number | null; adapterAlive: boolean; credentialGeneration: string | null; normalProcesses: number;
 }
 export async function waitCancelDeployEnabled(locator: V4Locator): Promise<void> {
   await expect.poll(() => locator.isDisabled(), { timeout: 30_000 }).toBe(false);
@@ -94,24 +95,33 @@ if metadata:
   raw=pathlib.Path('/proc',str(metadata['pid']),'stat').read_text().rsplit(')',1)[1].split()
   alive=raw[0]!='Z' and int(raw[19])==metadata['starttime']
  except FileNotFoundError:pass
+normal=0
+for entry in pathlib.Path('/proc').iterdir():
+ if not entry.name.isdigit():continue
+ try:
+  stat=entry.joinpath('stat').read_text().rsplit(')',1)[1].split()
+  values=dict(item.split(b'=',1) for item in entry.joinpath('environ').read_bytes().split(b'\\0') if b'=' in item)
+  if stat[0]!='Z' and values.get(b'CAUCE_RUNTIME_KEY')==runtime.encode() and values.get(b'CAUCE_BOOTSTRAP')==b'0':normal+=1
+ except (OSError,ValueError):pass
 credential=pathlib.Path('/run/cauce-credentials')/runtime/'normal/inventory/desired-fleet.json'
 print(json.dumps({'bundleDigest':metadata['bundleDigest'] if metadata else None,'pid':metadata['pid'] if metadata else None,
- 'adapterAlive':alive,'credentialGeneration':json.loads(credential.read_text())['generation'] if credential.exists() else None}))
+ 'adapterAlive':alive,'normalProcesses':normal,'credentialGeneration':json.loads(credential.read_text())['generation'] if credential.exists() else None}))
 `;
   const raw = JSON.parse(await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c', script, actor.runtime])) as
-    Pick<CancelDeployObservation, 'bundleDigest' | 'pid' | 'adapterAlive' | 'credentialGeneration'>;
+    Pick<CancelDeployObservation, 'bundleDigest' | 'pid' | 'adapterAlive' | 'credentialGeneration' | 'normalProcesses'>;
   return { id: inspected.Id, image: inspected.Image, running: inspected.State.Running,
     release: dirname(dirname(helper.Source)), volumes: inspected.Mounts.filter(row => row.Type === 'volume').map(row => row.Name ?? '').sort(), ...raw };
 }
 
-async function cancelFromBrowser(actor: CancelDeployActor, failed: CancelOperation): Promise<unknown> {
+export async function controlCancelDeployFromBrowser(actor: CancelDeployActor, failed: CancelOperation,
+  action: 'cancel' | 'resume'): Promise<unknown> {
   const panel = await openCancelDeployPanel(actor);
   const reread = panel.getByRole('button', { name: 'Releer operación', exact: true });
   await waitCancelDeployEnabled(reread); await reread.click();
   const card = actor.fixture.page.getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: failed.id });
   await card.getByText('Detalles técnicos', { exact: true }).click();
   await card.getByText(`ID: ${failed.id} · Versión: ${String(failed.version)}`, { exact: true }).waitFor({ timeout: 30_000 });
-  const path = `/v3/console/fleet/operations/${failed.id}/cancel`;
+  const path = `/v3/console/fleet/operations/${failed.id}/${action}`;
   const replies: { status: number; request: unknown; response: unknown }[] = [];
   actor.fixture.page.on('response', (raw: unknown) => {
     const response = raw as { url(): string; status(): number; json(): Promise<unknown>; request(): { postDataJSON(): unknown } };
@@ -121,7 +131,7 @@ async function cancelFromBrowser(actor: CancelDeployActor, failed: CancelOperati
         () => replies.push({ status: response.status(), request, response: { error: 'non_json_response' } }));
     }
   });
-  await card.getByRole('button', { name: 'Cancelar', exact: true }).click();
+  await card.getByRole('button', { name: action === 'cancel' ? 'Cancelar' : 'Reintentar', exact: true }).click();
   await expect.poll(() => replies.length, { timeout: 30_000 }).toBe(1);
   expect(replies[0]).toMatchObject({ status: 200, request: { expected_version: failed.version } });
   return replies[0];
@@ -154,7 +164,9 @@ export async function runCancelDeployScenario(fixture: CancelDeployFixture, scen
   expect(afterDeployment.id).toBe(before.id); expect(afterDeployment.image).toBe(before.image);
   expect(afterDeployment.bundleDigest).toBe(before.bundleDigest);
   expect(afterDeployment.bundleDigest).not.toBe(deployment.bundleDigest);
-  evidence.cancelHttp = await cancelFromBrowser(actor, failed);
+  evidence.materializedDisabled = await materializeDisabledCancelDeploy(fixture.computer, fixture.tenantId, actor.alias,
+    actor.runtime, deployment.release);
+  evidence.cancelHttp = await controlCancelDeployFromBrowser(actor, failed, 'cancel');
   const cancelled = await waitCancelDeployOperation(actor, 'update', ['cancelled']);
   expect(cancelled.id).toBe(failed.id);
   const restored = await observeCancelDeployActor(actor);
@@ -162,11 +174,16 @@ export async function runCancelDeployScenario(fixture: CancelDeployFixture, scen
   expect(restored.running).toBe(true); expect(restored.image).toBe(before.image);
   expect(restored.volumes).toEqual(before.volumes);
   expect(restored.credentialGeneration).toBe(before.credentialGeneration);
-  expect(restored.bundleDigest).toBe(deployment.bundleDigest);
+  expect(restored.adapterAlive).toBe(false); expect(restored.normalProcesses).toBe(0);
+  const disabled = (await fixture.computer.pool.query<{ enabled: boolean; lifecycle_state: string }>(
+    'SELECT enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [fixture.tenantId, actor.alias])).rows;
+  evidence.disabledAfterCancel = disabled;
+  expect(disabled).toEqual([{ enabled: false, lifecycle_state: 'failed' }]);
   await cancelDeployCapture(fixture.page, `${scenario}-cancelled`);
   const start = await openCancelDeployPanel(actor);
   await start.getByLabel('¿Qué quieres hacer?').selectOption('start');
   evidence.started = await enqueueCancelDeploy(actor, start, 'start');
+  evidence.materializedAdmitted = await observeAdmittedCancelDeploy(fixture.computer, deployment.release, actor.runtime);
   await assertLive(actor, `${scenario}-started`);
   const image = await deployCancelRelease(fixture, fixture.setup, `${scenario}-image`, { image: restored.image, newImage: true, sourceStage: deployment.stage });
   evidence.imageDeployment = image;
