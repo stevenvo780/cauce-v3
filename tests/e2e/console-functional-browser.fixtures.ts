@@ -15,6 +15,7 @@ import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.j
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 import { ChatLatencyCapture } from './browser-delivery-diagnostics.js';
+import { mountedSocketMatches } from './browser-socket-identity.js';
 import { isolatedBrowserNetwork, publishBrowserCdp } from './ui-bootstrap-network.js';
 import { browserExec as exec, browserDocker as docker, browserErrorStderr as errorStderr, browserErrorStdout as errorStdout, ownedBrowserLifecycle, browserLifetimeSeconds, browserResourcesRetained, BrowserResourcesRetained, BROWSER_DOCKER_TIMEOUT_MS } from './browser-owned-lifecycle.js';
 import { plazo } from '../helpers/plazos.js';
@@ -189,7 +190,7 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     if (mounts.length !== 1 || mounts[0]?.Source !== network.directory || mounts[0].Destination !== '/qa-browser-transport' || mounts[0].RW) throw new Error('Private browser transport mount differs');
     const metadata = await docker(['exec', container, 'node', '-e', "const s=require('node:fs').lstatSync('/qa-browser-transport/proxy.sock');console.log(JSON.stringify({uid:s.uid,ino:s.ino,dev:s.dev,mode:s.mode&511,socket:s.isSocket()}))"]);
     const socket = JSON.parse(metadata.stdout) as { uid: number; ino: number; dev: number; mode: number; socket: boolean };
-    if (!socket.socket || socket.mode !== 0o600 || socket.uid !== network.socketIdentity.uid || socket.ino !== network.socketIdentity.ino || socket.dev !== network.socketIdentity.dev) throw new Error('Browser daemon mounted a different private socket');
+    if (!mountedSocketMatches(socket, network.socketIdentity)) throw new Error('Browser daemon mounted a different private socket');
     const proxyForward = "const net=require('node:net'),fs=require('node:fs');net.createServer(s=>{const u=net.connect('/qa-browser-transport/proxy.sock');s.on('error',()=>u.destroy());u.on('error',()=>s.destroy());s.on('close',()=>u.destroy());u.on('close',()=>s.destroy());s.pipe(u);u.pipe(s)}).listen(1080,'127.0.0.1',()=>fs.writeFileSync('/tmp/cauce-proxy-forward-ready','ready',{mode:384,flag:'wx'}));";
     await docker(['exec', '--detach', container, 'node', '-e', proxyForward]);
     await docker(['exec', container, 'node', '-e', "const net=require('node:net');const s=net.connect('/qa-browser-transport/proxy.sock');s.setTimeout(3000,()=>{s.destroy();process.exitCode=1});s.on('connect',()=>{s.destroy()});s.on('error',()=>{process.exitCode=1})"], { timeout: plazo(5_000) });

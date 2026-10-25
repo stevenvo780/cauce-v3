@@ -12,6 +12,7 @@ import { PostgresConsoleUserStore } from '../../services/gateway/src/console-use
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, saludDePostgresDePrueba } from '../helpers/contenedor-de-prueba.js';
+import { publishCliDatabase } from './cli-database-loopback.js';
 import type { CliResult } from './v4-rupturas-terminal-cli.fixtures.js';
 
 export const owner = 'e2e-a9-cli-1025b';
@@ -30,14 +31,18 @@ export async function startPlatformAdminFixture() {
   let database: StartedTestContainer | undefined;
   let pool: DatabasePool | undefined;
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
+  let releaseCliDatabase: (() => Promise<void>) | undefined;
   let closing: Promise<void> | undefined;
   const close = (): Promise<void> => closing ??= (async () => {
     try { await app?.close(); }
     finally {
       try { await pool?.end(); }
       finally {
-        try { await database?.stop(); }
-        finally { await rm(directory, { recursive: true, force: true }); }
+        try { await releaseCliDatabase?.(); }
+        finally {
+          try { await database?.stop(); }
+          finally { await rm(directory, { recursive: true, force: true }); }
+        }
       }
     }
   })();
@@ -78,13 +83,15 @@ export async function startPlatformAdminFixture() {
       .withEnvironment({ POSTGRES_DB: 'cauce_test', POSTGRES_USER: 'cauce_test', POSTGRES_PASSWORD: databasePassword })
       .withExposedPorts(5432).withHealthCheck(saludDePostgresDePrueba('cauce_test', 'cauce_test'))
       .withWaitStrategy(Wait.forHealthCheck()).start());
-    const url = `postgresql://cauce_test:${encodeURIComponent(databasePassword)}@${database.getHost()}:${String(database.getMappedPort(5432))}/cauce_test`;
-    secrets.push(url); pool = createPool(url); await applyMigrations(pool); await seedSyntheticCompanyContexts(url);
+    const published = await publishCliDatabase('cauce_test', databasePassword, database.getHost(), database.getMappedPort(5432), 'cauce_test');
+    releaseCliDatabase = () => published.close();
+    const url = published.directUrl;
+    secrets.push(url, published.cliUrl); pool = createPool(url); await applyMigrations(pool); await seedSyntheticCompanyContexts(url);
     await pool.query('UPDATE console_users SET password_hash=$1', [await hashPassword(password, { cost: 1024, blockSize: 8, parallelism: 1 })]);
     const actor = (await pool.query<{ id: string }>('SELECT id::text FROM console_users WHERE email=$1', ['context_alpha@dev.example'])).rows[0]?.id;
     const foreignActor = (await pool.query<{ id: string }>('SELECT id::text FROM console_users WHERE email=$1', ['context_beta@dev.example'])).rows[0]?.id;
     if (!actor || !foreignActor) throw new Error('synthetic operators are unavailable');
-    const databaseFile = await privateFile('database-url', url);
+    const databaseFile = await privateFile('database-url', published.cliUrl);
     const environment = { DATABASE_URL_FILE: databaseFile, CAUCE_PLATFORM_ADMIN_ID: actor, CAUCE_SPACE_BACKUP_DIRECTORY: join(directory, 'backups') };
     app = await buildGateway({ pool, logger: false,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: randomBytes(32) }),
