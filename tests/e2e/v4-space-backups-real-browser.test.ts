@@ -523,7 +523,8 @@ describe('copia de espacio desde navegador real con exportación física firmada
       const archive = join(canaryRoot, 'download', `older-${backupId}.zip`);
       const browserFile = await downloaded.path();
       if (!browserFile?.startsWith('/tmp/playwright-artifacts-')) throw new Error('download artifact is outside the owned browser directory');
-      const copied = spawnSync('docker', ['--context', 'lab', 'cp', `${active().browserContainer}:${browserFile}`, archive],
+      // The runner points DOCKER_HOST at the VM that owns the browser; a named context does not exist inside it.
+      const copied = spawnSync('docker', ['cp', `${active().browserContainer}:${browserFile}`, archive],
         { encoding: 'utf8', timeout: 30_000 });
       expect(copied.status, copied.stderr).toBe(0);
       await chmod(archive, 0o600);

@@ -23,6 +23,13 @@ export async function readSpaceBackupAgent(client:DatabaseClient,company:string,
   if (!parsed.success) throw new StoreError('not_found','a placed space backup target is required');
   return parsed.data;
 }
+// Listing only needs the agent in this company: an agent not yet placed on a computer has no copies, not a missing target.
+export async function assertSpaceBackupAgentExists(client:DatabaseClient,company:string,tenant:string,alias:string):Promise<void> {
+  const found=(await client.query(`SELECT 1 FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id AND tenant.company_id=agent.company_id
+    WHERE agent.company_id=$1 AND agent.tenant_id=$2 AND agent.alias=$3 AND agent.purged_at IS NULL
+      AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL FOR SHARE OF agent,tenant`,[company,tenant,alias])).rowCount;
+  if (!found) throw new StoreError('not_found','space backup agent is unavailable');
+}
 export async function authorizeSpaceBackupRequester(client:DatabaseClient,row:SpaceBackupRow):Promise<void> {
   await assertSpaceBackupPolicy(client,row);
   const person=(await client.query<{tenant_id:string;alias:string}>('SELECT tenant_id,alias FROM console_users WHERE id=$1',[row.requested_by])).rows[0];

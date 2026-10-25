@@ -1,7 +1,7 @@
 import { withTransaction,type DatabaseClient,type DatabasePool } from './db.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
 import { StoreError } from './repository/errors.js';
-import { assertSpaceBackupAuthority,readSpaceBackupAgent } from './space-backup-authority.js';
+import { assertSpaceBackupAgentExists,assertSpaceBackupAuthority,readSpaceBackupAgent } from './space-backup-authority.js';
 import { SPACE_BACKUP_COMPANY_BYTES,SPACE_BACKUP_GLOBAL_BYTES,SPACE_BACKUP_MAX_BYTES,
   SpaceBackupRequestSchema,spaceBackupReceipt,type SpaceBackupQuotaLimits,type SpaceBackupRow } from './space-backup-contracts.js';
 function limits(value:SpaceBackupQuotaLimits) {
@@ -55,7 +55,7 @@ export class SpaceBackupRepository {
   list(source:CompanyAuthoritySource,tenant:string,alias:string) {
     return withTransaction(this.pool,async client=>{
       const authority=await source(client);assertSpaceBackupAuthority(authority,tenant);
-      await readSpaceBackupAgent(client,authority.actingCompany,tenant,alias);
+      await assertSpaceBackupAgentExists(client,authority.actingCompany,tenant,alias);
       await client.query("UPDATE space_backups SET status='failed',error='EXPIRED',lease_until=NULL WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND expires_at<=now()",
         [authority.actingCompany,tenant,alias]);
       const rows=(await client.query<SpaceBackupRow>('SELECT * FROM space_backups WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 ORDER BY created_at DESC,id DESC',
