@@ -142,14 +142,16 @@ export class ProviderAuthManager {
     return {
       input: async (bytes) => {
         await this.access(actor, session);
-        this.assertChannel(session);
         if (bytes.byteLength > 4096) throw new ProviderAuthError('INVALID_REQUEST');
+        if (session.connected && session.snapshot.status === 'verifying') return;
+        this.assertChannel(session);
         try { await session.login?.write(bytes); } catch { await this.finish(session, 'failed', 'LOGIN_FAILED'); throw new ProviderAuthError('LOGIN_FAILED'); }
       },
       resize: async (cols, rows) => {
         await this.access(actor, session);
-        this.assertChannel(session);
         if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 20 || cols > 400 || rows < 5 || rows > 200) throw new ProviderAuthError('INVALID_REQUEST');
+        if (session.connected && session.snapshot.status === 'verifying') return;
+        this.assertChannel(session);
         await session.login?.resize(cols, rows);
       },
       close: async () => { if (ACTIVE.has(session.snapshot.status)) await this.finish(session, 'cancelled', null); },

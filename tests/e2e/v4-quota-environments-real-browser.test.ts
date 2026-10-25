@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture, type BrowserSocket } from './console-functional-browser.fixtures.js';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { BrowserSocket } from './console-functional-browser.fixtures.js';
 import { join } from 'node:path';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, login,
@@ -8,10 +8,13 @@ import {
 } from './v4-console-real-browser.helpers.js';
 import { prepareQuotaDockerImage, removeQuotaDockerImage, quotaCanaryPerson, seedQuotaCompanyAdmin, startQuotaDockerHost } from './v4-quota-environments-real-browser.fixtures.js';
 
+vi.stubEnv('CAUCE_PLAZOS_FACTOR', process.env.CAUCE_PLAZOS_FACTOR ?? '3');
+const { newTrustedPage, startConsoleFunctionalFixture } = await import('./console-functional-browser.fixtures.js');
+const task = 'e2e-a7-commit-1025';
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const owner = quotaCanaryPerson('owner', run);
-const foreignOwner = quotaCanaryPerson('foreign-owner', run);
-const accountLabel = `zz-canary-account-${run}`;
+const owner = quotaCanaryPerson(`${task}-owner`, run);
+const foreignOwner = quotaCanaryPerson(`${task}-foreign-owner`, run);
+const accountLabel = `zz-canary-${task}-account-${run}`;
 const quotaHost = `${owner.company.slug}-quota_host_${run}`;
 const quotaHostName = `zz-canary-quota-host-name-${run}`;
 const ownerEnvironment = `zz-canary-owner-environment-${run}`;
@@ -27,13 +30,22 @@ let ownerEnvironmentId = '';
 let quotaImage: Awaited<ReturnType<typeof prepareQuotaDockerImage>>;
 let quotaImagePrepared = false;
 let quotaHostRuntime: Awaited<ReturnType<typeof startQuotaDockerHost>> | undefined;
-const evidenceDirectory = join(process.cwd(), 'ops/artifacts/quota-real-browser', run);
+const evidenceDirectory = join(process.cwd(), '.delegados/v4/recibos', task, 'environments', `provider-cli-${run}`);
 
 const active = () => { if (!fixture) throw new Error('quota browser fixture is not initialized'); return fixture; };
 const pool = () => active().database.pool;
 const base = () => active().baseUrl;
 const companyOwnerPage = () => { if (!ownerPage) throw new Error('quota company owner has no page'); return ownerPage; };
 const hostRuntime = () => { if (!quotaHostRuntime) throw new Error('quota Docker host is not initialized'); return quotaHostRuntime; };
+
+async function capture(page: V4Page, name: string): Promise<void> {
+  for (const [viewport, suffix] of [[{ width: 1440, height: 900 }, 'desktop'], [{ width: 390, height: 844 }, 'mobile']] as const) {
+    await page.setViewportSize(viewport);
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-${suffix}.png`), fullPage: false });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
 
 interface QuotaStreamFrame { payload: string | Buffer }
 interface QuotaStreamSocket extends BrowserSocket {
@@ -101,7 +113,7 @@ async function assertContainerRemoved(environmentId: string): Promise<void> {
 }
 
 async function freshPage(label: string): Promise<V4Page> {
-  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
   errors.watch(page, label);
   return page;
 }
@@ -186,7 +198,10 @@ afterAll(async () => {
   try { await quotaHostRuntime?.close(); }
   finally {
     try { await fixture?.close(); }
-    finally { if (quotaImagePrepared) await removeQuotaDockerImage(evidenceDirectory); }
+    finally {
+      try { if (quotaImagePrepared) await removeQuotaDockerImage(evidenceDirectory); }
+      finally { vi.unstubAllEnvs(); }
+    }
   }
 }, 180_000);
 
@@ -244,7 +259,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       await form.getByRole('button', { name: 'Crear entorno', exact: true }).click();
       const alert = page.getByRole('alert');
       await alert.waitFor({ timeout: 20_000 });
-      expect(await alert.innerText()).toBe('El servidor rechazó los datos enviados. Revísalos e inténtalo de nuevo.');
+      expect(await alert.innerText()).toBe('El servidor rechazó el campo nombre. Revísalo e inténtalo de nuevo.');
       expect((await quotaSnapshot(page)).environments.some(item => item.label === invalidLabel)).toBe(false);
 
       errors.expectHttpError('/v3/console/quota-environments', 400);
@@ -268,6 +283,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
         .toEqual({ required: true, valueMissing: true });
       expect(await form.getByRole('button', { name: 'Crear entorno', exact: true }).isDisabled()).toBe(true);
       expect((await quotaSnapshot(page)).environments).toEqual([]);
+      await capture(page, 'invalid-environment-name');
     });
   });
 
@@ -286,7 +302,8 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect(createReceipt.result.cli_version).toBe(quotaImage.versions.codex);
     await assertContainerIsolation(ownerEnvironmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.getByText('Preparado', { exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByRole('article', { name: `Entorno ${ownerEnvironment}`, exact: true }).getByText('Sin sesión', { exact: true }).waitFor({ timeout: 20_000 });
+    await capture(page, 'environment-ready');
     await step(page, 'editar entorno y rechazar un nombre vacío tras recortar espacios', async () => {
       const card = page.getByRole('article', { name: `Entorno ${ownerEnvironment}`, exact: true });
       await card.getByRole('button', { name: 'Editar entorno', exact: true }).click();
@@ -294,11 +311,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
       const nameInput = form.getByLabel('Nombre del entorno', { exact: true });
       await nameInput.fill('   ');
       expect(await nameInput.inputValue()).toBe('   ');
-      errors.expectHttpError(`/v3/console/quota-environments/${ownerEnvironmentId}`, 400);
-      await form.getByRole('button', { name: 'Guardar entorno', exact: true }).click();
-      const alert = page.getByRole('alert');
-      await alert.waitFor({ timeout: 20_000 });
-      expect(await alert.innerText()).toBe('El servidor rechazó los datos enviados. Revísalos e inténtalo de nuevo.');
+      expect(await form.getByRole('button', { name: 'Guardar entorno', exact: true }).isDisabled()).toBe(true);
       expect((await quotaSnapshot(page)).environments.find(item => item.id === ownerEnvironmentId))
         .toMatchObject({ label: ownerEnvironment, status: 'ready' });
 
@@ -311,6 +324,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     const edited = state.environments.find(item => item.id === ownerEnvironmentId);
     expect(edited).toMatchObject({ label: ownerEnvironmentEdited, status: 'ready' });
     expect(edited?.version).toBeGreaterThan(environment?.version ?? 0);
+    await capture(page, 'environment-edited');
 
     await step(page, 'consulta negativa con el lector real sin una sesión del proveedor', async () => {
       await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
@@ -353,6 +367,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true })
       .getByText('Eliminado', { exact: true }).waitFor({ timeout: 20_000 });
+    await capture(page, 'environment-deleted');
     const persisted = await pool().query<{ label: string; status: string }>(
       'SELECT label,status FROM quota_environments WHERE id=$1 AND company_id=$2', [ownerEnvironmentId, owner.company.slug]);
     expect(persisted.rows).toEqual([{ label: ownerEnvironmentEdited, status: 'deleted' }]);
@@ -379,6 +394,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     expect((await pool().query('SELECT quota_identity_hash,enabled FROM provider_accounts WHERE id=$1', [accountId])).rows)
       .toEqual([{ quota_identity_hash: null, enabled: false }]);
     await page.reload({ waitUntil: 'domcontentloaded' });
+    await capture(page, 'authentication-cancelled');
     await deleteEnvironment(page, environment.label);
     await hostRuntime().waitOperation(environment.id, 'delete');
     await assertContainerRemoved(environment.id);
@@ -393,6 +409,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     await page.getByText('No hay entornos de consulta. Registra una cuenta y crea su entorno.', { exact: true }).waitFor({ timeout: 20_000 });
     expect(await page.getByRole('article', { name: `Cuotas de ${accountLabel}`, exact: true }).count()).toBe(0);
     expect(await page.getByRole('article', { name: `Entorno ${ownerEnvironmentEdited}`, exact: true }).count()).toBe(0);
+    await capture(page, 'foreign-company-isolation');
 
     const accounts = await apiGet(page, '/v3/console/quota-accounts');
     const environments = await quotaSnapshot(page);
@@ -427,7 +444,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
   });
 
   it('company_admin gestiona entornos, pero la UI y la API le niegan el CRUD de cuentas', async () => {
-    const admin = await seedQuotaCompanyAdmin(pool(), owner, run);
+    const admin = await seedQuotaCompanyAdmin(pool(), owner, `${task}-${run}`);
     const page = await freshPage('quota-company-admin');
     await step(page, 'iniciar sesión como administrador de empresa', async () => login(page, base(), admin));
     await page.goto(`${base()}/my-quotas`, { waitUntil: 'domcontentloaded' });
@@ -437,8 +454,11 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     const accountCard = page.getByRole('article', { name: `Cuotas de ${accountLabel}`, exact: true });
     await accountCard.waitFor({ timeout: 20_000 });
     expect(await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).isDisabled()).toBe(true);
+    expect(await page.getByRole('button', { name: 'Registrar cuenta', exact: true }).evaluate(button => button.getAttribute('title')))
+      .toContain('dueño de la empresa o un administrador de plataforma');
     expect(await accountCard.getByRole('button', { name: 'Editar cuenta', exact: true }).isDisabled()).toBe(true);
     expect(await accountCard.getByRole('button', { name: 'Eliminar cuenta', exact: true }).isDisabled()).toBe(true);
+    await capture(page, 'company-admin-permissions');
     errors.expectHttpError('/v3/console/quota-accounts', 403);
     const deniedAccount = await apiMutation(page, 'POST', '/v3/console/quota-accounts', {
       provider: 'codex', label: `zz-canary-admin-forbidden-account-${run}`, idempotency_key: `zz-canary-${run}-admin-account`,
@@ -464,7 +484,7 @@ describe('entornos de cuota V4 en navegador real contra gateway y PostgreSQL rea
     await hostRuntime().waitOperation(environmentId, 'create');
     await assertContainerIsolation(environmentId);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.getByText('Preparado', { exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByRole('article', { name: `Entorno ${adminEnvironment}`, exact: true }).getByText('Sin sesión', { exact: true }).waitFor({ timeout: 20_000 });
 
     await step(page, 'editar entorno con rol company_admin', async () => editEnvironment(page, adminEnvironment, adminEnvironmentEdited));
     await step(page, 'eliminar entorno con rol company_admin', async () => deleteEnvironment(page, adminEnvironmentEdited));

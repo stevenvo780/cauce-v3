@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -17,6 +17,7 @@ const executor = join(repository, 'ops/cli/fleet-executor.py');
 const digest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
 export interface QuotaDockerImage {
   image: string; tag: string; versions: Record<string, string>; bundle_digest: string;
+  providers?: string[];
   bundles: Record<string, { directory: string; digest: string; executable: string; executable_sha256: string;
     argv: string[]; descriptor_sha256: string }>;
 }
@@ -37,8 +38,8 @@ export interface QuotaContainerObservation {
 async function command(filename: string, args: string[], input?: unknown, timeout = 180_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(filename, args, { cwd: repository, timeout, maxBuffer: 1_048_576,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' } }, (error, stdout) => {
-      if (error) reject(new Error(`quota fixture command failed: ${filename}; exit=${String(error.code ?? 'unknown')}`));
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' } }, (error, stdout, stderr) => {
+      if (error) reject(new Error(`quota fixture command failed: ${filename}; exit=${String(error.code ?? 'unknown')}; ${stderr.trim().slice(-4000)}`));
       else resolve(stdout.trim());
     });
     if (input !== undefined) child.stdin?.end(JSON.stringify(input));
@@ -115,11 +116,26 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
       const roots: Record<string, string> = Object.fromEntries(await Promise.all(['state','runtime','pki','tokens','identities'].map(async name => {
         const path = join(directory, name); await mkdir(path, { mode: 0o700 }); return [name, path] as const;
       })));
+      const approvedBundles: QuotaDockerImage['bundles'] = {};
+      const copies = new Map<string, string>();
+      for (const [provider, bundle] of Object.entries(image.bundles)) {
+        let approved = copies.get(bundle.directory);
+        if (!approved) {
+          approved = join(directory, `approved-bundle-${String(copies.size)}`);
+          await cp(bundle.directory, approved, { recursive: true, errorOnExist: true, force: false });
+          const copiedDigest = await command('/usr/bin/python3', ['-B', '-c',
+            'import sys;sys.path.insert(0,sys.argv[1]);from fleet_executor_runtime import bundle_digest;print(bundle_digest(sys.argv[2]))',
+            join(repository, 'ops/cli'), approved]);
+          if (copiedDigest !== bundle.digest) throw new Error('owned quota bundle copy differs from its approved digest');
+          copies.set(bundle.directory, approved);
+        }
+        approvedBundles[provider] = { ...bundle, directory: approved };
+      }
       await mkdir(join(roots.runtime ?? '', 'quota-login'), { mode: 0o700 });
       await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
       const policy = { schemaVersion: 1, host_id: hostId, executor_user: userInfo().username, roots,
-        native: [], containers: {}, profiles: {}, hooks: {}, bundles: image.bundles,
-        quota_environments: { image: image.image, network: 'bridge', providers: ['claude','codex','grok'] } };
+        native: [], containers: {}, profiles: {}, hooks: {}, bundles: approvedBundles,
+        quota_environments: { image: image.image, network: 'bridge', providers: image.providers ?? ['claude','codex','grok'] } };
       const policyFile = join(directory, 'policy.json');
       await writeFile(policyFile, JSON.stringify(policy), { mode: 0o600 });
       const keys = generateKeyPairSync('ed25519');
@@ -157,6 +173,12 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     return row;
   };
   const host = {
+    pause(): void {
+      if (!child.kill('SIGSTOP')) throw new Error('owned quota host could not pause');
+    },
+    resume(): void {
+      if (!child.kill('SIGCONT')) throw new Error('owned quota host could not resume');
+    },
     async waitOperation(environmentId: string, action: QuotaAction,
       options: { status?: 'done' | 'awaiting_auth' | 'failed'; afterId?: string; timeoutMs?: number } = {}): Promise<QuotaOperationReceipt> {
       await environment(environmentId);
@@ -216,6 +238,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     },
     async close(): Promise<void> {
       const failures: unknown[] = [];
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGCONT');
       await stopHost(child).catch((error: unknown) => { failures.push(error); });
       const rows = (await pool.query<QuotaEnvironmentIdentity>(`SELECT id,company_id,account_id,host_id,provider,container_name
         FROM quota_environments WHERE company_id=$1 AND host_id=$2`, [person.company_id, hostId])).rows;
@@ -238,7 +261,9 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
       if (hostFailure.processError || child.exitCode !== null || child.signalCode !== null) throw new Error('owned enrolled quota host failed to start');
       const row = (await pool.query<{ capabilities: Record<string, unknown> }>(`SELECT capabilities FROM fleet_host_identities
         WHERE host_id=$1 AND company_id=$2 AND capabilities_seen_at>now()-interval '120 seconds'`, [hostId, person.company_id])).rows[0];
-      if (row?.capabilities.quota_executor === true) {
+      const supported = row?.capabilities.quota_providers;
+      if (row?.capabilities.quota_executor === true && Array.isArray(supported)
+        && (image.providers ?? ['claude','codex','grok']).every(provider => supported.includes(provider))) {
         const sha = (await execute('/usr/bin/git', ['rev-parse', 'HEAD'], { cwd: repository })).stdout.trim();
         const sources = Object.fromEntries(await Promise.all(['tests/e2e/v4-quota-environments-real-browser.fixtures.ts',
           'tests/e2e/v4-quota-environments-real-browser.test.ts','services/gateway/src/fleet/main.ts',
