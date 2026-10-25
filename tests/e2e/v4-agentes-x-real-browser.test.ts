@@ -405,7 +405,8 @@ beforeAll(async () => {
     extraSourceFiles: ['services/gateway/src/fleet/space-backup.failure.ts', 'packages/protocol/src/context-retirement.ts',
       'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
       'services/gateway/src/console/context-repository/retirement-routes.ts', 'services/gateway/src/fleet/space-backup.finish.ts',
-      'ops/cli/space_archive_stream.py', 'packages/store/src/context-version-reevaluation.ts'] });
+      'ops/cli/space_archive_stream.py', 'packages/store/src/context-version-reevaluation.ts',
+      'ops/container-runtime/cauce_container_restart.py'] });
   if (isolation) {
     const namespace = JSON.parse(await outerDocker(['inspect', '--format', '{"network":{{json .HostConfig.NetworkMode}},"pid":{{json .HostConfig.PidMode}},"ipc":{{json .HostConfig.IpcMode}},"cgroup":{{json .HostConfig.CgroupnsMode}}}', computer.container])) as Record<string, string>;
     expect(namespace).toMatchObject({ network, cgroup: 'private' }); expect(namespace.pid).not.toBe('host'); expect(namespace.ipc).not.toBe('host'); evidence.computerNamespace = namespace;
