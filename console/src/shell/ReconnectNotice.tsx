@@ -17,6 +17,14 @@ export function ReconnectNotice() {
       </Notice>
     );
   }
+  if (notice.kind === 'unreachable') {
+    return (
+      <Notice tone="warn" role="alert" className="mx-4 mt-3 flex flex-wrap items-center gap-2">
+        <span>No hay conexión con el servidor. La consola lo sigue intentando sola; si no vuelve, recarga la página.</span>
+        <Button size="sm" onClick={() => { window.location.reload(); }}>Recargar la página</Button>
+      </Notice>
+    );
+  }
   return (
     <Notice tone="warn" role="alert" className="mx-4 mt-3 flex flex-wrap items-center gap-2">
       <span>El servidor no respondió y la última operación no se reintentó sola, para no repetirla a ciegas.</span>

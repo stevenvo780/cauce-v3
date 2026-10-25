@@ -37,3 +37,12 @@ it('una escritura caída no se reintenta sola: el aviso ofrece «Reintentar» y 
   expect(intentos).toBe(2);
   expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
 });
+
+it('si el servidor sigue sin responder ofrece «Recargar la página»', async () => {
+  const fetcher = (() => Promise.reject(new TypeError('fetch failed'))) as typeof fetch;
+  const api = new CauceApi('http://localhost', fetcher);
+  render(<ApiProvider api={api}><ReconnectNotice /></ApiProvider>);
+  await expect(api.getStatus()).rejects.toBeInstanceOf(TypeError);
+  expect(await screen.findByText(/No hay conexión con el servidor/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Recargar la página' })).toBeInTheDocument();
+});

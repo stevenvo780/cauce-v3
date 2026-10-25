@@ -40,7 +40,7 @@ import { readBoundedBlob } from './client/bounded-blob';
 type UnauthorizedListener = () => void;
 
 /** Transient loss of the gateway, shown as one discreet notice: reads retry on their own, writes wait for a person. */
-export type ConnectionNotice = { kind: 'reconnecting' } | { kind: 'write-failed' };
+export type ConnectionNotice = { kind: 'reconnecting' } | { kind: 'unreachable' } | { kind: 'write-failed' };
 
 const RECONNECT_DELAYS_MS = [250, 750, 1_500];
 
@@ -53,6 +53,9 @@ function isTransientFailure(cause: unknown): boolean {
  * make the listener ask it again in a loop, and a 401 from `/v3/auth/login` is a wrong password,
  * not an expired session.
  */
+function isTimeout(cause: unknown): boolean {
+  return cause instanceof ApiError && cause.code === 'timeout';
+}
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
@@ -111,8 +114,9 @@ export class CauceApi {
   }
 
   private setConnectionNotice(notice: ConnectionNotice | undefined): void {
-    if (notice?.kind === 'reconnecting' && this.connectionNoticeState?.kind === 'write-failed') return;
+    if (notice?.kind !== 'write-failed' && notice !== undefined && this.connectionNoticeState?.kind === 'write-failed') return;
     if (notice === undefined && this.connectionNoticeState?.kind === 'write-failed') return;
+    if (notice?.kind === 'reconnecting' && this.connectionNoticeState?.kind === 'unreachable') return;
     this.connectionNoticeState = notice;
     for (const listener of [...this.connectionListeners]) listener(notice);
   }
@@ -153,17 +157,21 @@ export class CauceApi {
     for (let attempt = 0; attempt <= RECONNECT_DELAYS_MS.length; attempt += 1) {
       try {
         const result = await this.requestOnce<T>(path, init, options);
-        if (attempt > 0) this.setConnectionNotice(undefined);
+        // Any answer proves the gateway is back, also for a read that never had to retry.
+        if (attempt > 0 || this.connectionNoticeState !== undefined) this.setConnectionNotice(undefined);
         return result;
       } catch (cause) {
         lastCause = cause;
+        if (isTimeout(cause)) break; // retrying a 30 s wait would keep the banner for minutes
         if (!isTransientFailure(cause) || attempt === RECONNECT_DELAYS_MS.length || init.signal?.aborted) break;
         this.setConnectionNotice({ kind: 'reconnecting' });
         await new Promise((resolve) => { setTimeout(resolve, RECONNECT_DELAYS_MS[attempt]); });
         if (init.signal?.aborted) break;
       }
     }
-    this.setConnectionNotice(undefined);
+    // A gateway that still does not answer stays visible (with an action) until a read succeeds;
+    // clearing here made the banner flicker or vanish while the chat stayed frozen.
+    this.setConnectionNotice(isTransientFailure(lastCause) || isTimeout(lastCause) ? { kind: 'unreachable' } : undefined);
     throw lastCause;
   }
 

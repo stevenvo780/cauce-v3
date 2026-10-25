@@ -58,3 +58,22 @@ it('una escritura ante 503 no se reintenta sola y el aviso permite reintentarla 
   await expect(api.retryLastFailedWrite()).resolves.toBeUndefined();
   expect(calls.filter((call) => call.path === '/v3/auth/logout')).toHaveLength(2);
 });
+
+it('una lectura que agota los reintentos deja el aviso «unreachable» hasta que otra lectura responde', async () => {
+  let caido = true;
+  const { fetcher } = fetcherFor(() => { if (caido) throw new TypeError('fetch failed'); return json(200, { ok: true }); });
+  const api = new CauceApi('http://localhost', fetcher);
+  await expect(api.getStatus()).rejects.toBeInstanceOf(TypeError);
+  expect(api.connectionNotice).toEqual({ kind: 'unreachable' });
+  caido = false;
+  await expect(api.getStatus()).resolves.toMatchObject({ ok: true });
+  expect(api.connectionNotice).toBeUndefined();
+});
+
+it('una lectura que vence el tiempo máximo no se reintenta y avisa que no hay conexión', async () => {
+  const { fetcher, calls } = fetcherFor(() => new Promise<Response>(() => undefined));
+  const api = new CauceApi('http://localhost', fetcher, undefined, 20);
+  await expect(api.getStatus()).rejects.toMatchObject({ status: 504, code: 'timeout' });
+  expect(calls).toHaveLength(1);
+  expect(api.connectionNotice).toEqual({ kind: 'unreachable' });
+});
