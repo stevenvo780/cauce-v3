@@ -99,8 +99,8 @@ RUN chmod 0755 ${LOGIN_CLI} && chmod 0644 ${LOGIN_CLI_SCRIPT}
 `;
 const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
-  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
-const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas'];
+  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py'];
+const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py'];
 const AGENT_FORWARDER = `import { writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 const [socketPath, target, listen = '9443'] = process.argv.slice(2);
