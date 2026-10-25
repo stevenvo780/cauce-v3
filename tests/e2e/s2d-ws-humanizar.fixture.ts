@@ -192,6 +192,12 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
       expires_at: new Date(Date.now() + 3_600_000).toISOString(), principal: { tenant_id: 'Steven', alias: row.alias,
         session_id: 'canary:' + run, channel: 'adapter', roles: ['adapter'], permissions: ['route', 'read'] } })) }), { mode: 0o600 });
     const auth = await prepareRehearsalAuth(pool, new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identities)), publisher, run);
+    const consoleOwners = (await pool.query<{ id: string; tenant_id: string; alias: string; role: string; active: boolean }>(
+      'SELECT id::text,tenant_id,alias,role,active FROM console_users WHERE email_normalized=$1', [auth.email])).rows;
+    expect(consoleOwners).toHaveLength(1); const consoleOwner = consoleOwners[0]; assert.ok(consoleOwner);
+    expect(consoleOwner).toMatchObject({ tenant_id: 'Steven', alias: publisher, role: 'operator', active: true });
+    await save('console-tui-owner', { human_id: consoleOwner.id, tenant_id: consoleOwner.tenant_id,
+      actor_alias: consoleOwner.alias, source: 'owned PostgreSQL console user' });
     app = await buildGateway({ pool, logger: false, outboxPollMs: 10, leaseTtlMs: 30_000, authProvider: auth.provider, consoleOrigins: [auth.origin],
       https: { cert: material.cert, key: material.key, ca: [material.cert, ...workers.map(worker => worker.cert)], requestCert: true, rejectUnauthorized: false } });
     await app.listen({ host: '0.0.0.0', port: 0 }); const address = app.server.address(); assert.ok(address && typeof address !== 'string');
@@ -229,6 +235,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
         PKI_DIR: managerRoot + '/pki/' + actor.alias, RELAY_URL: gateway.replace('https:', 'wss:') + '/v3/ws', EXPECTED_IMAGE_ID: imageId,
         EXPECTED_LABEL_KEY: 'cauce.e2e.owner', EXPECTED_LABEL_VALUE: OWNER, MOUNT_TYPE: 'bind', MOUNT_SOURCE: home, MOUNT_DESTINATION: '/home/node',
         MOUNT_RW: 'true', CONFIG_POR_ALIAS: '1', CAUCE_SEMBRAR_PERFIL: '1', SHARED_SESSION: '1', SHARED_SESSION_WORKSPACE: '/workspace',
+        OWNER_HUMAN_ID: consoleOwner.id,
         ...(actor.harness === 'claude' ? { EXPECTED_CLI_VERSION: '2.1.0' } : {}) }).map(([key, value]) => key + '=' + value).join('\n') + '\n', { mode: 0o600 });
       await docker(['cp', config, manager.container + ':' + managerRoot + '/config/' + actor.alias + '.env']);
       const unit = ['[Unit]', 'Description=Owned shared legacy adapter', '[Service]', 'Type=simple', 'Environment=HOME=/home/cauce',
