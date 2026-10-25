@@ -48,6 +48,8 @@ def approve(policy: dict, snapshot: dict, row: dict) -> tuple[dict, dict]:
     fields = {field: observed[field] for field in ('Id', 'Image', 'State', 'RestartCount', 'Mounts', 'HostConfig')}
     # Health status may change without replacing the runtime generation.
     fields['State'] = {key: observed['State'][key] for key in ('Running', 'Pid', 'StartedAt')}
+    # docker inspect lists mounts in a different order on each call; the generation must not depend on it.
+    fields['Mounts'] = sorted(observed['Mounts'], key=lambda mount: (mount.get('Destination', ''), mount.get('Source', '')))
     generation = hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     agent = {**snapshot, 'runtime_mode': 'container', 'home_directory': str(home), 'systemd_user': row['systemd_user'],
              '_placement': {**row, 'ownership': 'backup-only', 'python': '/usr/bin/python3'}}

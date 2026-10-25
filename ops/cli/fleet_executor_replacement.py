@@ -21,8 +21,10 @@ def container_pin(observed: dict) -> dict:
     if not isinstance(identity, str) or re.fullmatch(r'[a-f0-9]{64}', identity) is None:
         raise SafeFailure('replacement container has no immutable identity')
     return {'container_id': identity, 'created_at': observed['Created'], 'started_at': observed['State']['StartedAt'],
-            'image_id': observed['Image'], 'configuration_sha256': fingerprint({key: observed[key]
-                for key in ('Name', 'Created', 'Image', 'Config', 'HostConfig', 'Mounts')})}
+            'image_id': observed['Image'], 'configuration_sha256': fingerprint({**{key: observed[key]
+                for key in ('Name', 'Created', 'Image', 'Config', 'HostConfig')},
+                # docker inspect lists mounts in a different order on each call.
+                'Mounts': sorted(observed['Mounts'], key=lambda mount: (mount.get('Destination', ''), mount.get('Source', '')))})}
 
 
 def volume_pins(policy: dict, agent: dict) -> list[dict]:

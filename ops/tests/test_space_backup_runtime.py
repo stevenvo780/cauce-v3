@@ -365,6 +365,22 @@ class LegacyContainerApprovalTest(unittest.TestCase):
         self.assertEqual(converted['state_directory'], '/home/dev/state/legado-rt')
         self.assertEqual((approved, result), ({'runtime_mode': 'container'}, binding))
 
+    def test_backup_only_generation_ignores_the_order_docker_lists_mounts_in(self):
+        row = {'backup_only': True, 'runtime_user': 'dev', 'systemd_user': 'dev', 'home_directory': '/home/dev'}
+        policy = {'host_id': 'host-x', 'shared_containers': {'ws-legado': row}}
+        mounts = [{'Type': 'bind', 'Source': '/srv/a', 'Destination': '/workspace', 'RW': True},
+                  {'Type': 'bind', 'Source': '/srv/b', 'Destination': '/home/dev/.claude', 'RW': True},
+                  {'Type': 'volume', 'Source': '/srv/c', 'Destination': '/home/dev/.local', 'RW': True}]
+        observed = {'Id': 'a' * 64, 'Image': 'sha256:' + 'b' * 64, 'RestartCount': 0, 'Mounts': mounts,
+                    'HostConfig': {'Privileged': False, 'PidMode': '', 'CapAdd': []},
+                    'State': {'Running': True, 'Pid': 17, 'StartedAt': 'generation-one'}}
+        with mock.patch.object(container_fixtures.container, 'inspect_container', return_value=observed):
+            approved, binding = space_backup_runtime.approve_legacy_container(policy, self.snapshot)
+            observed['Mounts'] = list(reversed(mounts))
+            self.assertEqual(space_backup_runtime.read_container_binding(policy, approved)[1], binding)
+            observed['Mounts'] = [*mounts[:2], {**mounts[2], 'Source': '/srv/other'}]
+            self.assertNotEqual(space_backup_runtime.read_container_binding(policy, approved)[1], binding)
+
     def test_backup_only_observes_identity_and_rejects_foreign_user_home_state_and_container_isolation(self):
         row = {'backup_only': True, 'runtime_user': 'dev', 'systemd_user': 'dev', 'home_directory': '/home/dev'}
         policy = {'host_id': 'host-x', 'shared_containers': {'ws-legado': row}}
