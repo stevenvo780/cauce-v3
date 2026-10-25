@@ -18,7 +18,7 @@ const root = process.cwd();
 export const retiredRoomOwner = 'r8b-membresia-sala-retirada-1025';
 export const retiredRoomRun = randomUUID().slice(0, 8);
 export const retiredRoomPrefix = `zz-canary-r8b-room-${retiredRoomRun}`;
-export const retiredRoomEvidence = resolve('/datos/workspaces/personal/cauce-v3/.delegados/v4/recibos', retiredRoomOwner, retiredRoomRun);
+export const retiredRoomEvidence = join(root, '.delegados/v4/recibos', retiredRoomOwner, retiredRoomRun);
 
 interface SourceExport { types?: string }
 async function workspaceAliases() {
