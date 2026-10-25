@@ -87,11 +87,13 @@ def recreate_original(executor, entry: dict) -> None:
     """An update that changes extensions or resources recreates the container under its own name, so the captured
     original no longer exists when admission fails. Restoring it rebuilds the captured placement: the approved previous
     shape, the captured image and the very volumes pinned at capture. The rebuild carries this operation as its
-    provenance and is pinned in the journal; from then on it is verified as the original, field by field."""
+    provenance, is started idle (no adapter) and pinned in the journal; from then on it is verified as the original,
+    field by field, and the restoration continues exactly as for a preserved original."""
     if 'recreated_original' in entry:
         return
     from fleet_executor_container import (
         OPERATION_LABEL,
+        assert_idle_command,
         create_container,
         discard_operation,
         docker,
@@ -142,10 +144,18 @@ def recreate_original(executor, entry: dict) -> None:
             entry['phase'] = 'recreating_original'
             executor.save()
             current = create_container(executor.policy, restored, extra_labels={RESTORED_LABEL: operation})
+        # Pinned once running, as the original was: Docker rewrites HostConfig (OomKillDisable) on the first start.
+        if not current['State']['Running']:
+            assert_idle_command(current)
+            docker('start', current['Id'])
+            started = inspect_container(agent['container_name'])
+            if started is None or started['Id'] != current['Id'] or not started['State']['Running']:
+                raise ValueError
+            current = started
         validate_container(executor.policy, restored, current)
         labels = current['Config'].get('Labels') or {}
         if current['Image'] != pin['image_id'] or labels.get(RESTORED_LABEL) != operation or OPERATION_LABEL in labels \
-                or current['State']['Running'] or volume_pins(executor.policy, agent) != entry['original']['volumes']:
+                or volume_pins(executor.policy, agent) != entry['original']['volumes']:
             raise ValueError
         entry.update(recreated_original=container_pin(current), phase='recreated_original')
         executor.save()

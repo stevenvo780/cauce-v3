@@ -333,16 +333,22 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
         self.destination = {'Id': 'f' * 64, 'Image': 'sha256:' + '2' * 64, 'State': {'Running': True},
                             'Config': {'Labels': {**owner, container.OPERATION_LABEL: self.OPERATION}}}
         self.rebuilt = {'Id': '9' * 64, 'Image': self.IMAGE, 'State': {'Running': False},
-                        'Config': {'Labels': {**owner, rollback.RESTORED_LABEL: self.OPERATION}}}
-        self.pins['9' * 64] = {'container_id': '9' * 64, 'created_at': 'B', 'started_at': '0001-01-01T00:00:00Z',
+                        'Config': {'Labels': {**owner, rollback.RESTORED_LABEL: self.OPERATION},
+                                   'Entrypoint': ['/bin/sleep'], 'Cmd': ['infinity'], 'User': '0'}}
+        self.pins['9' * 64] = {'container_id': '9' * 64, 'created_at': 'B', 'started_at': 'B',
                                'image_id': self.IMAGE, 'configuration_sha256': '7' * 64}
         self.containers = [self.destination]
+        self.started = []
 
     def docker(self, *arguments):
         if arguments[:2] == ('ps', '-a'):
             return b'' if arguments[-1] == 'id=' + 'a' * 64 else b'x'
         if arguments[:2] == ('image', 'inspect'):
             return json.dumps([{'Id': arguments[2]}]).encode()
+        if arguments[0] == 'start' and self.containers and arguments[1] == self.containers[0]['Id']:
+            self.started.append(arguments[1])
+            self.containers[0]['State'] = {'Running': True}
+            return b''
         raise AssertionError(arguments)
 
     def inspect(self, _name):
@@ -379,7 +385,6 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
             return self.approved, self.inspect(previous['container_name'])
         def restore(policy, agent, **options):
             self.assertEqual(options, {'was_running': True, 'bootstrap': False, 'operation_id': None, 'allow_refresh': False})
-            self.rebuilt['State'] = {'Running': True}
             self.pins['9' * 64]['started_at'] = 'C'
             return {'runtime_digest': '1' * 64}
         with contextlib.ExitStack() as stack:
@@ -396,6 +401,8 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
         self.assertEqual(proof, replay)
         mocks['discard'].assert_called_once()
         mocks['create'].assert_called_once()
+        # Started idle once, before it is pinned; the adapter is then restored as for a preserved original.
+        self.assertEqual(self.started, ['9' * 64])
         self.assertEqual(self.entry['phase'], 'restored')
         self.assertEqual(self.entry['recreated_original']['container_id'], '9' * 64)
         # The evidence and the authority stay bound to the captured original, never to the rebuild.
@@ -423,14 +430,26 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
         self.assertNotIn('recreated_original', self.entry)
         self.assertEqual(self.entry['diagnostic']['exception_type'], 'ValueError')
 
-    def test_a_rebuild_already_started_is_never_adopted(self):
+    def test_a_rebuild_interrupted_after_its_start_is_adopted_without_another_start(self):
         import contextlib
         self.rebuilt['State'] = {'Running': True}
+        self.containers[:] = [self.rebuilt]
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack)
+            rollback.recreate_original(self.executor, self.entry)
+        mocks['create'].assert_not_called()
+        self.assertEqual(self.started, [])
+        self.assertEqual(self.entry['recreated_original'], self.pins['9' * 64])
+
+    def test_a_rebuild_without_the_idle_command_is_never_started(self):
+        import contextlib
+        self.rebuilt['Config']['Cmd'] = ['/bin/sh']
         self.containers[:] = [self.rebuilt]
         with contextlib.ExitStack() as stack:
             self.patches(stack)
             with self.assertRaisesRegex(SafeFailure, 'original unverified'):
                 rollback.recreate_original(self.executor, self.entry)
+        self.assertEqual(self.started, [])
         self.assertNotIn('recreated_original', self.entry)
 
     def test_unrecoverable_rebuild_keeps_the_destination_and_fails_closed(self):
