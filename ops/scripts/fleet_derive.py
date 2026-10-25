@@ -94,10 +94,10 @@ HARNESS_RULES: dict[str, dict[str, Any]] = {
             "container": _LOCAL_RUNTIME_STATE_DIRECTORY,
             "host": HOST_STATE_DIRECTORY,
         },
-        "workspaceWhenState": {
-            "stateDirectory": _MUSE_RUNTIME_STATE_DIRECTORY,
-            "workspace": "{home}/clawd",
-        },
+        "workspaceWhenState": [
+            {"stateDirectory": _MUSE_RUNTIME_STATE_DIRECTORY, "workspace": "{home}/clawd"},
+            {"stateDirectory": "{home}/.cauce/{alias}", "workspace": "{home}/.cauce/{alias}/space/projects"},
+        ],
     },
 }
 
@@ -128,9 +128,10 @@ def harness_workspace(alias: str, row: Mapping[str, Any]) -> str | None:
     rule = _harness_rule(row)
     template = rule.get("workspace")
     conditional = rule.get("workspaceWhenState")
-    if conditional is not None \
-            and row.get("runtimeStateDirectory") == _render(conditional["stateDirectory"], alias, row):
-        template = conditional["workspace"]
+    conditions = [conditional] if isinstance(conditional, dict) else conditional or []
+    for condition in conditions:
+        if row.get("runtimeStateDirectory") == _render(condition["stateDirectory"], alias, row):
+            template = condition["workspace"]
     return None if template is None else _render(template, alias, row)
 
 

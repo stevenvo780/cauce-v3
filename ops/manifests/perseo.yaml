@@ -7,7 +7,7 @@ spec:
   room: grp.hospital
   alias: perseo
   harness: muse
-  profile: {seedOnConnect: true, configScope: alias}
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/.cauce/perseo/space/projects}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_PERSEO_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

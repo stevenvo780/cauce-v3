@@ -1,14 +1,14 @@
 {
   "aliases": {
     "argos": {
-      "container": "ctrl-infra",
+      "container": "cauce-openclaw-argos",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/dev",
+      "home": "/home/node",
       "room": "grp.steven",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/argos",
+      "stateDirectory": "/home/node/.cauce/argos",
       "tenant": "Steven",
-      "user": "dev"
+      "user": "node"
     },
     "astra": {
       "container": "vm:pc-agente",
@@ -51,14 +51,14 @@
       "user": "node"
     },
     "hegel": {
-      "container": "ws-humanizar",
+      "container": "cauce-muse-hegel",
       "enabled": true,
       "harness": "muse",
-      "home": "/home/dev",
+      "home": "/home/node",
       "room": "grp.miguel",
-      "stateDirectory": "/home/dev/.local/state/cauce-v3/hegel",
+      "stateDirectory": "/home/node/.cauce/hegel",
       "tenant": "Miguel",
-      "user": "dev"
+      "user": "node"
     },
     "iza": {
       "container": "claw-iza",

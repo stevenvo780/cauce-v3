@@ -7,7 +7,7 @@ spec:
   room: grp.miguel
   alias: hegel
   harness: muse
-  profile: {seedOnConnect: true, configScope: alias}
+  profile: {seedOnConnect: true, configScope: alias, workspace: /home/node/.cauce/hegel/space/projects}
   origin: {transport: telegram}
   relay: {urlPathEnv: CAUCE_HEGEL_RELAY_URL, requiredScheme: wss}
   secretPathEnv:

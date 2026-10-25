@@ -1,12 +1,40 @@
 {
   "placement": {
+    "argos": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
     "astra": {
       "systemdUser": "ubuntu"
+    },
+    "gaia": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "hades": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "hegel": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
     },
     "kant": {
       "systemdUser": "server"
     },
+    "perseo": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
     "salva": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "teseo": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "zz-prueba-codex": {
       "dockerHost": "server2",
       "systemdUser": "server"
     }

@@ -136,12 +136,13 @@ def contexto_de_alias(alias: str, fila: Mapping[str, Any], placement: Mapping[st
         regla = reglas.get(harness) or {}
         plantilla = regla.get("workspace")
         condicional = regla.get("workspaceWhenState")
-        if not isinstance(plantilla, str) and isinstance(condicional, dict):
-            estado = condicional.get("stateDirectory")
+        conditions = [condicional] if isinstance(condicional, dict) else condicional or []
+        for condition in conditions:
+            estado = condition.get("stateDirectory")
             if isinstance(estado, str) and fila.get("runtimeStateDirectory") == estado.format(
                 alias=alias, home=hogar,
             ):
-                plantilla = condicional.get("workspace")
+                plantilla = condition.get("workspace")
         if not isinstance(plantilla, str):
             raise InventarioInvalido(f"el hecho {hecho!r} no tiene raíz derivable en el inventario")
         raiz = plantilla.format(alias=alias, home=hogar)

@@ -1,15 +1,15 @@
 {
   "fleet": {
     "argos": {
-      "container": "ctrl-infra",
+      "container": "cauce-openclaw-argos",
       "enabled": true,
       "harness": "openclaw",
-      "home": "/home/dev",
+      "home": "/home/node",
       "role": "agent",
       "room": "grp.steven",
-      "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/argos",
+      "runtimeStateDirectory": "/home/node/.cauce/argos",
       "tenant": "Steven",
-      "user": "dev"
+      "user": "node"
     },
     "astra": {
       "container": "vm:pc-agente",
@@ -56,15 +56,15 @@
       "user": "node"
     },
     "hegel": {
-      "container": "ws-humanizar",
+      "container": "cauce-muse-hegel",
       "enabled": true,
       "harness": "muse",
-      "home": "/home/dev",
+      "home": "/home/node",
       "role": "agent",
       "room": "grp.miguel",
-      "runtimeStateDirectory": "/home/dev/.local/state/cauce-v3/hegel",
+      "runtimeStateDirectory": "/home/node/.cauce/hegel",
       "tenant": "Miguel",
-      "user": "dev"
+      "user": "node"
     },
     "iza": {
       "container": "claw-iza",
@@ -189,6 +189,10 @@
     }
   },
   "placement": {
+    "argos": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
     "astra": {
       "systemdUser": "ubuntu"
     },
@@ -197,6 +201,10 @@
       "systemdUser": "server"
     },
     "hades": {
+      "dockerHost": "server2",
+      "systemdUser": "server"
+    },
+    "hegel": {
       "dockerHost": "server2",
       "systemdUser": "server"
     },
