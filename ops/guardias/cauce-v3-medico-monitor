@@ -443,10 +443,10 @@ OLVIDO_HORAS = 48         # cuanto se recuerda un hallazgo que dejo de verse (ve
 # directive: the doctor ORCHESTRATES, it does not execute. The reminder travels in BOTH
 # things the doctor sends (here and in libro_tareas.texto_reintento).
 RECORDATORIO_PARALELO = (
-    "RECORDATORIO PERMANENTE: no ejecutes vos, ORQUESTA. Antes de tocar cualquier herramienta, "
-    "preguntate si esto lo puede hacer un lane en paralelo. Casi siempre si.\n"
-    "Atacá estos hallazgos EN PARALELO (subagentes o workflow), no de a uno. "
-    "Preferí workflow cuando hay muchos ítems del mismo tipo que pasan por las mismas etapas; "
+    "RECORDATORIO PERMANENTE: no ejecutes tú, ORQUESTA. Antes de tocar cualquier herramienta, "
+    "pregúntate si esto lo puede hacer un lane en paralelo. Casi siempre si.\n"
+    "Ataca estos hallazgos EN PARALELO (subagentes o workflow), no de a uno. "
+    "Prefiere workflow cuando hay muchos ítems del mismo tipo que pasan por las mismas etapas; "
     "subagentes cuando los frentes son distintos entre sí.")
 
 # Signs that the doctor itself cannot receive nor act. If any of these appears, the normal
@@ -519,7 +519,7 @@ def main():
     ap.add_argument("--sin-aviso", action="store_true", help="no manda Telegram")
     ap.add_argument("--sin-entrega", action="store_true",
                     help="corrida de INSPECCION: mide, imprime y anota en la bitacora, pero "
-                         "NO publica la entrega a zeus. Usalo siempre que corras el guardia "
+                         "NO publica la entrega a zeus. Úsalo siempre que corras el guardia "
                          "a mano: `--sin-aviso` solo calla el Telegram de emergencia")
     args = ap.parse_args()
 
@@ -972,14 +972,14 @@ def main():
                     detalle_b = (f"hay un cron de openclaw cada {minutos} min en {cont} que abre turno de agente "
                                  f"sobre cuota ESCASA ({proveedor}). Ese es EXACTAMENTE el patron que el "
                                  "2026-08-10 se llevo el 69,7% de 115 M de tokens de argos: 380 "
-                                 "disparos, 378 cerrando 'HEARTBEAT_OK' sin cambiar nada. Miralo y "
-                                 "matalo si pregunta ESTADO en vez de encargar trabajo; subirle el "
+                                 "disparos, 378 cerrando 'HEARTBEAT_OK' sin cambiar nada. Míralo y "
+                                 "mátalo si pregunta ESTADO en vez de encargar trabajo; subirle el "
                                  "intervalo NO alcanza")
                 else:
                     tipo_b = "bucle_de_cuota_barato"
                     detalle_b = (f"hay un cron de openclaw cada {minutos} min en {cont} sobre un proveedor "
                                  f"barato ({proveedor}). No es el incidente de argos —aquel quemaba Claude— "
-                                 f"pero sigue abriendo un turno de agente cada {minutos} min: revisalo si "
+                                 f"pero sigue abriendo un turno de agente cada {minutos} min: revísalo si "
                                  "no produce un artefacto nuevo en cada corrida. Para decidir, mira "
                                  "`openclaw cron show <id> --json`: si `delivery.mode` es none y el "
                                  "prompt escribe un fichero, es una ETL silenciosa legitima")

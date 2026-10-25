@@ -51,7 +51,7 @@ esac
 
 [ -r "$LISTA" ] || { echo "no puedo leer la lista de URLs: $LISTA" >&2; exit 2; }
 if [ -z "$DESTINO" ] && { [ -z "$TENANT_AVISO" ] || [ -z "$SALA_AVISO" ]; }; then
-  echo "catalogo-mouseion-health: sin ruta de aviso; configurá CAUCE_DESTINO_AVISO o CAUCE_TENANT_AVISO y CAUCE_SALA_AVISO" >&2
+  echo "catalogo-mouseion-health: sin ruta de aviso; configura CAUCE_DESTINO_AVISO o CAUCE_TENANT_AVISO y CAUCE_SALA_AVISO" >&2
   exit 2
 fi
 

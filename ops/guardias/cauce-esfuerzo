@@ -64,7 +64,7 @@ def find_ops_root(candidates):
     tried = ', '.join(str(candidate) for candidate in candidates if candidate) or '(ningún candidato)'
     raise SystemExit(
         'no encuentro el inventario de la flota (container-aliases.json y scripts/container_alias_lib.py). '
-        f'Probé: {tried}. Instalá el espejo en ~/.local/share/cauce-v3/ops o exportá {OPS_ROOT_ENV}=<ruta a ops/>.'
+        f'Probé: {tried}. Instala el espejo en ~/.local/share/cauce-v3/ops o exporta {OPS_ROOT_ENV}=<ruta a ops/>.'
     )
 
 

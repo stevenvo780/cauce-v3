@@ -11,7 +11,7 @@ otra instancia que no recuerda nada.
 
 Cuatro garantías, en este orden:
 
-1. **Sabés a dónde entrás.** Antes de abrir nada se dice de qué conversación viene esa sesión,
+1. **Sabes a dónde entras.** Antes de abrir nada se dice de qué conversación viene esa sesión,
    por qué puente entró, cuántos turnos tiene y cuándo fue el último. Si la que abriría no es
    la del DM de Telegram del dueño, avisa y deja elegir.
 2. **Un solo escritor.** Si ya hay una sesión interactiva abierta sobre ese transcript, se niega
@@ -203,7 +203,7 @@ def avisar(mod, alias, texto, sufijo, prueba=False):
     destino = destino_de(alias)
     if not destino:
         return ('sin destino configurado para egreso proactivo (aviso omitido). '
-                'Configurá CAUCE_DESTINO_AVISO o destino en attach-aviso.json.')
+                'Configura CAUCE_DESTINO_AVISO o destino en attach-aviso.json.')
     cuerpo = {'destination': destino, 'kind': 'alert', 'body': texto,
               'idempotency_key': f'attach:{alias}:{os.getpid()}:{int(time.time())}:{sufijo}',
               'dry_run': bool(prueba)}
@@ -252,7 +252,7 @@ def elegir(mod, alias, datos, preferencia, interactivo):
     avisos = []
     if preferencia == 'dm':
         if dm is None:
-            die(f'{alias} no tiene ninguna sesión de DM de Telegram todavía (probá --reciente).')
+            die(f'{alias} no tiene ninguna sesión de DM de Telegram todavía (prueba --reciente).')
         return dm, avisos
     if preferencia == 'reciente' or dm is None or reciente is None:
         if dm is None and reciente is not None:
@@ -340,7 +340,7 @@ def main():
         elegida = resolver_prefijo(sesiones, pedida)
         if elegida is None:
             die(f'{alias} no tiene ninguna sesión que empiece con «{pedida}» '
-                f'(mirá: cauce-attach {alias} --lista)')
+                f'(mira: cauce-attach {alias} --lista)')
         avisos = []
     else:
         elegida, avisos = elegir(mod, alias, datos, preferencia, sys.stdin.isatty())
@@ -365,11 +365,11 @@ def main():
             libre = (f'\n             La del DM de Telegram ({datos["dm"].get("abrev")}) SÍ está '
                      f'libre:  cauce-attach {alias} --dm')
         die(f'ya hay {len(humanas)} terminal(es) abiertas sobre {native}:\n{detalle}\n'
-            f'             Dos procesos sobre el mismo transcript lo corrompen. Cerrá esa terminal,\n'
-            f'             o mirá sin escribir con: ia {alias} watch  (o forzá con --forzar).{libre}')
+            f'             Dos procesos sobre el mismo transcript lo corrompen. Cierra esa terminal,\n'
+            f'             o mira sin escribir con: ia {alias} watch  (o fuerza con --forzar).{libre}')
     if sin_tty and not forzar:
         die(f'{alias} está procesando una entrega ahora mismo ({len(sin_tty)} proceso(s) del '
-            f'adaptador sobre esa sesión).\n             Esperá unos segundos y reintentá; '
+            f'adaptador sobre esa sesión).\n             Espera unos segundos y reintenta; '
             f'mientras tanto: ia {alias} watch.')
 
     cwd = elegida.get('cwd') or info['home']

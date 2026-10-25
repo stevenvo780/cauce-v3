@@ -86,7 +86,7 @@ def find_ops_root(candidates: Iterable[Any]) -> pathlib.Path:
     raise SystemExit(
         f"{GUARDIA}: no encuentro el espejo de ops/ (flota.json, {CONTRATO} y {LECTOR}). "
         f"Probé: {', '.join(tried) or '(ningún candidato)'}. "
-        f"Instalá el espejo en ~/.local/share/cauce-v3/ops o exportá {OPS_ROOT_ENV}=<ruta a ops/>."
+        f"Instala el espejo en ~/.local/share/cauce-v3/ops o exporta {OPS_ROOT_ENV}=<ruta a ops/>."
     )
 
 

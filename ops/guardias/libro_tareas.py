@@ -562,7 +562,7 @@ def plan_reanudacion(libro, ctx):
         )
     return {"reenviar": reenviar, "bloquear": bloquear, "saltados": saltados}
 
-RECORDATORIO_PARALELO = "RECORDATORIO PERMANENTE: no ejecutes vos, ORQUESTA. Antes de tocar cualquier herramienta, preguntate si esto lo puede hacer un lane en paralelo. Casi siempre si."
+RECORDATORIO_PARALELO = "RECORDATORIO PERMANENTE: no ejecutes tú, ORQUESTA. Antes de tocar cualquier herramienta, pregúntate si esto lo puede hacer un lane en paralelo. Casi siempre si."
 
 def texto_reintento(item):
     quien = item.get("solicitante") or "?"
@@ -572,8 +572,8 @@ def texto_reintento(item):
             "Lo pidio %s el %s y quedo sin evidencia de que se hiciera: %s." % (quien, item.get("pedido_en") or "?", item.get("motivo")),
             "",
             "Si YA lo hiciste, contesta con la EVIDENCIA concreta (ruta, commit, unidad, salida) y",
-            "esto deja de insistir. Si no lo hiciste, hacelo ahora. Si depende de una persona,",
-            "decilo con esas palabras y se marca como bloqueado y deja de volver.",
+            "esto deja de insistir. Si no lo hiciste, hazlo ahora. Si depende de una persona,",
+            "dilo con esas palabras y se marca como bloqueado y deja de volver.",
             "",
             RECORDATORIO_PARALELO,
             "",

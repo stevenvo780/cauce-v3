@@ -294,7 +294,7 @@ contenedor, que es donde se los invoca.
 Dentro del contenedor que sostiene un túnel:
 `install -m755 ops/guardias/contenedor/polidin-fwd.sh <destino en el contenedor>`.
 
-**Comprobá el efecto, no el `systemctl start`.** Matá el proceso a propósito y verificá que el
+**Comprueba el efecto, no el `systemctl start`.** Mata el proceso a propósito y verifica que el
 guardián lo repone. Para un túnel, el banner por TCP crudo prueba la cadena entera sin autenticar
 —y sin gastar un intento contra el `fail2ban` del destino, que puede banear al host entero a los
 pocos fallos—:

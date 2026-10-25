@@ -115,7 +115,7 @@ def causa_en_el_panel(texto):
         return ("SIN CREDENCIAL: el CLI contesta 'Not logged in'. Medido en argos el 2026-08-22: "
                 "su `~/.claude/.credentials.json` era un fichero de CERO bytes propiedad de root "
                 "desde el 15-ago -una rotacion a medias-, y los dos peldanos anthropic de su "
-                "cadena llevaban una semana muertos sin que nadie lo notara. Comprobalo con "
+                "cadena llevaban una semana muertos sin que nadie lo notara. Compruébalo con "
                 "`sha256sum`: e3b0c44298fc... es el hash del fichero VACIO. No se reinyecta: se "
                 "repone la credencial y se prueba por efecto con `claude -p ok`")
     if "all models failed" in t or "fallbacksummaryerror" in t:
