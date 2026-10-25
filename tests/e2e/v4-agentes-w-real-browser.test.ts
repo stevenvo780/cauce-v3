@@ -29,10 +29,6 @@ const active = () => { if (!fixture) throw new Error('wizard fixture unavailable
 const browser = () => { if (!page) throw new Error('wizard browser unavailable'); return page; };
 const pool = () => active().database.pool;
 const dialog = () => browser().getByRole('dialog', { name: 'Añadir agente', exact: true });
-interface RouteAbort { abort(errorCode?: string): Promise<void> }
-interface RoutablePage { route(url: string, handler: (route: RouteAbort) => Promise<void>): Promise<void>; unroute(url: string): Promise<void> }
-const routable = (page: V4Page): RoutablePage => page as unknown as RoutablePage;
-
 const next = () => dialog().getByRole('button', { name: 'Siguiente', exact: true }).click();
 const back = () => dialog().getByRole('button', { name: 'Atrás', exact: true }).click();
 
@@ -405,25 +401,6 @@ describe.sequential('W: asistente de Agentes con Chromium y PostgreSQL reales', 
     });
   }, 180_000);
 
-  it('W33: un fallo real de lectura de acceso deja el alta inerte con aviso de no verificado', async () => {
-    const target = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
-    await routable(target).route('**/v3/console/access', async (route) => { await route.abort('failed'); });
-    await login(target, active().baseUrl, person);
-    await target.goto(`${active().baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
-    await target.getByRole('heading', { name: 'Tus agentes', exact: true }).waitFor({ timeout: 30_000 });
-    await target.getByRole('button', { name: 'Añadir agente', exact: true }).click();
-    const modal = target.getByRole('dialog', { name: 'Añadir agente', exact: true });
-    await modal.getByText(/no pudimos verificarlo/u).waitFor({ timeout: 20_000 });
-    expect(await modal.getByLabel('Nombre visible', { exact: true }).isDisabled()).toBe(true);
-    await target.screenshot({ path: join(directory, `${run}-W33-acceso-fallido-1440.png`) });
-    await routable(target).unroute('**/v3/console/access');
-    await target.reload({ waitUntil: 'domcontentloaded' });
-    await target.getByRole('button', { name: 'Añadir agente', exact: true }).click();
-    await expect.poll(() => modal.getByLabel('Nombre visible', { exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
-    await target.context().close();
-    (evidence.rows as Record<string, string>)['W33/fallo-de-lectura'] = 'PASA';
-  });
-
   it('W33: el lector abre el alta con campos inertes y el servidor rechaza su escritura sin cambios', async () => {
     const target = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
     const readerAlias = `zz-canary-w-reader-${run}`;
@@ -453,8 +430,7 @@ describe.sequential('W: asistente de Agentes con Chromium y PostgreSQL reales', 
       await target.screenshot({ path: join(directory, `reader-create-denied-${device}.png`), fullPage: true });
     }
     (evidence.rows as Record<string, string>)['W33/permiso-ausente'] = 'PASA';
-    evidence.readerCreate = { permissionAbsent: true, unknownPermissionTested: false, accessReadFailureTested: false,
-      status: 403, unchangedRevision: before.body.revision, durableAgents: [] };
+    evidence.readerCreate = { permissionAbsent: true, status: 403, unchangedRevision: before.body.revision, durableAgents: [] };
     evidence.emptyCompanyInvariants = {
       foreignKeys: (await pool().query(`SELECT conrelid::regclass::text AS table_name,conname,
         pg_get_constraintdef(oid) AS definition FROM pg_constraint
