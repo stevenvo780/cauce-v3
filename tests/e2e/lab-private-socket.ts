@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { lstat, rm } from 'node:fs/promises';
+import { lstat, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-const WRAPPER = 'import base64,sys; code=base64.b64decode(sys.argv[1]); sys.argv=[sys.argv[0],*sys.argv[2:]]; exec(code)';
 const BRIDGE_SOURCE = `
 import os, socket, threading, sys, signal
 path, port = sys.argv[1], int(sys.argv[2])
@@ -68,17 +68,23 @@ async function stopChild(child: ChildProcess, socketPath?: string): Promise<void
       });
     });
   }
-  if (socketPath !== undefined) await rm(socketPath, { force: true });
+  if (socketPath !== undefined) {
+    await rm(socketPath, { force: true });
+    await rm(join(dirname(socketPath), 'bridge.py'), { force: true });
+  }
 }
 
 /** The workstation socket is not connectable from a container on the forwarded docker-lab daemon. */
 export async function publishLabPrivateSocket(socketPath: string, port: number): Promise<{ close(): Promise<void> }> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('lab socket bridge requires the host proxy port');
+  const scriptPath = join(dirname(socketPath), 'bridge.py');
+  await writeFile(scriptPath, BRIDGE_SOURCE, { mode: 0o600 });
   const stderr: string[] = [];
+  // OpenSSH joins the remote command for the login shell. These paths have no shell metacharacters.
   const child = spawn('ssh', [
     '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=15', '-R', `127.0.0.1:${String(port)}:127.0.0.1:${String(port)}`, 'docker-lab',
-    'python3', '-c', WRAPPER, Buffer.from(BRIDGE_SOURCE, 'utf8').toString('base64'), socketPath, String(port),
+    'python3', scriptPath, socketPath, String(port),
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr.push(chunk.toString());
