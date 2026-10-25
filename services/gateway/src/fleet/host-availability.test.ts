@@ -26,4 +26,20 @@ describe('fleet transport availability guard', () => {
     await expect(c).rejects.toThrow('aborted'); expect(aborted).toEqual(['a', 'c']);
     void b.catch(() => undefined);
   });
+  it('refuses retirement on an unavailable host and aborts only its active retirement when the channel is lost', async () => {
+    const calls: string[] = [];
+    const { transport, abortHost } = guardFleetTransport({ perform: async () => ({ evidence: {} }), compensate: async () => ({}),
+      retire: async (host, _execution, signal) => {
+        calls.push(host);
+        return new Promise<never>((_, reject) => { signal.addEventListener('abort', () => { reject(new Error('aborted')); }, { once: true }); });
+      } }, host => host !== 'dead');
+    if (!transport.retire) throw new Error('retirement guard absent');
+    await expect(transport.retire('dead', execution, new AbortController().signal)).rejects.toThrow('unavailable');
+    expect(calls).toEqual([]);
+    const a = transport.retire('a', execution, new AbortController().signal);
+    const outer = new AbortController(); const b = transport.retire('b', execution, outer.signal);
+    abortHost('a'); await expect(a).rejects.toThrow('aborted');
+    outer.abort(); await expect(b).rejects.toThrow('aborted');
+    expect(calls).toEqual(['a', 'b']);
+  });
 });

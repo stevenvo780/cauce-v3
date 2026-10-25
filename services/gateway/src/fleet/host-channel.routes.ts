@@ -10,6 +10,7 @@ import { assertHostManagementAllowed, recordHostCapabilities, type BackupOnlyHos
 import { readFleetProviderAccounts } from './accounts.js';
 import { enqueueHostMaintenance, isMaintenanceOperation, MaintenanceDeferredError } from '@cauce/store';
 import type { HostMaintenanceCommand } from './host-channel.contracts.js';
+import { recordReplacementCompensation } from './replacement-compensation.js';
 
 const Params = z.object({host_id:HostId}).strict();
 interface HostIdentity {host_id:string;company_id:string}
@@ -37,14 +38,15 @@ async function fleetCommand(repository:FleetOperationsRepository,client:Database
     case 'execution':return hostFleetExecution(client,identity,claim);
     case 'prepare':await fleet.prepare(claim);return hostFleetExecution(client,identity,claim);
     case 'await_auth':return fleet.awaitAuth(claim);
-    case 'settle':return fleet.settle(claim);
+    case 'settle':return fleet.settle(claim,command.evidence);
     case 'host_slices':return (await fleet.hostSlices(claim)).filter(slice=>slice.host_id===identity.host_id);
     case 'host_receipts':return (await fleet.hostReceipts(claim,command.step)).filter(receipt=>receipt.host_id===identity.host_id);
     case 'start_step':return fleet.startStep(claim,command.step);
     case 'complete_step':return fleet.completeStep(claim,command.step,command.evidence);
     case 'complete_host_step':return fleet.completeHostStep(claim,command.step,identity.host_id,command.digest,command.evidence);
     case 'fail':return fleet.fail(claim,command.error);
-    case 'compensate':return fleet.compensate(claim,command.evidence);
+    case 'compensate':await recordReplacementCompensation(fleet,claim,identity.host_id,command.evidence);
+      return fleet.compensate(claim,command.evidence);
   }
 }
 async function quotaCommand(repository:QuotaOperationsRepository,client:DatabaseClient,identity:HostIdentity,command:HostQuotaCommand):Promise<unknown> {

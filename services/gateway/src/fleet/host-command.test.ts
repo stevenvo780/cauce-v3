@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { performHostCommand, performHostCompensation, performHostLoginStop } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostLoginStop, performHostRetirement } from './host-command.js';
 import type { FleetExecution } from './executor.js';
-import { FleetErrorSchema, FleetExecutionReasonSchema, FleetOperationRequestSchema } from '@cauce/protocol';
+import { FleetErrorSchema, FleetExecutionReasonSchema, FleetOperationRequestSchema, sha256Hex } from '@cauce/protocol';
 import { fleetExecutionFailure } from './recovery-host-command.js';
 const directories: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
@@ -15,6 +15,22 @@ async function helper(body: string) {
   return { python: '/usr/bin/python3', executable, policyFile: join(directory, 'policy.json'), timeoutMs: 1000 };
 }
 describe('host effect transport', () => {
+  it('uses the separate retirement command and binds its receipt to the durable configuration commitment', async () => {
+    const body = { version: 1, decision: 'configuration_committed', operation_id: execution.operation.id, company_id: 'company', host_id: 'old-host',
+      snapshot_sha256: 'a'.repeat(64), request_sha256: 'b'.repeat(64), target_slice_sha256: 'c'.repeat(64), applied_revision: 4,
+      original_container_id: 'd'.repeat(64), replacement_container_id: 'e'.repeat(64), replacement_started_at: 'started', runtime_digest: 'f'.repeat(64) };
+    const commit_canonical = JSON.stringify(body); const commit = { ...body, commit_canonical, commit_sha256: sha256Hex(commit_canonical) };
+    const current: FleetExecution = { ...execution, operation: { ...execution.operation, status: 'running' }, snapshot: { replacement_commit: commit } };
+    const evidence = { stopped_verified: true, removed: [{ type: 'container', name: 'old-agent' }], replacement_retired: {
+      commit_sha256: commit.commit_sha256, original_container_id: body.original_container_id,
+      replacement_container_id: body.replacement_container_id, runtime_digest: body.runtime_digest, volumes_retained: true } };
+    const config = await helper(`import json,sys\nx=json.load(sys.stdin)\nassert '--retire-replacement' in sys.argv and '--step' not in sys.argv\nassert x['snapshot']['replacement_commit']['decision']=='configuration_committed'\nprint(${JSON.stringify(JSON.stringify({ evidence }))})`);
+    expect(await performHostRetirement(config, current, new AbortController().signal)).toEqual(evidence);
+    await expect(performHostRetirement(config, { ...current, operation: { ...current.operation, status: 'cancelling' } }, new AbortController().signal)).rejects.toThrow();
+    const wrong = await helper(`print(${JSON.stringify(JSON.stringify({ evidence: { ...evidence,
+      replacement_retired: { ...evidence.replacement_retired, replacement_container_id: '1'.repeat(64) } } }))})`);
+    await expect(performHostRetirement(wrong, current, new AbortController().signal)).rejects.toThrow();
+  });
   it('imports release modules without creating bytecode under a shared umask', async () => {
     const config = await helper("import os\nos.umask(0o002)\nimport release_dependency,json,sys\nsys.stdin.read()\nassert sys.dont_write_bytecode and release_dependency.VALUE==1\nassert os.environ['PYTHONDONTWRITEBYTECODE']=='1'\nprint(json.dumps({'evidence':{'stopped_verified':True}}))");
     await writeFile(join(dirname(config.executable), 'release_dependency.py'), 'VALUE=1\n');

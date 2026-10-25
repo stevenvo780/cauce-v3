@@ -15,7 +15,8 @@ const AgentQuota = {resource:z.literal('agent_quota')};
 export const HostFleetCommandSchema = z.discriminatedUnion('action',[
   z.object({...Fleet,action:z.literal('claim'),lease_ms:Lease}).strict(),
   z.object({...Fleet,action:z.literal('renew'),claim:FleetFence,lease_ms:Lease}).strict(),
-  z.object({...Fleet,action:z.enum(['execution','prepare','await_auth','settle','host_slices']),claim:FleetFence}).strict(),
+  z.object({...Fleet,action:z.enum(['execution','prepare','await_auth','host_slices']),claim:FleetFence}).strict(),
+  z.object({...Fleet,action:z.literal('settle'),claim:FleetFence,evidence:FleetEvidenceSchema.optional()}).strict(),
   z.object({...Fleet,action:z.literal('start_step'),claim:FleetFence,step:FleetStepNameSchema}).strict(),
   z.object({...Fleet,action:z.literal('complete_step'),claim:FleetFence,step:FleetStepNameSchema,evidence:FleetEvidenceSchema}).strict(),
   z.object({...Fleet,action:z.literal('complete_host_step'),claim:FleetFence,step:HostStep,

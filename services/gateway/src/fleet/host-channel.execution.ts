@@ -1,4 +1,4 @@
-import { FleetOperationError, getMaintenanceRelease, isMaintenanceOperation, lockFleetClaim, lockFleetRevision, lockPreparedFleetRevision, loadFleetHostScope, preparedState, publicFleetOperation,
+import { FleetOperationError, getMaintenanceRelease, isMaintenanceOperation, isFleetUpdateRestoration, lockFleetClaim, lockFleetRevision, lockPreparedFleetRevision, loadFleetHostScope, preparedState, publicFleetOperation, assertFleetReplacementCommit,
   type DatabaseClient, type FleetOperationClaim } from '@cauce/store';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
@@ -13,6 +13,9 @@ export async function hostFleetExecution(client:DatabaseClient,identity:Identity
     await lockFleetRevision(client,row.status==='cancelling'||isMaintenanceOperation(row)?undefined:Number(row.expected_revision),row.company_id);
   } else await lockPreparedFleetRevision(client,row);
   const prepared=await preparedState(client,row.id);
+  if (row.status==='cancelling' && isFleetUpdateRestoration(row.request,prepared.previous_agents)) {
+    await lockPreparedFleetRevision(client,row,true);
+  }
   const agents=(await client.query<Agent>(`SELECT tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,
     state_directory,runtime_key,primary_room_id,lifecycle_state,host_id,runtime_mode,systemd_user,primary_account_id,model_id,reasoning_effort,extensions
     FROM agents WHERE company_id=$1 AND host_id=$2 AND purged_at IS NULL ORDER BY tenant_id,alias FOR SHARE`,
@@ -32,10 +35,14 @@ export async function hostFleetExecution(client:DatabaseClient,identity:Identity
     throw new FleetOperationError('forbidden','prepared fleet scope is outside the authenticated company');
   }
   const roles=(await client.query<{role:string}>('SELECT role FROM role_policies ORDER BY role')).rows;
+  const committed=await assertFleetReplacementCommit(client,row);
   const snapshot={agents:await fleetSharedHumans(client,identity.company_id,await trustedFleetBaseline(client,agents)),
-    memberships,rolePolicies:roles,purgedRuntimeKeys:purged};
+    memberships,rolePolicies:roles,purgedRuntimeKeys:purged,
+    ...(prepared.compensation_snapshot===undefined?{}:{compensation_snapshot:prepared.compensation_snapshot}),
+    ...(committed===undefined?{}:{replacement_commit:committed})};
   const previous=prepared.previous_agents.filter(agent=>agent.host_id===identity.host_id);
-  const execution:FleetExecution={operation:publicFleetOperation(row),request:row.request,...prepared,
+  const {compensation_snapshot:_compensation,...preparedExecution}=prepared;
+  const execution:FleetExecution={operation:publicFleetOperation(row),request:row.request,...preparedExecution,
     previous_agents:await trustedFleetBaseline(client,previous),snapshot};
   const maintenanceRelease=getMaintenanceRelease(row);
   if (maintenanceRelease!==undefined) execution.maintenance={release_sha256:maintenanceRelease};

@@ -2,7 +2,7 @@ import { normalize } from 'node:path';
 import { z } from 'zod';
 import { readPrivateJson } from './provider-login.js';
 import { FleetSshTransportSchema } from './host-transport.js';
-import { performHostCommand, performHostCompensation, type HostCommandConfig } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostRetirement, type HostCommandConfig } from './host-command.js';
 import type { FleetCoordinatorTransport } from './coordinator.js';
 import { LegacyAdoptionTargetsSchema } from '@cauce/store';
 
@@ -69,5 +69,6 @@ export function createFleetControllerTransport(config: FleetControllerConfig): F
       ...(value.transport === undefined ? {} : { transport: value.transport }) };
   };
   return { perform: async (host, step, execution, signal) => performHostCommand(command(host), step, execution, signal),
-    compensate: async (host, execution, signal) => performHostCompensation(command(host), execution, signal) };
+    compensate: async (host, execution, signal) => performHostCompensation(command(host), execution, signal),
+    retire: async (host, execution, signal) => performHostRetirement(command(host), execution, signal) };
 }

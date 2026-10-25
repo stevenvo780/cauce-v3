@@ -1,6 +1,6 @@
 import { FleetEvidenceSchema, type FleetError, type FleetEvidence, type FleetOperation, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
 import { z } from 'zod';
-import type { FleetOperationClaim } from '@cauce/store';
+import { FleetOperationError, type FleetOperationClaim } from '@cauce/store';
 import type { FleetProviderAccounts } from './accounts.js';
 import { redactExecutorStderr } from './host-stderr.js';
 import { FleetExecutionFailure } from './recovery-host-command.js';
@@ -31,7 +31,7 @@ export interface FleetExecutionRepository {
   awaitAuth(claim: FleetOperationClaim): Promise<FleetOperation>;
   fail(claim: FleetOperationClaim, error: FleetError): Promise<FleetOperation>;
   compensate(claim: FleetOperationClaim, evidence?: FleetEvidence): Promise<FleetOperation>;
-  settle(claim: FleetOperationClaim): Promise<FleetOperation>;
+  settle(claim: FleetOperationClaim, retirement?: FleetEvidence): Promise<FleetOperation>;
 }
 export interface FleetEffectResult {
   evidence: FleetEvidence; awaiting_auth?: boolean; account_identity?: string;
@@ -55,6 +55,7 @@ export interface FleetExecutorOptions {
   finish?(claim: FleetOperationClaim): Promise<void>;
   perform(step: FleetStepName, execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEffectResult>;
   compensate?(execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEvidence>;
+  retire?(execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEvidence>;
 }
 
 export class FleetExecutor {
@@ -83,7 +84,7 @@ export class FleetExecutor {
       if (isAborted()) return true;
       let execution = await this.repository.execution(claim);
       if (isAborted()) return true;
-      if (execution.operation.status !== 'cancelling') {
+      if (execution.operation.status !== 'cancelling' && execution.snapshot?.replacement_commit === undefined) {
         const prepared = await this.options.prepare?.(execution, claim, abort.signal);
         if (prepared === false) return true;
         if (prepared !== 'prepared') await this.repository.prepare(claim);
@@ -95,6 +96,13 @@ export class FleetExecutor {
         if (isAborted()) return true;
         execution = await this.repository.execution(claim);
         if (isAborted()) return true;
+        if (execution.snapshot?.replacement_commit !== undefined) {
+          if (execution.operation.status !== 'running' || !this.options.retire) throw new Error('Replacement retirement is unavailable');
+          const proof = await this.options.retire(execution, abort.signal, claim);
+          if (isAborted()) return true;
+          await this.repository.settle(claim, FleetEvidenceSchema.parse(proof));
+          return true;
+        }
         if (execution.operation.status === 'cancelling') {
           const evidence = this.options.compensate === undefined ? {} : await this.options.compensate(execution, abort.signal, claim);
           if (isAborted()) return true;
@@ -102,7 +110,12 @@ export class FleetExecutor {
           return true;
         }
         const next = execution.operation.steps.find((candidate) => candidate.status !== 'succeeded' && candidate.status !== 'compensated');
-        if (!next) break;
+        if (!next) {
+          const settled = await this.repository.settle(claim);
+          if (isAborted()) return true;
+          if (settled.status === 'running' && (await this.repository.execution(claim)).snapshot?.replacement_commit !== undefined) continue;
+          return true;
+        }
         step = next.name;
         await this.repository.startStep(claim, step);
         if (isAborted()) return true;
@@ -122,13 +135,12 @@ export class FleetExecutor {
         }
         await this.repository.completeStep(claim, step, FleetEvidenceSchema.parse(result.evidence));
       }
-      if (isAborted()) return true;
-      await this.repository.settle(claim);
     } catch (caught) {
       if (!abort.signal.aborted) {
         const failure = caught instanceof Error ? caught : new Error(String(caught));
         console.error(`fleet step failed step=${step ?? 'prepare'} error=${failure.name}: ${redactExecutorStderr(failure.message)}`);
-        const error: FleetError = { code: 'STEP_FAILED', retryable: true, ...(step === undefined ? {} : { step }),
+        const error: FleetError = { code: failure instanceof FleetOperationError && failure.code === 'conflict' ? 'REVISION_CONFLICT' : 'STEP_FAILED',
+          retryable: true, ...(step === undefined ? {} : { step }),
           ...(failure instanceof FleetExecutionFailure ? { reason: failure.reason } : {}) };
         try { await this.repository.fail(claim, error); } catch { /* A replaced claim cannot settle the operation. */ }
       }

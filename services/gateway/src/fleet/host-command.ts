@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, type FleetStepName } from '@cauce/protocol';
+import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, FleetReplacementCommitSchema, type FleetStepName, type FleetEvidence } from '@cauce/protocol';
 import { canRestoreFleetUpdate } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
@@ -8,8 +8,19 @@ import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
 import { providerProbeFailure, providerRuntimeFailureReason } from './provider-login.js';
 import { fleetExecutionFailure } from './recovery-host-command.js';
+import { replacementCompensationSnapshot, verifyReplacementCompensation } from './replacement-compensation.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
+export async function performHostRetirement(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence> {
+  const commit = FleetReplacementCommitSchema.parse(execution.snapshot?.replacement_commit);
+  if (execution.operation.status !== 'running' || commit.operation_id !== execution.operation.id) throw unverified();
+  const result = await runHostCommand(config, 'retire-replacement', execution, signal);
+  const proof = result.evidence.replacement_retired;
+  if (result.awaiting_auth || proof?.commit_sha256 !== commit.commit_sha256
+      || proof.original_container_id !== commit.original_container_id || proof.replacement_container_id !== commit.replacement_container_id
+      || proof.runtime_digest !== commit.runtime_digest || result.evidence.stopped_verified !== true) throw unverified();
+  return result.evidence;
+}
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
   account_identity: z.string().min(1).max(256).regex(/^[^\p{Cc}]+$/u).refine(value => !value.startsWith('unverified:')).optional() }).strict();
 const MAX_RECEIPT_BYTES = 8192;
@@ -23,12 +34,14 @@ export async function performHostCommand(
 }
 
 export async function performHostCompensation(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal) {
+  const replacement = replacementCompensationSnapshot(execution);
   const result = await runHostCommand(config, 'compensate', execution, signal);
   if (execution.request.kind === 'recover') {
     if (result.awaiting_auth || result.evidence.recovery_compensated !== true) throw unverified();
     return { recovery_compensated: true };
   }
-  const restored = canRestoreFleetUpdate(execution.operation, execution.request, execution.previous_agents ?? [])
+  verifyReplacementCompensation(execution, result.evidence);
+  const restored = canRestoreFleetUpdate(execution.operation, execution.request, replacement?.previous_agents ?? execution.previous_agents ?? [], replacement)
     && result.evidence.runtime_digest !== undefined;
   if (result.awaiting_auth || (!restored && result.evidence.stopped_verified !== true)
       || result.evidence.revocation_verified !== true) throw unverified();
@@ -47,16 +60,17 @@ export async function performHostLoginStop(config: HostCommandConfig, execution:
 }
 
 async function runHostCommand(
-  config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop', execution: FleetExecution, signal: AbortSignal,
+  config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop' | 'retire-replacement', execution: FleetExecution, signal: AbortSignal,
 ): Promise<FleetEffectResult> {
   const timeoutMs = config.timeoutMs ?? 150_000;
   const isAborted = () => signal.aborted;
   if (![config.python, config.executable, config.policyFile].every(absolute)
       || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 || signal.aborted) throw unverified();
   const request = FleetOperationRequestSchema.parse(execution.request);
+  const replacement = replacementCompensationSnapshot(execution);
   const encoded = JSON.stringify({ operation_id: execution.operation.id, request, fenced_targets: execution.fenced_targets,
     previous_agents: execution.previous_agents ?? [], desired_memberships: execution.desired_memberships ?? [],
-    ...(step === 'compensate' && canRestoreFleetUpdate(execution.operation, request, execution.previous_agents ?? [])
+    ...(step === 'compensate' && canRestoreFleetUpdate(execution.operation, request, replacement?.previous_agents ?? execution.previous_agents ?? [], replacement)
       ? { restore_previous_runtime: true } : {}),
     ...(execution.global_desired_memberships === undefined ? {} : { global_desired_memberships: execution.global_desired_memberships }),
     ...(execution.trusted_accounts === undefined ? {} : { trusted_accounts: execution.trusted_accounts }),

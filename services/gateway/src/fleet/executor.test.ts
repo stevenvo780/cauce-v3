@@ -3,7 +3,7 @@ import { FleetExecutor, type FleetExecution } from './executor.js';
 import type { FleetOperation, FleetOperationRequest, FleetStepName, FleetEvidence, FleetError } from '@cauce/protocol';
 import { FleetOperationRequestSchema } from '@cauce/protocol';
 import { FleetExecutionFailure } from './recovery-host-command.js';
-import type { FleetOperationClaim } from '@cauce/store';
+import { FleetOperationError, type FleetOperationClaim } from '@cauce/store';
 const request: FleetOperationRequest = { kind: 'stop', target: { resource: 'agent', tenant_id: 'Steven', alias: 'one' },
   expected_revision: 0, idempotency_key: 'stop-one-isolated', parameters: {} };
 function fixture() {
@@ -23,13 +23,70 @@ function fixture() {
       calls.push(`complete:${name}`); operation = { ...operation, steps: operation.steps.map((step) => step.name === name ? { ...step, status: 'succeeded' } : step) }; return operation;
     },
     awaitAuth: async () => { calls.push('auth'); return operation; },
-    fail: async () => { calls.push('fail'); return operation; },
+    fail: async (_claim: FleetOperationClaim, _error: FleetError) => { calls.push('fail'); return operation; },
     compensate: async () => { calls.push('compensate'); return operation; },
-    settle: async () => { calls.push('settle'); return operation; },
+    settle: async (_claim: FleetOperationClaim, _retirement?: FleetEvidence) => { calls.push('settle'); return operation; },
   };
   return { repository, calls, cancel: () => { operation = { ...operation, status: 'cancelling' }; } };
 }
 describe('fleet step execution', () => {
+  it('commits admission before retirement and settles success only after its receipt', async () => {
+    const { repository, calls } = fixture();
+    const read = repository.execution;
+    let committed = false;
+    repository.execution = async () => {
+      const execution = await read();
+      return { ...execution, operation: { ...execution.operation, steps: [] },
+        ...(committed ? { snapshot: { replacement_commit: { decision: 'configuration_committed' } } } : {}) };
+    };
+    repository.prepare = vi.fn(repository.prepare);
+    repository.settle = vi.fn(async (_claim: FleetOperationClaim, proof?: FleetEvidence): Promise<FleetOperation> => {
+      calls.push(proof ? 'succeeded' : 'configuration_committed'); committed = true;
+      return { ...(await read()).operation, status: proof ? 'succeeded' : 'running' };
+    });
+    const retirement: FleetEvidence = { stopped_verified: true };
+    const retire = vi.fn(async () => { calls.push('retire'); return retirement; });
+    const perform = vi.fn(async () => ({ evidence: {} }));
+    await new FleetExecutor(repository, { worker: 'worker', host: 'isolated', perform, retire }).runOnce();
+    expect(calls).toEqual(['configuration_committed', 'retire', 'succeeded']);
+    expect(repository.prepare).toHaveBeenCalledOnce(); expect(perform).not.toHaveBeenCalled();
+    expect(repository.settle).toHaveBeenLastCalledWith(expect.anything(), retirement);
+  });
+  it('reclaims an already committed replacement without preparing or repeating operation effects', async () => {
+    const { repository, calls } = fixture(); const read = repository.execution;
+    repository.execution = async () => ({ ...await read(), snapshot: { replacement_commit: { decision: 'configuration_committed' } } });
+    repository.prepare = vi.fn(repository.prepare);
+    const perform = vi.fn(async () => ({ evidence: {} }));
+    const retire = vi.fn(async () => { calls.push('retire'); return { stopped_verified: true }; });
+    const prepare = vi.fn(async () => true); const finish = vi.fn(async () => undefined);
+    await new FleetExecutor(repository, { worker: 'worker', host: 'isolated', perform, retire, prepare, finish }).runOnce();
+    expect(calls).toEqual(['retire', 'settle']); expect(repository.prepare).not.toHaveBeenCalled();
+    expect(perform).not.toHaveBeenCalled(); expect(retire).toHaveBeenCalledOnce();
+    expect(prepare).not.toHaveBeenCalled(); expect(finish).toHaveBeenCalledOnce();
+  });
+  it('records a retirement failure without settling or compensating the committed replacement', async () => {
+    const { repository, calls } = fixture(); const read = repository.execution;
+    repository.execution = async () => ({ ...await read(), snapshot: { replacement_commit: { decision: 'configuration_committed' } } });
+    await new FleetExecutor(repository, { worker: 'worker', host: 'isolated', perform: async () => ({ evidence: {} }),
+      retire: async () => { throw new Error('retirement unavailable'); } }).runOnce();
+    expect(calls).toEqual(['fail']);
+  });
+  it('does not commit a retirement receipt after losing the worker signal', async () => {
+    const { repository, calls } = fixture(); const read = repository.execution; const abort = new AbortController();
+    repository.execution = async () => ({ ...await read(), snapshot: { replacement_commit: { decision: 'configuration_committed' } } });
+    await new FleetExecutor(repository, { worker: 'worker', host: 'isolated', signal: abort.signal,
+      perform: async () => ({ evidence: {} }), retire: async () => { abort.abort(); return { stopped_verified: true }; } }).runOnce();
+    expect(calls).toEqual([]);
+  });
+  it('records the typed revision conflict without dispatching retirement when the source refuses its changed seal', async () => {
+    const { repository } = fixture(); const operation = (await repository.execution()).operation;
+    repository.execution = async () => { throw new FleetOperationError('conflict', 'sealed configuration changed'); };
+    repository.fail = vi.fn(async () => operation);
+    const perform = vi.fn(async () => ({ evidence: {} })); const retire = vi.fn(async () => ({}));
+    await new FleetExecutor(repository, { worker: 'worker', host: 'isolated', perform, retire }).runOnce();
+    expect(perform).not.toHaveBeenCalled(); expect(retire).not.toHaveBeenCalled();
+    expect(repository.fail).toHaveBeenCalledWith(expect.anything(), { code: 'REVISION_CONFLICT', retryable: true });
+  });
   it('does not claim work after host shutdown', async () => {
     const { repository } = fixture();
     const abort = new AbortController(); abort.abort();

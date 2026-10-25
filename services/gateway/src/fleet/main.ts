@@ -3,7 +3,8 @@ import { open, readFile } from 'node:fs/promises';
 import { isAbsolute, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPool, recordFleetHostStatus } from '@cauce/store';
-import { performHostCommand, performHostCompensation, type HostCommandConfig } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostRetirement, type HostCommandConfig } from './host-command.js';
+import { recordReplacementCompensation } from './replacement-compensation.js';
 import { FleetHostSource } from './source.js';
 import { FleetHostWorker } from './worker.js';
 import { startAuthBridge } from './auth-bridge-server.js';
@@ -150,8 +151,23 @@ export async function runFleetHost(environment: NodeJS.ProcessEnv = process.env)
   const worker = new FleetHostWorker(source, { worker: config.worker, host: config.host, leaseMs: config.leaseMs, pollMs: config.pollMs,
     perform: (step, execution, signal, claim) => coordinator === undefined ? performHostCommand(config.command, step, execution, signal)
       : coordinator.perform(step, execution, signal, claim),
-    compensate: (execution, signal, claim) => coordinator === undefined ? performHostCompensation(config.command, execution, signal)
-      : coordinator.compensate(execution, signal, claim),
+    compensate: async (execution, signal, claim) => {
+      if (coordinator !== undefined) return coordinator.compensate(execution, signal, claim);
+      const evidence = await performHostCompensation(config.command, execution, signal);
+      await recordReplacementCompensation(source, claim, config.host, evidence);
+      return evidence;
+    },
+    retire: async (execution, signal) => {
+      const commit = execution.snapshot?.replacement_commit;
+      const host = typeof commit === 'object' && commit !== null && 'host_id' in commit ? commit.host_id : undefined;
+      if (typeof host !== 'string') throw new Error('Replacement retirement host is unavailable');
+      if (guard !== undefined) {
+        if (!guard.transport.retire) throw new Error('Replacement retirement transport is unavailable');
+        return guard.transport.retire(host, execution, signal);
+      }
+      if (host !== config.host) throw new Error('Replacement retirement host is unavailable');
+      return performHostRetirement(config.command, execution, signal);
+    },
     onError: () => { process.stderr.write('Fleet host could not claim work\n'); } });
   let heartbeat: NodeJS.Timeout | undefined;
   if (controller) {

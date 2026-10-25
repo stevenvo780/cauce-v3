@@ -47,6 +47,14 @@ export const TerminalRevocationSchema = z.object({ grant_id: AuthorityDigestSche
   certificate_sha256: AuthorityDigestSchema }).strict();
 export const TerminalRevokedSchema = TerminalRevocationSchema.extend({ revoked: z.literal(true) });
 export const TerminalReceiptSchema = z.object({ grant: TerminalGrantSchema.nullable(), registered: z.boolean(), revoked: z.boolean() }).strict();
+export const AuthorityCheckpointSchema = z.object({ checkpoint_sha256: AuthorityDigestSchema }).strict();
+export const AuthorityRollbackSchema = AuthorityCheckpointSchema.extend({ authority_sha256: AuthorityDigestSchema,
+  shared_authority_preserved: z.literal(true), created_authority_revoked: z.literal(true),
+  revoked_credentials: z.array(z.object({ phase: z.enum(['bootstrap', 'normal']),
+    certificate_sha256: AuthorityDigestSchema, token_sha256: AuthorityDigestSchema }).strict()).max(2)
+    .refine(rows => new Set(rows.map(row => row.phase)).size === rows.length),
+});
+const ReplacementBinding = { snapshot_sha256: AuthorityDigestSchema, original_container_id: AuthorityDigestSchema };
 export const AuthorityRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('inventory'), scope: AuthorityScopeSchema }).strict(),
   z.object({ action: z.literal('verify_absent'), scope: AuthorityScopeSchema }).strict(),
@@ -55,6 +63,11 @@ export const AuthorityRequestSchema = z.discriminatedUnion('action', [
   TerminalIssueSchema.extend({ action: z.literal('issue_terminal'), scope: AuthorityScopeSchema }),
   TerminalIssueSchema.extend({ action: z.literal('terminal_receipt'), scope: AuthorityScopeSchema }),
   TerminalRevocationSchema.extend({ action: z.literal('revoke_terminal'), scope: AuthorityScopeSchema }),
+  z.object({ action: z.literal('checkpoint_credentials'), scope: AuthorityScopeSchema, ...ReplacementBinding,
+    expected_inventory: AuthorityInventoryPinsSchema,
+    normal_certificate_sha256: AuthorityDigestSchema, normal_token_sha256: AuthorityDigestSchema }).strict(),
+  z.object({ action: z.literal('rollback_credentials'), scope: AuthorityScopeSchema, ...ReplacementBinding,
+    expected_inventory: AuthorityInventoryPinsSchema, checkpoint_sha256: AuthorityDigestSchema }).strict(),
 ]);
 export type AuthorityScope = z.infer<typeof AuthorityScopeSchema>;
 export type AuthorityRequest = z.infer<typeof AuthorityRequestSchema>;

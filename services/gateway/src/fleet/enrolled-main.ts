@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { FleetCapabilitySchema } from '@cauce/protocol';
 import { SignedHostChannel, HostChannelFleetSource } from './signed-source.js';
 import { FleetHostWorker } from './worker.js';
-import { performHostCommand, performHostCompensation } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostRetirement } from './host-command.js';
 import { boundedProviderReceipt } from './provider-login.js';
 import { HostChannelQuotaRepository, QuotaExecutor } from './quota-executor.js';
 import { performQuotaHostCommand, verifyQuotaAuthenticationHostCommand } from './quota-host-command.js';
@@ -96,6 +96,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     compensate: (execution, signal) => performHostCompensation(config.command, execution, signal),
     prepare: (execution, claim, signal) => maintenance.prepare(execution, claim, signal),
     finish: claim => maintenance.finish(claim),
+    retire: (execution, signal) => performHostRetirement(config.command, execution, signal),
     runQuotaOnce: async signal => {
       const tasks = [() => maintenance.runOnce(signal), () => quota?.runOnce() ?? Promise.resolve(false),
         () => agentQuota.runOnce(), () => backups.runOnce(signal)];

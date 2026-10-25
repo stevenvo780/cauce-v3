@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, FleetOperationError, loadFleetHostScope, lockFleetRevision, providerAccountConsentSql, withTransaction,
+import { assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, FleetOperationError, isFleetUpdateRestoration, loadFleetHostScope, lockFleetRevision, preparedState, providerAccountConsentSql, withTransaction,
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { runAuthorityCommand, type AuthorityCommand } from './command.js';
 import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema,
-  TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema,
+  AuthorityCheckpointSchema, AuthorityRollbackSchema, TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema,
   FleetAuthorityError, type AuthorityRequest, type AuthorityScope } from './schemas.js';
+import { assertReplacementAuthority } from './replacement.js';
 
 const Agent = z.object({ tenant_id: z.string(), alias: z.string(), runtime_key: z.string(), host_id: z.string() }).loose();
 export interface FleetAuthorityOptions { host_id: string; command: AuthorityCommand }
@@ -54,6 +55,11 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
   const reserved = (await client.query(`SELECT 1 FROM fleet_runtime_identities
     WHERE runtime_key=$1 AND tenant_id=$2 AND alias=$3`, [agent.runtime_key, agent.tenant_id, agent.alias])).rowCount;
   if (reserved !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
+  await assertReplacementAuthority(client, row, request);
+  if (request.action === 'revoke' && row.status === 'cancelling'
+      && isFleetUpdateRestoration(row.request, (await preparedState(client, row.id)).previous_agents)) {
+    throw new FleetAuthorityError('AUTHORITY_REVOKED');
+  }
   if (request.action === 'issue' || request.action === 'issue_terminal') {
     if (slice.placement_role === 'source') throw new FleetAuthorityError('AUTHORITY_REVOKED');
     await assertFleetRelocationSourceBarrier(client, row);
@@ -124,7 +130,13 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output)
       : request.action === 'issue_terminal' ? TerminalGrantSchema.parse(output)
       : request.action === 'terminal_receipt' ? TerminalReceiptSchema.parse(output)
+      : request.action === 'checkpoint_credentials' ? AuthorityCheckpointSchema.parse(output)
+      : request.action === 'rollback_credentials' ? AuthorityRollbackSchema.parse(output)
       : request.action === 'revoke_terminal' ? TerminalRevokedSchema.parse(output) : AuthorityInventorySchema.parse(output);
+    if (request.action === 'rollback_credentials'
+        && (!('checkpoint_sha256' in result) || result.checkpoint_sha256 !== request.checkpoint_sha256)) {
+      throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
+    }
     if (request.action === 'revoke_terminal' && ('grant_id' in result
         && (result.grant_id !== request.grant_id || result.certificate_sha256 !== request.certificate_sha256))) {
       throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');

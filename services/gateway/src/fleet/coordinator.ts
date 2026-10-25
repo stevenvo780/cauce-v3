@@ -19,6 +19,7 @@ export interface FleetCoordinatorRepository {
 export interface FleetCoordinatorTransport {
   perform(host: string, step: FleetStepName, execution: FleetExecution, signal: AbortSignal): Promise<FleetEffectResult>;
   compensate(host: string, execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence>;
+  retire?(host: string, execution: FleetExecution, signal: AbortSignal): Promise<FleetEvidence>;
 }
 function unavailable(): Error { return new Error('Fleet host scope or effect is unavailable'); }
 export function fleetHostInputs(targets: { tenant_id: string; alias: string }[],

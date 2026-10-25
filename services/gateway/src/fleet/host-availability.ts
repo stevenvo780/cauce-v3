@@ -10,6 +10,10 @@ export function guardFleetTransport(inner: FleetCoordinatorTransport, available:
   const transport: FleetCoordinatorTransport = {
     perform: (host, step, execution, signal) => run(host, signal, effective => inner.perform(host, step, execution, effective)),
     compensate: (host, execution, signal) => run(host, signal, effective => inner.compensate(host, execution, effective)),
+    retire: (host, execution, signal) => run(host, signal, effective => {
+      if (!inner.retire) throw new Error('Fleet host retirement is unavailable');
+      return inner.retire(host, execution, effective);
+    }),
   };
   return { transport, abortHost: (host: string) => { for (const controller of active.get(host) ?? []) controller.abort(); } };
 }
