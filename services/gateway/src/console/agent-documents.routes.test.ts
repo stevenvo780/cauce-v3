@@ -223,7 +223,7 @@ describe('contenido y escritura tenant-qualified', () => {
     );
   });
 
-  it('sólo afirma applied cuando recibió el ACK de escritura de la sonda', async () => {
+  it('solo afirma applied cuando recibió el ACK de escritura de la sonda', async () => {
     let permiso: string | undefined;
     const anterior = '# viejo';
     const nuevo = '# nuevo';
@@ -328,7 +328,7 @@ describe('contenido y escritura tenant-qualified', () => {
     expect(writeGovernanceDocumentDurable).not.toHaveBeenCalled();
   });
 
-  it('crea sólo cuando GET observó ausencia y el cliente manda create_if_absent', async () => {
+  it('crea solo cuando GET observó ausencia y el cliente manda create_if_absent', async () => {
     const writeGovernanceDocumentDurable = vi.fn(async () => ({ sha: sha('# primero'), bytes: 9 }));
     vivo = servidor({
       probe: {

@@ -91,7 +91,7 @@ export function sondaDiferida(hueco: SondaCompartida): AgentFactsProbe {
       if (actual.writeGovernanceDocument === undefined) {
         return Promise.resolve({
           error: 'unavailable' as const,
-          reason: 'la sonda instalada sólo sabe leer; no anuncia escritura gobernada',
+          reason: 'la sonda instalada solo sabe leer; no anuncia escritura gobernada',
         });
       }
       return actual.writeGovernanceDocument(path, content, precondition, facts, tenantId, alias);

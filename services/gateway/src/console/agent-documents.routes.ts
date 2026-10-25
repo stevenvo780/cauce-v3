@@ -284,7 +284,7 @@ const MANAGED_CONTEXT_CONFLICT_MESSAGES: Record<ManagedContextEditConflict, stri
   managed_profile_revision_changed: 'la edición altera, crea o retira la revisión CAUCE de Contexto',
   reserved_markers_changed: 'la edición altera, crea, retira o reordena marcadores CAUCE reservados',
   reserved_markers_on_create: 'un fichero nuevo no puede crear marcadores CAUCE reservados desde el manual',
-  unknown_reserved_markers_in_current: 'el fichero usa marcadores CAUCE de una versión más nueva; actualizá el gateway antes de editarlo',
+  unknown_reserved_markers_in_current: 'el fichero usa marcadores CAUCE de una versión más nueva; actualiza el gateway antes de editarlo',
   unknown_reserved_markers_in_proposed: 'la edición introduce marcadores CAUCE que este gateway no conoce',
 };
 

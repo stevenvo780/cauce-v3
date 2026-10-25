@@ -183,7 +183,7 @@ afterEach(async () => {
   filasDeLectura.length = 0;
 });
 
-describe('sólo la lectura de contenido real deja fila en audit_events', () => {
+describe('solo la lectura de contenido real deja fila en audit_events', () => {
   it('el GET de contenido audita agent_document.read sin el texto servido', async () => {
     servidorVivo = servidorDeLectura(sondaDeLectura());
     const res = await servidorVivo.inject({

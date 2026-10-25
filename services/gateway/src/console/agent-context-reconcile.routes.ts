@@ -446,13 +446,13 @@ export function registerAgentContextReconcileRoutes(
         return reply.code(503).send({
           error: 'context_reconcile_effect_unknown_audit_failed',
           state: 'effect_unknown', operation_id: fenced.operation_id,
-          message: 'el efecto es incierto y sólo consta la intención durable; releé antes de reintentar',
+          message: 'el efecto es incierto y solo consta la intención durable; relee antes de reintentar',
         });
       }
       return reply.code(503).send({
         error: 'context_reconcile_effect_unknown',
         state: 'effect_unknown', operation_id: fenced.operation_id,
-        message: 'el efecto del runtime no pudo confirmarse; releé la vista previa antes de reintentar',
+        message: 'el efecto del runtime no pudo confirmarse; relee la vista previa antes de reintentar',
       });
     }
     const { documents, verification } = fenced.value.value;

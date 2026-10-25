@@ -96,7 +96,7 @@ async function recordAccess(client: DatabaseClient, grant: OAuthGrantRow, issued
   return Object.freeze({ ...issued, refreshToken });
 }
 
-// INSERT y no UPDATE: sólo toma FOR KEY SHARE del grant, así que no espera al FOR SHARE de las llamadas MCP en vuelo.
+// INSERT y no UPDATE: solo toma FOR KEY SHARE del grant, así que no espera al FOR SHARE de las llamadas MCP en vuelo.
 async function revokeGrant(client: DatabaseClient, grantId: string): Promise<void> {
   await client.query('INSERT INTO cauce_oauth_grant_revocations (grant_id) VALUES ($1) ON CONFLICT (grant_id) DO NOTHING', [grantId]);
 }
@@ -309,7 +309,7 @@ export class PostgresOAuthStore implements OAuthStore {
     });
   }
 
-  // Purga oportunista: sólo con más de 1000 registros y sólo clientes de más de un día que nunca
+  // Purga oportunista: solo con más de 1000 registros y solo clientes de más de un día que nunca
   // obtuvieron un grant; el tope duro acota el crecimiento si el limitador por dirección no basta.
   async registerClient(registration: OAuthClientRegistration, context: OAuthRequestContext): Promise<OAuthRegisteredClient> {
     const clientId = `${REGISTERED_CLIENT_PREFIX}${randomUUID()}`;

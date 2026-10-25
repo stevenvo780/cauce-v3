@@ -29,7 +29,7 @@ export function verifyWritablePath(
 ): PathVerdict {
   const doc = documentForKind(facts, kind);
   if (!doc) return { allowed: false, reason: 'ese alias no tiene ese documento' };
-  if (!doc.editable) return { allowed: false, reason: doc.reason ?? 'documento de sólo lectura' };
+  if (!doc.editable) return { allowed: false, reason: doc.reason ?? 'documento de solo lectura' };
   if (doc.path !== requested) return { allowed: false, reason: 'la ruta no es la del documento resuelto' };
 
   for (const candidate of [requested, resolved]) {

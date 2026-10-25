@@ -258,7 +258,7 @@ export async function prepareAgentProfileRuntime(
       verification,
       async apply(operation?: import('./governance-write-operation.js').GovernanceWriteOperation): Promise<readonly ProfileRuntimeAck[]> {
         if (consumed) {
-          throw new ProfileRuntimeError('conflict', 'la foto de runtime sólo se puede aplicar una vez');
+          throw new ProfileRuntimeError('conflict', 'la foto de runtime solo se puede aplicar una vez');
         }
         consumed = true;
         if (operation !== undefined && operation.runtimeGeneration !== generation) {

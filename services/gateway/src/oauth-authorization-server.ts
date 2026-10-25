@@ -13,7 +13,7 @@ import { OAUTH_GRANT_TTL_SECONDS } from './oauth-authorization-store.js';
 
 const FLOW_COOKIE = '__Host-cauce_oauth';
 const NONCE = /^[A-Za-z0-9_-]{43}$/u;
-// Sólo endpoints públicos sin cookie: nunca authorize, continue, login, consent ni grants.
+// Solo endpoints públicos sin cookie: nunca authorize, continue, login, consent ni grants.
 const PUBLIC_CORS = ['/.well-known/oauth-authorization-server', '/oauth/jwks', '/oauth/token', '/oauth/register'];
 const REGISTRATION_BUCKET = 'global';
 
@@ -50,7 +50,7 @@ function escape(value: string): string {
 function clientFacts(flow: Pick<OAuthAuthorizationRequest, 'clientId' | 'clientName' | 'redirectUri'>): string {
   const redirect = new URL(flow.redirectUri);
   if (loopbackRedirect(redirect)) {
-    return `<p><strong>Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso.</strong> Autoriza sólo si acabas de iniciar la conexión desde un programa en el que confías.</p><dl><dt>El acceso se entregará en</dt><dd><strong><code>${escape(`${redirect.host} (este equipo)`)}</code></strong></dd><dt>La aplicación dice ser (no verificado)</dt><dd>${escape(flow.clientName)}</dd></dl>`;
+    return `<p><strong>Una aplicación de este equipo (Cauce no puede comprobar cuál) recibirá el acceso.</strong> Autoriza solo si acabas de iniciar la conexión desde un programa en el que confías.</p><dl><dt>El acceso se entregará en</dt><dd><strong><code>${escape(`${redirect.host} (este equipo)`)}</code></strong></dd><dt>La aplicación dice ser (no verificado)</dt><dd>${escape(flow.clientName)}</dd></dl>`;
   }
   const destination = redirect.origin;
   let identity = flow.clientId;
@@ -61,7 +61,7 @@ function clientFacts(flow: Pick<OAuthAuthorizationRequest, 'clientId' | 'clientN
 
 // fetch: Origin exacto. continuation: navegación GET desde una página de Cauce. form: POST de un <form> nativo,
 // al que el navegador pone `Origin: null` por Referrer-Policy: no-referrer (Fetch, «serializing a request
-// origin»); sólo vale con Sec-Fetch-Site: same-origin, y el token CSRF de la sesión sigue siendo obligatorio.
+// origin»); solo vale con Sec-Fetch-Site: same-origin, y el token CSRF de la sesión sigue siendo obligatorio.
 // entry: además admite Sec-Fetch-Site: none (marcador o URL tecleada) para una página sin efectos.
 type SameOriginMode = 'fetch' | 'continuation' | 'form' | 'entry';
 
@@ -140,7 +140,7 @@ export async function registerOAuthAuthorizationServer(app: FastifyInstance, opt
       const client = !(failure instanceof OAuthError) && status >= 400 && status < 500;
       const code = failure instanceof OAuthError ? failure.error : client ? 'invalid_request' : 'server_error';
       if (code === 'server_error') {
-        // Sólo nombre, código y mensaje: el detail de PostgreSQL puede traer valores de la fila.
+        // Solo nombre, código y mensaje: el detail de PostgreSQL puede traer valores de la fila.
         request.log[failure.name === 'AbortError' ? 'warn' : 'error']({ err: { type: failure.name, code: failure.code,
           message: failure.message, stack: failure.stack } }, 'oauth server error');
       }

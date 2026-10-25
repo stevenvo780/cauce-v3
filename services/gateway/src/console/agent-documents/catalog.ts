@@ -288,7 +288,7 @@ const AVISO_HOOKS =
 
 const RAZON_CONFIG_TOML =
   'Es el mismo fichero que la configuración de MCP y de modelo, y un TOML mal formado deja al ' +
-  'agente sin arrancar. De sólo lectura hasta que haya validación previa.';
+  'agente sin arrancar. De solo lectura hasta que haya validación previa.';
 
 const RAZON_OPENCLAW =
   'En openclaw las herramientas, las skills, los prompts y los MCP viven en `openclaw.json`, el ' +
@@ -323,7 +323,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(dir, 'settings.json'),
           format: 'json',
           editable: false,
-          reason: 'Este canal sólo admite los manuales CLAUDE.md/AGENTS.md. settings.json puede '
+          reason: 'Este canal solo admite los manuales CLAUDE.md/AGENTS.md. settings.json puede '
             + 'contener hooks ejecutables y necesita validación estructural antes de habilitar escritura.',
           warning: AVISO_HOOKS,
         },
@@ -334,7 +334,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(dir, 'agents'),
           format: 'markdown',
           editable: false,
-          reason: 'Es un directorio; v1 sólo lista lo que hay, no edita fichero a fichero.',
+          reason: 'Es un directorio; v1 solo lista lo que hay, no edita fichero a fichero.',
         },
         {
           kind: 'mcp',
@@ -345,7 +345,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           editable: false,
           reason:
             'Los MCP viven en `.claude.json`, junto al OAuth de la cuenta y al historial de todos ' +
-            'los proyectos. No se sirve: habría que proyectar sólo `mcpServers`.',
+            'los proyectos. No se sirve: habría que proyectar solo `mcpServers`.',
         },
       ];
     }
@@ -376,7 +376,7 @@ export function resolveAgentDocuments(facts: RuntimeFacts): AgentDocument[] {
           path: join(dir, 'prompts'),
           format: 'markdown',
           editable: false,
-          reason: 'Es un directorio; v1 sólo lista lo que hay.',
+          reason: 'Es un directorio; v1 solo lista lo que hay.',
         },
       ];
     }

@@ -51,7 +51,7 @@ describe('el motivo del PUT del perfil es el mismo que el de la escritura de un 
   it.each([
     ['por debajo del mínimo', 'a'.repeat(DOCUMENT_REASON_MIN - 1)],
     ['por encima del máximo', 'a'.repeat(DOCUMENT_REASON_MAX + 1)],
-    ['sólo espacios', ' '.repeat(DOCUMENT_REASON_MAX)],
+    ['solo espacios', ' '.repeat(DOCUMENT_REASON_MAX)],
     ['no es texto', 42],
   ])('rechaza un motivo %s con los topes del documento', (_caso, reason) => {
     const admitido = admitir(cuerpo({ reason }));

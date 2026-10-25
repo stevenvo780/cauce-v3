@@ -98,7 +98,7 @@ function ackFor(writes: readonly GovernanceBatchWrite[]): readonly GovernanceBat
 }
 
 describe('prepareAgentProfileRuntime', () => {
-  it('compone contra el fichero real y sólo acredita el ACK SHA/bytes del lote', async () => {
+  it('compone contra el fichero real y solo acredita el ACK SHA/bytes del lote', async () => {
     const path = '/home/dev/.codex-kant/AGENTS.md';
     const before = '# manual humano\n';
     const batch = vi.fn(async (writes: readonly GovernanceBatchWrite[]) => ackFor(writes));
@@ -198,7 +198,7 @@ describe('prepareAgentProfileRuntime', () => {
     });
   });
 
-  it('dos alias con HOME compartido escriben sólo en su CODEX_HOME medido', async () => {
+  it('dos alias con HOME compartido escriben solo en su CODEX_HOME medido', async () => {
     const paths: string[] = [];
     const run = async (alias: string, codexHome: string) => {
       const p = probe(

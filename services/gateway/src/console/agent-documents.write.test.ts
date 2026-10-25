@@ -50,7 +50,7 @@ function writeAck(content: string, overrides: Partial<RelayFileWrite> = {}): Rel
 }
 
 describe('la escritura gobernada exige evidencia exacta del relay', () => {
-  it('acepta sólo el ACK que acredita ruta, operación, huella y bytes solicitados', async () => {
+  it('acepta solo el ACK que acredita ruta, operación, huella y bytes solicitados', async () => {
     const content = '# Directiva\n';
     const writeFile = vi.fn(async () => writeAck(content));
     const probe = new TerminalRelayFactsProbe(SIN_HECHOS, relay({ writeFile }));
@@ -256,7 +256,7 @@ describe('el PUT gobernado audita su éxito y responde con vocabulario honesto',
 
 /*
  * Los dos `$HOME` compartidos de la flota (ADR-008) hacen que «el CLAUDE.md de este alias» sea a
- * veces el de otro. La guardia se corre AQUÍ, en la escritura, y no sólo en la recarga.
+ * veces el de otro. La guardia se corre AQUÍ, en la escritura, y no solo en la recarga.
  */
 describe('la cuarentena de contaminación también cierra la escritura', () => {
   const AJENO = [

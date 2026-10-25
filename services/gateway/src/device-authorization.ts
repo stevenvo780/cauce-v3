@@ -126,7 +126,7 @@ export function registerDeviceAuthorization(app: FastifyInstance, provider: Pass
     }
     const state = await provider.authState(request);
     if (verified.credentialStamp === undefined || state.authority === undefined || state.authority.scope === 'none') {
-      throw new AuthorizationError('Renová la sesión y elegí una empresa activa antes de autorizar.');
+      throw new AuthorizationError('Renueva la sesión y elige una empresa activa antes de autorizar.');
     }
     const result = await store.decide({ userCodeHash: hash(code), decision: body.decision as 'approve' | 'deny',
       humanId: verified.humanId, tenantId: verified.tenantId, actorAlias: verified.actorAlias,

@@ -309,7 +309,7 @@ export function registerAgentContextReloadRoutes(
         await reply.code(403).send({
           error: 'forbidden',
           reason: 'self_reload_only',
-          message: 'esta forma sin tenant es sólo para que un alias recargue su propio contexto; '
+          message: 'esta forma sin tenant es solo para que un alias recargue su propio contexto; '
             + 'recargar el de otro exige la forma con tenant, una persona y un motivo',
         });
         return undefined;
@@ -399,7 +399,7 @@ export function registerAgentContextReloadRoutes(
       return denegar(409, {
         error: 'delivery_in_flight',
         message: 'hay una entrega en vuelo para este alias: reescribir sus ficheros de gobierno '
-          + 'ahora cambiaría el contexto por debajo de un turno que ya empezó. Reintentá cuando '
+          + 'ahora cambiaría el contexto por debajo de un turno que ya empezó. Reintenta cuando '
           + 'termine.',
         deliveries: enVuelo.deliveries.slice(0, DELIVERY_IN_FLIGHT_LISTED).map((entrega) => ({
           delivery_id: entrega.delivery_id,

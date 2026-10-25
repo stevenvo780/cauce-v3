@@ -41,7 +41,7 @@ function parseArguments(argv: readonly string[]): Options {
     index += 1;
   }
   if (values.has('password')) {
-    throw new Error('la contraseña no se pasa por argumento: usá CAUCE_CONSOLE_USER_PASSWORD o el prompt');
+    throw new Error('la contraseña no se pasa por argumento: usa CAUCE_CONSOLE_USER_PASSWORD o el prompt');
   }
   const email = (values.get('email') ?? '').trim();
   if (email.length < 3 || !/^[^\s@]+@[^\s@]+$/.test(email)) throw new Error('--email es obligatorio y debe ser un correo');
@@ -71,7 +71,7 @@ function parseArguments(argv: readonly string[]): Options {
 /** Prompt without echo. Fails if there is no TTY: asking a pipe for a password would leave it in a log. */
 async function promptPassword(label: string): Promise<string> {
   if (!process.stdin.isTTY) {
-    throw new Error('sin TTY: pasá la contraseña en CAUCE_CONSOLE_USER_PASSWORD');
+    throw new Error('sin TTY: pasa la contraseña en CAUCE_CONSOLE_USER_PASSWORD');
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const output = process.stdout;

@@ -175,7 +175,7 @@ const metricsPool = {
 } as unknown as DatabasePool;
 
 describe('expectativas ancladas a una generación que ya no existe', () => {
-  it('degrada sólo las filas cuya generación difiere de la presencia viva', async () => {
+  it('degrada solo las filas cuya generación difiere de la presencia viva', async () => {
     const { pool, statements } = poolWithExpectations([
       { tenant_id: 'Steven', alias: 'zeus', revision: '7', generation: 'gen-vieja' },
       { tenant_id: 'Steven', alias: 'kant', revision: 3, generation: 'gen-viva' },

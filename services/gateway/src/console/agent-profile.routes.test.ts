@@ -164,7 +164,7 @@ async function appDeEscritura(overrides: Partial<AgentProfileDeps> = {}) {
 }
 
 describe('GET perfil: convergencia medida del runtime', () => {
-  it('sólo marca applied con revisión durable igual y ruta+SHA+generación actuales', async () => {
+  it('solo marca applied con revisión durable igual y ruta+SHA+generación actuales', async () => {
     const app = await appDeEscritura();
 
     const body = (await app.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
@@ -198,7 +198,7 @@ describe('GET perfil: convergencia medida del runtime', () => {
 
 describe('PUT perfil: desired durable + ACK runtime', () => {
 
-  it('sólo responde applied cuando CAS, lote completo y applied_revision coinciden', async () => {
+  it('solo responde applied cuando CAS, lote completo y applied_revision coinciden', async () => {
     const replaceProfile = vi.fn(REPLACE_PROFILE);
     const readRuntimeAdoption = vi.fn(RUNTIME_ADOPTION);
     const markProfileApplied = vi.fn(MARK_PROFILE_APPLIED);

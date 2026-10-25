@@ -375,7 +375,7 @@ export function registerAgentDirectiveRoutes(app: FastifyInstance, deps: AgentDi
               ? [
                 'El agente no publicó la proyección conjunta de `project_doc_fallback_filenames` '
                   + `y \`project_doc_max_bytes\`; se aplicó el límite conservador de ${String(codexProjectDocMaxBytes(facts))} bytes `
-                  + 'y sólo los nombres estándar.',
+                  + 'y solo los nombres estándar.',
               ]
               : [],
           memory,
