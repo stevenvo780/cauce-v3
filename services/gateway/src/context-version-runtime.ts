@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { HarnessConsumptionEvidenceSchema, VERSIONED_CONTEXT_CAPABILITY } from '@cauce/protocol';
 import { CauceRepository, ContextRuntimeUnsupportedError, type ContextApplicationRuntime, type ContextRuntimeReadiness,
   type ContextTarget, type ContextVersion, type DatabasePool } from '@cauce/store';
+import { supportsVersionedContextApplication } from '../../../packages/store/src/context-version-reevaluation.js';
 
-/** A lease names its harness as `harness.<id>`; only these harnesses emit the consumption witness that proves adoption. */
-const WITNESS_HARNESSES = new Set<unknown>(HarnessConsumptionEvidenceSchema.shape.harness_id.options.map(id => `harness.${id}`));
 function requestUuid(hash: string): string {
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
 }
@@ -20,9 +18,7 @@ export class DeliveryContextRuntimeSink implements ContextApplicationRuntime {
     const lease = (await this.pool.query<{ capabilities: unknown }>(`SELECT capabilities FROM connection_leases
       WHERE tenant_id=$1 AND alias=$2 AND lease_until>clock_timestamp()`, [target.tenant_id, target.alias])).rows[0];
     if (!lease) return 'offline';
-    const capabilities: readonly unknown[] = Array.isArray(lease.capabilities) ? lease.capabilities : [];
-    return capabilities.includes(VERSIONED_CONTEXT_CAPABILITY) && capabilities.some(capability => WITNESS_HARNESSES.has(capability))
-      ? 'ready' : 'unsupported';
+    return supportsVersionedContextApplication(lease.capabilities) ? 'ready' : 'unsupported';
   }
   async apply(version: ContextVersion, waiting?: () => void, stop?: AbortSignal): Promise<{ version: number; digest: string }> {
     const evidence = () => this.pool.query<{ applied_at: Date | null }>(`SELECT applied_at FROM agent_context_outbox

@@ -6,12 +6,12 @@ const UNREADABLE_VERSION_MESSAGE = 'La versión actual no se puede leer. Restaur
 
 /** Server application codes. `pending` = the version will be adopted without operator action. */
 const APPLICATION: Record<string, ApplicationNotice> = {
-  context_runtime_unsupported: { pending: false, message: 'El agente usa un adaptador sin contexto versionado: actualiza su paquete y vuelve a aplicar.' },
+  context_runtime_unsupported: { pending: false, message: 'La conexión no anuncia contexto versionado o un arnés con testigo de consumo (adaptador sin contexto versionado: actualiza su paquete; arnés sin testigo: revisa su compatibilidad). Al anunciar ambos, se reevaluará automáticamente y la adopción se comprobará en su próximo turno.' },
   context_runtime_offline: { pending: true, message: 'El agente está desconectado: la versión se aplicará cuando vuelva.' },
   context_runtime_verification_failed: { pending: true, message: 'Aún no se pudo comprobar que el agente use esta versión: se reintentará y la adoptará en su próximo turno.' },
   context_runtime_attempts_exhausted: { pending: false, message: 'Se agotaron los reintentos sin comprobar que el agente use esta versión: revisa que esté en línea y pulsa «Aplicar al agente».' },
   context_version_unreadable: { pending: false, message: UNREADABLE_VERSION_MESSAGE },
-  native_context_governed_path: { pending: false, message: 'El agente intentó cambiar archivos gobernados desde su espacio; solo puede editar context/notes/. Nada de esa edición se guardó.' },
+  native_context_governed_path: { pending: false, message: 'El agente intentó cambiar archivos gobernados desde su espacio; puede editar context/notes/ y sus documentos nativos reconocidos que ya estén versionados. Nada de esa edición se guardó.' },
   native_context_secret_detected: { pending: false, message: 'La edición del agente en su espacio se rechazó porque el contenido parece un secreto.' },
   native_context_too_large: { pending: false, message: 'La edición del agente en su espacio se rechazó porque supera el tamaño máximo del contexto.' },
   native_context_harness_limit: { pending: false, message: 'La edición del agente en su espacio se rechazó porque supera el límite de documento de su harness.' },
@@ -48,8 +48,8 @@ const REQUEST_CODES: Partial<Record<string, string>> = {
   context_secret_detected: 'El contenido parece contener una credencial o secreto y no se puede versionar.',
   context_unsafe_text: 'El texto contiene caracteres de control o invisibles no permitidos.',
   context_harness_limit: 'El contexto supera el límite de documento del harness del agente.',
-  context_governed_path: 'Esa ruta está gobernada: solo se puede editar context/notes/ desde el espacio del agente.',
-  profile_is_governed: 'El perfil del agente está gobernado: edítalo desde la consola; desde su espacio solo puede editar context/notes/.',
+  context_governed_path: 'Esa ruta está gobernada: desde el espacio se puede editar context/notes/ y los documentos nativos reconocidos que ya estén versionados.',
+  profile_is_governed: 'El perfil del agente está gobernado: edítalo desde la consola. La ingesta de notas y documentos nativos no permite cambiar el perfil.',
   context_version_failed: 'No se pudo registrar la versión del contexto. Reintenta.',
   context_runtime_unavailable: 'El servicio que aplica el contexto al agente no está disponible. La versión quedó pendiente.',
 };

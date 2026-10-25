@@ -35,6 +35,34 @@ async function count(table: 'agent_context_versions' | 'agent_context_outbox' | 
 }
 
 describe('native ingest CAS and bounded refusal auditing with real PostgreSQL', () => {
+  it('records edits of seeded native OpenClaw files as the agent without changing its governed profile', async () => {
+    await pool.query("UPDATE agents SET harness_id='openclaw' WHERE tenant_id=$1 AND alias=$2", [target().tenant_id, target().alias]);
+    const initial = await write(0, [{ path: 'context/MEMORY.md', content: 'Seeded memory.' },
+      { path: 'directives/AGENTS.md', content: 'Seeded manual.' }]);
+    const files = initial.files.map(file => file.path === 'context/MEMORY.md' ? { ...file, content: 'Current native memory.' } : file);
+    expect(await ingest(1, files)).toMatchObject({ state: 'ingested', snapshot: { version: 2, files } });
+    const entry = (await pool.query<{ source: string; actor_alias: string; actor_human_id: string | null }>(`SELECT source,actor_alias,actor_human_id FROM agent_context_versions
+      WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=2`, [target().company_id, target().tenant_id, target().alias])).rows[0];
+    expect(entry).toEqual({ source: 'native', actor_alias: target().alias, actor_human_id: null });
+    expect(await ingest(2, files.map(file => file.path === 'context/profile.json' ? { ...file, content: '{}' } : file)))
+      .toMatchObject({ state: 'rejected', error: { reason: 'context_governed_path' } });
+    expect(await ingest(2, [...files, { path: 'directives/SOUL.md', content: 'Unseeded authority.' }]))
+      .toMatchObject({ state: 'rejected', error: { reason: 'context_governed_path' } });
+    const server = await write(2, files.map(file => file.path === 'context/MEMORY.md' ? { ...file, content: 'Server update.' } : file));
+    expect(await ingest(2, files)).toMatchObject({ state: 'conflict', desired_version: 3 });
+    expect((await store.read(source(), target().tenant_id, target().alias)).files).toEqual(server.files);
+  });
+
+  it('does not admit another harness native paths or arbitrary directives', async () => {
+    const initial = await write(0, [{ path: 'context/MEMORY.md', content: 'Stored memory.' },
+      { path: 'directives/mission.md', content: 'Operator mission.' }]);
+    for (const path of ['context/MEMORY.md', 'directives/mission.md']) {
+      expect(await ingest(1, initial.files.map(file => file.path === path ? { ...file, content: 'Agent replacement.' } : file)))
+        .toMatchObject({ state: 'rejected', error: { reason: 'context_governed_path', paths: [path] } });
+    }
+    expect(await count('agent_context_versions')).toBe(1);
+  });
+
   it('returns the unchanged current version without duplicating its history, outbox or audit', async () => {
     const initial = await write();
     expect(await ingest(initial.version, [...initial.files].reverse())).toEqual({ state: 'ingested', snapshot: initial });

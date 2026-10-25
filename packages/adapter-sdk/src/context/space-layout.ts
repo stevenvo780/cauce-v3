@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { deliveredVersionedContext } from './versioned-context-files.js';
 import { retireSpaceFile } from './space-retire.js';
 import { lstat, mkdir, realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { discoReal } from './siembra-del-perfil.js';
+import { nativeContextFileBindings } from './native-context-files.js';
 import { parseHarnessDescriptor, type HarnessDescriptor } from './harness-descriptor.js';
 
 export const SPACE_DIRECTORIES = ['context', 'directives', 'projects', 'config', 'data', 'logs', 'tmp'] as const;
@@ -62,6 +63,8 @@ export async function writeSpaceContext(root: string, descriptor: HarnessDescrip
     .filter(part => part !== '').join('\n\n');
   if (Buffer.byteLength(text) > valid.context.max_bytes) throw new Error('context exceeds harness document limit');
   const writes: { ruta: string; contenido: string; contenidoPrevio?: string }[] = [];
+  const nativeFiles = nativeContextFileBindings(root, valid.harness, files);
+  const nativeRetired = nativeContextFileBindings(root, valid.harness, retired);
   for (const file of files) {
     const path = join(root, file.path); const parent = resolve(path, '..');
     await mkdir(parent, { recursive: true, mode: 0o700 });
@@ -71,7 +74,21 @@ export async function writeSpaceContext(root: string, descriptor: HarnessDescrip
       && createHash('sha256').update(previous).digest('hex') !== previousHashes.get(file.path)) throw new Error('active context file was edited locally');
     writes.push({ ruta: path, contenido: file.content, ...(previous === undefined ? {} : { contenidoPrevio: previous }) });
   }
-  if (valid.context.native_document !== 'none') {
+  for (const native of nativeFiles) {
+    const file = files.find(file => file.path === native.path);
+    if (file === undefined) throw new Error('native context binding has no versioned file');
+    const parent = resolve(native.nativePath, '..');
+    await mkdir(parent, { recursive: true, mode: 0o700 });
+    if (await realpath(parent) !== parent) throw new Error('native context directory escapes its root');
+    const previous = discoReal.leer(native.nativePath, 262_144);
+    if (previous !== undefined && previous !== file.content
+      && createHash('sha256').update(previous).digest('hex') !== previousHashes.get(file.path)) {
+      throw new Error('active native context file was edited locally');
+    }
+    writes.push({ ruta: native.nativePath, contenido: file.content, ...(previous === undefined ? {} : { contenidoPrevio: previous }) });
+  }
+  if (valid.context.native_document !== 'none'
+    && ![...nativeFiles, ...nativeRetired].some(file => file.nativePath === join(root, valid.context.native_document))) {
     const path = join(root, valid.context.native_document);
     const original = discoReal.leer(path, 1_048_576);
     const previous = original ?? '';
@@ -90,6 +107,14 @@ export async function writeSpaceContext(root: string, descriptor: HarnessDescrip
     if (createHash('sha256').update(content).digest('hex') !== file.sha256) throw new Error('retired context file was edited locally');
     writes.push({ ruta: path, contenido: '', contenidoPrevio: content });
   }
+  for (const file of nativeRetired) {
+    const content = discoReal.leer(file.nativePath, 262_144);
+    if (content === undefined) continue;
+    if (createHash('sha256').update(content).digest('hex') !== previousHashes.get(file.path)) {
+      throw new Error('active native context file was edited locally');
+    }
+    writes.push({ ruta: file.nativePath, contenido: '', contenidoPrevio: content });
+  }
   const metadata = JSON.stringify({ tenant_id: version.tenant_id, alias: version.alias, company_id: version.company_id,
     version: version.version, digest: version.digest, paths: files.map(file => file.path),
     documents: files.map(file => ({ path: file.path, sha256: createHash('sha256').update(file.content).digest('hex') })),
@@ -101,10 +126,12 @@ export async function writeSpaceContext(root: string, descriptor: HarnessDescrip
     return { path: write.ruta, sha256: createHash('sha256').update(write.contenido).digest('hex') };
   });
   for (const file of retired) retireSpaceFile(root, file.path, emptySha);
+  for (const file of nativeRetired) retireSpaceFile(dirname(file.nativePath), basename(file.nativePath), emptySha);
   const finalMetadata = JSON.stringify({ ...JSON.parse(metadata) as Record<string, unknown>, retired_files: [] });
   discoReal.escribirLote([{ ruta: statePath, contenido: finalMetadata, contenidoPrevio: metadata }]);
   if (discoReal.leer(statePath, 262_144) !== finalMetadata) throw new Error('context final receipt differs');
   return { state: 'written', version: version.version, digest: version.digest,
-    documents: documents.filter(document => !retired.some(file => document.path === join(root, file.path))).map(document =>
+    documents: documents.filter(document => !retired.some(file => document.path === join(root, file.path))
+      && !nativeRetired.some(file => document.path === file.nativePath)).map(document =>
       document.path === statePath ? { path: statePath, sha256: createHash('sha256').update(finalMetadata).digest('hex') } : document) };
 }

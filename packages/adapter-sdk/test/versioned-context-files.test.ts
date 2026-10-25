@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { canonicalVersionedContext, deliveredVersionedContext } from '../src/context/versioned-context-files.js';
+import { nativeContextFileBindings } from '../src/context/native-context-files.js';
 
 interface File { path: string; content: string }
 function version(files: File[], digestFiles = [...files].sort((a, b) => a.path < b.path ? -1 : 1)) {
@@ -24,4 +25,23 @@ test('a delivered version still fails on a digest, duplicate path or total size 
   const large = Array.from({ length: 5 }, (_, index) => ({ path: `context/large-${String(index)}.md`, content: 'x'.repeat(262_144) }));
   assert.throws(() => deliveredVersionedContext(version(large)), /digest or shape/u);
   assert.throws(() => deliveredVersionedContext({ ...version([file]), files: [{ path: 'context/../escape.md', content: 'x' }] }));
+});
+
+test('native seed paths resolve through the harness document directory and retain their canonical names', () => {
+  const files = ['context/MEMORY.md', 'directives/AGENTS.md', 'directives/SOUL.md', 'directives/TOOLS.md',
+    'context/profile.json', 'context/notes/day.md'].map(path => ({ path }));
+  assert.deepEqual(nativeContextFileBindings('/space', 'openclaw', files, { CAUCE_OPENCLAW_WORKSPACE: '/agent/workspace' }), [
+    { path: 'context/MEMORY.md', nativePath: '/agent/workspace/MEMORY.md' },
+    { path: 'directives/AGENTS.md', nativePath: '/agent/workspace/AGENTS.md' },
+    { path: 'directives/SOUL.md', nativePath: '/agent/workspace/SOUL.md' },
+    { path: 'directives/TOOLS.md', nativePath: '/agent/workspace/TOOLS.md' },
+  ]);
+  assert.deepEqual(nativeContextFileBindings('/space', 'openclaw', files, {})[0],
+    { path: 'context/MEMORY.md', nativePath: '/space/workspace/MEMORY.md' });
+  assert.deepEqual(nativeContextFileBindings('/space', 'codex', [{ path: 'directives/global-AGENTS.md' }],
+    { HOME: '/agent', CODEX_HOME: '/profiles/codex' }),
+  [{ path: 'directives/global-AGENTS.md', nativePath: '/profiles/codex/AGENTS.md' }]);
+  assert.throws(() => nativeContextFileBindings('/space', 'openclaw', files, { CAUCE_OPENCLAW_WORKSPACE: '/bad/../path' }));
+  assert.throws(() => nativeContextFileBindings('/space', 'openclaw', [
+    { path: 'context/AGENTS.md' }, { path: 'directives/AGENTS.md' }], {}), /overlap/u);
 });

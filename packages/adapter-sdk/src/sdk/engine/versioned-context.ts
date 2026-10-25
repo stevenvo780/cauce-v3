@@ -68,11 +68,11 @@ export class VersionedContextTurn {
       }
       if (this.ingest !== undefined) {
         try {
-          this.effective = await ingestLocalContextEdits(this.root, base, this.ingest, paths => { this.ignored.push(...paths); });
+          this.effective = await ingestLocalContextEdits(this.root, base, this.ingest, paths => { this.ignored.push(...paths); }, harness);
         } catch (error) {
           if (error instanceof AdapterError && (error.code === 'VERSIONED_CONTEXT_CONFLICT'
             || error.code === 'VERSIONED_CONTEXT_CHANGED' || error.code === 'VERSIONED_CONTEXT_INGEST_REJECTED')) {
-            const paths = await quarantineDivergedContextFiles(this.root, base);
+            const paths = await quarantineDivergedContextFiles(this.root, base, harness);
             this.degraded = { code: error.code === 'VERSIONED_CONTEXT_CONFLICT' ? 'native_context_conflict' : 'local_context_quarantined', paths };
           } else throw error;
         }
@@ -84,10 +84,13 @@ export class VersionedContextTurn {
         this.materialized = await materializeVersionedContext(effectiveDelivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
+        if (message === 'active native context file was edited locally') {
+          throw new AdapterError('VERSIONED_CONTEXT_INGEST_FAILED', 'Native context changed and could not be ingested; native files were preserved', true);
+        }
         if (message === 'context exceeds harness document limit') {
           this.degraded = { code: 'context_too_large', paths: [] };
         } else if (message.includes('edited locally')) {
-          const paths = await quarantineDivergedContextFiles(this.root, this.baseContext);
+          const paths = await quarantineDivergedContextFiles(this.root, this.baseContext, this.turnHarness);
           this.degraded ??= { code: 'local_context_quarantined', paths };
           try {
             this.materialized = await materializeVersionedContext(effectiveDelivery, tenant, harness, { CAUCE_SPACE_ROOT: this.root });
@@ -123,11 +126,11 @@ export class VersionedContextTurn {
       }
       let effective: VersionedContext | undefined;
       try {
-        effective = await ingestLocalContextEdits(this.root, this.baseContext, this.ingest, paths => { this.ignored.push(...paths); });
+        effective = await ingestLocalContextEdits(this.root, this.baseContext, this.ingest, paths => { this.ignored.push(...paths); }, this.turnHarness);
       } catch (error) {
         if (error instanceof AdapterError && (error.code === 'VERSIONED_CONTEXT_CONFLICT'
           || error.code === 'VERSIONED_CONTEXT_CHANGED' || error.code === 'VERSIONED_CONTEXT_INGEST_REJECTED')) {
-          const paths = await quarantineDivergedContextFiles(this.root, this.baseContext);
+          const paths = await quarantineDivergedContextFiles(this.root, this.baseContext, this.turnHarness);
           this.degraded ??= { code: error.code === 'VERSIONED_CONTEXT_CONFLICT' ? 'native_context_conflict' : 'local_context_quarantined', paths };
         } else throw error;
       }
@@ -140,9 +143,12 @@ export class VersionedContextTurn {
           this.baseContext = snapshot;
         } catch (error) {
           const message = error instanceof Error ? error.message : '';
+          if (message === 'active native context file was edited locally') {
+            throw new AdapterError('VERSIONED_CONTEXT_INGEST_FAILED', 'Native context changed and could not be ingested; native files were preserved', true);
+          }
           if (message === 'context exceeds harness document limit') this.degraded = { code: 'context_too_large', paths: [] };
           else if (message.includes('edited locally')) {
-            const paths = await quarantineDivergedContextFiles(this.root, snapshot);
+            const paths = await quarantineDivergedContextFiles(this.root, snapshot, this.turnHarness);
             this.degraded ??= { code: 'local_context_quarantined', paths };
             this.materialized = await materializeVersionedContext(
               { ...this.turnDelivery, versioned_context: snapshot }, this.turnTenant, this.turnHarness, { CAUCE_SPACE_ROOT: this.root })

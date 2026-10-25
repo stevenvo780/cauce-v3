@@ -1,6 +1,7 @@
 import { clientMailboxRoutingTargets } from '../../client-mailbox.js';
 import { CompanyContextCache } from '../../company-context.js';
 import { versionedContextForDelivery } from '../../context-version-adoption.js';
+import { reevaluateUnsupportedContext } from '../../context-version-reevaluation.js';
 import type { ProfileRuntimeContract, Tenant } from '@cauce/protocol'; /* eslint @typescript-eslint/no-unnecessary-boolean-literal-compare: "error" */
 import {
   COMPANY_CONTEXT_CAPABILITY,
@@ -126,6 +127,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
         if (resumedLease === undefined) {
           throw new StoreError('conflict', 'resumed connection lease is unavailable');
         }
+        await reevaluateUnsupportedContext(client, tenantId, alias, capabilities);
         return {
           acquired: true,
           epoch: Number(active.epoch),
@@ -154,6 +156,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
       if (acquiredLease === undefined) {
         throw new StoreError('conflict', 'acquired connection lease is unavailable');
       }
+      await reevaluateUnsupportedContext(client, tenantId, alias, capabilities);
       return {
         acquired: true,
         epoch: nextEpoch,
@@ -180,14 +183,15 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
     const work = async (client: DatabaseClient): Promise<string> => {
       await this.assertRuntimeRoute(client, tenantId, alias);
       await assertRuntimeLeaseIdentity(client, tenantId, alias, identity);
-      const result = await client.query<{ lease_until: Date }>(
+      const result = await client.query<{ lease_until: Date; capabilities: unknown }>(
         `UPDATE connection_leases SET lease_until=now()+$5*interval '1 millisecond',last_heartbeat_at=now()
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4 AND lease_until > now()
            AND ($6::uuid IS NULL OR connection_token=$6::uuid)
-         RETURNING lease_until`, [tenantId, alias, instanceId, epoch, ttlMs, connectionToken ?? null]
+         RETURNING lease_until,capabilities`, [tenantId, alias, instanceId, epoch, ttlMs, connectionToken ?? null]
       );
       const lease = result.rows[0];
       if (!lease) throw new StoreError('fenced', 'heartbeat rejected by lease fencing');
+      await reevaluateUnsupportedContext(client, tenantId, alias, lease.capabilities);
       return lease.lease_until.toISOString();
     };
     return auditRuntimeLease(this.pool, tenantId, alias, 'heartbeat', () => signal === undefined

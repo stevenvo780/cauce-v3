@@ -10,6 +10,7 @@ import type { NativeContextIngest, NativeContextIngestInput, NativeContextIngest
 import { DurableStore } from '../src/sdk/durable-store.js';
 import { AdapterEngine } from '../src/sdk/engine.js';
 import { canonicalVersionedContext } from '../src/context/versioned-context-files.js';
+import { VersionedContextTurn } from '../src/sdk/engine/versioned-context.js';
 import type { AdapterLog, CommandRunner, DeliveryEvent } from '../src/sdk/types.js';
 import { conversation, delivery, SUCCESS } from './engine-fixtures.js';
 
@@ -267,4 +268,147 @@ test('the native harness document is generated from the applied version around u
   assert.match(second, /Version 2 instructions\./);
   assert.doesNotMatch(second, /Version 1 instructions\./);
   assert.equal(f.store.getDelivery('native-doc-second')?.state, 'done');
+});
+
+async function openClawSpace(t: TestContext) {
+  const root = await mkdtemp(join(tmpdir(), 'cauce-native-openclaw-'));
+  const workspace = join(root, 'workspace');
+  await mkdir(workspace);
+  const previous = process.env.CAUCE_OPENCLAW_WORKSPACE;
+  process.env.CAUCE_OPENCLAW_WORKSPACE = workspace;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.CAUCE_OPENCLAW_WORKSPACE;
+    else process.env.CAUCE_OPENCLAW_WORKSPACE = previous;
+    await rm(root, { recursive: true, force: true });
+  });
+  return { root, workspace, memory: join(workspace, 'MEMORY.md'),
+    files: [{ path: 'context/MEMORY.md', content: 'Seeded native memory.' },
+      { path: 'directives/AGENTS.md', content: 'Native instructions.' },
+      { path: 'directives/SOUL.md', content: 'Native personality.' }] };
+}
+
+test('first OpenClaw adoption ingests a changed workspace memory before applying and the next server version updates it', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  await writeFile(f.memory, 'Native memory written after the seed.');
+  await writeFile(join(f.workspace, 'AGENTS.md'), 'Native instructions.');
+  await writeFile(join(f.workspace, 'SOUL.md'), 'Native personality.');
+  const turn = new VersionedContextTurn(f.root, accepting(calls));
+  await turn.materialize(claimed('native-openclaw-first', snapshot(1, f.files)), 'Steven', 'openclaw');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.base_version, 1);
+  assert.equal(calls[0].files.find(file => file.path === 'context/MEMORY.md')?.content, 'Native memory written after the seed.');
+  assert.equal(turn.materializedVersion, 2);
+  assert.equal(turn.materializationDegraded, undefined);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Native memory written after the seed.');
+  await turn.verify();
+  assert.equal(calls.length, 1, 'a native receipt is stable after the turn');
+  const nextFiles = calls[0].files.map(file => file.path === 'context/MEMORY.md' ? { ...file, content: 'Server memory update.' } : file);
+  const next = new VersionedContextTurn(f.root, accepting(calls));
+  await next.materialize(claimed('native-openclaw-next', snapshot(3, [...nextFiles])), 'Steven', 'openclaw');
+  assert.equal(calls.length, 1, 'a server-only change is never ingested as local work');
+  assert.equal(next.materializedVersion, 3);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Server memory update.');
+  assert.equal(await readFile(join(f.root, 'context/MEMORY.md'), 'utf8'), 'Server memory update.');
+});
+
+test('OpenClaw reports a conflict only after local and server content both change, preserving the local native file', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  const seed = new VersionedContextTurn(f.root, accepting(calls));
+  await seed.materialize(claimed('native-conflict-seed', snapshot(1, f.files)), 'Steven', 'openclaw');
+  await writeFile(f.memory, 'Agent memory to preserve.');
+  const ingest: NativeContextIngest = { ingest: async input => {
+    calls.push(input); return { state: 'conflict', desired_version: 2, applied_version: 1 };
+  } };
+  const files = f.files.map(file => file.path === 'context/MEMORY.md' ? { ...file, content: 'Operator memory.' } : file);
+  const turn = new VersionedContextTurn(f.root, ingest);
+  await turn.materialize(claimed('native-conflict-both', snapshot(2, files)), 'Steven', 'openclaw');
+  assert.equal(calls[0]?.base_version, 1);
+  assert.equal(turn.materializationDegraded?.code, 'native_context_conflict');
+  assert.equal(await readFile(join(f.root, 'config/conflicts/native/context/MEMORY.md.conflict'), 'utf8'), 'Agent memory to preserve.');
+  assert.equal(await readFile(f.memory, 'utf8'), 'Operator memory.');
+});
+
+test('a native change stays active when no ingest client can preserve it', async t => {
+  const f = await openClawSpace(t);
+  await writeFile(f.memory, 'Unregistered native work.');
+  const turn = new VersionedContextTurn(f.root);
+  await assert.rejects(turn.materialize(claimed('native-no-client', snapshot(1, f.files)), 'Steven', 'openclaw'),
+    { code: 'VERSIONED_CONTEXT_INGEST_FAILED' });
+  assert.equal(await readFile(f.memory, 'utf8'), 'Unregistered native work.');
+  await assert.rejects(readFile(join(f.root, 'config/context-state.json')), { code: 'ENOENT' });
+});
+
+test('native edits written while ingest is in flight survive without a materialization receipt', async t => {
+  const f = await openClawSpace(t);
+  await writeFile(f.memory, 'Native work before ingest.');
+  const ingest: NativeContextIngest = { ingest: async input => {
+    await writeFile(f.memory, 'Newer native work while the gateway records the candidate.');
+    return { state: 'ingested', context: snapshot(2, [...input.files]) };
+  } };
+  const turn = new VersionedContextTurn(f.root, ingest);
+  await assert.rejects(turn.materialize(claimed('native-ingest-race', snapshot(1, f.files)), 'Steven', 'openclaw'),
+    { code: 'VERSIONED_CONTEXT_INGEST_FAILED' });
+  assert.equal(await readFile(f.memory, 'utf8'), 'Newer native work while the gateway records the candidate.');
+  await assert.rejects(readFile(join(f.root, 'config/context-state.json')), { code: 'ENOENT' });
+});
+
+test('a first native adoption without its server ancestor receipt never guesses between two changed sides', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  await writeFile(f.memory, 'Native work with no recorded ancestor.');
+  const turn = new VersionedContextTurn(f.root, accepting(calls));
+  await assert.rejects(turn.materialize(claimed('native-no-ancestor', snapshot(3, f.files)), 'Steven', 'openclaw'),
+    { code: 'VERSIONED_CONTEXT_INGEST_FAILED' });
+  assert.equal(calls.length, 0);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Native work with no recorded ancestor.');
+});
+
+test('a native deletion after an applied receipt is ingested and never restored from the canonical replica', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  await new VersionedContextTurn(f.root, accepting(calls)).materialize(claimed('native-delete-seed', snapshot(1, f.files)), 'Steven', 'openclaw');
+  await rm(f.memory);
+  const turn = new VersionedContextTurn(f.root, accepting(calls));
+  await turn.materialize(claimed('native-delete-ingest', snapshot(1, f.files)), 'Steven', 'openclaw');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.files.some(file => file.path === 'context/MEMORY.md'), false);
+  assert.equal(turn.materializedVersion, 2);
+  await assert.rejects(readFile(f.memory), { code: 'ENOENT' });
+  await assert.rejects(readFile(join(f.root, 'context/MEMORY.md')), { code: 'ENOENT' });
+});
+
+test('a foreign context receipt never authorizes ingesting another target native memory', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  await new VersionedContextTurn(f.root, accepting(calls)).materialize(claimed('native-foreign-seed', snapshot(1, f.files)), 'Steven', 'openclaw');
+  const receipt = join(f.root, 'config/context-state.json');
+  const state = JSON.parse(await readFile(receipt, 'utf8')) as Record<string, unknown>;
+  await writeFile(receipt, JSON.stringify({ ...state, alias: 'other' }));
+  await writeFile(f.memory, 'Private work of another target.');
+  await assert.rejects(new VersionedContextTurn(f.root, accepting(calls)).materialize(
+    claimed('native-foreign-ingest', snapshot(1, f.files)), 'Steven', 'openclaw'), { code: 'INVALID_VERSIONED_CONTEXT' });
+  assert.equal(calls.length, 0);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Private work of another target.');
+});
+
+test('a server advance beyond the sealed delivery never applies the obsolete snapshot over native work', async t => {
+  const f = await openClawSpace(t);
+  await new VersionedContextTurn(f.root, accepting([])).materialize(claimed('native-stale-seed', snapshot(1, f.files)), 'Steven', 'openclaw');
+  await writeFile(f.memory, 'Native memory newer than the sealed delivery.');
+  const ingest: NativeContextIngest = { ingest: async () => ({ state: 'conflict', desired_version: 3, applied_version: 1 }) };
+  const turn = new VersionedContextTurn(f.root, ingest);
+  await assert.rejects(turn.materialize(claimed('native-stale-conflict', snapshot(1, f.files)), 'Steven', 'openclaw'),
+    { code: 'VERSIONED_CONTEXT_INGEST_FAILED' });
+  assert.equal(turn.materializedVersion, undefined);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Native memory newer than the sealed delivery.');
+});
+
+test('an untracked stale canonical replica cannot replace native content that already matches the delivered version', async t => {
+  const f = await openClawSpace(t); const calls: NativeContextIngestInput[] = [];
+  await mkdir(join(f.root, 'context'));
+  await writeFile(join(f.root, 'context/MEMORY.md'), 'Stale canonical replica.');
+  await writeFile(f.memory, 'Seeded native memory.');
+  const turn = new VersionedContextTurn(f.root, accepting(calls));
+  await turn.materialize(claimed('native-matches-server', snapshot(3, f.files)), 'Steven', 'openclaw');
+  assert.equal(calls.length, 0);
+  assert.equal(turn.materializedVersion, 3);
+  assert.equal(await readFile(f.memory, 'utf8'), 'Seeded native memory.');
+  assert.equal(await readFile(join(f.root, 'context/MEMORY.md'), 'utf8'), 'Seeded native memory.');
 });

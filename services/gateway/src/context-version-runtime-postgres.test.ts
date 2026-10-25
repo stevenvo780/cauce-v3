@@ -189,6 +189,63 @@ describe('bounded application of versioned context to the live agent', () => {
     expect((await pool.query("SELECT decision,metadata->>'error_code' AS code FROM audit_events WHERE action='context.apply'")).rows)
       .toEqual([{ decision: 'deny', code: 'context_runtime_unsupported' }, { decision: 'deny', code: 'context_runtime_unsupported' }]);
   });
+  it.each(['resume', 'takeover', 'reconnect'] as const)('reevaluates an unsupported version when a capable lease returns by %s', async mode => {
+    await context(); await lease(0, ['harness.codex']); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    expect(await processContextOutbox(pool, { git, runtime })).toMatchObject({ error: 'context_runtime_unsupported' });
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_unsupported', parked: true });
+    if (mode === 'reconnect') await pool.query('UPDATE connection_leases SET lease_until=now()');
+    const returned = await repository.acquireLease(target().tenant_id, target().alias, 'native-context-consumer-0', READY, 60_000,
+      mode === 'resume' ? { resume: true } : mode === 'takeover' ? { takeover: true } : {});
+    if (!returned.acquired || !returned.epoch) throw new Error('consumer lease unavailable');
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: false });
+    expect((await store.read(source(), target().tenant_id, target().alias)).application).toEqual({ state: 'pending', last_error: null });
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    expect(await turns()).toBe(0);
+    expect(await applied()).toBe(0);
+    await ack(0, returned.epoch, await naturalTurn(0, returned.epoch), true);
+    expect(await applied()).toBe(1);
+  });
+  it('recovers an already capable parked lease on its next fenced heartbeat', async () => {
+    await context(); const epoch = await lease(0, READY);
+    await pool.query("UPDATE agent_context_outbox SET apply_error='context_runtime_unsupported',apply_retry_at='infinity'");
+    await repository.heartbeat(target().tenant_id, target().alias, 'native-context-consumer-0', epoch, 60_000);
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: false });
+    expect(await applied()).toBe(0);
+    expect(await turns()).toBe(0);
+  });
+  it('retains the refusal until both capabilities are announced and preserves other terminal failures', async () => {
+    await context(); await lease(0, ['harness.codex']); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    await processContextOutbox(pool, { git, runtime });
+    await repository.acquireLease(target().tenant_id, target().alias, 'native-context-consumer-0', [VERSIONED_CONTEXT_CAPABILITY], 60_000, { resume: true });
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_unsupported', parked: true });
+    await pool.query("UPDATE agent_context_outbox SET apply_error='context_runtime_attempts_exhausted'");
+    await repository.acquireLease(target().tenant_id, target().alias, 'native-context-consumer-0', READY, 60_000, { resume: true });
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_attempts_exhausted', parked: true });
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'idle' });
+    expect(await turns()).toBe(0);
+  });
+  it('does not reopen a superseded refusal when the current version is already adopted', async () => {
+    await context(); await lease(0, ['harness.codex']); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    await processContextOutbox(pool, { git, runtime });
+    await context(0, 1);
+    await pool.query("UPDATE agent_context_outbox SET apply_error='context_runtime_unsupported',apply_retry_at='infinity',applied_at=now() WHERE version=2");
+    await repository.acquireLease(target().tenant_id, target().alias, 'native-context-consumer-0', READY, 60_000, { resume: true });
+    expect((await pool.query('SELECT version::integer,apply_error FROM agent_context_outbox ORDER BY version')).rows).toEqual([
+      { version: 1, apply_error: 'context_runtime_unsupported' }, { version: 2, apply_error: 'context_runtime_unsupported' }]);
+  });
+  it('requires successful lease fencing and never replaces a live application reservation', async () => {
+    await context(); const epoch = await lease(0, ['harness.codex']); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    await processContextOutbox(pool, { git, runtime });
+    expect((await repository.acquireLease(target().tenant_id, target().alias, 'other-consumer', READY, 60_000)).acquired).toBe(false);
+    await expect(repository.heartbeat(target().tenant_id, target().alias, 'native-context-consumer-0', epoch + 1, 60_000)).rejects.toThrow('fencing');
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_unsupported', parked: true });
+    await pool.query("UPDATE agent_context_outbox SET apply_token=gen_random_uuid(),apply_lease_until=now()+interval '1 minute'");
+    await repository.acquireLease(target().tenant_id, target().alias, 'native-context-consumer-0', READY, 60_000, { resume: true });
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_unsupported', parked: true, leased: true });
+    await pool.query('UPDATE agent_context_outbox SET apply_lease_until=now()');
+    await repository.heartbeat(target().tenant_id, target().alias, 'native-context-consumer-0', epoch, 60_000);
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: false });
+  });
   it('does not queue a dedicated turn for an offline agent on request', async () => {
     await context(); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
     expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
