@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
 import { connect, createServer } from 'node:net';
@@ -135,14 +135,16 @@ describe('repo de contextos: alta, consola y CLI contra remoto de laboratorio', 
       await region.getByRole('button', { name: 'Añadir archivo', exact: true }).click();
       await region.getByLabel('Contenido de context/mission.md', { exact: true }).fill(mission);
       await region.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-      await region.getByText(/Versión 1 · Consola/u).waitFor({ timeout: 20_000 });
+      await region.getByText(`Versión 1 · Consola · ${owner.name}`).waitFor({ timeout: 20_000 });
       await expect.poll(async () => (await syncRow(1))?.state, { timeout: 30_000 }).toBe('synced');
       const first = await syncRow(1);
       if (!first?.git_commit || !first.actor_human_id) throw new Error('console version lacks human author or commit');
       expect(first.source).toBe('ui');
       expect(await git(remote, ['show', `main:${prefix()}/context/mission.md`])).toBe(mission);
-      expect(await git(remote, ['log', '-1', '--format=%an', 'main', '--', prefix()])).toBe(first.actor_alias);
-      expect(await git(remote, ['log', '-1', '--format=%ae', 'main', '--', prefix()])).toBe(`${first.actor_alias}@${owner.company.slug}.cauce.invalid`);
+      const personHash = createHash('sha256').update(first.actor_human_id).digest('hex').slice(0, 12);
+      expect(await git(remote, ['log', '-1', '--format=%an', 'main', '--', prefix()])).toBe(owner.name);
+      expect(await git(remote, ['log', '-1', '--format=%ae', 'main', '--', prefix()])).toBe(`persona-${personHash}@${owner.company.slug}.cauce.invalid`);
+      expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Actor-Alias,valueonly)', 'main'])).toBe(first.actor_alias);
       expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Version,valueonly)', 'main'])).toContain(`${prefix()}@1:`);
 
       const cliHome = join(directory, 'cli-home');
@@ -193,7 +195,8 @@ describe('repo de contextos: alta, consola y CLI contra remoto de laboratorio', 
       expect(second.actor_alias).toBe(first.actor_alias);
       expect(await git(remote, ['show', `main:${prefix()}/context/cli-note.md`])).toBe(cliNote);
       expect(await git(remote, ['show', `main:${prefix()}/context/mission.md`])).toBe(mission);
-      expect(await git(remote, ['log', '-1', '--format=%an', 'main', '--', prefix()])).toBe(second.actor_alias);
+      expect(await git(remote, ['log', '-1', '--format=%an', 'main', '--', prefix()])).toBe(owner.name);
+      expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Actor-Alias,valueonly)', 'main'])).toBe(second.actor_alias);
       expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Version,valueonly)', 'main'])).toContain(`${prefix()}@2:`);
       expect(await git(remote, ['rev-list', '--count', 'main'])).toBe('2');
       await writeFile(join(evidence, 'repo-alta.json'), JSON.stringify({ run, tenant, alias,

@@ -172,7 +172,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
       await versions.getByRole('button', { name: 'Añadir archivo', exact: true }).click();
       await versions.getByLabel('Contenido de context/mission.md', { exact: true }).fill(initialMission);
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-      await versions.getByText(/Versión 1 · Consola · owner/u).waitFor({ timeout: 20_000 });
+      await versions.getByText(/Versión 1 · Consola · Persona V4 A/u).waitFor({ timeout: 20_000 });
     });
     await step(page, 'editar la misión y confirmar autoría en el historial', async () => {
       const missionEditor = versions.locator('textarea').first();
@@ -180,7 +180,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
       await expect.poll(() => missionEditor.isDisabled(), { timeout: 15_000 }).toBe(false);
       await missionEditor.fill(updatedMission);
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-      await versions.getByText(/Versión 2 · Consola · owner/u).waitFor({ timeout: 20_000 });
+      await versions.getByText(/Versión 2 · Consola · Persona V4 A/u).waitFor({ timeout: 20_000 });
       await page.screenshot({ path: `${artifactDirectory}/versiones-guardadas-desktop.png`, fullPage: true });
       const rows = await historyRows();
       expect(rows).toEqual([
@@ -208,7 +208,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
       const confirmation = versions.getByRole('region', { name: 'Confirmar restauración', exact: true });
       await confirmation.getByRole('button', { name: 'Confirmar restauración', exact: true }).click();
       await versions.getByText('Restauración guardada como una versión nueva.', { exact: true }).waitFor({ timeout: 20_000 });
-      await versions.getByText(/Versión 3 · Restauración · owner/u).waitFor({ timeout: 20_000 });
+      await versions.getByText(/Versión 3 · Restauración · Persona V4 A/u).waitFor({ timeout: 20_000 });
       expect(await versions.locator('textarea').first().inputValue()).toBe(initialMission);
       expect(await historyRows()).toEqual([
         { version: 1, source: 'ui', restored_from: null, actor_human_id: ownerId, actor_alias: 'owner' },
@@ -232,7 +232,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
       await login(teammatePage, base(), { ...sameCompanyPerson, password: owner.password, company: owner.company });
       await openAgentContext(teammatePage);
       const teammateVersions = teammatePage.getByRole('region', { name: 'Versiones de contexto', exact: true });
-      await teammateVersions.getByText(/Versión 3 · Restauración · owner/u).waitFor({ timeout: 20_000 });
+      await teammateVersions.getByText(/Versión 3 · Restauración · Persona V4 A/u).waitFor({ timeout: 20_000 });
       expect((await apiGet(teammatePage, `${contextPath()}/history`)).status).toBe(200);
     });
 
@@ -261,7 +261,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
       await login(page, base(), owner);
       await page.goto(agentPageUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
-      await page.getByText(/Versión 3 · Restauración · owner/u).waitFor({ timeout: 20_000 });
+      await page.getByText(/Versión 3 · Restauración · Persona V4 A/u).waitFor({ timeout: 20_000 });
     }
     const left = first.getByRole('region', { name: 'Versiones de contexto', exact: true });
     const right = second.getByRole('region', { name: 'Versiones de contexto', exact: true });
@@ -278,7 +278,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     await right.locator('textarea').fill(stale);
     await left.locator('textarea').fill(saved);
     await left.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-    await left.getByText(/Versión 4 · Consola · owner/u).waitFor({ timeout: 20_000 });
+    await left.getByText(/Versión 4 · Consola · Persona V4 A/u).waitFor({ timeout: 20_000 });
     errors.expectHttpError(contextPath(), 409);
     await right.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
     const conflict = right.getByRole('group', { name: 'Conflicto de versión', exact: true });
@@ -294,12 +294,12 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     await right.locator('textarea').fill(stale);
     await left.locator('textarea').fill('Segunda edición concurrente.');
     await left.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-    await left.getByText(/Versión 5 · Consola · owner/u).waitFor({ timeout: 20_000 });
+    await left.getByText(/Versión 5 · Consola · Persona V4 A/u).waitFor({ timeout: 20_000 });
     errors.expectHttpError(contextPath(), 409);
     await right.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
     await conflict.waitFor({ timeout: 20_000 });
     await conflict.getByRole('button', { name: 'Releer y reintentar con mis cambios', exact: true }).click();
-    await right.getByText(/Versión 6 · Consola · owner/u).waitFor({ timeout: 20_000 });
+    await right.getByText(/Versión 6 · Consola · Persona V4 A/u).waitFor({ timeout: 20_000 });
     const snapshot = await apiGet(second, contextPath());
     expect(snapshot.status).toBe(200);
     expect(snapshot.body.files).toEqual(baselineFiles.map(file => file.path === 'context/mission.md' ? { ...file, content: stale } : file));
@@ -338,7 +338,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     for (let version = 7; version <= 52; version += 1) {
       await versions.getByLabel('Contenido de context/mission.md', { exact: true }).fill(`Misión ${String(version)} para paginación real.`);
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-      await versions.getByText(new RegExp(`Versión ${String(version)} · Consola · owner`, 'u')).waitFor({ timeout: 20_000 });
+      await versions.getByText(new RegExp(`Versión ${String(version)} · Consola · Persona V4 A`, 'u')).waitFor({ timeout: 20_000 });
     }
     const history = versions.getByRole('region', { name: 'Historial de versiones', exact: true });
     expect(await history.locator('li').count()).toBe(50);

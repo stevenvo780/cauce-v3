@@ -255,7 +255,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       await addFile(versions, mission);
       await addFile(versions, notes);
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
-      await versions.getByText(/Versión 1 · Consola · owner/u).waitFor({ timeout: 20_000 });
+      await versions.getByText(/Versión 1 · Consola · Persona V4 FILES/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => listedFiles(versions), { timeout: 15_000 }).toEqual(withProfile.map((file) => file.path));
       await page.screenshot({ path: `${artifactDirectory}/archivos-versionados-desktop.png`, fullPage: true });
     });
@@ -271,7 +271,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
       await versions.getByText('Versión guardada. La aplicación y sincronización se acreditan por separado.', { exact: true })
         .waitFor({ timeout: 20_000 });
-      await versions.getByText(/Versión 2 · Consola · owner/u).waitFor({ timeout: 20_000 });
+      await versions.getByText(/Versión 2 · Consola · Persona V4 FILES/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => fileSelect(versions).inputValue(), { timeout: 15_000 }).toBe(mission.path);
       expect(await editor(versions).inputValue()).toBe(revisedMission.content);
     });
@@ -296,7 +296,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
     const reloaded = await step(page, 'la versión sin el archivo sigue tras recargar', async () => {
       await page.reload({ waitUntil: 'domcontentloaded' });
       const again = await showVersions(page);
-      await again.getByText(/Versión 2 · Consola · owner/u).waitFor({ timeout: 20_000 });
+      await again.getByText(/Versión 2 · Consola · Persona V4 FILES/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => listedFiles(again), { timeout: 15_000 }).toEqual(withoutNotes.map((file) => file.path));
       await expect.poll(() => fileSelect(again).inputValue(), { timeout: 15_000 }).toBe(mission.path);
       expect(await editor(again).inputValue()).toBe(revisedMission.content);
@@ -310,7 +310,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       const confirmation = reloaded.getByRole('region', { name: 'Confirmar restauración', exact: true });
       await confirmation.getByRole('button', { name: 'Confirmar restauración', exact: true }).click();
       await reloaded.getByText('Restauración guardada como una versión nueva.', { exact: true }).waitFor({ timeout: 20_000 });
-      await reloaded.getByText(/Versión 3 · Restauración · owner/u).waitFor({ timeout: 20_000 });
+      await reloaded.getByText(/Versión 3 · Restauración · Persona V4 FILES/u).waitFor({ timeout: 20_000 });
       await reloaded.getByText(/restaurada de 1/u).waitFor({ timeout: 15_000 });
       await expect.poll(() => listedFiles(reloaded), { timeout: 15_000 }).toEqual(withProfile.map((file) => file.path));
       await fileSelect(reloaded).selectOption(notes.path);
