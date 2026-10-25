@@ -32,11 +32,11 @@ import {
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const OWNER = 'e2e-a2-sigue-1025';
+const OWNER = 'x-admision-efecto-1025';
 const PREFIX = `zz-canary-${OWNER}-${run}`;
 const EVIDENCE_DIRECTORY = join(process.cwd(), '.delegados/v4/recibos', OWNER, 'cycle', run);
 const TARGET = process.env.CAUCE_FLEET_CYCLE_TARGET ?? 'local';
-const ALIAS = `ciclo${run}`;
+const ALIAS = `${PREFIX}-cycle`;
 const RUNTIME_KEY = `ciclo-${run}`;
 const MODEL = 'gpt-5.5';
 const EFFORT = 'high';
