@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { REMEDIO, comprobarEntorno } from '../../scripts/preflight-deps.mjs';
+import { REMEDIO, REMEDIO_DIST, comprobarEntorno } from '../../scripts/preflight-deps.mjs';
 
 const lockSano = "lockfileVersion: '9.0'\n";
 const dirs: string[] = [];
@@ -64,5 +64,30 @@ describe('preflight de dependencias del gate', () => {
     dirs.push(raiz);
     writeFileSync(join(raiz, 'pnpm-lock.yaml'), lockSano);
     expect(comprobarEntorno({ raiz })[0]).toBe('no existe node_modules');
+  });
+
+  it('detecta un dist de @cauce/protocol compilado antes que su fuente', () => {
+    const raiz = fixture();
+    mkdirSync(join(raiz, 'packages/protocol/src'), { recursive: true });
+    mkdirSync(join(raiz, 'packages/protocol/dist'), { recursive: true });
+    writeFileSync(join(raiz, 'packages/protocol/src/fleet-operation.ts'), 'export const a = 1;\n');
+    writeFileSync(join(raiz, 'packages/protocol/src/tipos.d.ts'), 'export type T = 1;\n');
+    writeFileSync(join(raiz, 'packages/protocol/dist/fleet-operation.js'), 'export const a = 1;\n');
+    const antes = new Date(Date.now() - 60_000);
+    utimesSync(join(raiz, 'packages/protocol/dist/fleet-operation.js'), antes, antes);
+    const problemas = comprobarEntorno({ raiz });
+    expect(problemas).toHaveLength(1);
+    expect(problemas[0]).toContain('fleet-operation.ts');
+    expect(problemas[0]).toContain(REMEDIO_DIST);
+    const ahora = new Date();
+    utimesSync(join(raiz, 'packages/protocol/dist/fleet-operation.js'), ahora, ahora);
+    expect(comprobarEntorno({ raiz })).toEqual([]);
+  });
+
+  it('no exige dist cuando el paquete aún no se ha compilado', () => {
+    const raiz = fixture();
+    mkdirSync(join(raiz, 'packages/protocol/src'), { recursive: true });
+    writeFileSync(join(raiz, 'packages/protocol/src/fleet-operation.ts'), 'export const a = 1;\n');
+    expect(comprobarEntorno({ raiz })).toEqual([]);
   });
 });
