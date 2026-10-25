@@ -154,7 +154,8 @@ export class TerminalSessionAuthority {
       if (await repository.authorizeAgentTarget(actor.tenantId, actor.alias,
         member.tenant_id, member.alias, 'control', client) === undefined) throw new AuthorizationError();
     }
-    if (!(await cohortRoutingAuthority(client, actor.tenantId, actor.alias, cohort)).allowed) throw new AuthorizationError();
+    if (!(await cohortRoutingAuthority(client, actor.tenantId, actor.alias, cohort,
+      origin.kind === 'human' ? origin.humanId : undefined)).allowed) throw new AuthorizationError();
   }
 
   async lockSession(

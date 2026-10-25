@@ -142,7 +142,7 @@ export interface RelayProxyContext {
   ) => Record<string, unknown>;
   readonly sessionActor: (
     row: TerminalSessionRow,
-  ) => { tenant_id: string; alias: string } | undefined;
+  ) => { tenant_id: string; alias: string; humanId?: string } | undefined;
   readonly currentSessionPolicy: (
     row: TerminalSessionRow,
     freshGrants?: boolean,
@@ -221,10 +221,11 @@ export function createRelayProxyContext(
     };
   }
 
-  function sessionActor(row: TerminalSessionRow): { tenant_id: string; alias: string } | undefined {
+  function sessionActor(row: TerminalSessionRow): { tenant_id: string; alias: string; humanId?: string } | undefined {
     try {
       const identity = decodeTerminalSubject(row.console_subject);
-      return { tenant_id: identity.actor.tenantId, alias: identity.actor.alias };
+      return { tenant_id: identity.actor.tenantId, alias: identity.actor.alias,
+        ...(identity.kind === 'human' ? { humanId: identity.humanId } : {}) };
     } catch { return undefined; }
   }
 
@@ -262,7 +263,7 @@ export function createRelayProxyContext(
       if (visible === undefined) return { allowed: false, reason: 'control_authority_revoked' };
     }
     const authority = await cohortRoutingAuthority(
-      database ?? pool, actor.tenant_id, actor.alias, cohort,
+      database ?? pool, actor.tenant_id, actor.alias, cohort, actor.humanId,
     );
     if (!authority.allowed) return { allowed: false, reason: 'no_routing_authority' };
     const grantStore = freshGrants ? grants.cloneFresh() : grants;

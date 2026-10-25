@@ -18,6 +18,7 @@ import type { TerminalSessionRow } from './types.js';
 import { createConsoleSecurityHook } from '../console-security.js';
 import { verifyTicketSignature, deriveAliasKey } from './tickets.js';
 import { renewRelayClaim } from './relay-proxy/claim-transition.js';
+import { routingAuthority } from './authority.js';
 
 let database: TestDatabase | undefined;
 let pool: DatabasePool;
@@ -105,6 +106,34 @@ async function blockedMutation(payload: AuthorityContinuityPayload, sql: string,
 }
 
 describe('terminal original authority under PostgreSQL fences', () => {
+  it('authorizes an explicit nominal human without enabling its machine actor', async () => {
+    const original = await seed();
+    if (original.origin.kind !== 'human') throw new Error('human expected');
+    await pool.query("UPDATE agents SET enabled=false WHERE tenant_id='Steven' AND alias='kant'");
+    await expect(routingAuthority(pool, 'Steven', 'kant', 'Steven', 'argos', original.origin.humanId))
+      .resolves.toMatchObject({ allowed: true, reason: 'same_tenant_room' });
+    await expect(routingAuthority(pool, 'Steven', 'kant', 'Steven', 'argos'))
+      .resolves.toMatchObject({ allowed: false, reason: 'actor_not_routable' });
+    await expect(routingAuthority(pool, 'Steven', 'kant', 'Steven', 'argos', randomUUID()))
+      .resolves.toMatchObject({ allowed: false, reason: 'actor_not_routable' });
+    await expect(withTransaction(pool, (client) => authority.lockSession(client, original, new CauceRepository(pool))))
+      .resolves.toBeInstanceOf(Date);
+  });
+  it.each([
+    ['inactive person', 'UPDATE console_users SET active=false WHERE id=$1'],
+    ['revoked membership', 'UPDATE human_tenant_memberships SET enabled=false,revoked_at=clock_timestamp() WHERE human_id=$1'],
+    ['membership without control', "UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1"],
+  ])('never falls back to an enabled machine for a human with %s', async (_condition, sql) => {
+    const original = await seed();
+    if (original.origin.kind !== 'human') throw new Error('human expected');
+    await pool.query(sql, [original.origin.humanId]);
+    await expect(routingAuthority(pool, 'Steven', 'kant', 'Steven', 'argos', original.origin.humanId))
+      .resolves.toMatchObject({ allowed: false, reason: 'actor_not_routable' });
+    await expect(routingAuthority(pool, 'Steven', 'kant', 'Steven', 'argos'))
+      .resolves.toMatchObject({ allowed: true, reason: 'same_tenant_room' });
+    await expect(withTransaction(pool, (client) => authority.lockSession(client, original, new CauceRepository(pool))))
+      .rejects.toThrow();
+  });
   it.each([
     ['account', 'UPDATE console_users SET active=false WHERE id=$1'],
     ['membership', "UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1"],

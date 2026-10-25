@@ -468,7 +468,9 @@ describe('targets route: the three causes of a refusal, told apart', () => {
   function targetsPool(): DatabasePool {
     const rooms = { 'Steven:kant': ['grp.steven'], 'Steven:jarvis': ['grp.steven'], 'Steven:zeus': ['grp.steven'] };
     const query = async (text: string, values: unknown[] = []) => {
-      if (text.includes('FROM agents')) return { rows: FLOTA, rowCount: FLOTA.length };
+      if (text.trimStart().startsWith('SELECT tenant_id,alias,container_name,runtime_user,company_id,host_id')) {
+        return { rows: FLOTA, rowCount: FLOTA.length };
+      }
       return pool(rooms).pool.query(text, values);
     };
     return { query } as unknown as DatabasePool;

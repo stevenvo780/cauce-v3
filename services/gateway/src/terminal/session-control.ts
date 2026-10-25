@@ -311,7 +311,7 @@ export function registerTerminalSessionControl(
         }
       }
       // Gate 4: routing authority over EVERY alias sharing the container.
-      const authority = await cohortRoutingAuthority(pool, actor.tenant_id, actor.alias, cohort);
+      const authority = await cohortRoutingAuthority(pool, actor.tenant_id, actor.alias, cohort, actor.human_id);
       if (!authority.allowed) {
         await deny(403, 'no_routing_authority', { authority_reason: authority.reason });
         return;
@@ -360,7 +360,7 @@ export function registerTerminalSessionControl(
         await continuity.lockTarget(admissionClient, origin, placement, repository);
         const lockedCohort = containerCohort(await loadFleetPlacements(admissionClient), placement.tenant_id, placement.alias);
         if (JSON.stringify(lockedCohort) !== JSON.stringify(cohort)
-            || !(await cohortRoutingAuthority(admissionClient, actor.tenant_id, actor.alias, lockedCohort)).allowed
+            || !(await cohortRoutingAuthority(admissionClient, actor.tenant_id, actor.alias, lockedCohort, actor.human_id)).allowed
             || !(await grants.allowsCohort(operator.operator_id, lockedCohort, body.mode))) {
           throw new Error('terminal authority changed');
         }

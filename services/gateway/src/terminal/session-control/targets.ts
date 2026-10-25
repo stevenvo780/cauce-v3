@@ -71,7 +71,7 @@ export function registerTerminalTargetRoute(
         const cacheKey = `${tenantId}\0${alias}`;
         let pending = decisions.get(cacheKey);
         if (!pending) {
-          pending = routingAuthority(pool, actor.tenant_id, actor.alias, tenantId, alias);
+          pending = routingAuthority(pool, actor.tenant_id, actor.alias, tenantId, alias, actor.human_id);
           decisions.set(cacheKey, pending);
         }
         return pending;

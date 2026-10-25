@@ -265,16 +265,29 @@ export async function routingAuthority(
   actorTenant: string,
   actorAlias: string,
   targetTenant: string,
-  targetAlias: string
+  targetAlias: string,
+  humanId?: string,
 ): Promise<RoutingAuthority> {
   const rooms = await pool.query<RoomSideRow>(
     `SELECT 'actor'::text AS side, room.id AS room_id
        FROM memberships membership
        JOIN rooms room ON room.id=membership.room_id AND room.tenant_id=membership.tenant_id
        JOIN tenants tenant ON tenant.id=membership.tenant_id
-       JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
       WHERE membership.tenant_id=$1 AND membership.alias=$2
-        AND membership.enabled AND room.enabled AND tenant.enabled AND agent.enabled
+        AND membership.enabled AND room.enabled AND tenant.enabled
+        AND (($5::uuid IS NULL AND EXISTS (
+          SELECT 1 FROM agents agent
+          WHERE agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias AND agent.enabled
+        )) OR ($5::uuid IS NOT NULL AND EXISTS (
+          SELECT 1 FROM console_users person
+          JOIN human_tenant_memberships human ON human.human_id=person.id
+            AND human.tenant_id=person.tenant_id AND human.actor_alias=person.alias
+          JOIN companies company ON company.id=tenant.company_id
+          WHERE person.id=$5 AND person.active AND person.role='operator'
+            AND person.tenant_id=membership.tenant_id AND person.alias=membership.alias
+            AND human.enabled AND human.revoked_at IS NULL AND 'control'=ANY(human.permissions)
+            AND tenant.retired_at IS NULL AND company.enabled AND company.retired_at IS NULL
+        )))
      UNION ALL
      SELECT 'target'::text AS side, room.id AS room_id
        FROM memberships membership
@@ -283,7 +296,7 @@ export async function routingAuthority(
        JOIN agents agent ON agent.tenant_id=membership.tenant_id AND agent.alias=membership.alias
       WHERE membership.tenant_id=$3 AND membership.alias=$4
         AND membership.enabled AND room.enabled AND tenant.enabled AND agent.enabled`,
-    [actorTenant, actorAlias, targetTenant, targetAlias]
+    [actorTenant, actorAlias, targetTenant, targetAlias, humanId ?? null]
   );
   const actorRooms = rooms.rows.filter((row) => row.side === 'actor').map((row) => row.room_id);
   const targetRooms = new Set(rooms.rows.filter((row) => row.side === 'target').map((row) => row.room_id));
@@ -317,12 +330,13 @@ export async function cohortRoutingAuthority(
   pool: DatabasePool | DatabaseClient,
   actorTenant: string,
   actorAlias: string,
-  cohort: readonly FleetIdentity[]
+  cohort: readonly FleetIdentity[],
+  humanId?: string,
 ): Promise<RoutingAuthority> {
   if (cohort.length === 0) return { allowed: false, reason: 'unknown_alias', source_room_ids: [] };
   const roomIds = new Set<string>();
   for (const member of cohort) {
-    const decision = await routingAuthority(pool, actorTenant, actorAlias, member.tenant_id, member.alias);
+    const decision = await routingAuthority(pool, actorTenant, actorAlias, member.tenant_id, member.alias, humanId);
     if (!decision.allowed) {
       return { allowed: false, reason: `${decision.reason}:${fleetIdentityLabel(member)}`, source_room_ids: [] };
     }
