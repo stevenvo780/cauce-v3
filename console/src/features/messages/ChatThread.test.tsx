@@ -81,7 +81,7 @@ it('separa humano y respuesta final escapada como hermanos del historial, sin fi
   expect(select.mock.calls[0]?.[0]).toEqual({ message, delivery, direction: 'input' });
 });
 
-it('representa una respuesta final sólo con archivos sin burbuja vacía ni descarga automática', () => {
+it('representa una respuesta final solo con archivos sin burbuja vacía ni descarga automática', () => {
   const { message, delivery, canonical } = fixture();
   const download = vi.spyOn(cauceApi, 'getMessageReplyAttachment');
   thread({ items: [{ message, delivery, direction: 'input' }], canonicalReply: { ...canonical, reply: null,
@@ -137,7 +137,7 @@ it.each([{ deliveryId: 'other-delivery' }, { messageId: 'other-root' }, { tenant
   expect(screen.queryByText('Pong del agente')).toBeNull();
 });
 
-it('una vista previa recortada lo dice y pide el cuerpo entero sólo a pedido', async () => {
+it('una vista previa recortada lo dice y pide el cuerpo entero solo a pedido', async () => {
   const { message } = fixture(false);
   const expand = vi.fn();
   const preview = 'b'.repeat(240);

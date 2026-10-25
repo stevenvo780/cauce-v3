@@ -83,7 +83,7 @@ describe('liveState', () => {
     expect(result.reason).not.toContain('ningún consumidor conectado');
   });
 
-  it('cola sólo futura con lease vivo sigue Recibiendo aunque el servidor marque la cola', () => {
+  it('cola solo futura con lease vivo sigue Recibiendo aunque el servidor marque la cola', () => {
     const result = liveState(
       agent({ work_state: 'queued', queued: 2, queued_ready: 0, flags: ['queued_without_consumer'] }),
       { nowMs: NOW },

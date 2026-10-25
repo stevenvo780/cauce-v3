@@ -229,7 +229,7 @@ function decidirEstado(
       reason: settled.outcome === 'deadline_vencido'
         ? 'Una entrega suya salió de vuelo con el deadline de ACK ya vencido: no fue un cierre limpio.'
         : 'Una entrega suya salió de vuelo en el último refresco. Si cerró bien o se murió no se puede '
-          + 'saber desde acá: /activity sólo lista leased, accepted y started, así que done, failed y '
+          + 'saber desde acá: /activity solo lista leased, accepted y started, así que done, failed y '
           + 'vencida por deadline se ven exactamente igual.',
       overloaded,
     };
