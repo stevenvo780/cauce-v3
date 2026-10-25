@@ -60,7 +60,7 @@ async function receipt(name: string, value: unknown): Promise<void> {
   await writeFile(join(active().receipts, `${name}.json`), JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
 }
 async function inventory(): Promise<Inventory> {
-  return document(await cli().run(['spaces', 'list', '--tenant', active().tenantId, '--alias', alias, ...connection()]), 'spaces list') as Inventory;
+  return document(await cli().run(['spaces', 'list', '--json', '--tenant', active().tenantId, '--alias', alias, ...connection()]), 'spaces list') as Inventory;
 }
 async function waitOperation(id: string): Promise<Operation> {
   const deadline = Date.now() + 240_000;
@@ -94,7 +94,7 @@ async function change(command: 'create' | 'edit' | 'retire', value?: unknown): P
   const snapshot = await inventory();
   const input = join(active().directory, `space-${command}.json`);
   if (value !== undefined) await writeFile(input, JSON.stringify(value), { mode: 0o600 });
-  const args = ['spaces', command, '--tenant', active().tenantId, '--alias', alias,
+  const args = ['spaces', command, '--json', '--tenant', active().tenantId, '--alias', alias,
     '--expected-revision', String(snapshot.revision), '--idempotency-key', `${active().prefix}-${command}`,
     ...connection(), ...(value === undefined ? [] : ['--input', input])];
   const preview = document(await cli().run(args), `spaces ${command} preview`) as { state: string; preview: { can_apply: boolean } };
@@ -304,7 +304,7 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
 
   it('explica alias inexistente o ajeno y sesión caducada sin conceder un terminal', async () => {
     const absent = await cli().run([`absent${active().run}`, ...connection()]);
-    expect(absent.code).toBe(1); expect(absent.stderr).toMatch(/Destino inexistente, no autorizado/iu);
+    expect(absent.code).toBe(1); expect(absent.stderr).toMatch(/El alias no figura en el inventario visible/iu);
     const slug = `zz-cli-other-${active().run}`;
     const password = `synthetic-other-${randomBytes(16).toString('hex')}`;
     const registration = await active().gateway.inject({ method: 'POST', url: '/v3/auth/register', headers: { origin: active().baseUrl },
@@ -312,7 +312,7 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     expect(registration.statusCode).toBe(201);
     const foreign = registration.json<{ hub: { id: string }; user: { username: string } }>();
     const hidden = await cli().run([`${foreign.hub.id}/${foreign.user.username}`, ...connection()]);
-    expect(hidden.code).toBe(1); expect(hidden.stderr).toMatch(/Destino inexistente, no autorizado/iu);
+    expect(hidden.code).toBe(1); expect(hidden.stderr).toMatch(/El alias no figura en el inventario visible/iu);
     active().advanceClock(9 * 60 * 60_000);
     try {
       const expired = await cli().run(terminal());
