@@ -38,6 +38,7 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
       options.onSelection?.(selectionForProfile(options.definition.id, final.model_id, options.executionSelection ?? {}, final.reasoning_effort ?? null)); return true;
     }
     if (state.enabled || state.normal_admitted) throw new Error('bootstrap admission is unavailable');
+    if (options.phase === 'normal' && state.status === 'succeeded') { await pause(signal); continue; }
     const probe = await options.client.claim(signal);
     if (probe === null) { await pause(signal); continue; }
     if (probe.operation_id !== options.operation_id || probe.phase !== options.phase || probe.runtime_key !== options.runtime_key

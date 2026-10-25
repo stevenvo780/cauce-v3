@@ -82,14 +82,20 @@ test('profile ownership, byte changes and an unapplied desired revision fail clo
   } finally { await f.close(); }
 });
 test('only normal phase exits after succeeded, enabled ready and explicit normal admission', async () => {
-  const f = await fixture('normal'); let claimed = false; f.measure(f.profile, { apply: true, expected: f.documents });
-  const client: BootstrapTransport = { state: async () => ({ operation_id: operationId, phase: 'normal', status: 'succeeded', enabled: true,
-    lifecycle_state: 'ready', runtime_key: 'boot-agent', profile_revision: 1, account_id: 'boot-account', normal_admitted: true }),
-    profile: async () => f.profile, claim: async () => { claimed = true; return null; }, ack: async () => undefined };
+  const f = await fixture('normal'); let claimed = false; let ready = false; let pauses = 0; let profiles = 0;
+  f.measure(f.profile, { apply: true, expected: f.documents });
+  const client: BootstrapTransport = { state: async () => ({ operation_id: operationId, phase: 'normal', status: 'succeeded', enabled: ready,
+    lifecycle_state: ready ? 'ready' : 'failed', runtime_key: 'boot-agent', profile_revision: 1, account_id: 'boot-account', normal_admitted: ready }),
+    profile: async () => { profiles++; return f.profile; }, claim: async () => { claimed = true; return null; }, ack: async () => undefined };
   try {
     const admitted = await runBootstrap({ operation_id: operationId, phase: 'normal', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
-      client, definition: codexDefinition, runner: new SpawnCommandRunner(), profile: f.measure }, new AbortController().signal);
-    assert.equal(admitted, true); assert.equal(claimed, false);
+      client, definition: codexDefinition, runner: new SpawnCommandRunner(), profile: f.measure,
+      pause: async () => { assert.equal(claimed, false); assert.equal(profiles, 0); if (++pauses === 2) ready = true; } }, new AbortController().signal);
+    assert.equal(admitted, true); assert.equal(claimed, false); assert.equal(pauses, 2); assert.equal(profiles, 1);
+    ready = false; const shutdown = new AbortController();
+    assert.equal(await runBootstrap({ operation_id: operationId, phase: 'normal', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
+      client, definition: codexDefinition, runner: new SpawnCommandRunner(), pause: async () => { shutdown.abort(); } }, shutdown.signal), false);
+    assert.equal(claimed, false); assert.equal(profiles, 1); ready = true;
     await writeFile(join(f.directory, 'AGENTS.md'), 'Changed after canary');
     await assert.rejects(runBootstrap({ operation_id: operationId, phase: 'normal', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
       client, definition: codexDefinition, runner: new SpawnCommandRunner(), profile: f.measure }, new AbortController().signal), /not converged/);
