@@ -116,6 +116,8 @@ it('login con deriva real recrea el contenedor y reanuda la misma operación des
   const fixture = await startA18cFixture();
   const evidence: Record<string, unknown> = { owner: OWNER, run: RUN, provider: 'owned interactive provider double',
     runtime: 'real SDK, executor, host channel, Chromium, signed setup and Docker', manual_operation_sql: false, direct_test_acks: false };
+  let originalContainer: string | undefined;
+  let installedRelease: string | undefined;
   let phase = 'create';
   const mark = (next: string) => { phase = next; console.info('A18C_PHASE', RUN, phase); };
   try {
@@ -145,11 +147,13 @@ it('login con deriva real recrea el contenedor y reanuda la misma operación des
     const waiting = await create(fixture);
     expect(waiting.error?.code).not.toBe('RUNTIME_DRIFT');
     const before = await observe();
+    originalContainer = before.id;
     expect(before.image).toBe(fixture.firstImage);
     expect(before.running).toBe(true);
     evidence.initial = { operation: waiting, container: before, portable_image: fixture.firstPortableImage };
     mark('signed deployment and real reconciliation');
     const deployment = await fixture.deploy();
+    installedRelease = deployment.release;
     expect(deployment.image).not.toBe(before.image);
     expect(await observe()).toEqual(before);
     const drifted = await waitOperation(fixture, waiting.id, 'awaiting_auth', true);
@@ -207,7 +211,8 @@ it('login con deriva real recrea el contenedor y reanuda la misma operación des
     mark('normal durable SDK and TUI nonce');
     evidence.response = await durableNonce(fixture);
     fixture.errors.assertClean();
-    const files = ['tests/e2e/v4-a18c-login-drift-real-browser.test.ts', 'tests/e2e/v4-a18c-login-drift.fixtures.ts', 'tests/e2e/v4-a18c-provider.py'];
+    const files = ['tests/e2e/v4-a18c-login-drift-real-browser.test.ts', 'tests/e2e/v4-a18c-login-drift.fixtures.ts',
+      'tests/e2e/v4-a18c-provider.py', 'tests/e2e/v4-a18c-diagnostics.py'];
     evidence.hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await readFile(file)).digest('hex')])));
     evidence.result = 'PASS';
   } catch (error) {
@@ -217,6 +222,17 @@ it('login con deriva real recrea el contenedor y reanuda la misma operación des
     evidence.page = await bodySnippet(fixture.page);
     evidence.browser_errors = fixture.errors.unexpected;
     evidence.browser_trace = fixture.errors.trace;
+    if (originalContainer && installedRelease) {
+      try {
+        const source = await readFile('tests/e2e/v4-a18c-diagnostics.py', 'utf8');
+        const diagnostic = await fixture.computer.onComputer(['python3', '-I', '-B', '-c', source,
+          join(fixture.computer.installRoot, fixture.company, fixture.host), installedRelease, KEY, ALIAS, fixture.tenant, originalContainer]);
+        evidence.runtime_diagnostic_exit = diagnostic.code;
+        await writeFile(join(RECEIPTS, 'runtime-diagnostic.json'), diagnostic.stdout, { mode: 0o600 });
+      } catch (diagnosticError) {
+        evidence.runtime_diagnostic_error_class = diagnosticError instanceof Error ? diagnosticError.name : 'unknown';
+      }
+    }
     const journal = await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-o', 'cat',
       '--grep=Agent provider authentication command=|provider auth helper failed:|fleet host command failed', '-n', '12']);
     evidence.host_failures = journal.stdout;
