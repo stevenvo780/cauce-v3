@@ -92,8 +92,8 @@ class GrantsFixture {
         const id = inserted.rows[0]?.id;
         if (id === undefined) throw new Error('console user insert lost its row');
         await client.query(
-          `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled)
-           VALUES($1,$2,$3,'operator',ARRAY['read','route','control'],true)`,
+          `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,permissions,enabled)
+           VALUES($1,$2,$3,ARRAY['read','route','control'],true)`,
           [id, tenant, alias]);
         return { id, email };
       };
