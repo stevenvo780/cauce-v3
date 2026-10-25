@@ -9,7 +9,6 @@ import {
 import {
   MAX_ARTIFACT_URI_CHARACTERS, MAX_TURN_ARTIFACT_CHARACTERS, NOT_SENT_URI
 } from '../agents/delegated-attachments.js';
-import type { RuntimeLeaseIdentity } from '../../runtime-lease-identity.js';
 import { objectRecord, visibleText } from '../outbox.js';
 
 export interface LeaseResult {
@@ -117,7 +116,6 @@ export interface LeaseAcquireOptions {
   /** Refuse the lease atomically unless the consumer has a valid durable capacity row. */
   requireDeclaredCapacity?: boolean;
   requireEnabledAgent?: boolean;
-  identity?: RuntimeLeaseIdentity | undefined;
 }
 export function ackRank(status: Ack['status']): number {
   if (status === 'accepted') return 1;

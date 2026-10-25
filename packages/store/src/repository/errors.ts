@@ -6,7 +6,6 @@ export type StoreRecoveryReason =
   | 'consumer_capacity_missing'
   | 'consumer_capacity_invalid'
   | 'consumer_disabled'
-  | 'consumer_placement_mismatch'
   | 'idempotency_durable_conflict'
   | 'context_write_commit_unverified';
 

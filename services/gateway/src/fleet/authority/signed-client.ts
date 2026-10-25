@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { z } from 'zod';
 import { HostId, SignedHostRequestSchema } from '@cauce/store';
 import { assertAuthBridgeParent } from '../auth-bridge-socket.js';
-import { AuthorityInventorySchema, AuthorityIssuedSchema, RuntimeAuthorityRequestSchema, RuntimeAuthoritySchema } from './schemas.js';
+import { AuthorityInventorySchema, AuthorityIssuedSchema } from './schemas.js';
 
 export interface SignedFleetAuthoritySocketPolicy { ownerUid: number; peerUid: number; groupGid?: number }
 const ErrorCode = z.enum(['INVALID_REQUEST', 'AUTHORITY_REVOKED', 'AUTHORITY_UNAVAILABLE', 'forbidden', 'conflict', 'invalid_input']);
@@ -29,36 +29,15 @@ export async function assertSignedAuthoritySocket(filename: string, policy: Sign
       || shared && info.gid !== policy.groupGid) throw unavailable();
 }
 export class SignedFleetAuthorityClient {
-  private readonly runtimeAuthorities = new Map<string, NonNullable<z.infer<typeof RuntimeAuthoritySchema>['identity']>>();
   constructor(private readonly filename: string, private readonly policy: SignedFleetAuthoritySocketPolicy) {}
-  async resolveRuntimeAuthority(fingerprint: string): Promise<z.infer<typeof RuntimeAuthoritySchema>['identity']> {
-    const body = RuntimeAuthorityRequestSchema.parse({ action: 'resolve_runtime_authority', certificate_sha256: fingerprint });
-    const cached = this.runtimeAuthorities.get(fingerprint);
-    if (cached && Date.parse(cached.expires_at) > Date.now()) return cached;
-    this.runtimeAuthorities.delete(fingerprint);
-    const result = RuntimeAuthoritySchema.parse(await this.post('/runtime-authority', body, output => RuntimeAuthoritySchema.parse(output)));
-    if (result.identity !== null && Date.parse(result.identity.expires_at) > Date.now()) {
-      if (this.runtimeAuthorities.size >= 2_000) this.runtimeAuthorities.clear();
-      this.runtimeAuthorities.set(fingerprint, result.identity);
-    }
-    return result.identity;
-  }
   async invoke(host: string, packet: unknown, signal?: AbortSignal): Promise<unknown> {
     const envelope = SignedAuthorityEnvelopeSchema.parse({ host_id: host, packet });
-    return this.post('/signed-authority', envelope, output => {
-      const action = envelope.packet.payload.action;
-      return action === 'ready' ? z.object({ ready: z.literal(true), host_id: HostId }).strict()
-        .refine(value => value.host_id === host).parse(output)
-        : action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output);
-    }, signal);
-  }
-  private async post(path: string, input: unknown, parse: (output: unknown) => unknown, signal?: AbortSignal): Promise<unknown> {
     if (process.geteuid?.() !== this.policy.peerUid || signal?.aborted) throw unavailable();
     await assertSignedAuthoritySocket(this.filename, this.policy);
-    const before = await lstat(this.filename); const body = JSON.stringify(input);
+    const before = await lstat(this.filename); const body = JSON.stringify(envelope);
     if (Buffer.byteLength(body) > 262_144) throw new SignedFleetAuthorityError('INVALID_REQUEST', 400);
     return new Promise((resolve, reject) => {
-      const outgoing = request({ socketPath: this.filename, path, method: 'POST',
+      const outgoing = request({ socketPath: this.filename, path: '/signed-authority', method: 'POST',
         headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, signal }, response => {
         let bytes = 0; const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => {
@@ -75,7 +54,10 @@ export class SignedFleetAuthorityClient {
               const output: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
               if (response.statusCode !== 200) throw new SignedFleetAuthorityError(ErrorBody.parse(output).error,
                 [400,403,409,422,503].includes(response.statusCode ?? 0) ? response.statusCode ?? 503 : 503);
-              resolve(parse(output));
+              const action = envelope.packet.payload.action;
+              resolve(action === 'ready' ? z.object({ ready: z.literal(true), host_id: HostId }).strict()
+                .refine(value => value.host_id === host).parse(output)
+                : action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output));
             } catch (error) { reject(error instanceof SignedFleetAuthorityError ? error : unavailable()); }
           })();
         });

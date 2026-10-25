@@ -151,19 +151,14 @@ def policy_paths(policy):
     return path(policy['state_root']), registries, owners
 
 
-def validate_scope(scope, agent):
-    if not isinstance(scope, dict) or not isinstance(agent, dict) \
-            or set(scope) != {'operation_id', 'host_id', 'scope_sha256', 'runtime_key'} \
-            or not all(isinstance(value, str) for value in (*scope.values(), *agent.values())) \
+def validate_packet(packet):
+    scope, agent = packet['scope'], packet['agent']
+    if set(scope) != {'operation_id', 'host_id', 'scope_sha256', 'runtime_key'} \
             or re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', scope['operation_id']) is None \
             or WIRE.fullmatch(scope['host_id']) is None or HEX.fullmatch(scope['scope_sha256']) is None \
             or RUNTIME.fullmatch(scope['runtime_key']) is None or set(agent) != {'tenant_id', 'alias'} \
             or re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,63}', agent['tenant_id']) is None or WIRE.fullmatch(agent['alias']) is None:
         raise AuthorityError('authority scope is invalid')
-
-
-def validate_packet(packet):
-    validate_scope(packet['scope'], packet['agent'])
     required = {'action', 'scope', 'agent'}
     if 'preserve_legacy' in packet:
         if packet['preserve_legacy'] is not True:
@@ -175,103 +170,21 @@ def validate_packet(packet):
         raise AuthorityError('authority request is invalid')
 
 
-def registry(location, owners):
-    raw, original = read(location, owners=owners)
-    document = json.loads(raw)
-    if not isinstance(document, dict) or set(document) != {'version', 'identities'} or document['version'] != 1 \
-            or not isinstance(document['identities'], list) or len(document['identities']) > 20000 \
-            or not all(isinstance(row, dict) for row in document['identities']):
-        raise AuthorityError('authority registry is invalid')
-    return raw, document, original
-
-
 def inventory(registries, owners, agent, preserve_legacy=False):
     rows = []
     for name in AUTHORITIES:
-        raw, document, original = registry(registries[name], owners[registries[name]])
+        raw, original = read(registries[name], owners=owners[registries[name]])
+        document = json.loads(raw)
+        if not isinstance(document, dict) or set(document) != {'version', 'identities'} or document['version'] != 1 \
+                or not isinstance(document['identities'], list) or len(document['identities']) > 20000 \
+                or not all(isinstance(row, dict) for row in document['identities']):
+            raise AuthorityError('authority registry is invalid')
         matching = [row for row in document['identities'] if target(agent, row)]
         if len(matching) > 64:
             raise AuthorityError('authority target inventory exceeds limit')
         rows.append((name, document, original, {'id': name, 'sha256': digest(raw), 'matching_records': matching,
             **({'preserved': True} if preserve_legacy and name.startswith('base_') else {})}))
     return rows
-
-
-def resolve_runtime_authority(policy, packet):
-    if set(packet) != {'action', 'certificate_sha256'} or not isinstance(packet['certificate_sha256'], str) \
-            or HEX.fullmatch(packet['certificate_sha256']) is None:
-        raise AuthorityError('authority lookup request is invalid')
-    state, registries, owners = policy_paths(policy)
-    location = registries['fleet_mtls']
-    matches, snapshots = [], []
-    with ExitStack() as stack:
-        parent = directory(state, private=True)
-        stack.callback(os.close, parent)
-        state_stat = os.fstat(parent)
-        registry_parent = directory(location.parent, owners=owners[location])
-        stack.callback(os.close, registry_parent)
-        _, document, registry_stat = registry(location, owners[location])
-        names = []
-        with os.scandir(parent) as entries:
-            for count, entry in enumerate(entries, 1):
-                if count > 8192:
-                    raise AuthorityError('authority journal snapshot exceeds limit')
-                if re.fullmatch(r'[a-f0-9]{64}\.json', entry.name):
-                    names.append(entry.name)
-                    if len(names) > 4096:
-                        raise AuthorityError('authority journal snapshot exceeds limit')
-        size = 0
-        for name in names:
-            raw, original = read(state / name, private=True)
-            size += len(raw)
-            if size > 33554432:
-                raise AuthorityError('authority journal snapshot exceeds limit')
-            snapshots.append((name, original))
-            journal = json.loads(raw)
-            binding = journal.get('binding') if isinstance(journal, dict) else None
-            if not isinstance(binding, dict):
-                raise AuthorityError('authority journal is invalid')
-            scope, agent = binding.get('scope'), binding.get('agent')
-            validate_scope(scope, agent)
-            if name != digest(json.dumps(scope, sort_keys=True).encode()) + '.json':
-                raise AuthorityError('authority journal scope changed')
-            normal = journal.get('issued', {}).get('normal')
-            if normal is None:
-                continue
-            receipt = normal.get('receipt') if isinstance(normal, dict) else None
-            if not isinstance(receipt, dict):
-                raise AuthorityError('authority journal receipt is invalid')
-            if receipt.get('certificate_sha256') == packet['certificate_sha256']:
-                matches.append((journal, scope, agent, normal, receipt))
-        if identity(os.fstat(parent)) != identity(state_stat) \
-                or identity(os.stat(location.name, dir_fd=registry_parent, follow_symlinks=False)) != identity(registry_stat) \
-                or any(identity(os.stat(name, dir_fd=parent, follow_symlinks=False)) != identity(original)
-                       for name, original in snapshots):
-            raise AuthorityError('authority lookup snapshot changed')
-    if len(matches) > 1:
-        raise AuthorityError('authority runtime lookup is ambiguous')
-    if not matches:
-        return {'identity': None}
-    journal, scope, agent, normal, receipt = matches[0]
-    if 'revoked' in journal or normal.get('registered') is not True:
-        return {'identity': None}
-    selected = {**agent, 'channel': 'adapter', 'session_id': 'adapter-' + scope['runtime_key']}
-    related = [row for row in document['identities'] if row.get('certificate_sha256') == packet['certificate_sha256']
-               or isinstance(row.get('principal'), dict) and all(row['principal'].get(key) == value for key, value in selected.items())]
-    if len(related) != 1:
-        return {'identity': None}
-    record = related[0]
-    if record.get('certificate_sha256') != packet['certificate_sha256'] or not isinstance(record.get('principal'), dict) \
-            or not all(record['principal'].get(key) == value for key, value in selected.items()) \
-            or record.get('expires_at') != receipt.get('expires_at'):
-        return {'identity': None}
-    try:
-        expiry = datetime.datetime.fromisoformat(receipt['expires_at'].replace('Z', '+00:00'))
-        if expiry <= datetime.datetime.now(datetime.UTC):
-            return {'identity': None}
-    except (KeyError, TypeError, ValueError, AttributeError):
-        return {'identity': None}
-    return {'identity': {**{key: scope[key] for key in ('host_id', 'runtime_key')}, **agent, 'expires_at': receipt['expires_at']}}
 
 
 def observation(rows):
@@ -396,8 +309,6 @@ def issue(policy, packet, rows, journal, journal_path, journal_stat):
 
 
 def perform(policy, packet):
-    if packet.get('action') == 'resolve_runtime_authority':
-        return resolve_runtime_authority(policy, packet)
     validate_packet(packet)
     state, registries, owners = policy_paths(policy)
     with ExitStack() as stack:

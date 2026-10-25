@@ -3,11 +3,6 @@ import { RuntimeKeySchema } from '@cauce/protocol';
 
 export const AuthorityDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
 export const AuthorityHostSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
-export const RuntimeAuthorityRequestSchema = z.object({ action: z.literal('resolve_runtime_authority'),
-  certificate_sha256: AuthorityDigestSchema }).strict();
-export const RuntimeAuthoritySchema = z.object({ identity: z.object({ host_id: AuthorityHostSchema,
-  runtime_key: RuntimeKeySchema, tenant_id: z.string(), alias: z.string(), expires_at: z.iso.datetime(),
-}).strict().nullable() }).strict();
 export const AuthorityScopeSchema = z.object({
   operation_id: z.uuidv4(), host_id: AuthorityHostSchema, scope_sha256: AuthorityDigestSchema,
   runtime_key: RuntimeKeySchema, claim_epoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),

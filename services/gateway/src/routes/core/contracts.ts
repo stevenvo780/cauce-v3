@@ -2,14 +2,13 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { WebSocket } from 'ws';
 import type { Tenant } from '@cauce/protocol';
 import type {
-  AgentProfileRepository, DatabasePool, DeliveryLeaseCap, RuntimeLeaseIdentity, subscribeDeliveryWakes
+  AgentProfileRepository, DatabasePool, DeliveryLeaseCap, subscribeDeliveryWakes
 } from '@cauce/store';
 import type { AuthProvider } from '../../auth.js';
 import type { ConsolePublishTelemetry } from '../../console-publish-telemetry.js';
 import type { DeliveryAdmissionConfig } from '../../config.js';
 import type { GatewayAck } from '../../app.js';
 import type { WakePumpTelemetry } from '../../wake-pump-telemetry.js';
-import type { SignedFleetAuthorityClient } from '../../fleet/authority/signed-client.js';
 
 export type CorePublishHandler = (
   request: FastifyRequest,
@@ -20,8 +19,6 @@ export interface CoreRouteOptions {
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;
   readonly deliveryWakeSubscriber?: typeof subscribeDeliveryWakes;
-  readonly signedFleetAuthorityClient?: Pick<SignedFleetAuthorityClient, 'resolveRuntimeAuthority'>;
-  readonly legacyRuntimeHostId?: string;
 }
 
 export interface CoreResolvedOptions {
@@ -78,7 +75,6 @@ export interface Session {
   epoch: number;
   /** Rotated by PostgreSQL on every hello, including a same-instance/same-epoch resume. */
   connectionToken: string;
-  leaseIdentity?: RuntimeLeaseIdentity | undefined;
   abort: AbortController;
   /** A wake that arrived while we were draining. It is served at the end, never lost. */
   drainAgain: boolean;
