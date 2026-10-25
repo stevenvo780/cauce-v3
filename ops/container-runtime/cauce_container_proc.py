@@ -24,6 +24,7 @@ from cauce_container_base import (
     METADATA_KEYS,
     METADATA_NAME,
     SCHEMA_VERSION,
+    STOP_AUTHORITY,
     TENANT_RE,
     WIRE_ALIAS_RE,
     ExecutableIdentityMismatch,
@@ -320,8 +321,11 @@ def metadata_hint(raw: bytes) -> int | None:
 
 
 def validate_metadata(document: Any) -> dict[str, Any]:
-    if not isinstance(document, dict) or set(document) not in (METADATA_KEYS, METADATA_KEYS | {"wireAlias", "tenantId"}):
+    permitted_keys = (METADATA_KEYS, METADATA_KEYS | {"wireAlias", "tenantId"})
+    if not isinstance(document, dict) or set(document) - {"stopAuthority"} not in permitted_keys:
         raise PermanentError("lifecycle metadata has unexpected or missing fields")
+    if "stopAuthority" in document and document["stopAuthority"] != STOP_AUTHORITY:
+        raise PermanentError("lifecycle metadata stop authority is invalid")
     if document["schemaVersion"] != SCHEMA_VERSION or document["phase"] not in {"starting", "running"} \
             or not isinstance(document["alias"], str) or not ALIAS_RE.fullmatch(document["alias"]):
         raise PermanentError("lifecycle metadata identity is invalid")

@@ -4,9 +4,10 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from typing import Any
 
-from cauce_container_base import AdapterExitedBeforeIdentity, PermanentError
+from cauce_container_base import STOP_AUTHORITY, AdapterExitedBeforeIdentity, PermanentError
 from cauce_container_proc import (
     alias_generation_pids,
     descendants,
@@ -150,6 +151,13 @@ class PinnedLeaderTree:
         self.pinned.clear()
 
 
+class PinnedAdapterLeader(PinnedLeaderTree):
+    """Only the Popen child belongs to the adapter lifecycle controller."""
+
+    def refresh(self) -> None:
+        self.discard_exited()
+
+
 def signal_known_tree(tree: PinnedLeaderTree, term_seconds: float, kill_seconds: float, *, can_reap: bool) -> None:
     tree.signal(signal.SIGTERM)
     if tree.wait_empty(term_seconds, can_reap=can_reap):
@@ -208,157 +216,102 @@ def terminate_from_metadata(
     state_directory: str,
     term_seconds: float,
     kill_seconds: float,
+    *,
+    before_signal: Callable[[], None],
+    claim_lifecycle_lock: Callable[[], None],
 ) -> None:
-    # External teardown never signals a bare PID or PGID. The adapter leader and
-    # every observed related process are pinned with pidfds; relation checks are
-    # repeated after pinning. Pins survive TERM->KILL even if a target reparents,
-    # changes session/environment, or the numeric PID/PGID becomes reusable.
-    controller_pid = document["controllerPid"]
-    pgid = document["pgid"]
-    generation = document["containerGeneration"]
-    self_pid = os.getpid()
-    pinned: dict[int, tuple[int, int]] = {}
-    controller_pin: tuple[int, int] | None = None
-
+    legacy = "stopAuthority" not in document
+    if not legacy and document["stopAuthority"] != STOP_AUTHORITY:
+        raise PermanentError("RESTART_HOLD_STOP_AUTHORITY_UNKNOWN")
     if document["phase"] != "running" or document["pid"] is None:
         raise PermanentError("adapter leader is not published; metadata was preserved and no signal was sent")
+    from cauce_container_restart import restart_fence
 
+    leader_fd: int | None = None
+    controller_fd: int | None = None
+    legacy_controller_stopped = False
+    effect_started = False
     try:
         try:
-            leader_fd = pin_verified_adapter(
-                document, alias, state_directory, allow_reexec=True,
-            )
-            pinned[document["pid"]] = (leader_fd, document["starttime"])
+            leader_fd = pin_verified_adapter(document, alias, state_directory, allow_reexec=not legacy)
         except ProcessLookupError as error:
             raise PermanentError("current-generation adapter PID is absent; metadata was preserved") from error
         try:
             controller_fd = pin_verified_controller(document)
-            controller_pin = (controller_fd, document["controllerStarttime"])
-        except (PermanentError, ProcessLookupError, PermissionError, OSError):
-            # A dead/reused controller is never a traversal root or signal target.
-            controller_pin = None
-
-        def discard_exited() -> None:
-            controller_fd = controller_pin[0] if controller_pin is not None else None
-            for pid, (pid_fd, _starttime) in list(pinned.items()):
-                if not pidfd_running(pid_fd):
-                    if pid_fd != controller_fd:
-                        os.close(pid_fd)
-                    del pinned[pid]
-
-        def relation_candidates() -> dict[int, set[str]]:
-            related: dict[int, set[str]] = {}
-
-            def add(pid: int, relation: str) -> None:
-                if pid > 1 and pid != self_pid:
-                    related.setdefault(pid, set()).add(relation)
-
-            leader_pin = pinned.get(document["pid"])
-            # Never trust a numeric PGID after the pinned leader has exited.
-            if pgid is not None and leader_pin is not None \
-                    and pidfd_matches_starttime(document["pid"], leader_pin[0], leader_pin[1]):
-                for pid in group_members(pgid):
-                    add(pid, "group")
-            if leader_pin is not None and pidfd_matches_starttime(document["pid"], leader_pin[0], leader_pin[1]):
-                for pid in descendants(document["pid"]):
-                    add(pid, "descendant")
-            return related
-
-        def refresh_pins() -> None:
-            discard_exited()
-            for pid, relations in relation_candidates().items():
-                if pid in pinned:
-                    continue
-                pid_fd: int | None = None
-                try:
-                    pid_fd = open_pidfd(pid)
-                    if not pidfd_running(pid_fd):
-                        continue
-                    details = proc_stat(pid)
-                    starttime = int(details["starttime"])
-                    valid = False
-                    if "group" in relations and pgid is not None:
-                        leader_pin = pinned.get(document["pid"])
-                        valid = leader_pin is not None \
-                            and pidfd_matches_starttime(document["pid"], leader_pin[0], leader_pin[1]) \
-                            and details["pgid"] == pgid
-                    if not valid and "descendant" in relations:
-                        root_pid = document["pid"]
-                        root_pin = pinned.get(root_pid)
-                        valid = root_pin is not None \
-                            and pidfd_matches_starttime(root_pid, root_pin[0], root_pin[1]) \
-                            and pid in descendants(root_pid)
-                    if valid:
-                        pinned[pid] = (pid_fd, starttime)
-                        pid_fd = None
-                except (ProcessLookupError, PermissionError, UnicodeDecodeError, OSError, PermanentError):
-                    pass
-                finally:
-                    if pid_fd is not None:
-                        os.close(pid_fd)
+        except (PermanentError, ProcessLookupError, PermissionError, OSError) as error:
+            if legacy:
+                raise PermanentError("RESTART_HOLD_LEGACY_CONTROLLER_UNVERIFIED") from error
+            controller_fd = None
 
         def assert_no_environment_only_matches() -> None:
-            allowed = set(pinned)
-            if controller_pin is not None \
-                    and pidfd_matches_starttime(controller_pid, controller_pin[0], controller_pin[1]):
-                # The verified lifecycle controller carries the same environment
-                # but is intentionally spared during a running-phase stop.
-                allowed.add(controller_pid)
-            matches = set(alias_generation_pids(alias, generation, state_directory, exclude={self_pid}))
-            unexpected = sorted(matches - allowed)
-            if unexpected:
+            allowed = {document["pid"]}
+            if controller_fd is not None and pidfd_matches_starttime(
+                document["controllerPid"], controller_fd, document["controllerStarttime"],
+            ):
+                allowed.add(document["controllerPid"])
+            matches = set(alias_generation_pids(
+                alias, document["containerGeneration"], state_directory, exclude={os.getpid()},
+            ))
+            if matches - allowed:
                 raise PermanentError(
-                    "environment-only lifecycle identity matches an untracked process; metadata was preserved and no signal was sent"
+                    "environment-only lifecycle identity matches an untracked process; metadata was preserved"
                 )
 
-        def signal_all(process_signal: signal.Signals) -> None:
-            refresh_pins()
+        def signal_leader(process_signal: signal.Signals) -> None:
+            nonlocal effect_started
             assert_no_environment_only_matches()
-            for pid, (pid_fd, starttime) in list(pinned.items()):
-                if pidfd_matches_starttime(pid, pid_fd, starttime):
-                    signal_pidfd(pid_fd, process_signal)
-                elif pidfd_running(pid_fd):
-                    raise PermanentError("pinned process starttime changed before signalling; metadata was preserved")
+            before_signal()
+            if pidfd_matches_starttime(document["pid"], leader_fd, document["starttime"]):
+                effect_started = True
+                signal_pidfd(leader_fd, process_signal)
+            elif pidfd_running(leader_fd):
+                raise PermanentError("pinned adapter starttime changed before signalling; metadata was preserved")
 
-        def wait_empty(timeout: float) -> bool:
+        def wait_leader_exit(timeout: float) -> bool:
             deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                refresh_pins()
-                assert_no_environment_only_matches()
-                if not pinned:
-                    return True
+            while pidfd_running(leader_fd) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            refresh_pins()
-            assert_no_environment_only_matches()
-            return not pinned
+            return not pidfd_running(leader_fd)
 
-        def wait_running_controller_exit(timeout: float) -> None:
-            if controller_pin is None:
+        def wait_controller_exit(timeout: float) -> None:
+            if controller_fd is None:
                 return
             deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                if not pidfd_running(controller_pin[0]):
-                    return
+            while pidfd_running(controller_fd) and time.monotonic() < deadline:
                 time.sleep(0.02)
-            if pidfd_running(controller_pin[0]):
+            if pidfd_running(controller_fd):
                 raise PermanentError("lifecycle controller did not exit after adapter teardown; metadata was preserved")
 
-        refresh_pins()
         assert_no_environment_only_matches()
         stop_signal_gate()
-        signal_all(signal.SIGTERM)
-        if wait_empty(term_seconds):
-            wait_running_controller_exit(kill_seconds)
+        if not legacy and not pidfd_running(leader_fd):
+            before_signal()
+            wait_controller_exit(kill_seconds)
             return
-        signal_all(signal.SIGKILL)
-        if not wait_empty(kill_seconds):
-            raise PermanentError("adapter tree still has live members after SIGKILL; metadata was preserved")
-        wait_running_controller_exit(kill_seconds)
+        with restart_fence(document):
+            if legacy:
+                before_signal()
+                if not pidfd_matches_starttime(document["pid"], leader_fd, document["starttime"]) \
+                        or not pidfd_matches_starttime(document["controllerPid"], controller_fd, document["controllerStarttime"]):
+                    raise PermanentError("RESTART_HOLD_LEGACY_IDENTITY_CHANGED")
+                signal_pidfd(controller_fd, signal.SIGKILL)
+                legacy_controller_stopped = True
+                wait_controller_exit(kill_seconds)
+                claim_lifecycle_lock()
+            signal_leader(signal.SIGTERM)
+            if not wait_leader_exit(term_seconds):
+                signal_leader(signal.SIGKILL)
+                if not wait_leader_exit(kill_seconds):
+                    raise PermanentError("adapter leader is still live after SIGKILL; metadata was preserved")
+            wait_controller_exit(kill_seconds)
+    except BaseException as error:
+        if legacy_controller_stopped:
+            raise PermanentError("RESTART_PARTIAL_LEGACY_CONTROLLER_STOPPED_METADATA_PRESERVED") from error
+        if effect_started:
+            raise PermanentError("RESTART_PARTIAL_ADAPTER_TEARDOWN") from error
+        raise
     finally:
-        closed: set[int] = set()
-        for pid_fd, _starttime in pinned.values():
-            if pid_fd not in closed:
-                os.close(pid_fd)
-                closed.add(pid_fd)
-        if controller_pin is not None and controller_pin[0] not in closed:
-            os.close(controller_pin[0])
+        if leader_fd is not None:
+            os.close(leader_fd)
+        if controller_fd is not None:
+            os.close(controller_fd)

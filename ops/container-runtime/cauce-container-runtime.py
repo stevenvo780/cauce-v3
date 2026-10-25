@@ -6,6 +6,7 @@ import os
 import signal
 import stat
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from typing import Any
@@ -20,6 +21,7 @@ from cauce_container_base import (
     PERMANENT_EXIT,
     RESERVED_SUPERVISOR_EXITS,
     SCHEMA_VERSION,
+    STOP_AUTHORITY,
     TENANT_RE,
     WIRE_ALIAS_RE,
     AdapterExitedBeforeIdentity,
@@ -55,8 +57,9 @@ from cauce_container_proc import (
     verify_adapter,
     verify_controller,
 )
+from cauce_container_restart import restart_fence
 from cauce_container_tree import (
-    PinnedLeaderTree,
+    PinnedAdapterLeader,
     signal_known_tree,
     terminate_from_metadata,
     wait_for_exec,
@@ -163,20 +166,68 @@ def run_adapter(args: argparse.Namespace) -> int:
         os.close(guard_fd)
     state_fd = open_directory(args.state)
     process: subprocess.Popen[bytes] | None = None
-    process_tree: PinnedLeaderTree | None = None
+    process_tree: PinnedAdapterLeader | None = None
     running_document: dict[str, Any] | None = None
     published_starting = False
     termination_requested = False
     adoption_server = None
+    restart_context = None
+    restart_guard_fd: int | None = None
+
+    def release_restart_fence() -> None:
+        nonlocal restart_context, restart_guard_fd
+        context, restart_context = restart_context, None
+        try:
+            if context is not None:
+                context.__exit__(None, None, None)
+        finally:
+            if restart_guard_fd is not None:
+                os.close(restart_guard_fd)
+                restart_guard_fd = None
 
     def should_stop() -> bool:
         return termination_requested
 
     def forward(_signum: int, _frame: Any) -> None:
-        nonlocal termination_requested
-        termination_requested = True
+        nonlocal termination_requested, restart_context, restart_guard_fd
+        if restart_context is not None:
+            return
         if process_tree is not None and (adoption_server is None or not adoption_server.fenced):
-            process_tree.signal(signal.SIGTERM)
+            if running_document is None:
+                print("RESTART_HOLD_UNPUBLISHED_LEADER", file=sys.stderr, flush=True)
+                return
+            restart_fd: int | None = None
+            fence_enter_started = False
+            try:
+                restart_fd = mutation_guard(control_fd, exclusive=True)
+                context = restart_fence(running_document)
+                fence_enter_started = True
+                context.__enter__()
+            except PermanentError as error:
+                if restart_fd is not None:
+                    os.close(restart_fd)
+                if str(error).startswith("RESTART_PARTIAL_"):
+                    raise
+                if fence_enter_started and not str(error).startswith("RESTART_HOLD_"):
+                    raise PermanentError("RESTART_PARTIAL_FENCE_SETUP_UNKNOWN_METADATA_PRESERVED") from error
+                termination_requested = False
+                print(str(error), file=sys.stderr, flush=True)
+                return
+            except Exception as error:
+                if restart_fd is not None:
+                    os.close(restart_fd)
+                if fence_enter_started:
+                    raise PermanentError("RESTART_PARTIAL_FENCE_SETUP_UNKNOWN_METADATA_PRESERVED") from error
+                termination_requested = False
+                print("RESTART_HOLD_GUARD_UNAVAILABLE", file=sys.stderr, flush=True)
+                return
+            restart_context, restart_guard_fd = context, restart_fd
+            termination_requested = True
+            try:
+                signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
+            except BaseException as error:
+                raise PermanentError("RESTART_PARTIAL_ADAPTER_SIGNAL_METADATA_PRESERVED") from error
+        termination_requested = True
 
     signal.signal(signal.SIGTERM, forward)
     signal.signal(signal.SIGINT, forward)
@@ -192,6 +243,7 @@ def run_adapter(args: argparse.Namespace) -> int:
         controller_starttime = int(proc_stat(os.getpid())["starttime"])
         base_document = {
             "schemaVersion": SCHEMA_VERSION,
+            "stopAuthority": STOP_AUTHORITY,
             "phase": "starting",
             "alias": args.alias,
             **({"wireAlias": args.wire_alias, "tenantId": args.tenant} if args.wire_alias is not None else {}),
@@ -250,7 +302,7 @@ def run_adapter(args: argparse.Namespace) -> int:
         try:
             # Pin before any phase wait, exec inspection or process.wait()/poll()
             # can observe and reap the leader.
-            process_tree = PinnedLeaderTree(process.pid)
+            process_tree = PinnedAdapterLeader(process.pid)
         except BaseException:
             # The direct Popen child has not been reaped, so its numeric PID cannot
             # yet be reused. Refuse lifecycle startup after best-effort leader cleanup.
@@ -272,8 +324,8 @@ def run_adapter(args: argparse.Namespace) -> int:
                 details = proc_stat(process.pid)
                 if details["pgid"] != process.pid or details["sid"] != process.pid:
                     raise PermanentError("adapter did not start in a dedicated process session")
-                running_document = dict(base_document)
-                running_document.update({
+                candidate_document = dict(base_document)
+                candidate_document.update({
                     "phase": "running",
                     "pid": process.pid,
                     "pgid": process.pid,
@@ -281,25 +333,28 @@ def run_adapter(args: argparse.Namespace) -> int:
                     "starttime": int(details["starttime"]),
                     "executable": executable,
                 })
-                validate_metadata(running_document)
-                verify_adapter(running_document, args.alias, args.state)
+                validate_metadata(candidate_document)
+                verify_adapter(candidate_document, args.alias, args.state)
             except ProcessLookupError as error:
                 raise AdapterExitedBeforeIdentity from error
             except (OSError, PermanentError) as error:
                 if not pidfd_running(process_tree.leader_fd):
                     raise AdapterExitedBeforeIdentity from error
                 raise
-            atomic_metadata(control_fd, running_document)
+            atomic_metadata(control_fd, candidate_document)
+            running_document = candidate_document
             if os.environ.get('CAUCE_ADOPTION_LIFECYCLE_FENCE') == '1':
                 adoption_server = LifecycleAdoptionServer(control_fd, args.control_dir, lock_fd,
                     {key: running_document[key] for key in ('alias', 'containerId', 'containerGeneration', 'controllerPid', 'controllerStarttime')})
         except AdapterExitedBeforeIdentity:
-            # Preserve the child status and clean up only descendants pinned while it lived.
+            # Reap exited adoptees without gaining authority over live processes.
             status = wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
             signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
             remove_metadata(control_fd)
             return remap_child_exit(status)
         except BaseException:
+            if running_document is not None:
+                raise
             signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=False)
             try:
                 wait_process_tracking(process, process_tree, timeout=max(1.0, args.kill_seconds))
@@ -314,7 +369,7 @@ def run_adapter(args: argparse.Namespace) -> int:
             while True:
                 adoption_server.poll(0.02)
                 if termination_requested and not adoption_server.fenced:
-                    process_tree.signal(signal.SIGTERM)
+                    forward(signal.SIGTERM, None)
                 try:
                     status = wait_process_tracking(process, process_tree, timeout=0.02)
                     adoption_server.close()
@@ -323,6 +378,7 @@ def run_adapter(args: argparse.Namespace) -> int:
                 except subprocess.TimeoutExpired:
                     pass
         signal_known_tree(process_tree, args.term_seconds, args.kill_seconds, can_reap=True)
+        release_restart_fence()
         current, _ = read_metadata(control_fd)
         if current is not None and current != running_document:
             raise PermanentError("lifecycle metadata changed while adapter was running; it was preserved")
@@ -333,13 +389,16 @@ def run_adapter(args: argparse.Namespace) -> int:
             remove_metadata(control_fd)
         raise
     finally:
-        if adoption_server is not None:
-            adoption_server.close()
-        if process_tree is not None:
-            process_tree.close()
-        os.close(lock_fd)
-        os.close(state_fd)
-        os.close(control_fd)
+        try:
+            release_restart_fence()
+        finally:
+            if adoption_server is not None:
+                adoption_server.close()
+            if process_tree is not None:
+                process_tree.close()
+            os.close(lock_fd)
+            os.close(state_fd)
+            os.close(control_fd)
 
 
 def stop_adapter(args: argparse.Namespace) -> None:
@@ -350,7 +409,7 @@ def stop_adapter(args: argparse.Namespace) -> None:
     except PermanentError:
         return _stop_adapter(args)
     try:
-        guard_fd = mutation_guard(guarded_control)
+        guard_fd = mutation_guard(guarded_control, exclusive=True)
         try:
             _stop_adapter(args)
         finally:
@@ -371,8 +430,9 @@ def _stop_adapter(args: argparse.Namespace) -> None:
         if alias_generation_pids(args.alias, args.generation, args.state, exclude={os.getpid()}):
             raise PermanentError("untracked processes still carry this alias generation; nothing was signalled") from err
         return
+    released_lock_fd: int | None = None
     try:
-        document, _ = read_metadata(control_fd)
+        document, original_raw = read_metadata(control_fd)
         if document is None:
             # Fail-closed: a held lock (controller mid-startup pre-publication) or any
             # surviving alias+generation process is ambiguous and must not report stopped.
@@ -395,16 +455,33 @@ def _stop_adapter(args: argparse.Namespace) -> None:
             # durably before publishing the replacement generation.
             return
         require_current_generation(document, args.container_id, args.generation)
+        def assert_metadata_unchanged() -> None:
+            _current, raw = read_metadata(control_fd)
+            if raw != original_raw:
+                raise PermanentError("lifecycle metadata changed before teardown; no further signal was sent")
+
+        def claim_lifecycle_lock() -> None:
+            nonlocal released_lock_fd
+            released_lock_fd = lock_control(control_fd)
+
         if document["phase"] == "running":
             terminate_from_metadata(
                 document, args.alias, args.state, args.term_seconds, args.kill_seconds,
+                before_signal=assert_metadata_unchanged,
+                claim_lifecycle_lock=claim_lifecycle_lock,
             )
         else:
             # No adapter leader identity exists yet. Controller PID/starttime is
             # lifecycle metadata, not authority to signal an unregistered target.
             raise PermanentError("adapter leader is not published; metadata was preserved and no signal was sent")
-        remove_metadata(control_fd)
+        current, current_raw = read_metadata(control_fd)
+        if current is not None:
+            if current_raw != original_raw:
+                raise PermanentError("lifecycle metadata changed after teardown; it was preserved")
+            remove_metadata(control_fd)
     finally:
+        if released_lock_fd is not None:
+            os.close(released_lock_fd)
         os.close(control_fd)
 
 

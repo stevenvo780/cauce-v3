@@ -71,7 +71,8 @@ class DockerPhysicalFenceTests(unittest.TestCase):
         executable.write_text('#!/bin/sh\nexec ' + shlex.join(command) + '\n')
         executable.chmod(0o700)
         pins = {f'/lifecycle/{name}': hashlib.sha256((OPS / 'container-runtime' / name).read_bytes()).hexdigest() for name in
-            ['cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py', 'cauce_container_adoption.py', 'cauce-container-runtime.py']}
+            ['cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py',
+             'cauce_container_adoption.py', 'cauce_container_restart.py', 'cauce-container-runtime.py']}
         self.row = {'target': {'tenant_id': 'acme', 'alias': 'iza'}, 'runtime_key': 'iza', 'harness_id': 'codex',
             'placement': {'host_id': 'local', 'mode': 'container', 'container_name': inspect['Name'].lstrip('/'), 'runtime_user': runtime_user,
                 'home_directory': '/home/node', 'state_directory': '/home/node/state', 'systemd_user': pwd.getpwuid(os.geteuid()).pw_name},

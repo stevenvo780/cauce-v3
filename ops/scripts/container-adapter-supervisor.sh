@@ -29,7 +29,7 @@ PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
 RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
 # The helper imports these siblings from its own directory: the container copy must carry all of them.
-RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py cauce_container_adoption.py)
+RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py cauce_container_adoption.py cauce_container_restart.py)
 MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
 ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
 HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
@@ -806,6 +806,7 @@ stop_adapter() {
   set_generation_from_signature
   [[ $container_running == true ]] || return 0
   docker_id_exec test -x "$control_helper" >/dev/null 2>&1 || die 'container lifecycle helper is absent; no signal was sent' 78
+  copy_control_helper
   docker_id_exec --user 0 /usr/bin/python3 "$control_helper" stop \
     --alias "$alias_name" --state "$state_directory" --control-dir "$control_dir" \
     --container-id "$container_id" --generation "$container_generation"

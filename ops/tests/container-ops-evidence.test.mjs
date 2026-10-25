@@ -37,6 +37,7 @@ for (const required of [
   ...operationsSources,
   "container-runtime/cauce-container-runtime.py",
   "container-runtime/cauce_container_adoption.py",
+  "container-runtime/cauce_container_restart.py",
   "cli/fleet_executor_authority.py",
   "cli/fleet-adoption-probe.py",
   "cli/fleet_adoption_probe_policy.py",

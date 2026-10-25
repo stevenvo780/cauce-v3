@@ -21,6 +21,7 @@ OPERATIONS_SOURCES = (
     "container-runtime/cauce_container_proc.py",
     "container-runtime/cauce_container_tree.py",
     "container-runtime/cauce_container_adoption.py",
+    "container-runtime/cauce_container_restart.py",
     "scripts/container-adapter-supervisor-lib.sh",
     "scripts/container_alias_lib.py",
     "scripts/manifest_lib.py",

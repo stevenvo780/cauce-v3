@@ -16,7 +16,7 @@ export async function escenariosB(ctx) {
   let statePath = ctx.statePath;
   let result = ctx.result;
   let calls = ctx.calls;
-  // Real process-group stop kills a TERM-resistant descendant but not an unrelated process.
+  // The runtime owns its adapter leader; detached jobs retain their own lifetime.
   const lifecycleBundle = path.join(temporary, "lifecycle-fixtures");
   await mkdir(lifecycleBundle, { mode: 0o755 });
   const resistant = path.join(lifecycleBundle, "resistant.py");
@@ -24,7 +24,7 @@ export async function escenariosB(ctx) {
   await executable(resistant, `#!/usr/bin/env python3
 import signal, subprocess, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-child = subprocess.Popen([sys.executable, '-c', "import os,signal,time; os.setsid(); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
+child = subprocess.Popen([sys.executable, '-c', "import os,signal,time; os.setsid(); signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"], env={})
 open(sys.argv[1], 'w', encoding='utf-8').write(str(child.pid))
 time.sleep(60)
 `);
@@ -53,7 +53,7 @@ os.setsid()
 with open(moved, 'w', encoding='utf-8') as stream: stream.write(str(os.getpid()))
 os.execve('/bin/sleep', ['/bin/sleep', '60'], {})
 """
-child = subprocess.Popen([sys.executable, '-c', code, move, moved])
+child = subprocess.Popen([sys.executable, '-c', code, move, moved], env={})
 with open(pidfile, 'w', encoding='utf-8') as stream: stream.write(str(child.pid))
 time.sleep(60)
 `);
@@ -96,6 +96,7 @@ time.sleep(60)
   let managed = await startManaged(lifecycleState, lifecycleControl, resistant, [childPidFile]);
   await waitForFile(childPidFile);
   const descendantPid = Number((await readFile(childPidFile, "utf8")).trim());
+  cleanupGroups.push(descendantPid);
   const leaderPid = managed.document.pid;
   assert.equal(managed.document.pid, managed.document.pgid);
   assert.equal(managed.document.pid, managed.document.sid);
@@ -107,7 +108,7 @@ time.sleep(60)
   result = stopManaged(lifecycleState, lifecycleControl);
   assert.equal(result.status, 0, result.stderr);
   await waitProcessGone(leaderPid);
-  await waitProcessGone(descendantPid);
+  assert.equal(processAlive(descendantPid), true, "the detached job must survive adapter stop");
   // The controller exits and releases the control lock on its own after a running-phase stop.
   await waitProcessGone(managed.child.pid);
   assert.equal(processAlive(unrelated.pid), true);
@@ -174,8 +175,7 @@ time.sleep(60)
   await waitProcessGone(reexecManaged.document.pid);
   process.stdout.write("same-lineage real re-exec: terminated and gone before stop returned\n");
 
-  // Pin the complete observed target set before the first signal. While stop is gated, kill the controller
-  // and move a child to a new session with an empty environment: the pre-opened pidfd must still target it.
+  // A job changing its session while stop is pinned never becomes an adapter signal target.
   const atomicState = path.join(temporary, "atomic-stop-state");
   const atomicControl = await makeControl("atomic-stop");
   const atomicMove = path.join(temporary, "atomic-stop.move");
@@ -187,6 +187,7 @@ time.sleep(60)
   const atomicManaged = await startManaged(atomicState, atomicControl, atomicMover, [atomicMove, atomicMoved, atomicPidFile]);
   await waitForFile(atomicPidFile);
   const atomicChildPid = Number((await readFile(atomicPidFile, "utf8")).trim());
+  cleanupProcesses.push({ kill(sig) { try { process.kill(atomicChildPid, sig); } catch { /* gone */ } } });
   const gatedAtomicStop = await stopManagedAtGate(atomicState, atomicControl, atomicGate, atomicRelease);
   atomicManaged.child.kill("SIGKILL");
   await waitProcessGone(atomicManaged.child.pid);
@@ -198,8 +199,8 @@ time.sleep(60)
   const atomicStop = await gatedAtomicStop.completed;
   assert.equal(atomicStop.status, 0, `pidfd-pinned stop must succeed: ${atomicStop.stderr}`);
   await waitProcessGone(atomicManaged.document.pid);
-  await waitProcessGone(atomicChildPid);
-  process.stdout.write("atomic stop barrier: moved identity-cleared child terminated through pinned pidfd\n");
+  assert.equal(processAlive(atomicChildPid), true, "the moved job must survive pinned adapter teardown");
+  process.stdout.write("atomic stop barrier: moved identity-cleared job preserved outside adapter authority\n");
 
   // ---- PGID reuse AFTER the leader is reaped: an alien in the freed process group
   // must NEVER be signalled. The gated stop pins the leader (and controller) BEFORE the
@@ -447,8 +448,8 @@ time.sleep(60)
   // published) or "starting" metadata whose leader PID/PGID/SID are still null -- the
   // controller PID/starttime is lifecycle bookkeeping, not authority to signal an
   // unregistered target. Both stop and stopped must refuse fail-closed (78) and preserve
-  // every byte, WITHOUT signalling the controller. The controller cancels itself and any
-  // nascent child only on a direct SIGTERM (its own graceful-cancellation contract).
+  // every byte, WITHOUT signalling the controller. Once a child exists, direct SIGTERM
+  // also holds until a verified running identity can pass the restart guard.
   for (const phase of ["pre-metadata", "starting", "pre-child", "post-child"]) {
     const marker = path.join(temporary, `gate-${phase}-${Math.random().toString(16).slice(2)}.marker`);
     const gated = await startGated(phase, marker, simple);
@@ -467,8 +468,13 @@ time.sleep(60)
     const proof = spawnSync("python3", lifecycleArgs("stopped", gated.state, gated.control), { encoding: "utf8" });
     assert.equal(proof.status, 78, `${phase} stopped must be fail-closed (78), got ${proof.status}: ${proof.stderr}`);
     assert.equal(processAlive(gated.child.pid), true, `${phase}: stopped must never signal the controller either`);
-    // Only a direct SIGTERM cancels the controller (and tears down any nascent child).
     gated.child.kill("SIGTERM");
+    if (phase === "post-child") {
+      const running = await waitForMetadataPhase(gatedMetadata, "running", 12_000);
+      assert.equal(running.stopAuthority, "adapter-leader-v1");
+      assert.equal(processAlive(gated.child.pid), true, "unpublished child identity must keep the controller alive");
+      gated.child.kill("SIGTERM");
+    }
     await waitProcessGone(gated.child.pid);
   }
   process.stdout.write("no published leader across startup phases: stop/stopped refuse with 78 and never signal the controller\n");
@@ -511,6 +517,7 @@ time.sleep(60)
   managed = await startManaged(orphanState, orphanControl, resistant, [orphanPidFile]);
   await waitForFile(orphanPidFile);
   const orphanDescendant = Number((await readFile(orphanPidFile, "utf8")).trim());
+  cleanupGroups.push(orphanDescendant);
   const orphanLeader = managed.document.pid;
   // The docker-exec client dying == the controller dying abruptly; the adapter is orphaned.
   process.kill(managed.child.pid, "SIGKILL");
@@ -524,11 +531,11 @@ time.sleep(60)
   });
   assert.equal(secondConsumer.status, 78, `a second consumer must be refused: ${secondConsumer.stdout} ${secondConsumer.stderr}`);
   assert.equal(processAlive(orphanLeader), true, "the refused restart never touched the live adapter");
-  // stop reaps the orphaned leader and its TERM-resistant setsid descendant, leaving no residue.
+  // A controller crash does not expand the authority of the replacement stop helper.
   const orphanStop = stopManaged(orphanState, orphanControl);
   assert.equal(orphanStop.status, 0, `stop must reap the orphan: ${orphanStop.stderr}`);
   await waitProcessGone(orphanLeader);
-  await waitProcessGone(orphanDescendant);
+  assert.equal(processAlive(orphanDescendant), true, "the detached job must survive recovery of the adapter leader");
   const orphanProof = spawnSync("python3", lifecycleArgs("stopped", orphanState, orphanControl), { encoding: "utf8" });
   assert.equal(orphanProof.status, 0, `the orphan must be provably stopped: ${orphanProof.stderr}`);
 

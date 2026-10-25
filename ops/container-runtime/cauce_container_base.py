@@ -24,6 +24,7 @@ CONTAINER_ID_RE = re.compile(r"^[a-f0-9]{64}$")
 DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 GENERATION_RE = re.compile(r"^[a-f0-9]{64}$")
 SCHEMA_VERSION = 2
+STOP_AUTHORITY = "adapter-leader-v1"
 METADATA_KEYS = {
     "schemaVersion", "phase", "alias", "stateDirectory", "controlDirectory", "runtimeUid", "runtimeGid",
     "pid", "pgid", "sid", "starttime", "controllerPid", "controllerStarttime",

@@ -32,6 +32,7 @@ export async function prepareSupervisorOps(source, destination) {
     "scripts/verify-hermes-runtime.py", "container-runtime/cauce-container-runtime.py",
     "container-runtime/cauce_container_base.py", "container-runtime/cauce_container_proc.py",
     "container-runtime/cauce_container_tree.py", "container-runtime/cauce_container_adoption.py",
+    "container-runtime/cauce_container_restart.py",
     "container-runtime/podar-releases.py",
     "hermes-runtime.json",
   ]) {

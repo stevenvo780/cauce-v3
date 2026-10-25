@@ -117,6 +117,7 @@ for (const sentinel of [
   'ops/container-aliases.json',
   'ops/container-runtime/cauce-container-runtime.py',
   'ops/container-runtime/cauce_container_adoption.py',
+  'ops/container-runtime/cauce_container_restart.py',
   'ops/cli/fleet_executor_authority.py',
   'ops/cli/fleet-adoption-probe.py',
   'ops/cli/fleet_adoption_probe_policy.py',

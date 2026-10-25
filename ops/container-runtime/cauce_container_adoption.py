@@ -25,10 +25,10 @@ def open_guard(control: int) -> int:
     return fd
 
 
-def mutation_guard(control: int) -> int:
+def mutation_guard(control: int, *, exclusive: bool = False) -> int:
     fd = open_guard(control)
     try:
-        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
         return fd
     except BlockingIOError as error:
         os.close(fd)

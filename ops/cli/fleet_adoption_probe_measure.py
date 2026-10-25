@@ -33,7 +33,8 @@ def code_identity(filename: str, pin: str, runtime_uid: int | None = None) -> di
 def observe_local(row: dict, container: dict | None = None) -> dict:
     observation, placement = row['observation'], row['placement']
     directory = pathlib.Path(observation['lifecycle_directory'])
-    required = {'cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py', 'cauce_container_adoption.py', 'cauce-container-runtime.py'}
+    required = {'cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py',
+                'cauce_container_adoption.py', 'cauce_container_restart.py', 'cauce-container-runtime.py'}
     if set(observation['pins']) != {str(directory / name) for name in required}:
         raise ProbeFailure('lifecycle_pins_incomplete')
     pins = {filename: code_identity(filename, pin) for filename, pin in observation['pins'].items()}

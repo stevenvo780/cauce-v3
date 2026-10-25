@@ -28,6 +28,7 @@ ProbeFailure = importlib.import_module('fleet_adoption_probe_policy').ProbeFailu
 load_policy = importlib.import_module('fleet_adoption_probe_policy').load_policy
 packet = importlib.import_module('fleet_adoption_probe_supervisor').packet
 receive = importlib.import_module('fleet_adoption_probe_supervisor').receive
+observe_local = importlib.import_module('fleet_adoption_probe_measure').observe_local
 
 
 def sha(path):
@@ -54,7 +55,7 @@ class LegacySupervisorFenceTests(unittest.TestCase):
         self.command.chmod(0o700)
         runtime = OPS / 'container-runtime'
         names = ['cauce_container_base.py', 'cauce_container_proc.py', 'cauce_container_tree.py',
-                 'cauce_container_adoption.py', 'cauce-container-runtime.py']
+                 'cauce_container_adoption.py', 'cauce_container_restart.py', 'cauce-container-runtime.py']
         self.target = {'tenant_id': 'acme', 'alias': 'iza'}
         self.row = {'target': self.target, 'runtime_key': 'iza', 'harness_id': 'codex',
             'placement': {'host_id': 'local', 'mode': 'native', 'runtime_user': pwd.getpwuid(os.geteuid()).pw_name,
@@ -137,6 +138,18 @@ class LegacySupervisorFenceTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('adoption holds the lifecycle fence', result.stderr)
         self.fence.assert_held()
+
+    def test_restart_guard_is_required_in_the_pinned_lifecycle_sources(self):
+        filename = str(OPS / 'container-runtime/cauce_container_restart.py')
+        del self.row['observation']['pins'][filename]
+        with self.assertRaisesRegex(ProbeFailure, 'lifecycle_pins_incomplete'):
+            observe_local(self.row)
+
+    def test_restart_guard_pin_is_verified_before_observation(self):
+        filename = str(OPS / 'container-runtime/cauce_container_restart.py')
+        self.row['observation']['pins'][filename] = '0' * 64
+        with self.assertRaisesRegex(ProbeFailure, 'code_digest_changed'):
+            observe_local(self.row)
 
     def test_controller_crash_preserves_both_physical_locks_until_release(self):
         self.fence.acquire()
