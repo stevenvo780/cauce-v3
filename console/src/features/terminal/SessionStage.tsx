@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AlertTriangle, CircleOff, Loader2, MonitorPlay, TerminalSquare, X } from 'lucide-react';
 import { useApi } from '../../api/context';
 import type { ConsoleAccess, TerminalCapability } from '../../api/types';
@@ -6,7 +6,8 @@ import { cn } from '../../cn';
 import { AgentOrb } from '../../components/AgentOrb';
 import { AgentContextMenu } from '../../components/agent-actions/AgentActionsMenu';
 import { Button, StatePill } from '../../components/kit';
-import { redirect } from '../../router';
+import { navigate, redirect } from '../../router';
+import { CompanySession, canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { TerminalApiError, type TerminalSessionGrant, type TerminalTargetsSnapshot } from './api';
 import { prorrogarSesion } from './api-control';
@@ -106,12 +107,31 @@ interface StageProps {
   harnessId?: string | null;
 }
 
+function GrantAccessAction({ subject, tenantId, alias, canManage }: {
+  subject: string; tenantId: string; alias: string; canManage: boolean;
+}) {
+  if (!canManage) {
+    return (
+      <p className="m-0 mt-1 text-xs text-muted">
+        Pídeselo al dueño o a un administrador de tu empresa en Ajustes → Acceso y roles → Concesiones de terminal.
+      </p>
+    );
+  }
+  return (
+    <Button size="sm" className="mt-1.5" onClick={() => {
+      navigate(`/config?seccion=acceso&persona=${encodeURIComponent(subject)}&agente=${encodeURIComponent(`${tenantId}:${alias}`)}`);
+    }}>Conceder acceso</Button>
+  );
+}
+
 export function SessionStage({
   agent, sessionId, sessionToken, state, memory, access, capability, targets, summary,
   grants, closedChannels, onRequestGrant, onMemory, onChannelClosed, onReleaseChannel, onReconciliarPlazas, onRefresh, requestedView,
   loginAction, harnessId,
 }: StageProps) {
   const api = useApi();
+  const session = useContext(CompanySession);
+  const authority = useCompanyAuthority();
   const grant = grants[sessionId] as TerminalSessionGrant | undefined;
   const [view, setView] = useState<StageView>(() => (grant ? (isTuiMode(grant.target.mode) ? 'tui' : 'terminal') : requestedView ?? 'tui'));
   /** A view the address asked for, kept until its channel can be requested: the gates load after the stage. */
@@ -400,6 +420,10 @@ export function SessionStage({
       {requestError ? (
         <div className="shrink-0 border-b border-line p-2">
           <NegativaPty negativa={requestError} />
+          {requestError.codigo === 'no_grant' || requestError.codigo === 'no_grant_for_operator' ? (
+            <GrantAccessAction subject={session?.subject ?? ''} tenantId={agent.tenantId} alias={agent.alias}
+              canManage={canManageCompany(authority?.role)} />
+          ) : null}
           <button type="button" className="mt-1.5 cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline hover:text-fg" onClick={() => { setRequestError(undefined); }}>
             Descartar
           </button>
@@ -409,6 +433,12 @@ export function SessionStage({
       {ptyClosedAll ? (
         <Notice tone="neutral" icon={<CircleOff size={14} aria-hidden="true" />}>
           <strong className="font-medium text-fg-2">{channelLabel}.</strong> {channelReason}
+          {channel.status === 'denied' && /concesión/i.test(channelReason) ? (
+            <span className="block">
+              <GrantAccessAction subject={session?.subject ?? ''} tenantId={agent.tenantId} alias={agent.alias}
+                canManage={canManageCompany(authority?.role)} />
+            </span>
+          ) : null}
         </Notice>
       ) : null}
 

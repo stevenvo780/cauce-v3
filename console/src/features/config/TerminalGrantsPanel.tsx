@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError } from '../../api/client/core';
 import type { TerminalGrant, TerminalGrantMode } from '../../api/client/terminal-grants-client';
 import { useApi } from '../../api/context';
@@ -85,6 +85,25 @@ function TerminalGrantsEditor() {
   const [notice, setNotice] = useState('');
   const ready = !!grants.data && !grants.error && !grants.loading && !busy;
   const canWrite = ready && grants.data?.capabilities.create === true;
+  const preselectApplied = useRef(false);
+  useEffect(() => {
+    if (preselectApplied.current || !people.data || !targets.data) return;
+    preselectApplied.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const persona = params.get('persona');
+    const agente = params.get('agente');
+    if (persona) {
+      const separator = persona.indexOf(':');
+      const person = people.data.items.find((item) => item.active && (item.id === persona || item.email === persona
+        || (separator > 0 && item.tenant_id === persona.slice(0, separator) && item.alias === persona.slice(separator + 1))
+        || item.alias === persona));
+      if (person) setPersonId(person.id);
+    }
+    if (agente) {
+      const target = targets.data.find((item) => `${item.tenant_id}:${item.alias}` === agente || item.alias === agente);
+      if (target) setTargetKey(`${target.tenant_id}\0${target.alias}`);
+    }
+  }, [people.data, targets.data]);
 
   function toggle(list: TerminalGrantMode[], mode: TerminalGrantMode, set: (next: TerminalGrantMode[]) => void) {
     set(list.includes(mode) ? list.filter((item) => item !== mode) : [...list, mode]);
