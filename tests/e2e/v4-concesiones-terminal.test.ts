@@ -141,17 +141,15 @@ class GrantsFixture {
     });
     await this.app.listen({ host: '127.0.0.1', port: 0 });
     this.url = `https://127.0.0.1:${String((this.app.server.address() as AddressInfo).port)}`;
-    for (const [tenant, alias, container] of [
-      [this.tenantA, this.targetA, this.containerA], [this.tenantB, this.targetB, this.containerB],
-    ] as const) {
-      const presence = await this.relay('/v3/terminal/relay/agents', { agents: [{
-        tenant_id: tenant, alias, container_id: container,
-        generation: 'qa-generation', image_id: `sha256:${'a'.repeat(64)}`,
-        runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', modes: ['shell'],
-        connected_since: new Date().toISOString(),
-      }] });
-      if (presence.status !== 200) throw new Error('authenticated relay presence failed');
-    }
+    const presence = await this.relay('/v3/terminal/relay/agents', { agents: [
+      { tenant_id: this.tenantA, alias: this.targetA, container_id: this.containerA },
+      { tenant_id: this.tenantB, alias: this.targetB, container_id: this.containerB },
+    ].map((target) => ({
+      ...target, generation: 'qa-generation', image_id: `sha256:${'a'.repeat(64)}`,
+      runtime_user: 'claw', runtime_uid: 1000, harness: 'openclaw', modes: ['shell'],
+      connected_since: new Date().toISOString(),
+    })) });
+    if (presence.status !== 200) throw new Error('authenticated relay presence failed');
   }
 
   async login(email: string): Promise<Session> {
