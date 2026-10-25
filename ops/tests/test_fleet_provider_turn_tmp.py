@@ -139,8 +139,9 @@ class SpaceTurnTemporaryTests(unittest.TestCase):
         self.assertLess(events.index(('agent-prepare', str(computer_state / 'space' / 'tmp'))), events.index(('profile', provider)))
         self.assertLess(events.index(('profile', provider)), events.index(('environment', provider)))
         self.assertFalse(computer_state.parent.exists())
-        replacements['docker'].assert_called_once()
-        self.assertIn('--retire-consumer-lease', replacements['docker'].call_args.args)
+        launches = [call for call in replacements['docker'].call_args_list if call.args[:2] == ('exec', '-d')]
+        self.assertEqual(len(launches), 1)
+        self.assertIn('--retire-consumer-lease', launches[0].args)
 
 
 if __name__ == '__main__':
