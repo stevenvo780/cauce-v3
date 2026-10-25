@@ -8,6 +8,7 @@ import { AuthError, AuthorizationError, isAgentPrincipal, requirePermission, typ
 import { consoleHumanAccess } from './console-human-authority.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { principal, replyError } from './routes/shared.js';
+import { registerContextRetirementRoutes } from './console/context-repository/retirement-routes.js';
 
 const Params = z.object({ tenant: TenantSchema, alias: AliasSchema }).strict();
 const Revision = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -25,6 +26,7 @@ export function registerContextVersionRoutes(app: FastifyInstance, provider: Aut
   options: ContextVersionRouteOptions = {}): void {
   const store = new ContextVersionStore(pool);
   const root = options.repositoryRoot ?? process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
+  registerContextRetirementRoutes(app, provider, pool, root);
   const git = root === undefined ? undefined : new ContextGitBroker(root);
   let timer: NodeJS.Timeout | undefined; let running: Promise<void> | undefined;
   const run = async (target?: ContextTarget) => {

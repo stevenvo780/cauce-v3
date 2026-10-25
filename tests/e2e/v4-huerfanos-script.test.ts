@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { agentPlan, EVIDENCE, LIVE_ALIAS, NATIVE_ALIAS, nativeObservation, OWNER, PREFIX, runCleanup,
   liveReply, startOrphansFixture, waitOperation, type OrphansFixture, type OrphansPlan } from './v4-huerfanos.fixtures.js';
+import { exerciseOrphanVolumes } from './v4-huerfanos-volumes.fixtures.js';
+import { exerciseDockerRemains } from './v4-huerfanos-docker.fixtures.js';
+import { exerciseOrphanContexts, startOrphansContextBroker, type OrphansContextBroker } from './v4-huerfanos-context.fixtures.js';
 
 interface CleanupItem {
   id: string; status: string; reason_code: string; reason: string;
@@ -44,8 +47,12 @@ async function captureReceipt(fixture: OrphansFixture, name: string) {
 it('simula sin efectos, retira y purga un canario por la API y conserva referencias y recursos de Praxis', async () => {
   const evidence: Record<string, unknown> = { owner: OWNER, prefix: PREFIX, provider: 'existing synthetic CLI', sdk: 'real' };
   let fixture: OrphansFixture | undefined;
+  let broker: OrphansContextBroker | undefined;
+  const failures: unknown[] = [];
   try {
-    fixture = await startOrphansFixture();
+    await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
+    broker = await startOrphansContextBroker();
+    fixture = await startOrphansFixture({ contextRepository: broker.root });
     const current = fixture;
     evidence.reply_before = await liveReply(current);
     const retire = await agentPlan(current, 'retire');
@@ -135,16 +142,26 @@ it('simula sin efectos, retira y purga un canario por la API y conserva referenc
     expect(await docker(['network', 'inspect', '--format', '{{.Id}}', current.retainedNetwork.name])).toBe(before.network);
     expect((await current.computer.pool.query<{ enabled: boolean }>('SELECT enabled FROM agents WHERE tenant_id=$1 AND alias=$2',
       [current.tenant, LIVE_ALIAS])).rows[0]?.enabled).toBe(true);
+    evidence.test_volumes = await exerciseOrphanVolumes(current, name => captureReceipt(current, name));
+    evidence.test_docker = await exerciseDockerRemains(current, name => captureReceipt(current, name));
+    evidence.test_contexts = await exerciseOrphanContexts(current, broker, captureReceipt);
+    expect(await docker(['inspect', '--format', '{{.Id}} {{.State.Running}}', current.liveContainer])).toBe(before.live);
+    expect(await docker(['volume', 'inspect', '--format', '{{json .Labels}}', current.retainedVolume])).toBe(before.volume);
+    expect(await docker(['network', 'inspect', '--format', '{{.Id}}', current.retainedNetwork.name])).toBe(before.network);
     evidence.reply_after = await liveReply(current);
     evidence.native_after = afterPurge;
     evidence.retained = { container: current.liveContainer, volume: current.retainedVolume, network: current.retainedNetwork };
-    evidence.sources = Object.fromEntries(await Promise.all(['limpiar-huerfanos.sh', 'limpiar-huerfanos-driver.py'].map(async name =>
+    evidence.sources = Object.fromEntries(await Promise.all(['limpiar-huerfanos.sh', 'limpiar-huerfanos-driver.py', 'limpiar-huerfanos-volumes.py'].map(async name =>
       [name, createHash('sha256').update(await readFile(join(process.cwd(), '.delegados/v4', name))).digest('hex')] as const)));
   } catch (error) {
+    failures.push(error);
     evidence.failure = error instanceof Error ? error.message : String(error);
-    throw error;
   } finally {
-    try { await fixture?.close(); }
-    finally { await writeFile(join(EVIDENCE, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 }); }
+    try { await fixture?.close(); } catch (error) { failures.push(error); evidence.cleanup_failure = String(error); }
+    try { await broker?.close(); } catch (error) { failures.push(error); evidence.broker_cleanup_failure = String(error); }
+    try { await writeFile(join(EVIDENCE, 'evidence.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 }); }
+    catch (error) { failures.push(error); }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, 'orphan cleanup scenario and cleanup failed');
 }, 1_200_000);

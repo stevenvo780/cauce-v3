@@ -108,17 +108,17 @@ const DUE_VERSIONS = `SELECT * FROM (SELECT DISTINCT ON (outbox.company_id,outbo
  * Serializes the broker across processes with a session lock, so no transaction stays open during Git I/O. A connection whose
  * unlock is uncertain is destroyed, which releases the lock with it.
  */
-async function withBrokerLock<T>(pool: DatabasePool, work: () => Promise<T>): Promise<T | 'busy'> {
+export async function withBrokerLock<T>(pool: DatabasePool, work: (client: DatabaseClient) => Promise<T>): Promise<T | 'busy'> {
   const client = await pool.connect();
   const ignore = (): void => undefined;
   client.on('error', ignore);
-  let clean = false;
+  let clean = false; let failed = false;
   try {
     const locked = (await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock(783_003_058) AS locked')).rows[0]?.locked === true;
     if (!locked) { clean = true; return 'busy'; }
-    try { return await work(); } finally {
+    try { return await work(client); } catch (error) { failed = true; throw error; } finally {
       clean = (await client.query<{ unlocked: boolean }>('SELECT pg_advisory_unlock(783_003_058) AS unlocked')
-        .catch(() => undefined))?.rows[0]?.unlocked === true;
+        .catch(() => undefined))?.rows[0]?.unlocked === true && !failed;
     }
   } finally {
     if (clean) client.off('error', ignore);

@@ -7,12 +7,12 @@ import { Writable } from 'node:stream';
 import { expect } from 'vitest';
 import { companyRevision, CauceRepository, withTransaction } from '@cauce/store';
 import { PublishMessageSchema, sha256Hex, type FleetOperationRequest } from '@cauce/protocol';
-import { COMPUTER_RUNTIME, docker, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
+import { COMPUTER_RUNTIME, docker, dockerInventory, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
   type ComputerHarness, type CommandResult } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { registerSetupOwner, type SetupOwnerSession } from '../../services/gateway/src/fleet/host-setup.fixtures.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 
-export const OWNER = 'h10-huerfanos-1025';
+export const OWNER = 'h10b-huerfanos-retirada-1025';
 export const RUN = randomUUID().slice(0, 8);
 export const PREFIX = `zz-canary-${OWNER}-${RUN}`;
 export const EVIDENCE = join(process.cwd(), '.delegados/v4/recibos', OWNER, `e2e-${RUN}`);
@@ -31,6 +31,8 @@ export interface OrphansFixture {
   computer: ComputerHarness; session: SetupOwnerSession; company: string; tenant: string; host: string; room: string;
   directory: string; native: NativeManifest; liveContainer: string; retainedVolume: string; retainedNetwork: { name: string; id: string };
   request(method: string, path: string, body?: unknown): Promise<Record<string, unknown>>;
+  trackImage(tag: string, id: string): void;
+  trackNetwork(name: string, id: string): void;
   close(): Promise<void>;
 }
 export interface AgentPlanItem { id: string; kind: 'agent'; request: FleetOperationRequest; preview_sha256: string }
@@ -38,7 +40,23 @@ export interface ResourcePlanItem {
   id: string; kind: 'resource'; resource_type: string; name: string; reason: string;
   scope: { company_id: string; tenant_id?: string; host_id?: string };
 }
-export interface OrphansPlan { version: 1; company_id: string; expected_revision: number; items: (AgentPlanItem | ResourcePlanItem)[] }
+export interface TestVolumePlanItem {
+  id: string; kind: 'test_volume'; name: string; scope: { company_id: string }; location: { kind: 'lab_socket' };
+  pin: { daemon_id: string; volume_sha256: string | null; preview_sha256: string | null };
+}
+export interface TestDockerPlanItem {
+  id: string; kind: 'test_container' | 'test_network' | 'test_image'; name: string;
+  scope: { company_id: string }; location: { kind: 'lab_socket' };
+  pin: { daemon_id: string; resource_sha256: string | null; preview_sha256: string | null };
+}
+export interface TestContextPlanItem {
+  id: string; kind: 'test_context'; company_id: string; action: 'retire' | 'restore';
+  pin: { head: string | null; preview_sha256: string | null }; retirement_commit?: string;
+}
+export interface OrphansPlan {
+  version: 1; company_id: string; expected_revision: number;
+  items: (AgentPlanItem | ResourcePlanItem | TestVolumePlanItem | TestDockerPlanItem | TestContextPlanItem)[];
+}
 
 export async function nativeObservation(fixture: OrphansFixture): Promise<NativeObservation> {
   const source = await readFile(join(process.cwd(), 'tests/e2e/v4-purga-nativos-systemd.fixture.py'), 'utf8');
@@ -57,28 +75,52 @@ export async function waitOperation(fixture: OrphansFixture, id: string): Promis
   return operation;
 }
 
-export async function startOrphansFixture(): Promise<OrphansFixture> {
+export async function startOrphansFixture(options: { contextRepository?: string } = {}): Promise<OrphansFixture> {
   await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
   const directory = await mkdtemp(join(tmpdir(), 'cauce-h10-'));
   let computer: ComputerHarness;
+  const previousRepository = process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
+  if (options.contextRepository !== undefined) process.env.CAUCE_CONTEXT_REPOSITORY_ROOT = options.contextRepository;
   try {
     computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: ['http://localhost'], workRoot: '/datos',
-      resourceOwner: OWNER, runtimeBundle: cancelDeployRuntime });
+      resourceOwner: OWNER, runtimeBundle: cancelDeployRuntime,
+      extraSourceFiles: ['packages/protocol/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
+        'packages/store/src/context-retirement.ts', 'services/gateway/src/console/context-repository/retirement-routes.ts',
+        'services/gateway/src/fleet/recovery-host-command.ts', 'services/gateway/src/fleet/agent-recovery-preflight.ts',
+        'packages/store/src/context-version-reevaluation.ts'] });
   } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
+  finally {
+    if (previousRepository === undefined) delete process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
+    else process.env.CAUCE_CONTEXT_REPOSITORY_ROOT = previousRepository;
+  }
   const company = `zz-canary-h10-${RUN}`;
   const host = `${company}-pc`;
   let retainedNetwork: { name: string; id: string } | undefined;
+  const images = new Map<string, string>(), networks = new Map<string, string>();
   const close = async () => {
     const failures: unknown[] = [];
-    if (retainedNetwork) {
+    try { await computer.close(); } catch (error) { failures.push(error); }
+    for (const [name, id] of networks) {
       try {
-        const current = await docker(['network', 'inspect', '--format', '{{.Id}}', retainedNetwork.name]);
-        expect(current).toBe(retainedNetwork.id);
-        await docker(['network', 'rm', retainedNetwork.id]);
+        const current = await docker(['network', 'ls', '--no-trunc', '--filter', `name=^${name}$`, '--format', '{{.ID}}']);
+        if (current === '') continue;
+        expect(current).toBe(id);
+        expect(await docker(['network', 'inspect', '--format', '{{index .Labels "cauce.e2e.owner"}}', id])).toBe(OWNER);
+        await docker(['network', 'rm', id]);
+      } catch (error) { failures.push(error); }
+    }
+    for (const [tag, id] of images) {
+      try {
+        const current = await docker(['images', '-q', '--no-trunc', '--filter', `reference=${tag}`]);
+        if (current === '') continue;
+        expect(current).toBe(id);
+        expect(await docker(['image', 'inspect', '--format', '{{index .Config.Labels "cauce.e2e.owner"}}', id])).toBe(OWNER);
+        expect(await docker(['ps', '-a', '--filter', `ancestor=${id}`, '--format', '{{.ID}}'])).toBe('');
+        await docker(['image', 'rm', id]);
       } catch (error) { failures.push(error); }
     }
     try {
-      const inventory = await computer.close();
+      const inventory = await dockerInventory(PREFIX);
       await writeFile(join(EVIDENCE, 'cleanup.json'), JSON.stringify(inventory, null, 2) + '\n', { mode: 0o600 });
       expect(inventory).toEqual({ containers: '', volumes: '', images: '' });
     } catch (error) { failures.push(error); }
@@ -133,8 +175,10 @@ export async function startOrphansFixture(): Promise<OrphansFixture> {
     const networkName = `${PREFIX}-retained-network`;
     const networkId = await docker(['network', 'create', '--internal', '--label', `cauce.e2e.owner=${OWNER}`, networkName]);
     retainedNetwork = { name: networkName, id: networkId };
+    networks.set(networkName, networkId);
     const fixture: OrphansFixture = { computer, session, company, tenant, host, room, directory, native, liveContainer,
-      retainedVolume, retainedNetwork, request, close };
+      retainedVolume, retainedNetwork, request, close,
+      trackImage: (tag, id) => { images.set(tag, id); }, trackNetwork: (name, id) => { networks.set(name, id); } };
     await waitOperation(fixture, queued.operation_id);
     return fixture;
   } catch (error) { await close(); throw error; }

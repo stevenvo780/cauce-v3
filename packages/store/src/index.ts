@@ -53,6 +53,7 @@ export * from './context-version-model.js';
 export * from './context-version-worker.js';
 export * from './context-version-adoption.js';
 export * from './context-git.js';
+export * from './context-retirement.js';
 export * from './quota-accounts.js';
 export * from './quota-environments.js';
 export * from './quota-identity.js';

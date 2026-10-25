@@ -1,4 +1,5 @@
 export * from './canonical.js';
+export * from './context-retirement.js';
 export * from './patterns.js';
 export * from './env.js';
 export * from './backoff.js';

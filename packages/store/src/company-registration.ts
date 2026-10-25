@@ -1,5 +1,6 @@
 import { withTransaction, type DatabasePool } from './db.js';
 import { StoreError } from './repository/errors.js';
+import { lockCompanyConfiguration } from './company-authority.js';
 
 export interface CompanyRegistration {
   email: string; name: string; passwordHash: string; company: { slug: string; name: string };
@@ -13,6 +14,7 @@ export async function registerCompany(pool: DatabasePool, input: CompanyRegistra
   try {
     return await withTransaction(pool, async client => {
       await client.query("SELECT set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)");
+      await lockCompanyConfiguration(client, input.company.slug);
       const row = (await client.query<{ human_id: string; tenant_id: string; actor_alias: string }>(
         'SELECT human_id,tenant_id,actor_alias FROM cauce_register_company($1,$2,$3,$4,$5)',
         [input.email, input.name, input.passwordHash, input.company.slug, input.company.name],

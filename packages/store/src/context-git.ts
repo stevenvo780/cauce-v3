@@ -23,12 +23,12 @@ function contextAuthor(version: ContextVersion): ContextAuthor {
   return { name: version.actor_alias, email: `${version.actor_alias}@${version.company_id}.cauce.invalid`, date: `${String(seconds)} +0000` };
 }
 export class ContextGitBroker implements ContextGitSink {
-  constructor(private readonly repositoryRoot: string) {
+  constructor(protected readonly repositoryRoot: string) {
     if (!isAbsolute(repositoryRoot) || resolve(repositoryRoot) !== repositoryRoot || repositoryRoot === '/') {
       throw new Error('context repository root must be an absolute canonical directory');
     }
   }
-  private async root(): Promise<void> {
+  protected async root(): Promise<void> {
     const root = await lstat(this.repositoryRoot);
     const metadata = await lstat(join(this.repositoryRoot, '.git'));
     if (!root.isDirectory() || !metadata.isDirectory() || await realpath(this.repositoryRoot) !== this.repositoryRoot
@@ -36,7 +36,7 @@ export class ContextGitBroker implements ContextGitSink {
       throw new Error('context repository must be private and have real Git metadata');
     }
   }
-  private async git(args: readonly string[], options: GitOptions = {}): Promise<string> {
+  protected async git(args: readonly string[], options: GitOptions = {}): Promise<string> {
     const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
     // Failure causes are classified from Git's English messages.
     env.LC_ALL = 'C'; env.GIT_TERMINAL_PROMPT = '0'; env.GIT_CONFIG_NOSYSTEM = '1';
@@ -50,7 +50,7 @@ export class ContextGitBroker implements ContextGitSink {
     if (options.input !== undefined) { pending.child.stdin?.end(options.input); }
     return (await pending).stdout.trim();
   }
-  private async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+  protected async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
     try {
       await this.git(['merge-base', '--is-ancestor', ancestor, descendant]);
       return true;
@@ -59,7 +59,7 @@ export class ContextGitBroker implements ContextGitSink {
       throw error;
     }
   }
-  private async localMain(): Promise<string> {
+  protected async localMain(): Promise<string> {
     return this.git(['rev-parse', '--verify', '--quiet', MAIN]).catch(() => '');
   }
   /** The remote main after a fresh fetch, or '' while the remote has no main yet. */
@@ -105,7 +105,7 @@ export class ContextGitBroker implements ContextGitSink {
       return commit;
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
-  private async clearFolder(prefix: string, index: string): Promise<void> {
+  protected async clearFolder(prefix: string, index: string): Promise<void> {
     const tracked = await this.git(['ls-files', '-z', '--', prefix], { index });
     if (tracked !== '') await this.git(['update-index', '--force-remove', '-z', '--stdin'], { index, input: tracked });
   }
