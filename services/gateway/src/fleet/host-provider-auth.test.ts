@@ -34,7 +34,10 @@ let config: { hostConfig: { host: string; command: { python: string; executable:
 const createMemberships = [{ tenant_id: 'Steven', alias: 'physical-new', room_id: 'physical-hub', role: 'agent', enabled: true },
   { tenant_id: 'Steven', alias: 'other-agent', room_id: 'physical-hub', role: 'agent', enabled: true }];
 let services: Awaited<ReturnType<typeof createHostProviderAuthService>>[];
-preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 120_000);
+preparePostgresSuite(import.meta.url, async () => {
+  database = await startTestDatabase();
+  process.stdout.write(`E2E fixture database: ${database.container.getId()}\n`);
+}, 120_000);
 async function fingerprint(filename: string): Promise<string> { return createHash('sha256').update(await readFile(filename)).digest('hex'); }
 async function savePolicy(): Promise<void> { await writeFile(config.authPolicyFile, JSON.stringify(policy), { mode: 0o600 }); }
 async function saveExecutorPolicy(): Promise<void> {

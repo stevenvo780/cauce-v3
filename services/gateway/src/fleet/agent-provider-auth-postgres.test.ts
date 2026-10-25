@@ -23,7 +23,10 @@ import { recoverAgentAuthSession } from './agent-provider-auth-recovery.js';
 let database: TestDatabase; let current: EmptyTestDatabase; let pool: DatabasePool; let app: FastifyInstance;
 let router: ReturnType<typeof createFleetProviderAuthRouter> | undefined;
 let local: Awaited<ReturnType<typeof enrolledAgentAuthFixture>> | undefined;
-preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); });
+preparePostgresSuite(import.meta.url, async () => {
+  database = await startTestDatabase();
+  process.stdout.write(`E2E fixture database: ${database.container.getId()}\n`);
+});
 beforeEach(async () => {
   current = await startTestCaseDatabase(database); pool = current.pool;
   if (process.env.CAUCE_TEST_RUNTIME_ROLE === '1') {
