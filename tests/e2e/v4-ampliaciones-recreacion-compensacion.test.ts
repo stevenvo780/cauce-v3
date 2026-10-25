@@ -91,11 +91,12 @@ async function applyResourcesAndFailAdmission(current: ReplacementFixture, origi
     return operation?.status;
   }, { timeout: 180_000, interval: 100 }).not.toBe('running');
   await unpause();
-  if (!operation) throw new Error('in-place update absent after its admission failure');
-  evidence.failed = { status: operation.status, error: operation.error,
-    steps: operation.steps.map(step => ({ name: step.name, status: step.status })) };
-  expect(operation.steps.find(step => step.name === 'admission')?.status).toBe('failed');
-  return operation;
+  const failed = operation as Operation | undefined; // the poll callback reassigns it and may leave it undefined
+  if (!failed) throw new Error('in-place update absent after its admission failure');
+  evidence.failed = { status: failed.status, error: failed.error,
+    steps: failed.steps.map(step => ({ name: step.name, status: step.status })) };
+  expect(failed.steps.find(step => step.name === 'admission')?.status).toBe('failed');
+  return failed;
 }
 
 beforeAll(async () => {

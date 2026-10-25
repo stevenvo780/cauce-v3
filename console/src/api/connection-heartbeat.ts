@@ -33,6 +33,7 @@ export function startHeartbeat(options: HeartbeatOptions): () => void {
   let running = false;
   let downSince: number | undefined;
 
+  const isStopped = (): boolean => stopped;
   const hidden = (): boolean => typeof document !== 'undefined' && document.visibilityState === 'hidden';
 
   const schedule = (delay: number): void => {
@@ -56,7 +57,7 @@ export function startHeartbeat(options: HeartbeatOptions): () => void {
     } catch {
       reason = controller.signal.aborted ? 'timeout' : 'red';
     } finally { clearTimeout(abort); running = false; }
-    if (stopped) return;
+    if (isStopped()) return; // stop() puede llegar mientras se espera el ping
     if (hidden()) { failures = 0; schedule(intervalMs); return; } // un fallo con la pestaña oculta no cuenta
     if (ok) {
       if (downSince !== undefined) {
