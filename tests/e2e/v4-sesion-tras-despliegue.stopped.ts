@@ -49,7 +49,8 @@ export async function assertStoppedCurrentRuntimeSkipped(): Promise<void> {
     const running = await observeCancelDeployActor(actor);
     expect(running.adapterAlive).toBe(true);
     const known = new Set((await automaticOperations(actor)).map(row => row.id));
-    await docker(['exec', '--user', '0', actor.container, 'kill', '-KILL', String(running.pid)]);
+    await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c',
+      'import os,signal,sys;os.kill(int(sys.argv[1]),signal.SIGKILL)', String(running.pid)]);
     const killedAt = Date.now();
     await expect.poll(async () => (await observeCancelDeployActor(actor)).adapterAlive, { timeout: 20_000 }).toBe(false);
     const stopped = await observeCancelDeployActor(actor);
