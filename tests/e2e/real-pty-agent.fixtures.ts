@@ -23,6 +23,7 @@ import { startTrustedBrowser, type BrowserContext, type BrowserPage, type Truste
 import { reserveNamedLoopbackPorts, type NamedLoopbackPortReservations } from './port-reservation.js';
 import { cleanupLabelsForFailure, createCleanupAggregate, type CleanupStep } from './fixture-cleanup-error.js';
 import { initializeTerminalTmux, realPtyRuntimeOptions, stageTerminalRuntime } from './v4-terminal-runtime.fixtures.js';
+import { initializeProviderTui, openclawFixtureBundle, providerTuiDockerfile, type ProviderTuiOptions } from './v4-terminal-provider.fixtures.js';
 
 const execute = promisify(execFile);
 const APPROVED_NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
@@ -91,7 +92,7 @@ export interface RealPtyFixture {
   close(): Promise<void>;
 }
 
-export interface RealPtyFixtureOptions {
+export interface RealPtyFixtureOptions extends ProviderTuiOptions {
   readonly governanceRelay?: boolean;
   readonly tui?: boolean;
   readonly modes?: readonly TerminalMode[];
@@ -325,7 +326,7 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
   const { owner, resourcePrefix, modes, sessionTtlSeconds, sessionMaxTotalSeconds,
     controlHoldSeconds, idleTimeoutSeconds, maxSessionsPerOperator } = realPtyRuntimeOptions(options);
   const ownerLabel = `cauce.e2e.owner=${owner}`;
-  const imageTag = `${resourcePrefix}-agent:${randomUUID()}`;
+  const imageTag = `${resourcePrefix}-${options.realTuiHarness ?? 'agent'}:${randomUUID()}`;
   const containerName = `${resourcePrefix}-${randomUUID()}`;
   const tmuxSocket = `pty-${randomBytes(8).toString('hex')}`;
   const tmuxTarget = `cauce-${TARGET_ALIAS}:agente`;
@@ -409,11 +410,11 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
     await (await import('node:fs/promises')).cp(sourcePackage, stagedPackage, {
       recursive: true, filter: (path) => path === sourcePackage || path.endsWith('.py') || path.endsWith('/contexto-de-gobierno.json'),
     });
-    await stageTerminalRuntime(buildContext, options.tui === true);
+    if (!options.realTuiHarness) await stageTerminalRuntime(buildContext, options.tui === true);
     await writeFile(join(buildContext, 'Dockerfile'), `FROM ${APPROVED_NODE_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends python3${options.tui ? ' tmux' : ''} && rm -rf /var/lib/apt/lists/*
-COPY --chown=node:node cauce_pty_agent/ /opt/cauce-pty-agent/cauce_pty_agent/
-${options.tui ? 'COPY --chmod=0755 codex /usr/local/bin/codex\n' : ''}USER node
+${options.realTuiHarness ? providerTuiDockerfile(options.realTuiHarness) : ''}COPY --chown=node:node cauce_pty_agent/ /opt/cauce-pty-agent/cauce_pty_agent/
+${!options.realTuiHarness && options.tui ? 'COPY --chmod=0755 codex /usr/local/bin/codex\n' : ''}USER node
 WORKDIR /home/node
 `, { mode: 0o600 });
     const imageCollision = await inspectImage(imageTag);
@@ -459,7 +460,7 @@ WORKDIR /home/node
       ...(options.tui ? { writableTuiEnabled: true, controlHoldSeconds } : {}),
       claimLeaseSeconds: 150, maxSessionsPerOperator, operatorHeader: 'x-cauce-operator', operators: new Set([OPERATOR_EMAIL]),
     };
-    await seed(startedDatabase, 'pending', options.tui ? 'codex' : 'pty-e2e');
+    await seed(startedDatabase, 'pending', options.realTuiHarness ?? (options.tui ? 'codex' : 'pty-e2e'));
     const auth = new PasswordAuthProvider({
       users: new PostgresConsoleUserStore(startedDatabase.pool), signingKey: randomBytes(32),
       sessionTtlMs: 10 * 60_000, fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pkiValue.relayIdentityFile)),
@@ -571,8 +572,8 @@ WORKDIR /home/node
       tenant_id: TENANT, alias: TARGET_ALIAS,
       container_id: 'pending', generation: `g${randomBytes(10).toString('hex')}`,
       image_id: imageId, runtime_user: 'node', runtime_uid: TARGET_UID, runtime_gid: TARGET_GID,
-      home: '/home/node', shell_candidates: ['/bin/sh'], harness: options.tui ? 'codex' : 'shell',
-      ...(options.tui ? { tmux_tui: { path: '/usr/bin/tmux', socket: tmuxSocket } } : {}),
+      home: '/home/node', shell_candidates: ['/bin/sh'], harness: options.realTuiHarness ?? (options.tui ? 'codex' : 'shell'),
+      ...(options.realTuiHarness === 'openclaw' ? openclawFixtureBundle(options.openclawGateway) : options.tui ? { tmux_tui: { path: '/usr/bin/tmux', socket: tmuxSocket } } : {}),
       relay_host: '127.0.0.1', relay_port: ports.agent, relay_server_name: 'localhost',
       alias_key_hex: deriveAliasKey(ticketKey, TENANT, TARGET_ALIAS).toString('hex'),
       client_cert_pem: (await readFile(pkiValue.agentCert, 'utf8')),
@@ -581,7 +582,8 @@ WORKDIR /home/node
       runtime_facts: {},
     };
     const run = await execute('docker', ['run', '--rm', '--detach', '--name', containerName, '--label', ownerLabel,
-      '--network', 'host', '--user', 'node', '--read-only', '--memory', '256m', '--cpus', '1', '--pids-limit', '64',
+      '--network', 'host', '--user', 'node', '--read-only', '--memory', options.realTuiHarness ? '1g' : '256m', '--cpus', '1', '--pids-limit', options.realTuiHarness ? '256' : '64',
+      ...(options.realTuiHarness ? ['--tmpfs', '/home/node:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=1000,gid=1000'] : []),
       '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777', '--entrypoint', 'sh', agentImage, '-lc', 'sleep 600'],
     { timeout: 30_000, maxBuffer: 64 * 1024 });
     const dockerId = run.stdout.trim();
@@ -590,9 +592,9 @@ WORKDIR /home/node
     if (containerId !== dockerId || actualOwner !== owner || user !== 'node') throw new Error('target container identity/owner/user validation failed');
     agentContainerId = containerId;
     const targetId = containerId;
-    if (options.tui) {
-      await initializeTerminalTmux(containerName, tmuxSocket, TARGET_ALIAS);
-    }
+    if (options.tui) await (options.realTuiHarness
+      ? initializeProviderTui(containerName, tmuxSocket, TARGET_ALIAS, options.realTuiHarness, TENANT, targetId, options.openclawGateway)
+      : initializeTerminalTmux(containerName, tmuxSocket, TARGET_ALIAS));
     await startedDatabase.pool.query('UPDATE agents SET container_name=$3 WHERE tenant_id=$1 AND alias=$2', [TENANT, TARGET_ALIAS, targetId]);
     agentEnvBundle.container_id = targetId;
     const bundlePath = join(directory, 'agent-bundle.json');

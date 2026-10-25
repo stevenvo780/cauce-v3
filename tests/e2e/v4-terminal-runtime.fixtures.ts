@@ -14,6 +14,7 @@ function boundedSeconds(value: number | undefined, fallback: number, maximum: nu
 }
 
 export function realPtyRuntimeOptions(options: RealPtyFixtureOptions) {
+  if (options.realTuiHarness && !options.tui) throw new Error('real provider TUI requires tui=true');
   const owner = options.owner ?? 'real-pty-agent';
   const resourcePrefix = options.resourcePrefix ?? (options.owner ? `zz-canary-${owner}` : 'cauce-real-pty');
   if (!/^[a-z0-9][a-z0-9._-]{0,95}$/u.test(owner) || !/^[a-z0-9][a-z0-9._-]{0,95}$/u.test(resourcePrefix)) {
