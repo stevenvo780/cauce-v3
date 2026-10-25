@@ -39,78 +39,79 @@ interface TerminalDenialCopy {
 }
 
 /**
- * The bus owner. No proper name is written: whoever runs this console changes, and a name burned into
- * code ages worse than a role.
+ * Whoever can fix a permission in this company. No proper name is written: whoever runs this
+ * console changes, and a name burned into code ages worse than a role.
  */
-const DUENO_DEL_BUS = 'el dueño del bus (quien administra Cauce)';
+const ADMIN_EMPRESA = 'la persona que administra tu empresa';
 
 export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, TerminalDenialCopy>> = {
   csrf_missing: {
     titulo: 'La consola no mandó su token CSRF',
-    porQue: 'El gateway exige una cabecera `X-CSRF-Token` en toda escritura y esta petición salió sin '
+    porQue: 'El servidor exige una cabecera `X-CSRF-Token` en toda escritura y esta petición salió sin '
       + 'ella, así que la rechazó antes de mirar tu permiso. No es tu permiso ni el alias: es la consola.',
     quienLoLevanta: 'quien mantiene la consola: no hay nada que puedas conceder para arreglarlo',
   },
   unauthorized: {
     titulo: 'La sesión de la consola caducó',
-    porQue: 'El gateway no reconoció la sesión del navegador. No es un permiso que te falte: la cookie '
+    porQue: 'El servidor no reconoció la sesión del navegador. No es un permiso que te falte: la cookie '
       + 'de consola venció o se invalidó, y hasta que vuelvas a entrar ninguna escritura pasa.',
     quienLoLevanta: 'tú mismo: vuelve a entrar y reintenta',
   },
   unknown_alias: {
     titulo: 'Ese alias no está en el mapa de la flota',
-    porQue: 'El gateway no encuentra al alias en su reparto de contenedores, o lo tiene en otro cliente '
+    porQue: 'El servidor no encuentra al alias en su reparto de contenedores, o lo tiene en otro cliente '
       + 'distinto del que pediste. Sin saber en qué contenedor vive, no hay dónde abrir la sesión.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: hay que dar de alta el alias en el reparto de la flota, o corregir el cliente.`,
+    quienLoLevanta: `${ADMIN_EMPRESA}: hay que dar de alta el alias en el reparto de la flota, o corregir el cliente.`,
   },
   control_permission_required: {
     titulo: 'Tu cuenta no tiene permiso de control',
     porQue: 'La terminal es una operación de control sobre la flota y tu sesión no lo tiene concedido en la base. '
       + 'Es el MISMO permiso que pide «Ajustes y altas».',
-    quienLoLevanta: `${DUENO_DEL_BUS}: te tiene que conceder el permiso «control» a tu alias de operador.`,
+    quienLoLevanta: `${ADMIN_EMPRESA}: te tiene que conceder el permiso «control» a tu alias de operador.`,
   },
   attribution_required: {
     titulo: 'Falta decir qué persona está entrando',
     porQue: 'Sin una persona con nombre detrás de la sesión, la auditoría no puede atribuir lo que pase dentro del '
       + 'contenedor. Sin esa identidad solo se puede entrar a los alias de tu propio cliente, y este es de otro.',
     quienLoLevanta: 'Tú: entra con una sesión con identidad de persona. Si ya entraste así, '
-      + `pídele a ${DUENO_DEL_BUS} que revise cómo llega tu identidad al gateway.`,
+      + `pídele a ${ADMIN_EMPRESA} que revise cómo llega tu identidad al servidor.`,
   },
   no_routing_authority: {
-    titulo: 'No tienes autoridad de ruteo sobre ese contenedor',
-    porQue: 'Una shell alcanza a TODOS los alias que comparten el contenedor, así que el gateway exige que puedas '
-      + 'hablarle a cada uno de ellos. Con que falte el permiso sobre uno solo, la puerta queda cerrada.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: hay que darte membresía o arista ACL hacia todos los alias de ese contenedor.`,
+    titulo: 'No tienes permiso sobre todos los agentes de ese contenedor',
+    porQue: 'Abrir una terminal alcanza a todos los agentes que comparten el contenedor, así que hacen falta '
+      + 'permisos sobre cada uno de ellos. Con que falte uno solo, la puerta queda cerrada.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: tiene que darte permiso sobre todos los agentes de ese contenedor `
+      + 'en Ajustes → Acceso y roles → Concesiones de terminal.',
   },
   no_grant: {
-    titulo: 'Tu operador no figura en la lista de permisos de la terminal',
-    porQue: 'El gateway relee de disco el fichero de permisos de terminal en cada pedido, y ahí no aparece tu '
-      + 'operador para este alias y este modo. No es un fallo del relay: el relay está sano y la lista dice que no.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir tu operador al fichero de permisos de terminal, `
-      + 'para ese alias y ese modo (TUI en vivo o shell son permisos distintos).',
+    titulo: 'No tienes permiso para abrir la terminal de este agente',
+    porQue: 'Nadie te ha dado permiso para entrar a la terminal de este agente. Mirar su TUI y abrir una '
+      + 'terminal son permisos distintos: hace falta uno que te nombre a ti para este agente.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: te lo da en Ajustes → Acceso y roles → Concesiones de terminal. `
+      + 'Si administras tú la empresa, entra ahí y dátelo.',
   },
   no_grant_for_operator: {
-    titulo: 'Tu operador no tiene concesión sobre ese alias',
-    porQue: 'El fichero de permisos de terminal sí conoce el alias, pero ninguna de sus filas nombra a tu operador '
-      + 'para el contenedor entero. Una fila comodín solo abre los modos de solo lectura; para escribir hace '
-      + 'falta que la fila te nombre.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir una fila con tu operador para todos los alias de ese contenedor.`,
+    titulo: 'No tienes permiso para abrir la terminal de este agente',
+    porQue: 'Hay permisos de terminal para este agente, pero ninguno con tu nombre para todo el contenedor. '
+      + 'Los permisos dados a todo el mundo solo dejan mirar; para escribir hace falta uno con tu nombre.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: te lo da en Ajustes → Acceso y roles → Concesiones de terminal. `
+      + 'Si administras tú la empresa, entra ahí y dátelo.',
   },
   no_recognized_mode: {
-    titulo: 'El agente PTY habla un dialecto que este gateway no conoce',
-    porQue: 'El agente está conectado, pero ninguno de los modos que publica figura entre los que este gateway '
-      + 'entiende. Suele ser un agente más nuevo que el gateway: no es tu permiso ni tu concesión.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: hay que actualizar el gateway al mismo contrato que el agente PTY, o volver el agente atrás.`,
+    titulo: 'El programa de terminal de ese contenedor no se entiende con este servidor',
+    porQue: 'El programa que abre la terminal dentro del contenedor está conectado, pero no ofrece ningún '
+      + 'modo que este servidor conozca. Suele ser más nuevo que el servidor: no es tu permiso.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: hay que poner el servidor y ese programa en la misma versión.`,
   },
   writable_tui_disabled: {
-    titulo: 'La escritura sobre la TUI está apagada en este gateway',
-    porQue: 'El interruptor de la TUI con teclado está en cero en la configuración del gateway, así que ningún '
-      + 'operador puede abrir ni tomar una sesión con escritura, tenga o no concesión. Mirar sigue permitido.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que encender el interruptor de escritura del gateway y reiniciarlo.`,
+    titulo: 'Escribir en la TUI está apagado',
+    porQue: 'La escritura en la TUI está apagada para todo el mundo en este servidor, así que nadie puede '
+      + 'abrir ni tomar una sesión con teclado, tenga o no permiso. Mirar sigue permitido.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: tiene que encender la escritura de la TUI en la configuración del servidor.`,
   },
   control_held: {
     titulo: 'Otro operador tiene el control de esa TUI',
-    porQue: 'El control se toma de a uno: mientras alguien lo tenga, el bus deja las entregas de ese alias en '
+    porQue: 'El control se toma de a uno: mientras alguien lo tenga, las entregas de ese alias quedan en '
       + 'espera y nadie más teclea. El aviso dice quién lo tiene y hasta cuándo, nada más.',
     quienLoLevanta: 'Quien lo tiene, devolviéndolo. Si cerró la pestaña sin devolverlo, vence solo al terminar la sesión.',
   },
@@ -124,15 +125,14 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
   extension_exhausted: {
     titulo: 'La sesión ya no admite más prórroga',
     porQue: 'Cada sesión tiene un techo total contado desde que se abrió, y la prórroga pedida no gana '
-      + 'ventana sobre ese techo. No es tu permiso: es el tope de duración del gateway.',
+      + 'ventana sobre ese techo. No es tu permiso: es el tope de duración del servidor.',
     quienLoLevanta: 'Tú: cierra la sesión y abre una nueva. Si el techo es corto para el trabajo, '
-      + `pídele a ${DUENO_DEL_BUS} que suba el tope total.`,
+      + `pídele a ${ADMIN_EMPRESA} que suba el tope total.`,
   },
   stale_terminal_owner: {
     titulo: 'Esta pestaña ya no es la dueña de la sesión, o la sesión todavía no está enganchada',
-    porQue: 'El gateway solo acepta escribir sobre una sesión viva, consumida por el relay y con la misma '
-      + 'capacidad de dueño que emitió a esta pestaña. O el relay aún no redimió el ticket, o otra '
-      + 'pestaña rotó la propiedad, o la sesión ya se cerró.',
+    porQue: 'Solo se puede escribir en una sesión viva y abierta desde esta misma pestaña. O la sesión '
+      + 'todavía no terminó de abrirse, o otra pestaña la tomó, o ya se cerró.',
     quienLoLevanta: 'Tú: espera a que la terminal muestre la sesión enganchada y reintenta; si otra pestaña '
       + 'la tomó, cierra esta y sigue desde aquella.',
   },
@@ -141,20 +141,21 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
     porQue: 'Pediste un modo con teclado (shell o TUI con escritura) desde una sesión sin identidad de persona. '
       + 'Mirar se puede sin nombre; teclear dentro del contenedor del agente, no: cada pulsación queda atribuida.',
     quienLoLevanta: 'Tú: entra con una sesión con identidad de persona. Si ya entraste así, '
-      + `pídele a ${DUENO_DEL_BUS} que revise cómo llega tu identidad al gateway.`,
+      + `pídele a ${ADMIN_EMPRESA} que revise cómo llega tu identidad al servidor.`,
   },
   writable_requires_named_operator: {
-    titulo: 'Una concesión comodín no abre modos con teclado',
-    porQue: 'La fila que te alcanza en el fichero de permisos de terminal es la comodín, y el gateway solo la '
-      + 'acepta para mirar. Para un modo con escritura la fila tiene que nombrar a tu operador.',
-    quienLoLevanta: `${DUENO_DEL_BUS}: tiene que añadir una fila con tu operador y ese modo para ese alias.`,
+    titulo: 'Tu permiso de terminal solo deja mirar',
+    porQue: 'El permiso que te alcanza es el dado a todo el mundo, y ese solo deja mirar. Para escribir '
+      + '(abrir una terminal o teclear en la TUI) hace falta un permiso con tu nombre.',
+    quienLoLevanta: `${ADMIN_EMPRESA}: te lo da en Ajustes → Acceso y roles → Concesiones de terminal. `
+      + 'Si administras tú la empresa, entra ahí y dátelo.',
   },
   agent_offline: {
     titulo: 'El agente PTY del contenedor no está conectado',
-    porQue: 'Dentro del contenedor vive un agente que es el que abre la sesión, y el gateway no lo ve conectado '
+    porQue: 'Dentro del contenedor vive un programa que es el que abre la sesión, y el servidor no lo ve conectado '
       + '—o no publica el modo que pediste—. El permiso puede estar perfectamente bien: lo que falta es el agente.',
-    quienLoLevanta: 'Nadie tiene que darte un permiso: hay que levantar el agente PTY dentro de ese contenedor. '
-      + `Si no sabes quién lo maneja, es ${DUENO_DEL_BUS}.`,
+    quienLoLevanta: 'Nadie tiene que darte un permiso: hay que levantar ese programa dentro del contenedor. '
+      + `Si no sabes quién lo maneja, es ${ADMIN_EMPRESA}.`,
   },
   session_limit: {
     titulo: 'Ya tienes abiertas todas las sesiones que te tocan',
@@ -164,14 +165,14 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
   },
   container_busy: {
     titulo: 'Otro operador ya está dentro de ese contenedor',
-    porQue: 'Dos operadores no comparten contenedor: la segunda shell leería el home de la primera. El gateway lo '
+    porQue: 'Dos operadores no comparten contenedor: la segunda shell leería el home de la primera. El servidor lo '
       + 'impide mientras la otra sesión siga viva.',
     quienLoLevanta: 'Quien tenga la sesión abierta, cerrándola. Se libera sola cuando vence.',
   },
   request_conflict: {
     titulo: 'El reintento ya no coincide con la reserva original',
     porQue: 'Ese identificador de apertura ya existe, pero cambió el destino, el modo, la geometría '
-      + 'o la capacidad dueña. El gateway no mezcla ambas operaciones ni entrega la reserva anterior.',
+      + 'o la capacidad dueña. El servidor no mezcla ambas operaciones ni entrega la reserva anterior.',
     quienLoLevanta: 'Tú: cierra esta pestaña y abre una intención nueva. Si fue solo una pérdida de red, '
       + 'reintenta sin editar nada para conservar la misma identidad de la operación.',
   },
@@ -264,14 +265,14 @@ export function explicarDenegacionPty(entrada: {
   const cita = typeof entrada.texto === 'string' && entrada.texto.trim() ? entrada.texto.trim() : undefined;
   const titulo = 'El servidor rechazó la sesión y no dijo por qué en un código que esta consola conozca';
   const porQue = cita
-    ? `El gateway contestó, textualmente: «${cita}»${sufijoEstado || '.'} Esta consola no tiene traducción para eso, `
+    ? `El servidor contestó, textualmente: «${cita}»${sufijoEstado || '.'} Esta consola no tiene traducción para eso, `
       + 'así que se cita en vez de inventarle un significado.'
-    : `El gateway rechazó el pedido sin texto${sufijoEstado || '.'}`;
+    : `El servidor rechazó el pedido sin texto${sufijoEstado || '.'}`;
   return {
     estado,
     titulo,
     porQue,
-    quienLoLevanta: `${DUENO_DEL_BUS}: pásale este texto tal cual; sale de los registros del gateway.`,
+    quienLoLevanta: `${ADMIN_EMPRESA}: pásale este texto tal cual; sale de los registros del servidor.`,
     linea: `${titulo}. ${porQue}`,
   };
 }

@@ -12,7 +12,7 @@ import { LIVE_STATE_META, type LiveState } from '../live/agent-state';
 import { TerminalApiError, type TerminalSessionGrant, type TerminalTargetsSnapshot } from './api';
 import { prorrogarSesion } from './api-control';
 import { ControlDeTui } from './ControlDeTui';
-import { explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
+import { codigoDeDenegacion, explicarDenegacionPty, traducirCodigosEnTexto, type DenegacionExplicada } from './denegaciones';
 import {
   LIVE_TUI_LABELS,
   LIVE_TUI_MODE,
@@ -433,7 +433,8 @@ export function SessionStage({
       {ptyClosedAll ? (
         <Notice tone="neutral" icon={<CircleOff size={14} aria-hidden="true" />}>
           <strong className="font-medium text-fg-2">{channelLabel}.</strong> {channelReason}
-          {channel.status === 'denied' && /concesión/i.test(channelReason) ? (
+          {channel.status === 'denied' && (codigoDeDenegacion(channel.reason) === 'no_grant'
+            || codigoDeDenegacion(channel.reason) === 'no_grant_for_operator') ? (
             <span className="block">
               <GrantAccessAction subject={session?.subject ?? ''} tenantId={agent.tenantId} alias={agent.alias}
                 canManage={canManageCompany(authority?.role)} />

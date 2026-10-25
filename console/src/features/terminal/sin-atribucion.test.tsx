@@ -171,7 +171,7 @@ afterEach(async () => {
 describe('T041 · la toma de teclado exige persona con nombre', () => {
   it.each([
     ['writable_requires_attribution', 'Escribir en una TUI exige una persona con nombre'],
-    ['writable_requires_named_operator', 'Una concesión comodín no abre modos con teclado'],
+    ['writable_requires_named_operator', 'Tu permiso de terminal solo deja mirar'],
   ])('403 %s se dice en castellano y el teclado no se entrega', async (codigo, titulo) => {
     const sesiones: SesionPedida[] = [];
     const controles: ControlPedido[] = [];
