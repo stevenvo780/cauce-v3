@@ -43,7 +43,7 @@ function identityError(draft: AgentRegistryCreateDraft, snapshot?: Configuration
   if (snapshot && !registryTenantExists(snapshot, draft.tenantId)) {
     return 'El espacio de trabajo elegido ya no está disponible. Elige uno del inventario actual para continuar.';
   }
-  if (!SLUG.test(draft.alias.trim())) return 'El alias debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
+  if (!SLUG.test(draft.alias.trim())) return 'El alias debe empezar con una letra minúscula y usar solo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
   const name = draft.displayName.trim();
   if (!name || name.length > 128) return 'Indica un nombre visible de hasta 128 caracteres.';
   return undefined;
@@ -51,7 +51,7 @@ function identityError(draft: AgentRegistryCreateDraft, snapshot?: Configuration
 
 function placementError(draft: AgentRegistryCreateDraft): string | undefined {
   if (draft.harnessId.trim() && !SLUG.test(draft.harnessId.trim())) {
-    return 'El tipo de agente debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
+    return 'El tipo de agente debe empezar con una letra minúscula y usar solo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.';
   }
   if (!/^[0-9]+$/u.test(draft.capacity)) return 'La capacidad debe ser un entero entre 1 y 100.';
   const capacity = Number(draft.capacity);

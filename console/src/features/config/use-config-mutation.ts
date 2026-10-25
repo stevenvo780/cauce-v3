@@ -21,11 +21,11 @@ export interface ConfigMutationNotice {
   alcance?: string;
 }
 
-const BLOQUEO_POR_DEFECTO = 'Cambio bloqueado: no tenés permiso para escribir configuración, o no se pudo leer el permiso. Ante la duda, cerrado.';
+const BLOQUEO_POR_DEFECTO = 'Cambio bloqueado: no tienes permiso para escribir configuración, o no se pudo leer el permiso. Ante la duda, cerrado.';
 
 const REVISION_RELEIDA = 'La configuración cambió mientras editabas; la releí. Revisa y confirma.';
 
-const SIN_DRY_RUN = 'Primero hay que previsualizar exactamente esta mutación sobre la revisión visible: el apply sólo se habilita sobre el dry-run que el servidor ya aceptó.';
+const SIN_DRY_RUN = 'Primero hay que previsualizar exactamente esta mutación sobre la revisión visible: el apply solo se habilita sobre el dry-run que el servidor ya aceptó.';
 
 export interface ConfigMutationRunner {
   /**
@@ -208,7 +208,7 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
     if (dryRun) {
       setValidated({ mutationKey, expectedRevision });
       setPreview(options.redactar ? options.redactar(result) : JSON.stringify(result, null, 2));
-      setNotice({ text: `Dry-run aceptado: ${result.summary ?? 'el servidor no devolvió resumen'}. Revisá el resultado antes de aplicar.`, tone: 'success' });
+      setNotice({ text: `Dry-run aceptado: ${result.summary ?? 'el servidor no devolvió resumen'}. Revisa el resultado antes de aplicar.`, tone: 'success' });
       return true;
     }
     setValidated(undefined);

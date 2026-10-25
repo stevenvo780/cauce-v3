@@ -43,7 +43,7 @@ export function textoRecarga(recarga: EstadoRecarga | undefined): string {
   return recarga.releido
     ? ` Releído del servidor: las tablas de abajo están en la revisión ${String(recarga.revision ?? 'desconocida')}.`
     : ` PERO la relectura del snapshot NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
-      + ' vencidas, usá «Actualizar» antes de seguir tocando.';
+      + ' vencidas, usa «Actualizar» antes de seguir tocando.';
 }
 
 const REVISION_MISMATCH = /revision changed: expected (\d+), current (\d+)/i;
@@ -70,9 +70,9 @@ export type CaminoDeCambio = 'previsualizado' | 'directo' | 'rollback';
 
 /** What to do after the clash, depending on the path that triggered it. */
 const QUE_HACER: Record<CaminoDeCambio, string> = {
-  previsualizado: 'revisá los datos efectivos, volvé a previsualizar y recién ahí aplicá.',
-  directo: 'revisá los datos efectivos y volvé a pedir el cambio sobre la revisión nueva.',
-  rollback: 'revisá los datos efectivos y volvé a elegir en el audit trail la revisión a deshacer '
+  previsualizado: 'revisa los datos efectivos, vuelve a previsualizar y recién ahí aplica.',
+  directo: 'revisa los datos efectivos y vuelve a pedir el cambio sobre la revisión nueva.',
+  rollback: 'revisa los datos efectivos y vuelve a elegir en el audit trail la revisión a deshacer '
     + 'sobre el estado nuevo.',
 };
 
@@ -207,7 +207,7 @@ export async function executeConfigurationChange(
         uncertain: !options.dryRun,
         message: options.dryRun
           ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
-          : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verificá la relectura antes de repetirla.',
+          : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verifica la relectura antes de repetirla.',
         ...(recarga === undefined ? {} : { recarga }),
       };
     }

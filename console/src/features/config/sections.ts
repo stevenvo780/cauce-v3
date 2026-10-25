@@ -64,7 +64,7 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     label: 'Acceso y roles',
     proposito: 'Quién puede hablarle a quién, qué hace cada rol y a qué personas se avisa.',
     detalle: 'Si no hay un permiso entre dos espacios, entre ellos no pasa nada. El rol se asigna en la membresía: '
-      + 'operador administra, agente conversa, adaptador entrega, y el bróker de contexto sólo publica. Cada destino '
+      + 'operador administra, agente conversa, adaptador entrega, y el bróker de contexto solo publica. Cada destino '
       + 'de aviso declara a qué conversación va, cada cuánto y cuántas veces por día.',
   },
   {

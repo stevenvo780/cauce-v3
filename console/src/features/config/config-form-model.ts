@@ -106,10 +106,10 @@ export function buildFormMutation(definition: ConfigFormDefinition, action: Conf
       continue;
     }
     const text = (values[field.key] ?? '').trim();
-    if (action === 'create' && field.requiredOnCreate && text === '') throw new Error(`${field.label}: completá este campo obligatorio.`);
+    if (action === 'create' && field.requiredOnCreate && text === '') throw new Error(`${field.label}: completa este campo obligatorio.`);
     if (['delete', 'retire', 'restore'].includes(action) || (action === 'update' && values[field.key] === initial[field.key])) continue;
     if (text === '' && !field.nullable && field.kind !== 'list') {
-      if (action === 'update') throw new Error(`${field.label}: completá el valor antes de previsualizar.`);
+      if (action === 'update') throw new Error(`${field.label}: completa el valor antes de previsualizar.`);
       continue;
     }
     value[field.key] = text === '' && field.nullable ? null
@@ -119,7 +119,7 @@ export function buildFormMutation(definition: ConfigFormDefinition, action: Conf
             : text;
   }
   if (!['delete', 'retire', 'restore'].includes(action)) {
-    if (action === 'update' && !Object.keys(value).length) throw new Error('Modificá al menos un campo antes de previsualizar.');
+    if (action === 'update' && !Object.keys(value).length) throw new Error('Modifica al menos un campo antes de previsualizar.');
     mutation.value = value;
   }
   const parsed = ConfigMutationSchema.safeParse(mutation);
@@ -127,7 +127,7 @@ export function buildFormMutation(definition: ConfigFormDefinition, action: Conf
     const issue = parsed.error.issues[0];
     const key = String(issue.path.at(-1) ?? '');
     const field = definition.fields.find((entry) => entry.key === key);
-    throw new Error(`${field?.label ?? 'Configuración'}: valor no válido. Revisá el formato y los límites del campo.`);
+    throw new Error(`${field?.label ?? 'Configuración'}: valor no válido. Revisa el formato y los límites del campo.`);
   }
   return mutation;
 }

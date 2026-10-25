@@ -12,7 +12,7 @@ const membresia = {
   enabled: true, created_at: '2026-07-01T10:00:00.000Z',
 };
 
-it('arma la mutación de un permiso con SÓLO el campo que cambia y la dirección puesta', () => {
+it('arma la mutación de un permiso con SOLO el campo que cambia y la dirección puesta', () => {
   const interruptor = interruptorDeFila('acl_edges', arista, 'allow_route', 0);
   expect(interruptor?.mutation).toEqual({
     resource: 'acl_edge', action: 'update', from_tenant: 'Steven', to_tenant: 'Miguel',
@@ -30,7 +30,7 @@ it('el apagado propone encender, y al revés', () => {
     .toMatchObject({ value: { allow_control: false } });
 });
 
-it('el aria-label nombra la FILA y el permiso, no sólo el permiso', () => {
+it('el aria-label nombra la FILA y el permiso, no solo el permiso', () => {
   // Twenty-four controls that only say "Route" are twenty-four indistinguishable controls to
   // anyone not looking at the table.
   expect(interruptorDeFila('acl_edges', arista, 'allow_route', 0)?.aria)

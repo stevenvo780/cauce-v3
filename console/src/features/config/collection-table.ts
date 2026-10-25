@@ -281,7 +281,7 @@ export function motivoSinCambioDeRol(fila: Record<string, unknown>): string | un
   const faltan = IDENTIDAD_MEMBERSHIP.filter((campo) => texto(fila, campo) === undefined);
   if (!faltan.length) return undefined;
   return `UNKNOWN: el servidor no publica ${faltan.join(', ')} en esta fila, así que no se puede `
-    + 'armar la mutación de rol. Cambialo por el editor de mutaciones JSON.';
+    + 'armar la mutación de rol. Cámbialo por el editor de mutaciones JSON.';
 }
 
 /**

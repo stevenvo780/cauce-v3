@@ -83,10 +83,10 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
   }
   if (step === 'membership') {
     if (!draft.withMembership) return undefined;
-    if (!SLUG.test(draft.alias.trim())) return 'El identificador debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
-    return SLUG.test(draft.role.trim()) ? undefined : 'El rol de permisos debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
+    if (!SLUG.test(draft.alias.trim())) return 'El identificador debe ser minúsculas, empezar con letra y usar solo letras, números, guion o guion bajo.';
+    return SLUG.test(draft.role.trim()) ? undefined : 'El rol de permisos debe ser minúsculas, empezar con letra y usar solo letras, números, guion o guion bajo.';
   }
-  if (!planFor(draft).length) return 'El plan quedó vacío: incluí al menos un recurso.';
+  if (!planFor(draft).length) return 'El plan quedó vacío: incluye al menos un recurso.';
   for (const previous of wizardSteps) {
     if (previous === 'review') break;
     const error = stepError(previous, draft);
@@ -165,7 +165,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     if (dryRun) {
       setValidated(pendingKey);
       setPreview(JSON.stringify(outcome.result, null, 2));
-      setNotice({ text: `Previsualización de ${stepTitles[pending.step]} aceptada: revisá el resultado antes de aplicar.`, tone: 'success' });
+      setNotice({ text: `Previsualización de ${stepTitles[pending.step]} aceptada: revisa el resultado antes de aplicar.`, tone: 'success' });
       return;
     }
     // The mutation the server accepted is recorded, even if the draft changed during the await.
@@ -211,7 +211,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     </div> : null}
 
     {step === 'review' ? <>
-      {!plan.length ? <EmptyState>El plan quedó vacío: volvé a los pasos e incluí al menos un recurso.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Plan del espacio">
+      {!plan.length ? <EmptyState>El plan quedó vacío: vuelve a los pasos e incluye al menos un recurso.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Plan del espacio">
         {progress.map((entry) => <li key={entry.step} className="rounded-lg border border-line p-2.5">
           <Badge tone={entry.done ? 'done' : entry === pending ? 'info' : 'unknown'}>{entry.done ? 'aplicado' : entry === pending ? 'en curso' : 'en cola'}</Badge>{' '}
           <code className="text-xs break-all">{JSON.stringify(entry.mutation)}</code>

@@ -79,7 +79,7 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
     if (room.length < 1 || room.length > 128) return 'La sala necesita un identificador de 1 a 128 caracteres.';
     if (isReservedAlias(borrador.alias)) return RESERVED_ALIAS_MESSAGE;
     if (!SLUG.test(borrador.alias.trim())) {
-      return 'El identificador (alias) debe ser minúsculas, empezar con letra y usar sólo letras, números, guion o guion bajo.';
+      return 'El identificador (alias) debe ser minúsculas, empezar con letra y usar solo letras, números, guion o guion bajo.';
     }
     return SLUG.test(borrador.role.trim())
       ? undefined
@@ -89,7 +89,7 @@ export function errorDeAlta(recurso: RecursoAlta, borrador: BorradorAlta): strin
   if (!TENANT.test(borrador.hacia.trim())) return 'El espacio de destino debe empezar con letra (máx. 64 caracteres).';
   // The store rejects an edge to itself with a 409; warning here saves the round trip.
   return borrador.desde.trim() === borrador.hacia.trim()
-    ? 'Un permiso de un espacio hacia sí mismo está prohibido: elegí dos espacios distintos.'
+    ? 'Un permiso de un espacio hacia sí mismo está prohibido: elige dos espacios distintos.'
     : undefined;
 }
 

@@ -233,7 +233,7 @@ export function useConfigWrites() {
             tone: 'error',
             text: dryRun
               ? `El servidor devolvió un 2xx sin el recibo exacto del preview de rollback ${revisionId}; no se acredita.`
-              : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verificá la relectura antes de repetirlo.${textoRecarga(recarga)}`,
+              : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verifica la relectura antes de repetirlo.${textoRecarga(recarga)}`,
           });
           return;
         }
@@ -243,7 +243,7 @@ export function useConfigWrites() {
           canalRollback.informar({
             tone: 'success',
             text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
-              + 'no se escribió nada todavía, revisá el resultado de abajo.',
+              + 'no se escribió nada todavía, revisa el resultado de abajo.',
           });
           return;
         }

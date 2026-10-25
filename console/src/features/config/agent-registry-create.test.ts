@@ -10,9 +10,9 @@ describe('agent registry create draft', () => {
     expect(agentRegistryCreateError(EMPTY_AGENT_REGISTRY_DRAFT))
       .toBe('Elige un espacio de trabajo del registro actual.');
     expect(agentRegistryCreateError({ ...EMPTY_AGENT_REGISTRY_DRAFT, tenantId: 'A', alias: 'good', displayName: 'Agent', harnessId: 'Bad' }))
-      .toBe('El tipo de agente debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.');
+      .toBe('El tipo de agente debe empezar con una letra minúscula y usar solo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.');
     expect(agentRegistryCreateError({ ...EMPTY_AGENT_REGISTRY_DRAFT, tenantId: 'A', alias: 'Bad', displayName: 'Agent' }))
-      .toBe('El alias debe empezar con una letra minúscula y usar sólo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.');
+      .toBe('El alias debe empezar con una letra minúscula y usar solo letras minúsculas, números, guiones o guiones bajos, hasta 64 caracteres.');
     expect(agentRegistryCreateError({ ...EMPTY_AGENT_REGISTRY_DRAFT, tenantId: 'A', alias: 'good', displayName: 'Agent', capacity: '0' }))
       .toMatch(/entre 1 y 100/);
     expect(agentRegistryCreateError({ ...EMPTY_AGENT_REGISTRY_DRAFT, tenantId: 'A', alias: 'good', displayName: 'Agent', containerName: 'container' }))

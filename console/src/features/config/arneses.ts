@@ -32,7 +32,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
       + 'y no desde la personal.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente: los campos canónicos y el editor manual '
-      + 'están juntos, y sólo escriben con hechos del runtime medidos.',
+      + 'están juntos, y solo escriben con hechos del runtime medidos.',
   },
   {
     id: 'codex',
@@ -43,7 +43,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
       + 'dos, del mismo tamaño, y la de `~/.codex` es la que abriría un resolutor ingenuo.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, con el entorno del proceso medido. Su '
-      + '`config.toml` sigue de sólo lectura: un TOML mal formado deja al bot sin arrancar.',
+      + '`config.toml` sigue de solo lectura: un TOML mal formado deja al bot sin arrancar.',
   },
   {
     id: 'openclaw',
@@ -59,9 +59,9 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'grok',
     label: 'Grok',
-    aporta: 'El agente ya corre Grok. El manual sólo cuenta si el runtime midió su espacio de trabajo.',
+    aporta: 'El agente ya corre Grok. El manual solo cuenta si el runtime midió su espacio de trabajo.',
     directiva: '<WORKSPACE_GROK>/AGENTS.md',
-    detalle: 'El inventario sólo acredita el manual con `grok_workspace` medido en el runtime. '
+    detalle: 'El inventario solo acredita el manual con `grok_workspace` medido en el runtime. '
       + 'La carpeta de autenticación de Grok no demuestra cuál es el proyecto del agente.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
@@ -70,9 +70,9 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'muse',
     label: 'Muse',
-    aporta: 'El agente ya corre Muse. El manual sólo cuenta si el runtime midió su espacio de trabajo.',
+    aporta: 'El agente ya corre Muse. El manual solo cuenta si el runtime midió su espacio de trabajo.',
     directiva: '<WORKSPACE_MUSE>/AGENTS.md',
-    detalle: 'El inventario sólo acredita el manual con `muse_workspace` medido en el runtime. '
+    detalle: 'El inventario solo acredita el manual con `muse_workspace` medido en el runtime. '
       + 'Un proceso Muse en modo puente sin workspace no acredita una ruta de manual.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
@@ -121,7 +121,7 @@ export const DECISION_DEL_ARNES =
 /** The declared self-description is written on the agent profile, never from this catalog. */
 export const DONDE_SE_ESCRIBE_EL_ROL_DECLARADO =
   'El texto con el que el agente se presenta tampoco se escribe aquí. Se redacta una sola vez en '
-  + '«Perfil y contexto». Esta pantalla sólo muestra la copia de diagnóstico, y no siempre llega al archivo del programa.';
+  + '«Perfil y contexto». Esta pantalla solo muestra la copia de diagnóstico, y no siempre llega al archivo del programa.';
 
 /** Declared tools are authored guidance; they are never an authorization or runtime capability grant. */
 export const DISTINCION_HERRAMIENTAS_Y_PERMISOS =

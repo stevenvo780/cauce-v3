@@ -120,7 +120,7 @@ it('bloquea el apply de nuevo cuando el servidor responde conflicto de revisión
   const user = userEvent.setup();
   renderWizard((call) => call.dryRun
     ? accept(call)
-    : { ok: false, conflict: true, message: 'Conflicto de revisión: volvé a previsualizar.' });
+    : { ok: false, conflict: true, message: 'Conflicto de revisión: vuelve a previsualizar.' });
   await user.click(screen.getByRole('button', { name: review }));
   await user.click(screen.getByRole('button', { name: /previsualizar paso/i }));
   await user.click(await screen.findByRole('button', { name: /aplicar paso/i }));

@@ -50,7 +50,7 @@ export function TeamsPanel({ snapshot, ctx }: { snapshot: ConfigurationSnapshot;
       onClick={() => { open({ collection: 'rooms', action: 'create' }); }}>
       <Plus size={14} aria-hidden="true" />Nuevo equipo</Button>}>
     {!rooms ? <EmptyState>El servidor no publica los equipos en esta lectura.</EmptyState>
-      : !rooms.length ? <EmptyState>Todavía no hay equipos. Creá el primero con «Nuevo equipo».</EmptyState>
+      : !rooms.length ? <EmptyState>Todavía no hay equipos. Crea el primero con «Nuevo equipo».</EmptyState>
         : <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,26rem),1fr))] gap-2 p-0" aria-label="Equipos configurados">
           {rooms.map((room) => {
             const id = `${String(room.tenant_id)}/${String(room.id)}`;

@@ -40,7 +40,7 @@ export function TeamFormDialog({ ctx }: { ctx: ConfigWrites }) {
           description="Puedes previsualizar el cambio antes de confirmarlo." />
         {confirming ? <div className="shrink-0 border-b border-line px-5 py-3">
           <Notice tone="warn" role="alert" className="grid gap-2">
-            <p><strong>Tenés cambios sin guardar.</strong> Si cerrás ahora, se descartan los borradores sin confirmar.</p>
+            <p><strong>Tienes cambios sin guardar.</strong> Si cierras ahora, se descartan los borradores sin confirmar.</p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button size="sm" onClick={() => { setConfirming(false); }}>Seguir editando</Button>
               <Button size="sm" variant="danger" onClick={close}>Descartar y cerrar</Button>

@@ -130,7 +130,7 @@ it('asks inside the dialog before discarding an edited team form, and closes at 
   const name = await screen.findByRole('textbox', { name: 'Nombre visible' });
   await user.type(name, ' nuevo');
   await user.keyboard('{Escape}');
-  expect(await screen.findByText(/Tenés cambios sin guardar/)).toBeInTheDocument();
+  expect(await screen.findByText(/Tienes cambios sin guardar/)).toBeInTheDocument();
   expect(screen.getByRole('dialog')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Seguir editando' }));
   expect(screen.getByRole('textbox', { name: 'Nombre visible' })).toHaveValue('Equipo Miguel nuevo');

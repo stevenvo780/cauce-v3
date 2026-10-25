@@ -28,7 +28,7 @@ const EFECTOS: Record<string, EfectoDeRol> = {
   },
   context_broker: {
     nombre: 'Bróker de contexto',
-    efecto: 'Para el agente de sistema que publica el contexto de la empresa. Sólo envía. No es una persona.',
+    efecto: 'Para el agente de sistema que publica el contexto de la empresa. Solo envía. No es una persona.',
   },
   observer: {
     nombre: 'Observador',
@@ -47,4 +47,4 @@ export function efectoDeRol(rol: string): EfectoDeRol {
 export const GUIA_DE_ROLES =
   'El rol se elige en la membresía del agente, en «Espacios y salas». Operador administra. Agente conversa. '
   + 'Adaptador entrega mensajes. «Agente que avisa» escribe a una persona sin que se lo pidan. '
-  + '«Bróker de contexto» sólo publica el contexto de la empresa y no es una persona.';
+  + '«Bróker de contexto» solo publica el contexto de la empresa y no es una persona.';

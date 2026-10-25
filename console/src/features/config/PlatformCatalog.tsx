@@ -48,7 +48,7 @@ function describePlatformError(error: unknown): { message: string; conflict: boo
     return {
       conflict: false,
       message: `El servidor rechazó el cambio y no se aplicó nada: lo bloquean ${dependencySummary(error.dependencies) ?? 'dependencias guardadas'}. `
-        + 'Resolvé las dependencias primero (agentes o membresías que todavía lo usan) y volvé a intentarlo.',
+        + 'Resuelve las dependencias primero (agentes o membresías que todavía lo usan) y vuelve a intentarlo.',
     };
   }
   if (error instanceof ApiError && [400, 403, 404, 409].includes(error.status) && error.message) {
@@ -88,7 +88,7 @@ function usePlatformCatalog(ctx: ConfigWrites) {
         setNotice({
           tone: 'error',
           text: 'El servidor respondió sin el recibo durable exacto del cambio. Puede haberse aplicado; '
-            + 'verificá la lista releída antes de repetirlo.',
+            + 'verifica la lista releída antes de repetirlo.',
         });
         return false;
       }
@@ -105,7 +105,7 @@ function usePlatformCatalog(ctx: ConfigWrites) {
         await ctx.config.reload();
       }
       setNotice({ tone: 'error', text: described.message
-        + (described.conflict ? ' Volvé a abrir la acción sobre la versión actual para continuar.' : '') });
+        + (described.conflict ? ' Vuelve a abrir la acción sobre la versión actual para continuar.' : '') });
       return false;
     } finally {
       setBusy(false);
@@ -167,9 +167,9 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
   async function submit(event: SyntheticEvent) {
     event.preventDefault();
     if (!draft) return;
-    if (!draft.id) { setFormError('Id del arnés: elegí un arnés con descriptor publicado.'); return; }
-    if (!draft.displayName.trim()) { setFormError('Nombre visible: completá el nombre visible del arnés.'); return; }
-    if (draft.capabilities.length === 0) { setFormError('Capacidades: elegí al menos una capacidad.'); return; }
+    if (!draft.id) { setFormError('Id del arnés: elige un arnés con descriptor publicado.'); return; }
+    if (!draft.displayName.trim()) { setFormError('Nombre visible: completa el nombre visible del arnés.'); return; }
+    if (draft.capabilities.length === 0) { setFormError('Capacidades: elige al menos una capacidad.'); return; }
     setFormError(undefined);
     const applied = editing === undefined
       ? await catalog.run('harness', 'create', baseRevision, (expected) => catalog.api.createPlatformHarness({
@@ -332,7 +332,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
     event.preventDefault();
     if (!draft) return;
     if (editing === undefined && !ROLE_PATTERN.test(draft.role.trim())) {
-      setFormError('Id del rol: usá minúsculas, dígitos, guiones o guiones bajos, empezando con una letra (máximo 64).');
+      setFormError('Id del rol: usa minúsculas, dígitos, guiones o guiones bajos, empezando con una letra (máximo 64).');
       return;
     }
     setFormError(undefined);

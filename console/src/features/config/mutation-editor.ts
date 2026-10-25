@@ -132,7 +132,7 @@ export function parseMutation(text: string, snapshot?: ConfigurationSnapshot): C
   if (ACCOUNT_RESOURCES.has(String(mutation.resource) as AnyConfigResource)) {
     throw new Error(
       'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas». '
-      + 'Abrí /accounts para usar formularios tipados, confirmación y dry-run.',
+      + 'Abre /accounts para usar formularios tipados, confirmación y dry-run.',
     );
   }
   if (!allActions.includes(String(mutation.action) as ConfigAction)) throw new Error('action no reconocida.');
@@ -140,8 +140,8 @@ export function parseMutation(text: string, snapshot?: ConfigurationSnapshot): C
   if (mutation.resource === 'agent' && rawValue !== null && typeof rawValue === 'object'
     && !Array.isArray(rawValue) && Object.hasOwn(rawValue, 'role_brief')) {
     throw new Error(
-      '`agents.role_brief` es una proyección diagnóstica de sólo lectura. '
-      + 'Modificá el contexto del agente en su página «Perfil y contexto».',
+      '`agents.role_brief` es una proyección diagnóstica de solo lectura. '
+      + 'Modifica el contexto del agente en su página «Perfil y contexto».',
     );
   }
   return mutation as ConfigMutation;
