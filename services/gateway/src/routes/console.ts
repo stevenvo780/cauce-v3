@@ -43,6 +43,7 @@ import { registerConsoleAccessRoutes } from './console/access.js';
 import { registerConsoleMessageAttachmentRoutes } from './console/message-attachments.js';
 import { registerConsoleAgentPreferenceRoutes } from './console/agent-preferences.js';
 import { registerConsoleOperationsRoutes } from './console/operations.js';
+import { registerPlatformCatalogRoutes } from './console/platform-catalog.js';
 import { publishRouteOptions } from './core/publish.js';
 
 export { createConsoleRoutes } from './console/access.js';
@@ -117,6 +118,7 @@ export function registerConsoleRoutes(
   registerConsoleMessageAttachmentRoutes(app, context.options);
   registerConsoleReplyAttachmentRoutes(app, context.options);
   registerConsoleOperationsRoutes(app, context);
+  registerPlatformCatalogRoutes(app, context.options.authProvider, context.options.pool);
   registerConsoleAgentPreferenceRoutes(app, context);
   return registerConsoleAgentRoutes(app, context, publishHandler);
 }
