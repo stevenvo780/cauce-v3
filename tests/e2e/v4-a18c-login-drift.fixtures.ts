@@ -117,8 +117,7 @@ export async function startA18cFixture(): Promise<A18cFixture> {
   };
   try {
     computer = await startComputerHarness({ prefix: PREFIX, resourceOwner: OWNER, workRoot: '/datos',
-      consoleOrigins: [baseUrl], runtimeBundle: runtime,
-      extraSourceFiles: ['ops/container-runtime/cauce_container_restart.py'] });
+      consoleOrigins: [baseUrl], runtimeBundle: runtime });
     vite = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
       configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
       cacheDir: join(directory, 'vite-cache'), server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true,
