@@ -210,6 +210,17 @@ interface DocumentLoadFailure {
   readonly detalle: string;
 }
 
+function documentConflictDiffs(mine: string, theirs: string, label: string): ConflictFieldDiff[] {
+  let difference = 0;
+  const sharedLength = Math.min(mine.length, theirs.length);
+  while (difference < sharedLength && mine[difference] === theirs[difference]) difference += 1;
+  const start = Math.max(0, difference - 60);
+  const excerpt = (text: string) => `${start > 0 ? '…' : ''}${text.slice(start)}`;
+  return diffConflictFields(
+    { contenido: excerpt(mine) }, { contenido: excerpt(theirs) }, { contenido: label },
+  );
+}
+
 function useDocumentContent(
   api: CauceApi,
   tenantId: string,
@@ -410,11 +421,7 @@ function Editor({
           const fresh = await api.getAgentDocumentContent(tenantId, alias, item.kind);
           setServido(fresh);
           setConflicto({
-            diffs: diffConflictFields(
-              { contenido: texto },
-              { contenido: fresh.content },
-              { contenido: `Contenido de ${item.label}` },
-            ),
+            diffs: documentConflictDiffs(texto, fresh.content, `Contenido de ${item.label}`),
           });
         } catch { setConflicto({ diffs: [] }); }
         return;
@@ -542,21 +549,20 @@ function Editor({
   );
 }
 
-/** The gap stated in this view: a locked `mcp` is a measured decision, not a missing console feature. */
+/** Native pieces use their own operations instead of exposing files that may contain credentials. */
 function HuecoDeclarado() {
   return (
     <details className="rounded-lg border border-line px-3 py-2 text-[13px]">
       <summary className="cursor-pointer font-medium">Lo que esto todavía no hace</summary>
       <ul className="mt-2 mb-0 grid gap-2 pl-5 text-xs text-muted">
         <li>
-          <strong className="text-fg-2">Los MCP y las skills no se editan desde aquí.</strong> En claude viven en
-          `~/.claude.json`, junto al OAuth de la cuenta; en openclaw, dentro del mismo fichero que
-          `auth` y `secrets`, y ahí hay claves de API de verdad. Servir esos ficheros sería una
-          fuga, no una funcionalidad. Se editan a mano dentro del contenedor.
+          <strong className="text-fg-2">Los MCP y las skills tienen su propia administración.</strong> Las piezas
+          compatibles se gestionan en Perfil, en «Piezas nativas · MCP, skills y subagentes», según el arnés y los permisos.
+          Esta pestaña no expone los archivos que contienen credenciales de la cuenta.
         </li>
         <li>
-          <strong className="text-fg-2">Los subagentes y los prompts guardados se listan, no se editan.</strong> Son
-          directorios con un fichero por pieza, y esta vista edita ficheros sueltos.
+          <strong className="text-fg-2">Los subagentes y los prompts se gestionan como piezas nativas.</strong> Su
+          edición depende de las capacidades disponibles en «Piezas nativas · MCP, skills y subagentes» del perfil.
         </li>
         <li>
           <strong className="text-fg-2">Esto no ve lo que se edite por la terminal.</strong> El diario de cambios cubre

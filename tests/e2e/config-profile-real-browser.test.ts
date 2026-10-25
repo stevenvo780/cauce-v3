@@ -7,10 +7,13 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startRealPtyFixture, type RealPtyFixture } from './real-pty-agent.fixtures.js';
 import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
+import { apiGet, asV4Page, bodySnippet, type V4Page } from './v4-console-real-browser.helpers.js';
 
 const execute = promisify(execFile);
-const OWNER = 'config-profile-real-browser';
+const OWNER = 'e2e-a10-contextos-1025b';
 const RUN_ID = randomUUID();
+const ARTIFACTS = process.env.CAUCE_E2E_ARTIFACT_DIR
+  ?? join(process.cwd(), '.delegados/v4/recibos/e2e-a10-contextos-1025b/profile');
 let fixture: RealPtyFixture | undefined;
 let replacementContainer: { name: string; id: string } | undefined;
 let runtimeAgent: ChildProcess | undefined;
@@ -110,6 +113,37 @@ async function dockerInput(args: string[], input: string): Promise<void> {
   });
 }
 
+async function screenshot(page: V4Page, name: string): Promise<void> {
+  await mkdir(ARTIFACTS, { recursive: true });
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.screenshot({ path: join(ARTIFACTS, `profile-${name}-${String(viewport.width)}.png`) });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
+async function openContext(): Promise<V4Page> {
+  if (!fixture) throw new Error('measured profile fixture missing');
+  const page = asV4Page(await fixture.browserPage({ width: 1440, height: 900 }));
+  await page.goto(fixture.baseUrl, { waitUntil: 'domcontentloaded' });
+  await page.getByLabel('Correo', { exact: true }).fill(fixture.operatorEmail);
+  await page.getByLabel('Contraseña', { exact: true }).fill(fixture.operatorPassword);
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 20_000 });
+  await page.goto(`${fixture.baseUrl}/messages/${fixture.tenant}/${fixture.targetAlias}?view=context`, { waitUntil: 'domcontentloaded' });
+  await page.getByLabel('Responsabilidades', { exact: true }).waitFor({ timeout: 20_000 });
+  return page;
+}
+
+async function openManual(page: V4Page): Promise<ReturnType<V4Page['getByLabel']>> {
+  await page.getByRole('tab', { name: /^Ficheros/u }).click();
+  const editor = page.getByLabel('Contenido de AGENTS.md (manual del sitio)', { exact: true });
+  if (await editor.count() > 0 && await editor.isVisible()) return editor;
+  await page.getByRole('button', { name: /AGENTS\.md \(manual del sitio\)/u }).click();
+  await editor.waitFor({ timeout: 20_000 });
+  return editor;
+}
+
 async function waitForMeasuredTarget(active: RealPtyFixture, cookie: string): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -132,15 +166,15 @@ async function configureMeasuredCodexRuntime(active: RealPtyFixture): Promise<vo
   const imageIdentity = (await docker([
     'image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', active.agentImage,
   ])).split(/\s+/u);
-  expect(imageIdentity).toEqual([active.agentImageId, 'real-pty-agent']);
+  expect(imageIdentity).toEqual([active.agentImageId, OWNER]);
 
   const originalIdentity = (await docker([
     'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', active.agentContainer,
   ])).split(/\s+/u);
-  expect(originalIdentity).toEqual([active.agentContainerId, 'real-pty-agent']);
+  expect(originalIdentity).toEqual([active.agentContainerId, OWNER]);
   await docker(['rm', '--force', active.agentContainer]);
 
-  const name = `cauce-profile-e2e-${RUN_ID}`;
+  const name = `zz-canary-${OWNER}-${RUN_ID}`;
   const existing = await execute('docker', ['inspect', '--format', '{{.Id}}', name], { timeout: 5_000, maxBuffer: 16 * 1024 })
     .then((result) => result.stdout.trim()).catch(() => undefined);
   expect(existing).toBeUndefined();
@@ -199,7 +233,7 @@ async function configureMeasuredCodexRuntime(active: RealPtyFixture): Promise<vo
 }
 
 beforeAll(async () => {
-  fixture = await startRealPtyFixture({ governanceRelay: true });
+  fixture = await startRealPtyFixture({ governanceRelay: true, owner: OWNER, resourcePrefix: `zz-canary-${OWNER}` });
   await configureMeasuredCodexRuntime(fixture);
 }, 10 * 60_000);
 
@@ -241,7 +275,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     expect(initial).toMatchObject({ harness: 'codex', exists: false });
     expect(initial.ficheros).toEqual([expect.objectContaining({ nombre: 'AGENTS.md' })]);
 
-    const page = await active.browserPage({ width: 360, height: 800 });
+    const page = await active.browserPage({ width: 390, height: 844 });
     observeUiBootstrap(page);
     let resolveAuthEvidence: ((evidence: AuthResponseEvidence) => void) | undefined;
     const authEvidencePromise = new Promise<AuthResponseEvidence>((resolve) => { resolveAuthEvidence = resolve; });
@@ -277,7 +311,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
         active.operatorEmail,
         active.operatorPassword,
       );
-      const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
+      const artifactDirectory = ARTIFACTS;
       if (artifactDirectory) {
         await mkdir(artifactDirectory, { recursive: true });
         await page.screenshot({ path: join(artifactDirectory, 'config-profile-360-auth-timeout.png') });
@@ -307,7 +341,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await menu.waitFor({ state: 'visible', timeout: 10_000 });
     await menu.getByRole('link', { name: 'Ajustes' }).click();
     await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-    const artifactDirectory = process.env.CAUCE_E2E_ARTIFACT_DIR;
+    const artifactDirectory = ARTIFACTS;
     const section = page.getByRole('combobox', { name: 'Sección', exact: true });
     if (await section.count()) await section.selectOption('agentes');
     else await page.getByRole('tab', { name: 'Agentes', exact: true }).click();
@@ -365,7 +399,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
       [active.tenant, active.targetAlias]);
     expect(revisions.rows).toEqual([{
       revision: '1', operation: 'insert', responsibilities: [marker],
-      actor_tenant: null, actor_alias: null,
+      actor_tenant: active.tenant, actor_alias: active.operatorAlias,
     }]);
     const audit = await active.database.pool.query<{ action: string; decision: string; tenant_id: string; actor_alias: string }>(
       `SELECT action,decision,tenant_id,actor_alias FROM audit_events
@@ -407,6 +441,327 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     }]);
     expect(document.expected_sha).toBe(fileSha);
     expect(document.expected_bytes).toBe(fileBytes);
+    await screenshot(asV4Page(page), 'saved');
     process.stdout.write(`Config mobile profile E2E: target=${active.tenant}/${active.targetAlias} revision=${String(profile.revision)} HTTP=${responseStatuses.join(',')} file_sha=${document.expected_sha} bytes=${String(document.expected_bytes)} adoption=${profile.runtime_state}\n`);
+  }, 180_000);
+
+  it('lee y guarda el manual real con conflicto CAS y muestra directiva, historial y recarga sin acreditar adopción', async () => {
+    if (!fixture || !replacementContainer) throw new Error('measured runtime missing');
+    const page = await openContext();
+    const before = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`);
+    const previousFields = before.body.perfil as Record<string, string | string[] | null>;
+    const concurrent = await openContext();
+    const editor = await openManual(page);
+    const otherEditor = await openManual(concurrent);
+    const initial = await editor.inputValue();
+    expect(initial).toContain('Responsabilidades:');
+    await page.getByRole('button', { name: /AGENTS\.md \(manual del sitio\)/u }).click();
+    expect(await editor.count()).toBe(0);
+    await openManual(page);
+    expect(await editor.inputValue()).toBe(initial);
+    await editor.fill(`${initial}\nBorrador que debe descartarse.\n`);
+    await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+    await expect.poll(() => editor.inputValue()).toBe(initial);
+    const mine = `${initial}\nManual editado desde Chromium ${RUN_ID}.\n`;
+    const theirs = `${initial}\nManual concurrente desde Chromium ${RUN_ID}.\n`;
+    await editor.fill(mine);
+    await otherEditor.fill(theirs);
+    await concurrent.getByLabel('Motivo del guardado', { exact: true }).fill('Actualizar el manual desde otra pestaña para comprobar CAS.');
+    await concurrent.getByRole('button', { name: 'Guardar', exact: true }).click();
+    await expect.poll(() => docker(['exec', '--user', 'node', replacementContainer?.name ?? '', 'cat', '/tmp/.codex/AGENTS.md']))
+      .toBe(theirs.trimEnd());
+    await page.getByLabel('Motivo del guardado', { exact: true }).fill('Comprobar que el manual conserva el borrador frente a edición concurrente.');
+    await page.getByRole('button', { name: 'Guardar', exact: true }).click();
+    const conflict = page.getByRole('group', { name: 'Conflicto de versión', exact: true });
+    await conflict.waitFor({ timeout: 20_000 });
+    expect(await editor.inputValue()).toBe(mine);
+    expect(await conflict.innerText()).toContain('Manual concurrente desde Chromium');
+    await screenshot(page, 'manual-conflict');
+    await conflict.getByRole('button', { name: 'Descartar mis cambios', exact: true }).click();
+    await expect.poll(() => editor.inputValue()).toBe(theirs);
+    const retry = `${theirs}Manual conservado al reintentar ${RUN_ID}.\n`;
+    await editor.fill(retry);
+    const freshConcurrent = await openManual(concurrent);
+    await freshConcurrent.fill(`${theirs}Segunda edición concurrente ${RUN_ID}.\n`);
+    await concurrent.getByLabel('Motivo del guardado', { exact: true }).fill('Avanzar la huella antes de reintentar el borrador local.');
+    await concurrent.getByRole('button', { name: 'Guardar', exact: true }).click();
+    await expect.poll(() => docker(['exec', '--user', 'node', replacementContainer?.name ?? '', 'cat', '/tmp/.codex/AGENTS.md']))
+      .toContain('Segunda edición concurrente');
+    await page.getByLabel('Motivo del guardado', { exact: true }).fill('Reaplicar explícitamente el borrador conservado sobre la huella más nueva.');
+    await page.getByRole('button', { name: 'Guardar', exact: true }).click();
+    await conflict.waitFor({ timeout: 20_000 });
+    await conflict.getByRole('button', { name: 'Releer y reintentar con mis cambios', exact: true }).click();
+    expect(await editor.inputValue()).toBe(retry);
+    await page.getByRole('button', { name: 'Guardar', exact: true }).click();
+    await expect.poll(() => docker(['exec', '--user', 'node', replacementContainer?.name ?? '', 'cat', '/tmp/.codex/AGENTS.md']))
+      .toBe(retry.trimEnd());
+    await page.getByText('Lo que esto todavía no hace', { exact: true }).click();
+    await page.locator('details').filter({ hasText: 'Lo que esto todavía no hace' })
+      .getByText(/compatibles se gestionan en Perfil/u).waitFor({ timeout: 10_000 });
+    await screenshot(page, 'manual-read');
+    const afterManual = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`);
+    expect(afterManual.body.contaminacion).toMatchObject({ contaminated: false, findings: [] });
+
+    await page.getByRole('tab', { name: 'Directiva', exact: true }).click();
+    await page.getByRole('heading', { name: 'Capa 1 · Rol declarado', exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByText('Ver el contenido', { exact: true }).first().click();
+    await page.getByRole('tabpanel', { name: 'Directiva', exact: true })
+      .getByText(`Manual concurrente desde Chromium ${RUN_ID}.`, { exact: false }).waitFor({ timeout: 20_000 });
+    await screenshot(page, 'directive');
+    await page.getByRole('button', { name: 'Editar el manual en Ficheros', exact: true }).click();
+    await page.getByRole('tab', { name: 'Directiva', exact: true }).click();
+    await page.getByRole('button', { name: 'Editar los campos canónicos', exact: true }).click();
+    const authored = {
+      purpose: `Propósito público ${RUN_ID}.`, role_summary: `Perfil actualizado ${RUN_ID}.`,
+      human_brief: 'Operador sintético: respuestas breves y verificables.',
+      responsibilities: ['Verificar el contexto público.', 'Preservar las escrituras concurrentes.'],
+      restrictions: ['No cambiar recursos ajenos.'], tools: ['Consola local de prueba.'],
+      operating_rules: ['Releer los recibos antes de reintentar.'],
+    };
+    for (const [label, value] of [
+      ['Identidad y propósito', authored.purpose], ['Rol declarado', authored.role_summary],
+      ['Tu humano y cómo tratarlo', authored.human_brief], ['Responsabilidades', authored.responsibilities.join('\n')],
+      ['Restricciones', authored.restrictions.join('\n')], ['Herramientas declaradas en el contexto', authored.tools.join('\n')],
+      ['Instrucciones fijas de funcionamiento', authored.operating_rules.join('\n')],
+    ] as const) await page.getByLabel(label, { exact: true }).fill(value);
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Verificar diferencias y restauración del historial canónico.');
+    await page.getByRole('button', { name: 'Guardar y aplicar perfil', exact: true }).click();
+    await page.getByText(/Desired y ficheros del runtime quedaron actualizados/u).waitFor({ timeout: 30_000 });
+    const saved = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`);
+    expect(saved.body).toMatchObject({ revision: 2, perfil: authored });
+    const savedRow = await fixture.database.pool.query(
+      'SELECT purpose,role_summary,human_brief,responsibilities,restrictions,tools,operating_rules FROM agent_profiles WHERE tenant_id=$1 AND alias=$2',
+      [fixture.tenant, fixture.targetAlias]);
+    expect(savedRow.rows).toEqual([authored]);
+    await page.getByRole('tab', { name: 'Historial', exact: true }).click();
+    await page.getByText('Cambio del perfil · revisión 2', { exact: true }).waitFor({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Ver qué cambió', exact: true }).first().click();
+    const differences = page.getByRole('group', { name: 'Diferencias con la revisión 1', exact: true });
+    await differences.waitFor({ timeout: 15_000 });
+    expect(await differences.innerText()).toContain(authored.purpose);
+    expect(await differences.innerText()).toContain(authored.role_summary);
+    expect(await differences.innerText()).toContain(authored.human_brief);
+    await screenshot(page, 'profile-history');
+    await page.getByRole('button', { name: 'Restaurar esta revisión', exact: true }).nth(1).click();
+    for (const [field, label] of [
+      ['purpose', 'Identidad y propósito'], ['role_summary', 'Rol declarado'],
+      ['human_brief', 'Tu humano y cómo tratarlo'], ['responsibilities', 'Responsabilidades'],
+      ['restrictions', 'Restricciones'], ['tools', 'Herramientas declaradas en el contexto'],
+      ['operating_rules', 'Instrucciones fijas de funcionamiento'],
+    ] as const) {
+      const value = previousFields[field];
+      await expect.poll(() => page.getByLabel(label, { exact: true }).inputValue())
+        .toBe(Array.isArray(value) ? value.join('\n') : value ?? '');
+    }
+    const unchanged = await fixture.database.pool.query<{ revision: string }>('SELECT revision::text FROM agent_profiles WHERE tenant_id=$1 AND alias=$2', [fixture.tenant, fixture.targetAlias]);
+    expect(unchanged.rows).toEqual([{ revision: '2' }]);
+    await page.getByRole('button', { name: 'Descartar borrador de perfil y releer', exact: true }).click();
+    await page.getByLabel('Motivo de la recarga', { exact: true }).fill('Reescribir y medir el contexto sin reiniciar la conversación.');
+    await page.getByRole('button', { name: 'Recargar contexto', exact: true }).click();
+    await page.getByText(/Contexto reescrito en la revisión 2/u).waitFor({ timeout: 30_000 });
+    await page.getByText('Adopción no acreditada', { exact: true }).waitFor({ timeout: 20_000 });
+    await screenshot(page, 'context-reload');
+    const profile = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`);
+    expect(profile.body).toMatchObject({ revision: 2, applied_revision: null, runtime_state: 'pending_session_refresh' });
+    expect(await docker(['exec', '--user', 'node', replacementContainer.name, 'cat', '/tmp/.codex/AGENTS.md']))
+      .toContain(`Perfil actualizado ${RUN_ID}.`);
+  }, 240_000);
+
+  it('crea, reconoce y elimina una pieza nativa real y bloquea el reinicio sin autorización o capacidad acreditada', async () => {
+    if (!fixture || !replacementContainer) throw new Error('measured runtime missing');
+    const page = await openContext();
+    await page.getByText('Piezas nativas · MCP, skills y subagentes', { exact: true }).click();
+    await page.getByRole('button', { name: 'Leer inventario nativo', exact: true }).click();
+    const native = page.getByRole('region', { name: 'Editor de piezas nativas', exact: true });
+    await native.getByText(/Arnés: codex/u).waitFor({ timeout: 20_000 });
+    const id = `zz-canary-${RUN_ID.slice(0, 8)}`;
+    const content = `---\nname: ${id}\ndescription: Contexto sintético de navegador para verificar un archivo real.\n---\n\nInstrucciones públicas del canario ${RUN_ID}.\n`;
+    await native.getByLabel('Nombre de pieza', { exact: true }).fill(id);
+    await native.getByRole('button', { name: 'Leer o preparar pieza', exact: true }).click();
+    const markdown = native.getByLabel('Contenido Markdown', { exact: true });
+    await expect.poll(() => markdown.isDisabled(), { timeout: 20_000 }).toBe(false);
+    await markdown.fill(content);
+    await native.getByLabel('Motivo del cambio nativo', { exact: true }).fill('Crear una pieza sintética y verificar el archivo y su recibo durable.');
+    await native.getByRole('button', { name: 'Guardar pieza nativa', exact: true }).click();
+    try { await native.getByText('Guardado con respaldo privado y SHA verificado. Pendiente de recarga.', { exact: true }).waitFor({ timeout: 30_000 }); }
+    catch (cause) { throw new Error(`native write failed: ${await bodySnippet(page)}`, { cause }); }
+    expect(await docker(['exec', '--user', 'node', replacementContainer.name, 'cat', `/tmp/.codex/skills/${id}/SKILL.md`])).toBe(content.trimEnd());
+    await native.getByRole('button', { name: 'Verificar reconocimiento del proveedor', exact: true }).click();
+    await native.getByText(/pendiente de próxima sesión/u).waitFor({ timeout: 20_000 });
+    expect(await native.getByRole('button', { name: 'Reiniciar este agente y verificar archivos', exact: true }).count()).toBe(0);
+    await screenshot(page, 'native-saved');
+    await native.getByLabel('Motivo del cambio nativo', { exact: true }).fill('Eliminar solo la pieza canario propia y comprobar ausencia.');
+    await native.getByRole('button', { name: 'Borrar pieza nativa', exact: true }).click();
+    await native.getByRole('button', { name: 'Cancelar borrado', exact: true }).click();
+    expect(await docker(['exec', '--user', 'node', replacementContainer.name, 'test', '-f', `/tmp/.codex/skills/${id}/SKILL.md`])).toBe('');
+    await native.getByRole('button', { name: 'Borrar pieza nativa', exact: true }).click();
+    await native.getByRole('button', { name: 'Confirmar borrado de pieza', exact: true }).click();
+    await native.getByText('Pieza borrada y ausencia verificada. Pendiente de recarga.', { exact: true }).waitFor({ timeout: 30_000 });
+    expect(await docker(['exec', '--user', 'node', replacementContainer.name, 'test', '!', '-f', `/tmp/.codex/skills/${id}/SKILL.md`])).toBe('');
+    await screenshot(page, 'native-deleted');
+
+    await page.goto(`${fixture.baseUrl}/terminal/${fixture.tenant}/${fixture.targetAlias}`, { waitUntil: 'domcontentloaded' });
+    const recovery = page.getByRole('region', { name: `Recuperación de ${fixture.targetAlias}`, exact: true });
+    await recovery.getByRole('button', { name: 'Reiniciar agente', exact: true }).click();
+    await recovery.getByRole('alert').waitFor({ timeout: 20_000 });
+    const inspection = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/recovery`);
+    expect([403, 501]).toContain(inspection.status);
+    expect(inspection.body.error).toBe(inspection.status === 403 ? 'forbidden' : 'unsupported');
+    expect(await recovery.innerText()).toContain(inspection.body.message);
+    expect(await recovery.getByRole('button', { name: 'Confirmar reinicio y reanudar', exact: true }).count()).toBe(0);
+    await screenshot(page, 'recovery-blocked');
+    expect(await recovery.getByRole('button', { name: 'Cancelar', exact: true }).count()).toBe(0);
+    expect(await docker(['inspect', '--format', '{{.Id}}', replacementContainer.name])).toBe(replacementContainer.id);
+    process.stdout.write(`Config profile recovery blocked: HTTP=${String(inspection.status)} error=${String(inspection.body.error)} same_container=true\n`);
+  }, 180_000);
+
+  it('valida límites, conserva borradores, bloquea el perfil por manual pendiente y resuelve ambas salidas de su CAS real', async () => {
+    if (!fixture || !replacementContainer) throw new Error('measured runtime missing');
+    const page = await openContext();
+    const concurrent = await openContext();
+    const path = `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`;
+    const initial = await apiGet(page, path);
+    const limits = initial.body.limites as { purpose: number; role_summary: number; items: number; item: number; total: number };
+    const purpose = page.getByLabel('Identidad y propósito', { exact: true });
+    const save = page.getByRole('button', { name: 'Guardar y aplicar perfil', exact: true });
+    if (await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).isDisabled()) {
+      await screenshot(page, 'profile-uneditable');
+      throw new Error(`profile is not editable: ${JSON.stringify({ runtime_state: initial.body.runtime_state,
+        contaminacion: initial.body.contaminacion, runtime_reason: initial.body.runtime_reason })} ${await bodySnippet(page)}`);
+    }
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Validar límites sin persistir el texto inválido.');
+    await purpose.fill('x'.repeat(limits.total + 1));
+    await page.getByText(/El perfil entero:.*unidades/u).waitFor({ timeout: 10_000 });
+    expect(await save.isDisabled()).toBe(true);
+    await purpose.fill('x'.repeat(limits.purpose + 1));
+    expect(await save.isDisabled()).toBe(true);
+    await purpose.fill('Propósito válido para comprobar límites.');
+    await page.getByLabel('Responsabilidades', { exact: true }).fill(Array.from({ length: limits.items + 1 }, (_, i) => `Entrada ${String(i)}`).join('\n'));
+    expect(await save.isDisabled()).toBe(true);
+    await page.getByLabel('Responsabilidades', { exact: true }).fill('x'.repeat(limits.item + 1));
+    expect(await save.isDisabled()).toBe(true);
+    await page.getByLabel('Responsabilidades', { exact: true }).fill('Entrada válida para aislar el límite de rol.');
+    await page.getByLabel('Rol declarado', { exact: true }).fill('x'.repeat(limits.role_summary + 1));
+    expect(await save.isDisabled()).toBe(true);
+    await page.getByLabel('Rol declarado', { exact: true }).fill('😀'.repeat(601));
+    await page.getByText(/601 puntos de código · 1202 unidades UTF-16/u).waitFor({ timeout: 10_000 });
+    await page.getByText(/Son 601 caracteres, que la base acepta, pero 1202 unidades UTF-16/u).waitFor({ timeout: 10_000 });
+    await screenshot(page, 'profile-limits');
+    expect((await apiGet(page, path)).body.revision).toBe(initial.body.revision);
+    await page.getByRole('button', { name: 'Descartar borrador de perfil y releer', exact: true }).click();
+    await expect.poll(() => purpose.inputValue()).toBe((initial.body.perfil as { purpose: string | null }).purpose ?? '');
+
+    const mine = `Borrador preservado ${RUN_ID}.`;
+    await purpose.fill(mine);
+    let reloadWarnings = 0;
+    page.on('dialog', (value) => {
+      const dialog = value as { type(): string; dismiss(): Promise<void> };
+      if (dialog.type() === 'beforeunload') reloadWarnings += 1;
+      void dialog.dismiss();
+    });
+    await page.evaluate(() => { window.location.reload(); });
+    await expect.poll(() => reloadWarnings).toBe(1);
+    expect(await purpose.inputValue()).toBe(mine);
+    await page.getByRole('link', { name: 'Volver a la conversación', exact: true }).click();
+    const actions = page.getByRole('button', { name: `Acciones de ${fixture.targetAlias}`, exact: true });
+    await actions.nth((await actions.count()) - 1).click();
+    await page.getByRole('menuitem', { name: 'Perfil y contexto', exact: true }).click();
+    await expect.poll(() => purpose.inputValue()).toBe(mine);
+    await page.getByText('Vista previa de los ficheros del arnés', { exact: true }).click();
+    const preview = page.locator('details').filter({ hasText: 'Vista previa de los ficheros del arnés' });
+    await preview.getByRole('tab', { name: 'AGENTS.md', exact: true }).click();
+    expect(await preview.locator('pre').innerText()).not.toContain(mine);
+    const manual = await openManual(page);
+    const original = await manual.inputValue();
+    await manual.fill(`${original}\nManual pendiente ${RUN_ID}.\n`);
+    await page.getByRole('tab', { name: /^Perfil/u }).click();
+    await page.getByText(/Hay un borrador manual pendiente/u).waitFor({ timeout: 10_000 });
+    expect(await purpose.inputValue()).toBe(mine);
+    expect(await save.isDisabled()).toBe(true);
+    await screenshot(page, 'manual-blocks-profile');
+    await page.getByRole('tab', { name: /^Ficheros/u }).click();
+    await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+    await page.getByRole('tab', { name: /^Perfil/u }).click();
+    await page.getByRole('button', { name: 'Actualizar estado del contexto', exact: true }).click();
+    expect(await purpose.inputValue()).toBe(mine);
+
+    const otherPurpose = concurrent.getByLabel('Identidad y propósito', { exact: true });
+    const otherSave = concurrent.getByRole('button', { name: 'Guardar y aplicar perfil', exact: true });
+    await otherPurpose.fill(`Perfil concurrente ${RUN_ID}.`);
+    await concurrent.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Guardar el perfil de otra pestaña antes del borrador conservado.');
+    await otherSave.click();
+    await concurrent.getByText(/Desired y ficheros del runtime quedaron actualizados/u).waitFor({ timeout: 30_000 });
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Comprobar que el CAS impide perder un perfil guardado desde otra pestaña.');
+    await save.click();
+    const conflict = page.getByRole('group', { name: 'Conflicto de versión', exact: true });
+    await conflict.waitFor({ timeout: 20_000 });
+    expect(await purpose.inputValue()).toBe(mine);
+    await screenshot(page, 'profile-cas');
+    await conflict.getByRole('button', { name: 'Descartar mis cambios', exact: true }).click();
+    await expect.poll(() => purpose.inputValue()).toBe(`Perfil concurrente ${RUN_ID}.`);
+    await purpose.fill(mine);
+    await otherPurpose.fill(`Segunda revisión concurrente ${RUN_ID}.`);
+    await concurrent.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Crear una segunda revisión para comprobar la salida de reintento.');
+    await otherSave.click();
+    await expect.poll(async () => (await apiGet(concurrent, path)).body.revision).toBe(Number(initial.body.revision) + 2);
+    await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Reaplicar el borrador tras revisar el conflicto explícito.');
+    await save.click();
+    await conflict.waitFor({ timeout: 20_000 });
+    await conflict.getByRole('button', { name: 'Releer y reintentar con mis cambios', exact: true }).click();
+    await save.click();
+    await expect.poll(async () => (await apiGet(page, path)).body.revision).toBe(Number(initial.body.revision) + 3);
+    expect((await apiGet(page, path)).body.perfil).toMatchObject({ purpose: mine });
+    expect(await docker(['exec', '--user', 'node', replacementContainer.name, 'cat', '/tmp/.codex/AGENTS.md'])).toContain(mine);
+    await screenshot(page, 'profile-retry');
+  }, 240_000);
+
+  it('distingue un manual ausente, vacío y recortado sin permitir reemplazar el prefijo', async () => {
+    if (!fixture || !replacementContainer) throw new Error('measured runtime missing');
+    const page = await openContext();
+    const container = replacementContainer.name;
+    const path = '/tmp/.codex/AGENTS.md';
+    const original = (await execute('docker', ['exec', '--user', 'node', container, 'cat', path])).stdout;
+    const originalSha = await docker(['exec', '--user', 'node', container, 'sha256sum', path]);
+    const profilePath = `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`;
+    const revision = (await apiGet(page, profilePath)).body.revision;
+    try {
+      await docker(['exec', '--user', 'node', container, 'rm', path]);
+      let editor = await openManual(page);
+      await page.getByText(/Este fichero todavía no existe. Si guardas, se crea/u).waitFor({ timeout: 20_000 });
+      expect(await editor.inputValue()).toBe('');
+      await screenshot(page, 'manual-absent');
+      await dockerInput(['exec', '-i', '--user', 'node', container, 'sh', '-lc', 'cat > /tmp/.codex/AGENTS.md'], '');
+      await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+      await expect.poll(() => page.getByText(/Este fichero todavía no existe. Si guardas, se crea/u).count()).toBe(0);
+      editor = page.getByLabel('Contenido de AGENTS.md (manual del sitio)', { exact: true });
+      expect(await editor.inputValue()).toBe('');
+      expect(await docker(['exec', '--user', 'node', container, 'wc', '-c', path])).toMatch(/^0\s/u);
+      await screenshot(page, 'manual-empty');
+      await dockerInput(['exec', '-i', '--user', 'node', container, 'sh', '-lc', 'cat > /tmp/.codex/AGENTS.md'], 'x'.repeat(256 * 1024 + 1));
+      await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+      await page.getByText(/Esta lectura está recortada/u).waitFor({ timeout: 20_000 });
+      expect(await editor.evaluate(element => element.readOnly)).toBe(true);
+      expect(await page.getByRole('button', { name: 'Guardar', exact: true }).isDisabled()).toBe(true);
+      expect((await editor.inputValue()).length).toBe(256 * 1024);
+      expect(await docker(['exec', '--user', 'node', container, 'wc', '-c', path])).toMatch(/^262145\s/u);
+      await screenshot(page, 'manual-truncated');
+      const external = `${original}\nEdición exterior sin autorizar ${RUN_ID}.\n`;
+      await dockerInput(['exec', '-i', '--user', 'node', container, 'sh', '-lc', 'cat > /tmp/.codex/AGENTS.md'], external);
+      await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+      await expect.poll(() => editor.inputValue()).toBe(external);
+      await editor.fill(`${external}No debe escribirse este intento.\n`);
+      await page.getByLabel('Motivo del guardado', { exact: true }).fill('Comprobar que una edición exterior no queda acreditada por un guardado posterior.');
+      await page.getByRole('button', { name: 'Guardar', exact: true }).click();
+      await page.getByRole('group', { name: 'Conflicto de versión', exact: true }).waitFor({ timeout: 20_000 });
+      expect((await execute('docker', ['exec', '--user', 'node', container, 'cat', path])).stdout).toBe(external);
+      expect((await apiGet(page, profilePath)).body.contaminacion).toMatchObject({ contaminated: true });
+      await screenshot(page, 'manual-external-blocked');
+    } finally {
+      await dockerInput(['exec', '-i', '--user', 'node', container, 'sh', '-lc', 'cat > /tmp/.codex/AGENTS.md'], original);
+      expect(await docker(['exec', '--user', 'node', container, 'sha256sum', path])).toBe(originalSha);
+      await page.getByRole('button', { name: 'Descartar y releer', exact: true }).click();
+      await expect.poll(() => page.getByLabel('Contenido de AGENTS.md (manual del sitio)', { exact: true }).inputValue()).toBe(original);
+      expect((await apiGet(page, profilePath)).body.revision).toBe(revision);
+    }
   }, 180_000);
 });

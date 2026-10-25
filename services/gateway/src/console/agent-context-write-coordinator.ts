@@ -75,6 +75,13 @@ export async function coordinateDocumentRequest(
   }
   const context = await deps.readContext(input.tenantId, input.alias);
   const expectation = await deps.readRuntimeExpectation(input.tenantId, input.alias);
+  const tracked = expectation !== undefined && expectation.generation === input.facts.generation
+    ? expectation.documents.find(document => document.path === input.path)
+    : undefined;
+  if (tracked !== undefined && (input.precondition.state !== 'present'
+    || input.precondition.sha256 !== tracked.sha)) {
+    throw new StoreError('conflict', 'manual write differs from the recorded runtime expectation');
+  }
   const bytes = Buffer.byteLength(input.content, 'utf8');
   const sha = createHash('sha256').update(input.content, 'utf8').digest('hex');
   return coordinateContextRequest(deps.coordinateWrite.bind(deps), request, reply, {
@@ -88,7 +95,22 @@ export async function coordinateDocumentRequest(
       if ('error' in written || written.sha !== sha || written.bytes !== bytes) throw new Error('document write unconfirmed');
       return written;
     },
-    persistTarget: async (client, _proof, effect) => {
+    persistTarget: async (client, proof, effect) => {
+      if (tracked !== undefined && expectation !== undefined) {
+        if (proof.writer.runtimeGeneration !== expectation.generation
+          || !proof.documents.some(document => document.path === input.path && document.sha === effect.sha)) {
+          throw new StoreError('conflict', 'manual write runtime proof changed');
+        }
+        const documents = expectation.documents.map(document => document.path === input.path
+          ? { ...document, sha: effect.sha } : document);
+        const updated = await client.query(
+          `UPDATE agent_profile_runtime_expectations SET documents=$3::jsonb,updated_at=clock_timestamp()
+            WHERE tenant_id=$1 AND alias=$2 AND revision=$4 AND generation=$5 AND documents=$6::jsonb`,
+          [input.tenantId, input.alias, JSON.stringify(documents), expectation.revision,
+            expectation.generation, JSON.stringify(expectation.documents)],
+        );
+        if (updated.rowCount !== 1) throw new StoreError('conflict', 'manual write runtime expectation CAS failed');
+      }
       await persist(client, {
         tenantId: input.tenantId, alias: input.alias, kind: input.kind, path: input.path,
         sha256: effect.sha, bytes: effect.bytes, actorTenant: input.actor.tenant_id, actorAlias: input.actor.alias,
