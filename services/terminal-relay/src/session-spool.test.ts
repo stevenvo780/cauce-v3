@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SessionCloseReport, TerminalGatewayClient } from './gateway-client.js';
 import { SessionManager, type SessionLimits } from './sessions.js';
+import { loadCloseSpool, persistCloseSpool } from './session-spool.js';
 import { grant, CLAIM_TOKEN, waitFor } from './relay-test-fixtures.js';
 
 const SESSION_ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -53,6 +54,45 @@ function limits(overrides: Partial<SessionLimits> = {}): SessionLimits {
 }
 
 describe('SessionManager close report spool persistence', () => {
+  it('preserves recording evidence when a fresh manager drains a persisted close', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-recording-'));
+    const spool = join(directory, 'reports.json');
+    const report = { reason: 'authz_unreachable', exit_code: null, bytes_in: 37, bytes_out: 98,
+      claim_token: CLAIM_TOKEN, claim_epoch: '1', input_batches: 2,
+      recording_sha256: 'a'.repeat(64), recording_capped: true };
+    persistCloseSpool(spool, new Map([[SESSION_ID, report]]));
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits(), closeSpoolFile: spool });
+    try {
+      await waitFor(() => gateway.closeReports.length === 1);
+      expect(gateway.closeReports).toEqual([{ sessionId: SESSION_ID, report }]);
+      expect(JSON.parse(await readFile(spool, 'utf8'))).toEqual({ version: 2, reports: [] });
+    } finally {
+      await manager.flush();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { input_batches: 1 },
+    { input_batches: -1, recording_sha256: 'a'.repeat(64), recording_capped: false },
+    { input_batches: 0.5, recording_sha256: 'a'.repeat(64), recording_capped: false },
+    { input_batches: 1, recording_sha256: 'x'.repeat(64), recording_capped: false },
+    { input_batches: 1, recording_sha256: 'a'.repeat(64), recording_capped: 'false' },
+  ])('rejects incomplete or invalid recording evidence: %j', async recording => {
+    const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-recording-invalid-'));
+    const spool = join(directory, 'reports.json');
+    await writeFile(spool, JSON.stringify({ version: 2, reports: [{
+      session_id: SESSION_ID, reason: 'authz_unreachable', exit_code: null, bytes_in: 0, bytes_out: 0,
+      claim_token: CLAIM_TOKEN, claim_epoch: '1', ...recording,
+    }] }), { mode: 0o600 });
+    try {
+      expect(() => { loadCloseSpool(spool, new Map()); }).toThrow('contains invalid fields');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('persiste el cierre antes de reintentar y limpia el spool cuando vuelve el gateway', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'cauce-terminal-close-'));
     const spool = join(directory, 'reports.json');

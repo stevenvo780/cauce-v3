@@ -33,6 +33,8 @@ export function loadCloseSpool(path: string | undefined, spooledReports: Map<str
     const rawClaimToken = record.claim_token;
     const rawClaimEpoch = record.claim_epoch;
     const hasClaim = rawClaimToken !== undefined || rawClaimEpoch !== undefined;
+    const hasRecording = record.input_batches !== undefined || record.recording_sha256 !== undefined
+      || record.recording_capped !== undefined;
     if (typeof record.session_id !== 'string' || typeof record.reason !== 'string' ||
         (record.exit_code !== null &&
           (typeof record.exit_code !== 'number' || !Number.isSafeInteger(record.exit_code))) ||
@@ -40,7 +42,11 @@ export function loadCloseSpool(path: string | undefined, spooledReports: Map<str
         typeof record.bytes_out !== 'number' || !Number.isSafeInteger(record.bytes_out) || record.bytes_out < 0 ||
         (version === 1 && hasClaim) ||
         (version === 2 && hasClaim
-          && (!isClaimToken(rawClaimToken) || claimEpoch(rawClaimEpoch) === undefined))) {
+          && (!isClaimToken(rawClaimToken) || claimEpoch(rawClaimEpoch) === undefined)) ||
+        (hasRecording && (typeof record.input_batches !== 'number'
+          || !Number.isSafeInteger(record.input_batches) || record.input_batches < 0
+          || typeof record.recording_sha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(record.recording_sha256)
+          || typeof record.recording_capped !== 'boolean'))) {
       throw new Error('terminal close report spool contains invalid fields');
     }
     spooledReports.set(record.session_id, {
@@ -51,6 +57,11 @@ export function loadCloseSpool(path: string | undefined, spooledReports: Map<str
       ...(version === 2 && hasClaim
         ? { claim_token: rawClaimToken as string, claim_epoch: rawClaimEpoch as string }
         : {}),
+      ...(hasRecording ? {
+        input_batches: record.input_batches as number,
+        recording_sha256: record.recording_sha256 as string,
+        recording_capped: record.recording_capped as boolean,
+      } : {}),
     });
   }
 }
