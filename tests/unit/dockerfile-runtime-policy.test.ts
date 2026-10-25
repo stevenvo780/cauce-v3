@@ -13,7 +13,7 @@ describe('Dockerfile runtime policy', () => {
     // git and openssh-client are the context broker's push transport; no other package comes from apk.
     expect(dockerfile.match(/apk add[^\n]*/gu)).toEqual(['apk add --no-cache git openssh-client \\']);
     expect(dockerfile).toContain(
-      'ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:56a687b4d23e7a6cb49114924f5e257fcfbd33ad1f28f5c67aea9365996f2819',
+      'ARG CAUCE_NODE_BASE=docker.io/library/node@sha256:9fee3a1d85a49993660c8ffc774ceafadc0b52eda69b4c981f6b6a1cfabcfe98',
     );
     expect(dockerfile).toContain(
       'ARG CAUCE_PYTHON_BASE=docker.io/library/python@sha256:53739acebd52a300f19f52d93f2a6165f63300689bdf6f8af2bff0d63780e5e6',
