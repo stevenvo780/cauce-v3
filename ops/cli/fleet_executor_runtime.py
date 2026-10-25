@@ -228,21 +228,22 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         values['CAUCE_REASONING_EFFORT'] = effort
     shared = row.get('sharedHumanIds')
     if shared is not None:
-        if agent['harness_id'] not in {'openclaw', 'claude', 'codex', 'grok', 'muse'} \
-                or not isinstance(shared, list) or not 1 <= len(shared) <= 32 \
+        if not isinstance(shared, list) or not 1 <= len(shared) <= 32 \
                 or any(not isinstance(entry, str) or SHARED_HUMAN.fullmatch(entry) is None for entry in shared) \
                 or len(set(shared)) != len(shared):
             raise SafeFailure('shared human session list is not approved')
-        values['CAUCE_SHARED_HUMAN_IDS'] = ','.join(shared)
+        if agent['harness_id'] == 'openclaw' or policy['bundles'][agent['harness_id']].get('shared_tui') is True:
+            values['CAUCE_SHARED_HUMAN_IDS'] = ','.join(shared)
     return values
 
 
 def sdk_environment_proof(policy: dict, agent: dict, observed: dict, bootstrap: bool, operation_id: str | None):
     expected = sdk_environment(policy, agent, bootstrap, operation_id)
-    # The shared human list must match even when it is absent: a removed admin cannot keep access
-    # through a container started with the previous list.
-    if any(observed.get(key) != expected.get(key) for key in {*expected, 'CAUCE_SHARED_HUMAN_IDS',
-            'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE'}):
+    keys = {*expected, 'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE'}
+    # Revoked admins must not retain access through an older shared session.
+    if agent['harness_id'] == 'openclaw' or policy['bundles'][agent['harness_id']].get('shared_tui') is True:
+        keys.add('CAUCE_SHARED_HUMAN_IDS')
+    if any(observed.get(key) != expected.get(key) for key in keys):
         raise NamespaceMismatch('running runtime has another SDK identity or transport')
 
 

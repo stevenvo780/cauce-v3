@@ -53,13 +53,13 @@ class ProviderMetadataSnapshotTest(unittest.TestCase):
 class SharedHumanEnvironmentTest(unittest.TestCase):
     ENTRY = 'Steven:' + 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
 
-    def environment(self, harness, row_extra, observed=None):
+    def environment(self, harness, row_extra, observed=None, *, shared_tui=False):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         import fleet_executor_runtime as runtime
         row = {'tenant': 'Miguel', 'user': 'node', 'runtimeStateDirectory': '/home/node/.cauce/gaia', 'enabled': True,
                'room': 'grp.miguel', **row_extra}
         policy = {'roots': {'state': '/nonexistent'}, 'transport': {'gateway_url': 'https://gateway.example'},
-                  'bundles': {harness: {'shared_tui': False}}}
+                  'bundles': {harness: {'shared_tui': shared_tui}}}
         agent = {'tenant_id': 'Miguel', 'alias': 'gaia', 'runtime_key': 'gaia', 'runtime_user': 'node',
                  'state_directory': '/home/node/.cauce/gaia', 'harness_id': harness}
         snapshot = json.dumps({'schemaVersion': 1, 'fleet': {'gaia': row}}).encode()
@@ -134,31 +134,48 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
         humans = sorted([self.ENTRY, 'Miguel:' + 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12])
         for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
             with self.subTest(harness=harness):
-                expected = self.environment(harness, {'sharedHumanIds': humans})
+                expected = self.environment(harness, {'sharedHumanIds': humans}, shared_tui=True)
+                self.assertEqual(expected['CAUCE_SHARED_SESSION'], '1')
                 self.assertEqual(expected['CAUCE_SHARED_HUMAN_IDS'], ','.join(humans))
-                self.assertEqual(self.environment(harness, {'sharedHumanIds': humans}, expected), expected)
-                self.assertNotIn('CAUCE_SHARED_HUMAN_IDS', self.environment(harness, {}))
+                self.assertEqual(self.environment(harness, {'sharedHumanIds': humans}, expected, shared_tui=True), expected)
+                self.assertNotIn('CAUCE_SHARED_HUMAN_IDS', self.environment(harness, {}, shared_tui=True))
 
-    def test_unknown_harnesses_and_malformed_shared_human_lists_are_rejected(self):
+    def test_openclaw_preserves_shared_humans_without_a_shared_tui_bundle(self):
+        expected = self.environment('openclaw', {'sharedHumanIds': [self.ENTRY]})
+        self.assertEqual(expected['CAUCE_SHARED_HUMAN_IDS'], self.ENTRY)
+        self.assertNotIn('CAUCE_SHARED_SESSION', expected)
+        self.assertEqual(self.environment('openclaw', {'sharedHumanIds': [self.ENTRY]}, expected), expected)
+
+    def test_nonshared_harnesses_validate_humans_without_exporting_them(self):
+        maximum = [f'Steven:{index:08x}-bbbb-bbbb-bbbb-' + 'b' * 12 for index in range(32)]
+        for harness in ('claude', 'codex', 'grok', 'muse', 'gemini', 'unknown'):
+            for humans in ([self.ENTRY], maximum):
+                with self.subTest(harness=harness, length=len(humans)):
+                    expected = self.environment(harness, {'sharedHumanIds': humans})
+                    self.assertNotIn('CAUCE_SHARED_HUMAN_IDS', expected)
+                    self.assertNotIn('CAUCE_SHARED_SESSION', expected)
+                    self.assertEqual(self.environment(harness, {'sharedHumanIds': humans}, expected), expected)
+
+    def test_malformed_shared_human_lists_are_rejected_for_every_harness_and_tui_mode(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         from fleet_executor_policy import SafeFailure
-        for harness in ('gemini', 'unknown'):
-            with self.subTest(harness=harness), self.assertRaises(SafeFailure):
-                self.environment(harness, {'sharedHumanIds': [self.ENTRY]})
-        invalid = ([], self.ENTRY, [123], [{}], ['Miguel:not-a-uuid'], [self.ENTRY, self.ENTRY], [self.ENTRY] * 33)
-        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
-            for humans in invalid:
-                with self.subTest(harness=harness, humans=humans), self.assertRaises(SafeFailure):
-                    self.environment(harness, {'sharedHumanIds': humans})
+        oversized = [f'Steven:{index:08x}-bbbb-bbbb-bbbb-' + 'b' * 12 for index in range(33)]
+        invalid = ([], self.ENTRY, [123], [{}], ['Miguel:not-a-uuid'], [self.ENTRY, self.ENTRY], oversized)
+        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse', 'gemini', 'unknown'):
+            for shared_tui in (False, True):
+                for humans in invalid:
+                    with self.subTest(harness=harness, shared_tui=shared_tui, humans=humans), self.assertRaises(SafeFailure):
+                        self.environment(harness, {'sharedHumanIds': humans}, shared_tui=shared_tui)
 
     def test_shared_human_proof_rejects_missing_removed_added_and_reordered_entries(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         import fleet_executor_runtime as runtime
         humans = sorted([self.ENTRY, 'Miguel:' + 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12])
         extra = 'Isa:' + 'c' * 8 + '-cccc-cccc-cccc-' + 'c' * 12
-        for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'):
-            with self.subTest(harness=harness):
-                expected = self.environment(harness, {'sharedHumanIds': humans})
+        modes = [('openclaw', False), *((harness, True) for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'))]
+        for harness, shared_tui in modes:
+            with self.subTest(harness=harness, shared_tui=shared_tui):
+                expected = self.environment(harness, {'sharedHumanIds': humans}, shared_tui=shared_tui)
                 for value in (None, '', humans[0], ','.join([*humans, extra]), ','.join(reversed(humans))):
                     observed = dict(expected)
                     if value is None:
@@ -166,17 +183,32 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
                     else:
                         observed['CAUCE_SHARED_HUMAN_IDS'] = value
                     with self.subTest(value=value), self.assertRaises(runtime.NamespaceMismatch):
-                        self.environment(harness, {'sharedHumanIds': humans}, observed)
+                        self.environment(harness, {'sharedHumanIds': humans}, observed, shared_tui=shared_tui)
 
-    def test_a_stale_shared_human_list_is_drift_even_when_none_is_expected(self):
-        from unittest import mock
+    def test_shared_tui_and_openclaw_proof_reject_a_list_removed_from_the_snapshot(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         import fleet_executor_runtime as runtime
-        expected = {'CAUCE_ROOM': 'grp.miguel'}
-        with mock.patch.object(runtime, 'sdk_environment', return_value=expected):
-            runtime.sdk_environment_proof({}, {}, dict(expected), False, 'op')
-            with self.assertRaises(runtime.NamespaceMismatch):
-                runtime.sdk_environment_proof({}, {}, {**expected, 'CAUCE_SHARED_HUMAN_IDS': self.ENTRY}, False, 'op')
+        modes = [('openclaw', False), *((harness, True) for harness in ('openclaw', 'claude', 'codex', 'grok', 'muse'))]
+        for harness, shared_tui in modes:
+            with self.subTest(harness=harness, shared_tui=shared_tui):
+                expected = self.environment(harness, {}, shared_tui=shared_tui)
+                self.assertEqual(self.environment(harness, {}, expected, shared_tui=shared_tui), expected)
+                with self.assertRaises(runtime.NamespaceMismatch):
+                    self.environment(harness, {}, {**expected, 'CAUCE_SHARED_HUMAN_IDS': self.ENTRY}, shared_tui=shared_tui)
+
+    def test_nonshared_proof_ignores_residual_humans_but_rejects_shared_session_markers(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        for harness in ('claude', 'codex', 'grok', 'muse', 'gemini', 'unknown'):
+            for row in ({}, {'sharedHumanIds': [self.ENTRY]}):
+                with self.subTest(harness=harness, row=row):
+                    expected = self.environment(harness, row)
+                    for residual in ({}, {'CAUCE_SHARED_HUMAN_IDS': self.ENTRY}):
+                        observed = {**expected, **residual}
+                        self.assertEqual(self.environment(harness, row, observed), expected)
+                        for marker, value in (('CAUCE_SHARED_SESSION', '1'), ('CAUCE_SHARED_SESSION_WORKSPACE', '/old/shared')):
+                            with self.subTest(marker=marker), self.assertRaises(runtime.NamespaceMismatch):
+                                self.environment(harness, row, {**observed, marker: value})
 
     def test_teardown_pins_identity_without_requiring_the_current_sdk_configuration(self):
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
