@@ -7,7 +7,7 @@ import { command, receipt, RECEIPTS, startLiveAdapterFixture } from './v4-live-a
 
 let fixture: Awaited<ReturnType<typeof startLiveAdapterFixture>> | undefined;
 beforeAll(async () => { fixture = await startLiveAdapterFixture(); }, 1_500_000);
-afterAll(async () => { await fixture?.close(); }, 180_000);
+afterAll(async () => { await fixture?.close(); }, 600_000);
 
 describe.sequential('live V3 container adapter release through the operator script', () => {
   test('simulates without writes, upgrades with a real delivery, reports API failure promptly and rolls back', async () => {
@@ -15,9 +15,11 @@ describe.sequential('live V3 container adapter release through the operator scri
     const active = fixture;
     const child = active.start();
     let stderr = '';
+    let stdout = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-16_384); });
+    child.stdout.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-16_384); });
     const baseline = await active.probe(active.old.name, 'baseline-proof').catch((error: unknown) => {
-      throw new Error(`Initial canonical supervisor did not become ready: ${stderr}`, { cause: error });
+      throw new Error(`Initial canonical supervisor did not become ready: ${stderr}\n${stdout}`, { cause: error });
     });
     assert.equal(baseline.delivery_done, true, stderr);
     const before = await readFile(active.config);
@@ -78,4 +80,56 @@ describe.sequential('live V3 container adapter release through the operator scri
       scriptExitCodes: { simulation: 0, upgrade: 0, rollback: 0 },
       outputSizes: [simulation.stdout.length, upgraded.stdout.length, rolledBack.stdout.length] });
   }, 720_000);
+
+  test('upgrades an OpenClaw supervisor container from the old release to a live delivery', async () => {
+    const active = await startLiveAdapterFixture({ harness: 'openclaw' });
+    try {
+      const child = active.start();
+      let stderr = '';
+      let stdout = '';
+      child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-16_384); });
+      child.stdout.on('data', (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-16_384); });
+      const baseline = await active.probe(active.old.name, 'openclaw-baseline').catch((error: unknown) => {
+        throw new Error(`Initial OpenClaw supervisor did not become ready: ${stderr}\n${stdout}`, { cause: error });
+      });
+      assert.equal(baseline.delivery_done, true, stderr);
+      assert.equal(baseline.process_alive, true);
+      assert.equal(baseline.lease_valid, true);
+      assert.equal(baseline.hello_ack, true);
+      assert.match(baseline.executable_path, /\/bin\/openclaw\.js$/u);
+      const before = await readFile(active.config);
+      const beforeCount = (await active.pool.query<{ count: string }>(
+        'SELECT count(*)::text FROM deliveries WHERE recipient_alias=$1', [active.alias])).rows[0]?.count;
+      const script = join(process.cwd(), '.delegados/v4/adaptador-vivo.sh');
+      const appliedReceipt = join(RECEIPTS, `apply-openclaw-${active.alias}.json`);
+      const baseArgs = [script, '--laboratorio', '--inventario', active.inventory,
+        '--agente', active.alias, '--ref', active.candidate.ref, '--bundle-preconstruido', active.candidate.bundle,
+        '--sonda', active.probePath, '--sonda-sha256', active.probeSha, '--recibo', appliedReceipt];
+      await command('bash', baseArgs, active.environment, 180_000);
+      assert.deepEqual(await readFile(active.config), before);
+      assert.equal(await stat(appliedReceipt).then(() => true, () => false), false);
+      assert.equal((await active.pool.query<{ count: string }>(
+        'SELECT count(*)::text FROM deliveries WHERE recipient_alias=$1', [active.alias])).rows[0]?.count, beforeCount);
+      const upgraded = await command('bash', [...baseArgs, '--ejecutar'], active.environment, 240_000);
+      const updated = await readFile(active.config, 'utf8');
+      const release = /^BUNDLE_RELEASE=(.+)$/mu.exec(updated)?.[1];
+      assert.ok(release && release !== active.old.name);
+      assert.equal((await readFile(join(active.roots.bundle, 'releases', release, '.release-sha'), 'utf8')).trim(), active.candidate.ref);
+      const proof = active.probes.at(-1) as { release: string; delivery_done: boolean; process_alive: boolean;
+        lease_valid: boolean; hello_ack: boolean; pid: number; executable_path: string; lease_epoch: string };
+      assert.equal(proof.release, release);
+      assert.equal(proof.delivery_done, true);
+      assert.equal(proof.process_alive, true);
+      assert.equal(proof.lease_valid, true);
+      assert.equal(proof.hello_ack, true);
+      assert.notEqual(proof.pid, baseline.pid);
+      assert.match(proof.executable_path, new RegExp(`/releases/${release}/packages/adapter-sdk/dist/src/bin/openclaw\\.js$`, 'u'));
+      assert.equal(upgraded.stdout.includes('"state": "verified"') || upgraded.stdout.includes('"state": "succeeded"'), true);
+      await receipt('openclaw-roundtrip', { result: 'PASS', alias: active.alias, harness: 'openclaw', lifecycle: 'supervisor',
+        oldRelease: active.old.name, newRelease: release, oldRef: active.old.ref, newRef: active.candidate.ref,
+        baselinePid: baseline.pid, baselineEpoch: baseline.lease_epoch, proof });
+    } finally {
+      await active.close();
+    }
+  }, 1_200_000);
 });

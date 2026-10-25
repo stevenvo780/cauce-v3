@@ -69,7 +69,7 @@ const dir=path.join(config,'projects',process.cwd().replace(/\//g,'-'));fs.mkdir
 const session=crypto.randomUUID();const transcript=path.join(dir,session+'.jsonl');let buffer='',paste='';
 let submits=0;const stateFile=path.join(home,'controlled-tui-state.json');
 const state=value=>fs.writeFileSync(stateFile,JSON.stringify({submits,bufferLength:buffer.length,pasteLength:paste.length,...value}));
-const screen=()=>process.stdout.write('\x1b[2J\x1b[HControlled release TUI\r\n❯ ');
+const screen=()=>process.stdout.write('\x1b[2J\x1b[H❯ ');
 function append(value){fs.appendFileSync(transcript,JSON.stringify(value)+'\n');}
 function submit(){if(!paste)return;submits+=1;const text=paste;paste='';const user=crypto.randomUUID();
 append({type:'user',uuid:user,parentUuid:null,isSidechain:false,promptSource:'typed',sessionId:session,message:{role:'user',content:text}});
@@ -81,10 +81,24 @@ process.stdin.setRawMode(true);process.stdin.setEncoding('utf8');process.stdin.r
 process.stdin.on('data',chunk=>{buffer+=chunk;state({inputReceived:true});while(buffer.length){if(buffer.startsWith('\x1b[200~')){const end=buffer.indexOf('\x1b[201~');if(end<0)return;paste=buffer.slice(6,end).replace(/\r\n?/g,'\n');buffer=buffer.slice(end+6);state({pasteReceived:true});continue;}if(buffer.startsWith('\x1b')&&buffer.length<6)return;const c=buffer[0];buffer=buffer.slice(1);if(c==='\r'||c==='\n')submit();}});
 `;
 
+const OPENCLAW_AGENT = `import { existsSync } from 'node:fs';
+export async function agentCliCommand(request) {
+  const text = typeof request?.message === 'string' ? request.message : '';
+  const id = /"cauce_correlation_id":"([a-f0-9]{64})"/.exec(text)?.[1];
+  if (existsSync((process.env.HOME ?? '') + '/api-error')) return { ok: false, error: 'terminal API error synthetic' };
+  const output = JSON.stringify({ reply: 'LIVE_RELEASE_CANARY_DONE', messages: [], status: 'done', retryable: false, artifacts: [], ...(id === undefined ? {} : { cauce_correlation_id: id }) });
+  return { payloads: [{ text: output }] };
+}
+`;
+
+const OPENCLAW_RUNTIME = `export const defaultRuntime = { log() {}, error() {} };
+`;
+
 interface Delivery { id: string; status: string; last_error: string | null; terminal_at: Date | null; error_code: string | null }
 interface Metadata { phase: string; pid: number; starttime: number; bundleDigest: string; executable: { path: string } }
 
-export async function startLiveAdapterFixture() {
+export async function startLiveAdapterFixture(options: { harness?: 'claude' | 'openclaw' } = {}) {
+  const harness = options.harness ?? 'claude';
   assert.match(process.env.HOME ?? '', /^\/tmp\/cauce-e2e-home-/u, 'Run this suite with scripts/e2e-lab.sh');
   assert.equal(process.getuid?.(), 1000);
   await mkdir(RECEIPTS, { recursive: true });
@@ -152,24 +166,42 @@ export async function startLiveAdapterFixture() {
       'scripts/secure_path.py', 'scripts/pin-container-release.py', 'scripts/validate-container-mount.py',
       'scripts/alias-lock-exec.py', 'scripts/verify-hermes-runtime.py', 'container-runtime/cauce-container-runtime.py',
       'container-runtime/cauce_container_base.py', 'container-runtime/cauce_container_proc.py',
-      'container-runtime/cauce_container_tree.py', 'container-runtime/cauce_container_adoption.py', 'container-runtime/podar-releases.py'];
+      'container-runtime/cauce_container_tree.py', 'container-runtime/cauce_container_adoption.py',
+      'container-runtime/cauce_container_restart.py', 'container-runtime/podar-releases.py'];
     for (const file of opsFiles) { await mkdir(join(roots.ops, file, '..'), { recursive: true }); await copyFile(join(ROOT, 'ops', file), join(roots.ops, file)); }
+    const openClawWorkspace = '/home/node/openclaw-workspace';
+    const openClawDist = '/home/node/openclaw-dist';
     await writeFile(join(roots.ops, 'container-aliases.json'), JSON.stringify({ schemaVersion: 2, systemPrincipals: {}, historicalAliases: {}, aliases: {
       [alias]: { tenant: 'Steven', room: 'grp.steven', container: containerName, user: 'node', home: '/home/node',
-        stateDirectory, harness: 'claude', membershipRole: 'agent', systemdUser: 'stev' },
+        stateDirectory, harness, membershipRole: 'agent', systemdUser: 'stev',
+        ...(harness === 'openclaw' ? { workspace: openClawWorkspace } : {}) },
     } }), { mode: 0o600 });
     await command('python3', [join(roots.ops, 'scripts/container-alias-query.py'), alias, '--supervisor'], environment);
-    for (const folder of ['.local/bin', '.claude', 'projects']) await mkdir(join(roots.home, folder), { recursive: true, mode: 0o700 });
-    await writeFile(join(roots.home, '.local/bin/claude'), CLAUDE, { mode: 0o700 });
-    await writeFile(join(roots.home, '.bash_profile'), 'export PATH="$HOME/.local/bin:$PATH"\n', { mode: 0o600 });
+    const homeFolders = harness === 'openclaw'
+      ? ['.local/bin', 'projects', 'openclaw-workspace', 'openclaw-dist']
+      : ['.local/bin', '.claude', 'projects'];
+    for (const folder of homeFolders) await mkdir(join(roots.home, folder), { recursive: true, mode: 0o700 });
+    if (harness === 'claude') {
+      await writeFile(join(roots.home, '.local/bin/claude'), CLAUDE, { mode: 0o700 });
+      await writeFile(join(roots.home, '.bash_profile'), 'export PATH="$HOME/.local/bin:$PATH"\n', { mode: 0o600 });
+    } else {
+      await writeFile(join(roots.home, 'openclaw-dist/package.json'), '{"type":"module"}\n', { mode: 0o644 });
+      await writeFile(join(roots.home, 'openclaw-dist/agent-via-gateway-lab.js'), OPENCLAW_AGENT, { mode: 0o644 });
+      await writeFile(join(roots.home, 'openclaw-dist/runtime-lab.js'), OPENCLAW_RUNTIME, { mode: 0o644 });
+    }
     const recipe = await readFile(join(ROOT, 'tests/e2e/lab-runner/Dockerfile'));
     const image = `cauce-e2e-lab-runner:${createHash('sha256').update(recipe).digest('hex').slice(0, 12)}`;
     runtime = await new GenericContainer(image).withName(containerName).withLabels({ 'cauce.e2e.owner': OWNER })
       .withUser('0').withNetworkMode('host').withBindMounts([{ source: roots.home, target: '/home/node', mode: 'rw' }])
       .withWorkingDir('/home/node/projects').withCommand(['sleep', 'infinity']).withWaitStrategy(Wait.forSuccessfulCommand('id node')).start();
-    const launcher = await command('docker', ['exec', '--user', '1000', '-e', 'HOME=/home/node',
-      '-e', 'PATH=/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin', containerName, 'bash', '-lc', 'command -v claude']);
-    assert.equal(launcher.stdout.trim(), '/home/node/.local/bin/claude');
+    if (harness === 'claude') {
+      const launcher = await command('docker', ['exec', '--user', '1000', '-e', 'HOME=/home/node',
+        '-e', 'PATH=/home/node/.local/bin:/usr/local/bin:/usr/bin:/bin', containerName, 'bash', '-lc', 'command -v claude']);
+      assert.equal(launcher.stdout.trim(), '/home/node/.local/bin/claude');
+    } else {
+      const present = await command('docker', ['exec', '--user', '1000', containerName, 'test', '-f', `${openClawDist}/agent-via-gateway-lab.js`]);
+      assert.equal(present.stdout, '');
+    }
     const imageId = (await command('docker', ['inspect', '--format', '{{.Image}}', containerName])).stdout.trim();
     const pki = join(roots.pki, alias); await mkdir(pki, { mode: 0o700 });
     for (const [source, target] of [[workerTls.cert_path, 'client.crt'], [workerTls.key_path, 'client.key'], [tls.cert_path, 'ca.crt']]) {
@@ -184,7 +216,7 @@ export async function startLiveAdapterFixture() {
     await applyMigrationsThrough(pool, '047_agent_preferences.sql');
     for (const target of [alias, publisher]) {
       await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,state_directory)
-        VALUES('Steven',$1,'claude',true,$2,'node','/home/node',$3)`, [target, containerName, stateDirectory]);
+        VALUES('Steven',$1,$2,true,$3,'node','/home/node',$4)`, [target, harness, containerName, stateDirectory]);
       await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven','grp.steven',$1,'agent')", [target]);
     }
     await applyMigrations(pool);
@@ -203,15 +235,22 @@ export async function startLiveAdapterFixture() {
     const address = app.server.address(); assert.ok(address && typeof address !== 'string');
     const origin = `https://127.0.0.1:${String(address.port)}`;
     const config = join(roots.config, `${alias}.env`);
-    await writeFile(config, Object.entries({ BUNDLE_RELEASE: old.name, BUNDLE_SHA256: old.digest, PKI_DIR: pki,
+    const configEntries: Record<string, string> = { BUNDLE_RELEASE: old.name, BUNDLE_SHA256: old.digest, PKI_DIR: pki,
       RELAY_URL: `${origin.replace('https:', 'wss:')}/v3/ws`, EXPECTED_IMAGE_ID: imageId,
       EXPECTED_LABEL_KEY: 'cauce.e2e.owner', EXPECTED_LABEL_VALUE: OWNER, MOUNT_TYPE: 'bind', MOUNT_SOURCE: roots.home,
-      MOUNT_DESTINATION: '/home/node', MOUNT_RW: 'true', CAUCE_SEMBRAR_PERFIL: '1', EXPECTED_CLI_VERSION: '2.1.0',
-      SHARED_SESSION: '1', SHARED_SESSION_WORKSPACE: '/home/node/projects',
-    }).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
+      MOUNT_DESTINATION: '/home/node', MOUNT_RW: 'true', CAUCE_SEMBRAR_PERFIL: '1' };
+    if (harness === 'claude') {
+      configEntries.EXPECTED_CLI_VERSION = '2.1.0';
+      configEntries.SHARED_SESSION = '1';
+      configEntries.SHARED_SESSION_WORKSPACE = '/home/node/projects';
+    } else {
+      configEntries.OPENCLAW_WORKSPACE = openClawWorkspace;
+      configEntries.OPENCLAW_DIST_DIR = openClawDist;
+    }
+    await writeFile(config, Object.entries(configEntries).map(([key, value]) => `${key}=${value}`).join('\n') + '\n', { mode: 0o600 });
     const inventory = join(directory, 'inventory.json');
     await writeFile(inventory, JSON.stringify({ version: 1, agents: [{ alias, kind: 'container', transport: 'local', lifecycle: 'supervisor',
-      harness: 'claude', container: containerName, ops_root: roots.ops, config_root: roots.config, bundle_root: roots.bundle,
+      harness, container: containerName, ops_root: roots.ops, config_root: roots.config, bundle_root: roots.bundle,
       pki_root: roots.pki, lock_root: roots.locks, control_root: controlRoot, state_directory: stateDirectory,
       supervisor_path: supervisor }] }), { mode: 0o600 });
     const activePool = pool;
@@ -265,7 +304,7 @@ export async function startLiveAdapterFixture() {
     }
     const probes: Record<string, unknown>[] = [];
     async function probe(release: string, nonce: string) {
-      await waitFor(() => command('bash', [supervisor, 'check', alias], environment).then(() => true, () => undefined));
+      await waitFor(() => command('bash', [supervisor, 'check', alias], environment).then(() => true, () => undefined), 180_000);
       const metadata = JSON.parse((await command('docker', ['exec', '--user', '0', containerName, 'cat',
         `${controlRoot}/${alias}/cauce-v3-adapter.json`])).stdout) as Metadata;
       const lease = await waitFor(async () => (await activePool.query<{ epoch: string }>(
