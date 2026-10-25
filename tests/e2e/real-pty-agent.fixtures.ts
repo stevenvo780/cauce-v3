@@ -8,7 +8,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildGateway } from '../../services/gateway/src/app.js';
+import { buildGateway, type GatewayOptions } from '../../services/gateway/src/app.js';
 import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services/gateway/src/auth.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
@@ -40,18 +40,11 @@ const consoleRequire = createRequire(join(process.cwd(), 'console/package.json')
 interface HttpResult { status: number; headers: import('node:http').IncomingHttpHeaders; body: string }
 interface Pki {
   directory: string;
-  caCert: string;
-  serverCert: string;
-  serverKey: string;
-  relayClientCert: string;
-  relayClientKey: string;
-  consoleClientCert: string;
-  consoleClientKey: string;
-  agentCert: string;
-  agentKey: string;
-  agentRegistry: string;
-  relayIdentityFile: string;
-  relayInstanceId: string;
+  caCert: string; serverCert: string; serverKey: string;
+  relayClientCert: string; relayClientKey: string;
+  consoleClientCert: string; consoleClientKey: string;
+  agentCert: string; agentKey: string;
+  agentRegistry: string; relayIdentityFile: string; relayInstanceId: string;
 }
 interface BrowserSession { cookie: string; csrf: string }
 export interface PtySocket {
@@ -62,27 +55,15 @@ export interface PtySocket {
   closeCode: number | undefined;
 }
 export interface RealPtyFixture {
-  database: TestDatabase;
-  app: Awaited<ReturnType<typeof buildGateway>>;
-  directory: string;
-  gatewayUrl: string;
-  baseUrl: string;
-  browserContainer: string;
+  database: TestDatabase; app: Awaited<ReturnType<typeof buildGateway>>;
+  directory: string; gatewayUrl: string; baseUrl: string; browserContainer: string;
   browserPage(viewport: { width: number; height: number }, device?: { isMobile?: boolean; hasTouch?: boolean }): Promise<BrowserPage>;
   relayPorts: { browser: number; agent: number; health: number };
-  relayInstanceId: string;
-  agentContainer: string;
-  agentContainerId: string;
-  agentImage: string;
-  agentImageId: string;
-  operatorEmail: string;
-  operatorPassword: string;
-  operatorAlias: string;
-  targetAlias: string;
-  tenant: string;
-  nonce: string;
-  agentLog: () => string;
-  relayLog: () => string;
+  relayInstanceId: string; agentContainer: string; agentContainerId: string;
+  agentImage: string; agentImageId: string;
+  operatorEmail: string; operatorPassword: string; operatorAlias: string;
+  targetAlias: string; tenant: string; nonce: string;
+  agentLog: () => string; relayLog: () => string;
   login(): Promise<BrowserSession>;
   request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: unknown }): Promise<HttpResult>;
   connect(ticket: string, sessionId: string, authorityProof: string, cols: number, rows: number): Promise<PtySocket>;
@@ -93,22 +74,28 @@ export interface RealPtyFixture {
 }
 
 export interface RealPtyFixtureOptions extends ProviderTuiOptions {
-  readonly governanceRelay?: boolean;
-  readonly tui?: boolean;
+  readonly database?: TestDatabase; readonly skipBrowser?: boolean;
+  readonly externalVerificationProxy?: boolean;
+  readonly gatewayOptions?: (context: Pick<RealPtyGatewayContext, 'pool' | 'auth' | 'directory'>) =>
+    Promise<Pick<GatewayOptions, 'bootstrapProviders' | 'providerAuthService' | 'fleetOperationsRepository'
+      | 'spaceBackups' | 'blobs' | 'signedFleetAuthorityClient' | 'legacyFleetAdoptionService'>>;
+  readonly configureGateway?: (context: RealPtyGatewayContext) => Promise<void>;
+  readonly governanceRelay?: boolean; readonly tui?: boolean;
   readonly modes?: readonly TerminalMode[];
-  readonly owner?: string;
-  readonly resourcePrefix?: string;
-  readonly sessionTtlSeconds?: number;
-  readonly sessionMaxTotalSeconds?: number;
-  readonly controlHoldSeconds?: number;
-  readonly idleTimeoutSeconds?: number;
+  readonly owner?: string; readonly resourcePrefix?: string;
+  readonly sessionTtlSeconds?: number; readonly sessionMaxTotalSeconds?: number;
+  readonly controlHoldSeconds?: number; readonly idleTimeoutSeconds?: number;
   readonly maxSessionsPerOperator?: number;
 }
 
+export interface RealPtyGatewayContext {
+  readonly app: Awaited<ReturnType<typeof buildGateway>>; readonly pool: TestDatabase['pool'];
+  readonly auth: PasswordAuthProvider; readonly terminalConfig: TerminalConfig;
+  readonly registry: AgentRegistry; readonly directory: string; readonly agentImage: string;
+}
 function boundedAppend(current: string, chunk: Buffer, limit = 24 * 1024): string {
   return `${current}${chunk.toString('utf8')}`.slice(-limit);
 }
-
 function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   const pid = child.pid;
   if (pid === undefined) return;
@@ -117,11 +104,9 @@ function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
     if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
   }
 }
-
 function isMissingDockerObject(error: unknown): boolean {
   return error instanceof Error && /No such (?:object|image|container)/iu.test(error.message);
 }
-
 async function inspectImage(tag: string): Promise<{ id: string; owner: string } | undefined> {
   try {
     const { stdout } = await execute('docker', ['image', 'inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', tag], { timeout: 15_000, maxBuffer: 64 * 1024 });
@@ -133,7 +118,6 @@ async function inspectImage(tag: string): Promise<{ id: string; owner: string } 
     throw error;
   }
 }
-
 async function removeOwnedImage(tag: string, id: string, owner: string): Promise<void> {
   const current = await inspectImage(tag);
   if (!current) return;
@@ -141,8 +125,7 @@ async function removeOwnedImage(tag: string, id: string, owner: string): Promise
   await execute('docker', ['image', 'rm', tag], { timeout: 15_000, maxBuffer: 64 * 1024 });
   if (await inspectImage(tag)) throw new Error(`owned Python agent image remains after cleanup: ${tag}`);
 }
-
-async function dockerExecInput(args: string[], input: string, timeoutMs = 15_000): Promise<void> {
+export async function dockerExecInput(args: string[], input: string, timeoutMs = 15_000): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     let stdout = '';
@@ -323,6 +306,7 @@ async function seed(database: TestDatabase, containerId: string, targetHarness =
 
 export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): Promise<RealPtyFixture> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) throw new Error('real PTY E2E requires its own Testcontainers database');
+  if (options.externalVerificationProxy && options.skipBrowser !== true) throw new Error('external verification proxy requires skipBrowser');
   const { owner, resourcePrefix, modes, sessionTtlSeconds, sessionMaxTotalSeconds,
     controlHoldSeconds, idleTimeoutSeconds, maxSessionsPerOperator } = realPtyRuntimeOptions(options);
   const ownerLabel = `cauce.e2e.owner=${owner}`;
@@ -332,7 +316,7 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
   const tmuxTarget = `cauce-${TARGET_ALIAS}:agente`;
   const buildContext = await mkdtemp(join(tmpdir(), 'cauce-real-pty-build-'));
   let directory = '';
-  let database: TestDatabase | undefined;
+  let database: TestDatabase | undefined = options.database;
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   let vite: { close(): Promise<void>; httpServer: import('node:http').Server | null; listen(): Promise<void> } | undefined;
   let trustedBrowser: TrustedBrowser | undefined;
@@ -432,7 +416,7 @@ WORKDIR /home/node
     const capability = await execute('docker', ['run', '--rm', '--label', ownerLabel, '--network', 'none', '--env', 'PYTHONPATH=/opt/cauce-pty-agent', '--entrypoint', 'python3', imageTag, '-c', "import os,pwd,cauce_pty_agent; print(os.geteuid(),pwd.getpwuid(os.geteuid()).pw_dir,os.environ.get('HOME','<unset>'))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
     if (capability.stdout.trim() !== '1000 /home/node /home/node') throw new Error(`agent image USER/HOME validation failed: ${JSON.stringify(capability.stdout.trim())}`);
 
-    database = await startTestDatabase();
+    database = options.database ?? await startTestDatabase();
     const startedDatabase = database;
     const pkiValue = await makePki(directory);
     relayInstanceId = relayInstanceIdFromCertificate(await readFile(pkiValue.relayClientCert));
@@ -475,12 +459,14 @@ WORKDIR /home/node
     gatewayUrl = `https://127.0.0.1:${String(gatewayPort)}`;
     const frontendOrigin = `https://localhost:${String(frontendPort)}`;
     app = await buildGateway({
+      ...await options.gatewayOptions?.({ pool: startedDatabase.pool, auth, directory }),
       pool: startedDatabase.pool, authProvider: auth, https: tls, consoleOrigins: [gatewayUrl, frontendOrigin],
       terminalCapability: terminalCapabilityAnnouncement(config),
       operatorResolution: { operatorHeader: config.operatorHeader, operators: config.operators },
     });
     const registry = new AgentRegistry();
     await app.register(registerTerminalControlPlane, { pool: startedDatabase.pool, authProvider: auth, config, registry });
+    await options.configureGateway?.({ app, pool: startedDatabase.pool, auth, terminalConfig: config, registry, directory, agentImage: imageTag });
     await portReservations.release('gateway');
     await app.listen({ host: '127.0.0.1', port: gatewayPort });
     proxyAgent = new (await import('node:https')).Agent({
@@ -507,7 +493,8 @@ WORKDIR /home/node
             target: `https://127.0.0.1:${String(ports.browser)}`,
             agent: browserProxyAgent, secure: true, changeOrigin: false, ws: true,
           },
-          '/v3': { target: gatewayUrl, agent: proxyAgent, secure: true, changeOrigin: false, ws: false },
+          ...(options.externalVerificationProxy === true ? { '/oauth': { target: gatewayUrl, agent: proxyAgent, secure: true, changeOrigin: false, ws: false } } : {}),
+          '/v3': { target: gatewayUrl, agent: proxyAgent, secure: true, changeOrigin: false, ws: options.externalVerificationProxy === true },
         },
       },
     });
@@ -517,8 +504,7 @@ WORKDIR /home/node
     if (!frontendAddress || typeof frontendAddress === 'string') throw new Error('Vite HTTPS server did not expose its bound address');
     baseUrl = `https://localhost:${String(frontendAddress.port)}`;
     if (baseUrl !== frontendOrigin) throw new Error('Vite HTTPS server did not bind its reserved origin');
-    const trusted = await startTrustedBrowser(pkiValue.caCert, directory, [frontendPort, gatewayPort]);
-    trustedBrowser = trusted;
+    if (!options.skipBrowser) trustedBrowser = await startTrustedBrowser(pkiValue.caCert, directory, [frontendPort, gatewayPort]);
     const provision = await execute(join(process.cwd(), 'node_modules/.bin/tsx'), [
       'services/gateway/src/console-user-cli.ts', '--email', OPERATOR_EMAIL, '--name', 'Real PTY E2E operator',
       '--role', 'operator', '--tenant', TENANT, '--alias', OPERATOR_ALIAS,
@@ -581,12 +567,26 @@ WORKDIR /home/node
       ca_pem: await readFile(pkiValue.caCert, 'utf8'), agent_version: 'cauce-pty-e2e',
       runtime_facts: {},
     };
-    const run = await execute('docker', ['run', '--rm', '--detach', '--name', containerName, '--label', ownerLabel,
-      '--network', 'host', '--user', 'node', '--read-only', '--memory', options.realTuiHarness ? '1g' : '256m', '--cpus', '1', '--pids-limit', options.realTuiHarness ? '256' : '64',
-      ...(options.realTuiHarness ? ['--tmpfs', '/home/node:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=1000,gid=1000'] : []),
-      '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777', '--entrypoint', 'sh', agentImage, '-lc', 'sleep 600'],
-    { timeout: 30_000, maxBuffer: 64 * 1024 });
-    const dockerId = run.stdout.trim();
+    let dockerId = '';
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const run = await execute('docker', ['run', '--rm', '--detach', '--name', containerName, '--label', ownerLabel,
+          '--network', 'host', '--user', 'node', '--read-only', '--memory', options.realTuiHarness ? '1g' : '256m', '--cpus', '1', '--pids-limit', options.realTuiHarness ? '256' : '64',
+          ...(options.realTuiHarness ? ['--tmpfs', '/home/node:rw,nosuid,nodev,noexec,size=128m,mode=0700,uid=1000,gid=1000'] : []),
+          '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777', '--entrypoint', 'sh', agentImage, '-lc', 'sleep 600'],
+        { timeout: 30_000, maxBuffer: 64 * 1024 });
+        dockerId = run.stdout.trim();
+        if (dockerId) break;
+      } catch (runError) {
+        const existing = await execute('docker', ['inspect', '--format', '{{.Id}}', containerName], { timeout: 10_000 }).catch(() => null);
+        if (existing?.stdout.trim()) {
+          dockerId = existing.stdout.trim();
+          break;
+        }
+        await execute('docker', ['rm', '--force', containerName], { timeout: 10_000 }).catch(() => null);
+        if (attempt === 3) throw runError;
+      }
+    }
     const inspect = await execute('docker', ['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}} {{.Config.User}}', containerName], { timeout: 15_000, maxBuffer: 64 * 1024 });
     const [containerId, actualOwner, user] = inspect.stdout.trim().split(' ');
     if (containerId !== dockerId || actualOwner !== owner || user !== 'node') throw new Error('target container identity/owner/user validation failed');
@@ -613,9 +613,9 @@ WORKDIR /home/node
     const relayPorts = ports;
     process.stdout.write(`terminal-e2e-owned ${JSON.stringify({ database_container: startedDatabase.container.getId(),
       agent_container: containerName, agent_container_id: agentContainerId, agent_image: agentImage, agent_image_id: imageId,
-      browser_container: trustedBrowser.container })}\n`);
+      browser_container: trustedBrowser?.container ?? '' })}\n`);
     return {
-      database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser.container,
+      database: startedDatabase, app, directory, gatewayUrl, baseUrl, browserContainer: trustedBrowser?.container ?? '',
       browserPage: async (viewport, device = {}) => {
         if (!trustedBrowser) throw new Error('trusted Chromium fixture is not initialized');
         const context = await trustedBrowser.browser.newContext({ viewport, ignoreHTTPSErrors: false, serviceWorkers: 'block', ...device });

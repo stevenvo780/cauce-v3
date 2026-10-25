@@ -85,14 +85,20 @@ async function invocations(): Promise<{ pid: number; native_id: string; argv: st
   return result.stdout.trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { pid: number; native_id: string; argv: string[] });
 }
 
+let fixtureError: Error | undefined;
+
 beforeAll(async () => {
-  await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
-  fixture = await startRealPtyFixture({ governanceRelay: true, tui: true, owner: OWNER,
-    resourcePrefix: `zz-canary-${OWNER}-${RUN}`, modes: ['shell', 'harness', 'harness_rw'] });
-  await fixture.database.pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
-    SELECT company_id,id,'owner','import',id FROM console_users WHERE email=$1
-    ON CONFLICT (company_id,human_id) DO UPDATE SET role='owner'`, [fixture.operatorEmail]);
-  await configureOpenClaw();
+  try {
+    await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
+    fixture = await startRealPtyFixture({ governanceRelay: true, tui: true, owner: OWNER,
+      resourcePrefix: `zz-canary-${OWNER}-${RUN}`, modes: ['shell', 'harness', 'harness_rw'] });
+    await fixture.database.pool.query(`INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+      SELECT company_id,id,'owner','import',id FROM console_users WHERE email=$1
+      ON CONFLICT (company_id,human_id) DO UPDATE SET role='owner'`, [fixture.operatorEmail]);
+    await configureOpenClaw();
+  } catch (error) {
+    fixtureError = error instanceof Error ? error : new Error(String(error));
+  }
 }, 900_000);
 
 afterAll(async () => {
@@ -107,6 +113,7 @@ afterAll(async () => {
 
 describe('OpenClaw recuperado por Chromium, gateway, relay, PostgreSQL y Docker reales', () => {
   it('reanuda el ID durable tras Ctrl+C, conserva el adaptador y audita; otra empresa recibe 403', async () => {
+    if (fixtureError) throw fixtureError;
     const current = active();
     const page = asV4Page(await current.browserPage({ width: 1440, height: 900 }));
     const path = `/v3/console/tenants/${current.tenant}/agents/${current.targetAlias}/recovery`;

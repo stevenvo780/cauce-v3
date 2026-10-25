@@ -321,8 +321,20 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
   let savedLayout: unknown;
 
   async function openPlan(page: V4Page): Promise<void> {
-    await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).getByRole('link', { name: 'Oficina', exact: true }).click();
-    await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+    const target = `${base()}/live`;
+    if (page.url() !== target) {
+      const link = page.getByRole('navigation', { name: 'Navegación principal', exact: true }).getByRole('link', { name: 'Oficina', exact: true });
+      if (await link.count() > 0 && await link.isVisible()) {
+        await link.click();
+      } else {
+        await page.goto(target, { waitUntil: 'domcontentloaded' });
+      }
+    }
+    const button = page.getByRole('button', { name: 'Plano editable', exact: true });
+    await button.waitFor({ timeout: 20_000 });
+    if (await page.getByRole('region', { name: officeRoom(), exact: true }).count() === 0) {
+      await button.click();
+    }
     await page.getByRole('region', { name: officeRoom(), exact: true }).waitFor({ timeout: 20_000 });
   }
 
