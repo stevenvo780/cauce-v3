@@ -180,6 +180,9 @@ def validate_packet(packet):
         required.add('preserve_terminal')
     fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
               'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
+              'checkpoint_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id',
+                                         'normal_certificate_sha256', 'normal_token_sha256'},
+              'rollback_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id', 'checkpoint_sha256'},
               'issue_terminal': {'csr_pem', 'csr_sha256', 'idempotency_key'},
               'terminal_receipt': {'csr_pem', 'csr_sha256', 'idempotency_key'},
               'revoke_terminal': {'grant_id', 'certificate_sha256'}}
@@ -300,6 +303,98 @@ def resolve_runtime_authority(policy, packet):
 
 def observation(rows):
     return {'authorities': [row[3] for row in rows]}
+
+
+def compensation_hash(value):
+    return digest(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode())
+
+
+def compensation_normal(policy, packet, rows, normal):
+    selected = principal({**packet, 'phase': 'normal'})
+    for name, field in (('fleet_mtls', 'normal_certificate_sha256'), ('fleet_token', 'normal_token_sha256')):
+        fingerprint = 'certificate_sha256' if name.endswith('mtls') else 'token_sha256'
+        records = next(row[3]['matching_records'] for row in rows if row[0] == name)
+        matching = [row for row in records if row.get('principal') == selected]
+        if len(matching) != 1 or matching[0].get(fingerprint) != normal[field] or expired(matching[0]):
+            raise AuthorityError('original normal authority is unavailable')
+    identity = resolve_runtime_authority(policy, {'action': 'resolve_runtime_authority',
+        'certificate_sha256': normal['normal_certificate_sha256']})['identity']
+    if identity is None or any(identity.get(key) != value for key, value in packet['agent'].items()) \
+            or any(identity.get(key) != packet['scope'][key] for key in ('host_id', 'runtime_key')):
+        raise AuthorityError('original normal authority provenance changed')
+
+
+def compensation_credentials(policy, packet, rows, journal, journal_path, journal_stat):
+    _, registries, owners = policy_paths(policy)
+    names = ('snapshot_sha256', 'original_container_id')
+    if any(not isinstance(packet.get(name), str) or HEX.fullmatch(packet[name]) is None for name in names) \
+            or packet['expected_inventory'] != [{'id': row[3]['id'], 'sha256': row[3]['sha256']} for row in rows]:
+        raise AuthorityError('credential compensation inventory changed')
+    checkpoint = journal.get('credential_checkpoint')
+    if packet['action'] == 'checkpoint_credentials':
+        normal = {name: packet[name] for name in ('normal_certificate_sha256', 'normal_token_sha256')}
+        if any(not isinstance(value, str) or HEX.fullmatch(value) is None for value in normal.values()):
+            raise AuthorityError('normal credential pins are invalid')
+        if journal.get('issued') or journal.get('terminal') or 'revoked' in journal:
+            raise AuthorityError('credential checkpoint must precede issuance')
+        compensation_normal(policy, packet, rows, normal)
+        if checkpoint is None:
+            checkpoint = {'version': 1, 'scope': packet['scope'], 'agent': packet['agent'], **normal,
+                          **{name: packet[name] for name in names},
+                          'authorities': [{'id': row[0], 'matching_records': row[3]['matching_records']} for row in rows]}
+            journal['credential_checkpoint'] = checkpoint
+            publish(journal_path, journal, journal_stat)
+        elif any(checkpoint.get(name) != packet[name] for name in (*names, *normal)):
+            raise AuthorityError('credential checkpoint replay changed')
+        elif checkpoint['authorities'] != [{'id': row[0], 'matching_records': row[3]['matching_records']} for row in rows]:
+            raise AuthorityError('credential checkpoint authority changed')
+        return {'checkpoint_sha256': compensation_hash(checkpoint)}
+    if not isinstance(checkpoint, dict) or packet.get('checkpoint_sha256') != compensation_hash(checkpoint) \
+            or any(checkpoint.get(name) != packet[name] for name in names) \
+            or checkpoint.get('scope') != packet['scope'] or checkpoint.get('agent') != packet['agent']:
+        raise AuthorityError('credential rollback lacks its original checkpoint')
+    compensation_normal(policy, packet, rows, checkpoint)
+    prior = {row['id']: row['matching_records'] for row in checkpoint['authorities']}
+    owned = {name: [] for name in prior}
+    revoked = []
+    for phase, issued in journal.get('issued', {}).items():
+        if phase not in {'bootstrap', 'normal'}:
+            raise AuthorityError('credential issuance phase changed')
+        receipt = issued['receipt']
+        selected = principal({**packet, 'phase': phase})
+        for name, field in (('fleet_mtls', 'certificate_sha256'), ('fleet_token', 'token_sha256')):
+            owned[name].append({field: receipt[field], 'principal': selected, 'expires_at': receipt['expires_at']})
+        if owned['fleet_mtls'][-1] not in prior['fleet_mtls'] or owned['fleet_token'][-1] not in prior['fleet_token']:
+            revoked.append({'phase': phase, **{name: receipt[name] for name in ('certificate_sha256', 'token_sha256')}})
+    if set(prior) != {row[0] for row in rows}:
+        raise AuthorityError('credential authority set changed')
+    for name, _, _, observed in rows:
+        current = observed['matching_records']
+        if any(record not in current for record in prior[name]) \
+                or any(record not in prior[name] and record not in owned[name] for record in current):
+            raise AuthorityError('shared authority was removed, replaced or changed by another operation')
+    if 'credential_rollback_started' not in journal:
+        journal['credential_rollback_started'] = True
+        publish(journal_path, journal, journal_stat)
+    for name, document, original, _ in rows:
+        field = 'agents' if name == 'pty' else 'identities'
+        kept = [record for record in document[field] if record not in owned[name] or record in prior[name]]
+        if kept != document[field]:
+            publish(registries[name], {**document, field: kept}, original, owners[registries[name]])
+    restored = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
+                         packet.get('preserve_terminal', False))
+    authorities = [{'id': row[0], 'matching_records': row[3]['matching_records']} for row in restored]
+    if authorities != checkpoint['authorities']:
+        raise AuthorityError('shared authority restoration was not observed')
+    compensation_normal(policy, packet, restored, checkpoint)
+    proof = {'version': 1, **{name: packet[name] for name in names},
+             'checkpoint_sha256': packet['checkpoint_sha256'], 'authorities': authorities}
+    result = {'checkpoint_sha256': packet['checkpoint_sha256'], 'authority_sha256': compensation_hash(proof),
+              'shared_authority_preserved': True, 'created_authority_revoked': True, 'revoked_credentials': revoked}
+    journal['credential_rollback'] = result
+    _, current_stat = read(journal_path, private=True)
+    publish(journal_path, journal, current_stat)
+    return result
 
 
 def principal(packet):
@@ -489,7 +584,7 @@ def expired(row) -> bool:
 
 
 def issue(policy, packet, rows, journal, journal_path, journal_stat):
-    if journal.get('revoked'):
+    if journal.get('revoked') or journal.get('credential_rollback_started'):
         raise AuthorityError('revoked authority journal cannot issue credentials')
     request_hash = digest(json.dumps(packet, sort_keys=True, separators=(',', ':')).encode())
     existing = journal.setdefault('issued', {}).get(packet['phase'])
@@ -566,6 +661,8 @@ def perform(policy, packet):
         rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
                          packet.get('preserve_terminal', False))
         action = packet['action']
+        if action in {'checkpoint_credentials', 'rollback_credentials'}:
+            return compensation_credentials(policy, packet, rows, journal, journal_path, journal_stat)
         if action in {'issue_terminal', 'revoke_terminal', 'terminal_receipt'}:
             return terminal_effect(policy, packet, rows, journal, journal_path, journal_stat)
         if action == 'inventory':

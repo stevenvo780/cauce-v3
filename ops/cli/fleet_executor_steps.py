@@ -106,6 +106,9 @@ def _canonical_inputs(context: dict) -> dict:
         inputs['placement_role'] = placement_role(context)
     if 'global_desired_memberships' in context:
         inputs['global_desired_memberships'] = _canonical_memberships(context['global_desired_memberships'])
+    compensation = context.get('snapshot', {}).get('compensation_snapshot')
+    if isinstance(compensation, dict):
+        inputs['compensation_snapshot_sha256'] = compensation.get('snapshot_sha256')
     return inputs
 
 
@@ -126,6 +129,9 @@ class Executor:
             raw_inputs['placement_role'] = placement_role(context)
         if 'global_desired_memberships' in context:
             raw_inputs['global_desired_memberships'] = context['global_desired_memberships']
+        compensation = context.get('snapshot', {}).get('compensation_snapshot')
+        if isinstance(compensation, dict):
+            raw_inputs['compensation_snapshot_sha256'] = compensation.get('snapshot_sha256')
         raw_hash = hashlib.sha256(json.dumps(raw_inputs, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         inputs_hash = hashlib.sha256(json.dumps(_canonical_inputs(context), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         stored_hash = self.journal.setdefault('inputs_sha256', inputs_hash)
@@ -209,6 +215,7 @@ class Executor:
 
     def materialize_snapshot(self, source: dict) -> dict:
         source = copy.deepcopy(source)
+        source.pop('compensation_snapshot', None)
         for agent in source.get('agents', []):
             agent.pop('fleet_baseline', None)
         return materialize(source, {}, self.state)
@@ -304,6 +311,8 @@ class Executor:
             proof = prepare(self.policy, self.context, agent, generation / 'flota.json',
                 generation / ('bootstrap/manifests' if bootstrap else 'manifests') / (agent['runtime_key'] + '.yaml'), bootstrap=bootstrap)
             self.journal[('bootstrap' if bootstrap else 'normal') + '_credentials'] = proof['certificate_fingerprint']
+            if 'provenance' in proof:
+                self.journal.setdefault('credential_provenance', {})['bootstrap' if bootstrap else 'normal'] = proof['provenance']
             self.save()
             return {'certificate_fingerprint': proof['certificate_fingerprint']}
         key = agent['runtime_key']
@@ -575,6 +584,8 @@ class Executor:
             if row['tenant_id'] != agent['tenant_id'] or row['alias'] != agent['alias']] + intended
         receipt = self.materialize_snapshot(source)
         generation = self.state / 'generations' / receipt['generation']
+        self.journal['admission_pending_generation'] = receipt['generation']
+        self.save()
         current = load_applied_fleet(self.state)['generation'] if (self.state / 'applied-fleet.json').exists() else None
         if current not in {self.journal['expected_applied'], receipt['generation']}:
             raise SafeFailure('applied fleet changed before admission runtime effects')
@@ -604,7 +615,8 @@ class Executor:
         self.journal['admission'] = {'generation': receipt['generation'], 'runtime': evidence['runtime_digest']}
         evidence.update(self.record_extension_receipt())
         self.save()
-        return {'artifact_sha256': receipt['generation'], **evidence, **terminal}
+        from fleet_executor_replacement import admission_replacement_evidence
+        return {'artifact_sha256': receipt['generation'], **evidence, **terminal, **admission_replacement_evidence(self)}
 
     def admit_memberships(self):
         if self.context['request']['kind'] != 'restore':
@@ -630,6 +642,8 @@ class Executor:
     def perform(self, step: str) -> dict:
         if step == 'compensate':
             return {'evidence': self.compensate()}
+        from fleet_executor_replacement_rollback import capture
+        capture(self)
         if step == 'login-stop':
             for row in self.physical_placements():
                 if row.get('runtime_mode') == 'container':
@@ -652,6 +666,10 @@ class Executor:
         raise SafeFailure('missing verified hook for requested fleet step')
 
     def compensate(self) -> dict:
+        from fleet_executor_replacement_rollback import compensate
+        restored = compensate(self)
+        if restored is not None:
+            return restored
         if self.context.get('restore_previous_runtime') is True:
             return self.restore_previous_runtime()
         rows = self.physical_placements()

@@ -30,6 +30,9 @@ FAILURE_REASONS = {
     'functional hook has not demonstrated its effect': 'provider_functional_proof_failed',
     'functional proof identity or nonce differs': 'provider_functional_proof_failed',
     'terminal provisioning failed': 'terminal_provision_failed',
+    'replacement snapshot missing': 'replacement_snapshot_missing',
+    'replacement original unverified': 'replacement_original_unverified',
+    'replacement authority unverified': 'replacement_authority_unverified',
 }
 
 
@@ -75,6 +78,7 @@ def main() -> int:
     action.add_argument('--recovery-preview', action='store_true')
     action.add_argument('--recovery-preflight', action='store_true')
     action.add_argument('--maintenance-guard', action='store_true')
+    action.add_argument('--retire-replacement', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
     action.add_argument('--quota', action='store_true')
@@ -139,6 +143,11 @@ def main() -> int:
                     receipt = approved_binding(policy, context, prepare_login=True)
             else:
                 receipt = approved_binding(policy, context)
+        elif args.retire_replacement:
+            from fleet_executor_replacement import retire_committed
+            from fleet_executor_steps import Executor
+            with executor_lock(policy):
+                receipt = {'evidence': retire_committed(Executor(policy, context))}
         else:
             receipt = perform(policy, context, args.step)
     print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))

@@ -224,6 +224,9 @@ def call(configuration: dict, scope: dict, action: str, **fields) -> dict:
     validate_scope(scope, configuration['host_id'])
     allowed = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
         'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
+        'checkpoint_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id',
+                                   'normal_certificate_sha256', 'normal_token_sha256'},
+        'rollback_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id', 'checkpoint_sha256'},
         'issue_terminal': {'csr_pem', 'csr_sha256', 'idempotency_key'},
         'terminal_receipt': {'csr_pem', 'csr_sha256', 'idempotency_key'},
         'revoke_terminal': {'grant_id', 'certificate_sha256'}}
@@ -498,6 +501,49 @@ def present_inventory(observed: dict, principal: dict, proof: dict, token_hash: 
             raise SafeFailure('central credential records were removed, replaced or expired')
 
 
+def checkpoint_credentials(policy: dict, context: dict, agent: dict, entry: dict) -> dict:
+    scope = scope_for(policy, context, agent)
+    observed = inventory(call(policy['authority'], scope, 'inventory'), agent)
+    result = call(policy['authority'], scope, 'checkpoint_credentials',
+        expected_inventory=[{name: row[name] for name in ('id', 'sha256')} for row in observed['authorities']],
+        **{name: entry[name] for name in ('snapshot_sha256', 'original_container_id', 'normal_certificate_sha256', 'normal_token_sha256')})
+    if set(result) != {'checkpoint_sha256'} or not isinstance(result['checkpoint_sha256'], str) \
+            or HEX.fullmatch(result['checkpoint_sha256']) is None:
+        raise SafeFailure('replacement authority unverified')
+    return result
+
+
+def rollback_credentials(policy: dict, context: dict, agent: dict, entry: dict) -> dict:
+    scope = scope_for(policy, context, agent)
+    observed = inventory(call(policy['authority'], scope, 'inventory'), agent)
+    result = call(policy['authority'], scope, 'rollback_credentials',
+        expected_inventory=[{name: row[name] for name in ('id', 'sha256')} for row in observed['authorities']],
+        **{name: entry[name] for name in ('snapshot_sha256', 'original_container_id', 'checkpoint_sha256')})
+    if set(result) != {'checkpoint_sha256', 'authority_sha256', 'shared_authority_preserved', 'created_authority_revoked', 'revoked_credentials'} \
+            or result.get('checkpoint_sha256') != entry['checkpoint_sha256'] \
+            or result.get('shared_authority_preserved') is not True or result.get('created_authority_revoked') is not True \
+            or not isinstance(result.get('authority_sha256'), str) or HEX.fullmatch(result['authority_sha256']) is None:
+        raise SafeFailure('replacement authority unverified')
+    revoked = result['revoked_credentials']
+    if not isinstance(revoked, list) or len(revoked) > 2 \
+            or any(not isinstance(row, dict) or set(row) != {'phase', 'certificate_sha256', 'token_sha256'}
+                   or row.get('phase') not in {'bootstrap', 'normal'}
+                   or any(not isinstance(row[name], str) or HEX.fullmatch(row[name]) is None
+                          for name in ('certificate_sha256', 'token_sha256')) for row in revoked) \
+            or len({row['phase'] for row in revoked}) != len(revoked):
+        raise SafeFailure('replacement authority unverified')
+    return result
+
+
+def credential_provenance(scope: dict, phase: str, request_path: pathlib.Path, proof: dict, token_hash: str) -> dict:
+    request = json.loads(checked_file(request_path, True))
+    origin = request.get('scope', {}).get('operation_id')
+    if not isinstance(origin, str) or str(uuid.UUID(origin)) != origin or request.get('phase') != phase:
+        raise SafeFailure('central credential issuance provenance is unavailable')
+    return {'origin_operation_id': origin, 'source': 'issued' if origin == scope['operation_id'] else 'reused',
+            'certificate_sha256': proof['certificate_fingerprint'], 'token_sha256': token_hash}
+
+
 def prepare(policy: dict, context: dict, agent: dict, snapshot: pathlib.Path, manifest: pathlib.Path, *, bootstrap: bool) -> dict:
     try:
         return prepare_locked(policy, context, agent, snapshot, manifest, bootstrap)
@@ -556,7 +602,8 @@ def prepare_pair(policy: dict, scope: dict, agent: dict, principal: dict, pair: 
             raise SafeFailure('installed central credential receipt changed')
         observed = inventory(call(configuration, scope, 'inventory'), agent)
         present_inventory(observed, principal, proof, sha256(token))
-        return {name: proof[name] for name in ('certificate_fingerprint', 'expires_at')}
+        return {**{name: proof[name] for name in ('certificate_fingerprint', 'expires_at')},
+                'provenance': credential_provenance(scope, phase, request_path, proof, sha256(token))}
     if not private.exists() and not private.is_symlink():
         if any(filename.exists() or filename.is_symlink() for filename in (csr_path, certificate, request_path, token_path)):
             raise SafeFailure('central credential key is missing; rotation is forbidden')
@@ -589,7 +636,8 @@ def prepare_pair(policy: dict, scope: dict, agent: dict, principal: dict, pair: 
     publish_once(token_path, (issued['token'] + '\n').encode(), private=True)
     receipt = {'proof': proof, 'token_sha256': issued['token_sha256']}
     publish_once(receipt_path, json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode(), private=True)
-    return {name: proof[name] for name in ('certificate_fingerprint', 'expires_at')}
+    return {**{name: proof[name] for name in ('certificate_fingerprint', 'expires_at')},
+            'provenance': credential_provenance(scope, phase, request_path, proof, issued['token_sha256'])}
 
 
 def revoke(policy: dict, context: dict, agent: dict, journal: dict, save) -> dict:

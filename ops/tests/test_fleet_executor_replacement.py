@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import json
 import pathlib
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
@@ -129,6 +131,91 @@ class ReplacementRetirementTest(unittest.TestCase):
         self.assertEqual(completed['volumes'], self.volumes)
         self.assertIs(completed['complete'], True)
         self.assertEqual(container.retire_replaced_container(self.policy, self.agent, completed, apply=True), completed)
+
+    def committed_executor(self):
+        receipt = self.authorized()
+        body = {'version': 1, 'decision': 'configuration_committed',
+                'operation_id': receipt['replacement']['operation_id'], 'company_id': 'company', 'host_id': 'host',
+                'snapshot_sha256': '1' * 64, 'original_container_id': 'a' * 64, 'replacement_container_id': 'd' * 64,
+                'replacement_started_at': 'new-started', 'runtime_digest': 'f' * 64,
+                'request_sha256': '2' * 64, 'target_slice_sha256': '3' * 64, 'applied_revision': 4}
+        encoded = json.dumps(body, separators=(',', ':'))
+        commit = {**body, 'commit_canonical': encoded, 'commit_sha256': hashlib.sha256(encoded.encode()).hexdigest()}
+        desired = {**self.agent, 'container_name': 'new-agent'}
+        return SimpleNamespace(policy=self.policy, agent=lambda: desired, save=mock.Mock(),
+            context={'operation_id': body['operation_id'], 'request': {'kind': 'update'},
+                     'previous_agents': [self.agent], 'snapshot': {'replacement_commit': commit}},
+            journal={'replacement_retirement': receipt, 'replacement_compensation': {'snapshot_sha256': body['snapshot_sha256']},
+                     'admission_normal_proof': {**{key: True for key in replacement.REQUIRED_PROOF},
+                         'operation_id': body['operation_id'], 'runtime_digest': 'f' * 64}})
+
+    def test_committed_configuration_retires_pinned_original_before_terminal_success(self):
+        executor = self.committed_executor()
+        evidence = replacement.retire_committed(executor)
+        self.assertIsNone(self.observed)
+        saved = executor.journal['replacement_retirement_commit']
+        self.assertEqual(saved['receipt']['confirmed_operation']['status'], 'configuration_committed')
+        self.assertEqual(saved['phase'], 'complete')
+        self.assertEqual(saved['receipt']['volumes'], self.volumes)
+        self.assertEqual(evidence['replacement_retired']['commit_sha256'], saved['commit_sha256'])
+        self.assertEqual([call for call in self.calls if call[0] != 'ps'],
+                         [('stop', '--time', '15', 'a' * 64), ('rm', 'a' * 64)])
+
+    def test_missing_or_changed_commit_never_touches_original(self):
+        for change in ('missing', 'body', 'literal', 'previous_commit'):
+            with self.subTest(change=change):
+                executor = self.committed_executor()
+                commit = executor.context['snapshot']['replacement_commit']
+                if change == 'missing':
+                    executor.context['snapshot'].clear()
+                elif change == 'body':
+                    commit['original_container_id'] = 'e' * 64
+                elif change == 'literal':
+                    commit['commit_canonical'] += ' '
+                else:
+                    executor.journal['replacement_retirement_commit'] = {'commit_sha256': 'e' * 64}
+                with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+                    replacement.retire_committed(executor)
+                self.assertEqual(self.calls, [])
+                self.assertTrue(self.observed['State']['Running'])
+
+    def test_login_hold_keeps_committed_operation_pending_with_original_and_volumes(self):
+        executor = self.committed_executor()
+        self.login_check.side_effect = SafeFailure('provider login session is open or unverified')
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+            replacement.retire_committed(executor)
+        self.assertEqual(executor.journal['replacement_retirement_commit']['phase'], 'retiring')
+        self.assertTrue(self.observed['State']['Running'])
+        self.assertEqual(self.calls, [])
+
+    def test_crash_after_removal_replays_without_repeating_stop_or_remove(self):
+        executor = self.committed_executor()
+        persisted = []
+
+        def save():
+            if persisted:
+                raise OSError
+            persisted.append(copy.deepcopy(executor.journal))
+
+        executor.save.side_effect = save
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+            replacement.retire_committed(executor)
+        self.assertIsNone(self.observed)
+        self.assertEqual(persisted[0]['replacement_retirement_commit']['phase'], 'retiring')
+        executor.journal = persisted[0]
+        executor.save = mock.Mock()
+        evidence = replacement.retire_committed(executor)
+        self.assertIs(evidence['replacement_retired']['volumes_retained'], True)
+        self.assertEqual([call for call in self.calls if call[0] != 'ps'],
+                         [('stop', '--time', '15', 'a' * 64), ('rm', 'a' * 64)])
+
+    def test_pending_commit_cannot_be_used_without_its_bound_envelope(self):
+        executor = self.committed_executor()
+        receipt = executor.journal['replacement_retirement']
+        receipt['confirmed_operation']['status'] = 'configuration_committed'
+        with self.assertRaisesRegex(SafeFailure, 'confirmed operation'):
+            replacement.retire_replaced(self.policy, self.agent, receipt, apply=True)
+        self.assertEqual(self.calls, [])
 
 
 if __name__ == '__main__':

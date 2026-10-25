@@ -1,0 +1,300 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+import os
+import ssl
+import traceback
+from pathlib import Path
+
+from fleet_executor_policy import SafeFailure
+
+
+def canonical(value) -> str:
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+
+
+def restoration(context: dict) -> bool:
+    request = context['request']
+    previous = context['previous_agents']
+    placement = request.get('parameters', {}).get('placement', {})
+    return request['kind'] == 'update' and len(previous) == 1 \
+        and context.get('fleet_scope', {}).get('placement_role') is None \
+        and previous[0].get('runtime_mode') == placement.get('mode') == 'container' \
+        and previous[0].get('host_id') == placement.get('host_id') \
+        and previous[0].get('runtime_key') == request['parameters']['runtime_key'] \
+        and (previous[0].get('container_name') != placement.get('container_name') \
+             or previous[0].get('enabled') is True and previous[0].get('lifecycle_state') == 'ready')
+
+
+def snapshot(context: dict) -> dict:
+    value = context.get('snapshot', {}).get('compensation_snapshot')
+    try:
+        if not isinstance(value, dict):
+            raise ValueError
+        body = {key: child for key, child in value.items() if key not in {'snapshot_canonical', 'snapshot_sha256'}}
+        encoded = value['snapshot_canonical']
+        if not isinstance(encoded, str) or hashlib.sha256(encoded.encode()).hexdigest() != value['snapshot_sha256'] \
+                or canonical(json.loads(encoded)) != canonical(body) or type(body.get('version')) is not int or body['version'] != 1 \
+                or body.get('operation_id') != context['operation_id'] or body.get('target') != context['request']['target'] \
+                or not isinstance(body.get('previous_agents'), list) or len(body['previous_agents']) != 1 \
+                or not isinstance(body.get('previous_memberships'), list):
+            raise ValueError
+        before = body['previous_agents'][0]
+        previous = context['previous_agents'][0]
+        if any(before.get(key) != child for key, child in previous.items() if key != 'fleet_baseline'):
+            raise ValueError
+        if before.get('enabled') is not True or before.get('lifecycle_state') != 'ready':
+            raise ValueError
+        if any(member.get('tenant_id') != before['tenant_id'] or member.get('alias') != before['alias']
+               for member in body['previous_memberships']):
+            raise ValueError
+        return value
+    except (KeyError, TypeError, ValueError, IndexError):
+        raise SafeFailure('replacement snapshot missing') from None
+
+
+def normal_pins(executor, agent: dict) -> dict:
+    from fleet_executor_authority import proof_for, sha256
+    from fleet_executor_pki import checked_file
+    proof = proof_for(executor.policy, agent, bootstrap=False)
+    token = checked_file(Path(executor.policy['roots']['tokens']) / 'normal' / (agent['runtime_key'] + '.token'), True).strip()
+    return {'normal_certificate_sha256': proof['certificate_fingerprint'], 'normal_token_sha256': sha256(token)}
+
+
+def original(executor, entry: dict, *, restarting: bool = False) -> tuple[dict, dict]:
+    from fleet_executor_replacement import approved_observation, container_pin, volume_pins
+    try:
+        agent, observed = approved_observation(executor.policy, executor.context['previous_agents'][0])
+        if observed is None:
+            raise ValueError
+        pin = container_pin(observed)
+        expected = entry['original']['previous']
+        fields = set(expected) - ({'started_at'} if restarting else set())
+        if any(pin.get(key) != expected[key] for key in fields) \
+                or volume_pins(executor.policy, agent) != entry['original']['volumes']:
+            raise ValueError
+        return agent, observed
+    except (KeyError, TypeError, ValueError, SafeFailure):
+        raise SafeFailure('replacement original unverified') from None
+
+
+def capture(executor) -> None:
+    if not restoration(executor.context):
+        return
+    value = snapshot(executor.context)
+    entry = executor.journal.get('replacement_compensation')
+    if entry is not None:
+        if entry.get('snapshot_sha256') != value['snapshot_sha256']:
+            raise SafeFailure('replacement snapshot missing')
+        return
+    if executor.journal.get('attempted') or executor.journal.get('runtime_launch_attempted'):
+        raise SafeFailure('replacement authority unverified')
+    from fleet_executor_authority import checkpoint_credentials
+    from fleet_executor_container import adapter_restart_state
+    from fleet_executor_replacement import capture_previous
+    try:
+        previous = executor.context['previous_agents'][0]
+        receipt = capture_previous(executor.policy, previous)
+        entry = {'snapshot_sha256': value['snapshot_sha256'], 'original': receipt,
+                 'original_container_id': receipt['previous']['container_id'], 'phase': 'capturing'}
+        agent, observed = original(executor, entry)
+        state = adapter_restart_state(executor.policy, agent, observed)
+        if state.get('adapter_bootstrap') is not False:
+            raise SafeFailure('replacement original unverified')
+        entry['adapter_state'] = state
+        entry.update(normal_pins(executor, agent))
+        checkpoint = checkpoint_credentials(executor.policy, executor.context, agent, entry)
+        entry.update(checkpoint_sha256=checkpoint['checkpoint_sha256'], phase='captured')
+        executor.journal['replacement_compensation'] = entry
+        if previous['container_name'] != executor.context['request']['parameters']['placement']['container_name']:
+            executor.journal.setdefault('replacement_retirement', receipt)
+        executor.save()
+    except (OSError, KeyError, TypeError, ValueError, SafeFailure) as error:
+        if str(error) == 'replacement original unverified':
+            raise
+        raise SafeFailure('replacement authority unverified') from None
+
+
+def restore_source(executor, value: dict) -> dict:
+    from fleet_runtime_apply import publish_applied
+    from fleet_runtime_materialization import load_applied_fleet
+    source = copy.deepcopy(executor.context['snapshot'])
+    source.pop('compensation_snapshot', None)
+    before = value['previous_agents'][0]
+    rows = [row for row in source['agents'] if row.get('tenant_id') == before['tenant_id'] and row.get('alias') == before['alias']]
+    if len(rows) != 1:
+        raise SafeFailure('replacement snapshot missing')
+    for key in rows[0]:
+        if key in before:
+            rows[0][key] = before[key]
+    source['memberships'] = [member for member in source['memberships']
+        if (member['tenant_id'], member['alias']) != (before['tenant_id'], before['alias'])]
+    fields = ('tenant_id', 'alias', 'room_id', 'role', 'enabled')
+    source['memberships'].extend({key: member[key] for key in fields} for member in value['previous_memberships'])
+    receipt = executor.materialize_snapshot(source)
+    current = load_applied_fleet(executor.state)['generation']
+    permitted = {executor.journal['expected_applied'], executor.journal.get('admission_pending_generation'),
+                 executor.journal.get('admission', {}).get('generation'), receipt['generation']}
+    if current not in permitted:
+        raise SafeFailure('replacement original unverified')
+    publish_applied(executor.state, receipt['generation'], current)
+    return receipt
+
+
+def cleanup_credentials(executor, entry: dict, revoked: list[dict]) -> None:
+    if not revoked:
+        return
+    from fleet_executor_authority import scope_for, stable_scope
+    from fleet_executor_pki import checked_file
+    from fleet_executor_terminal_files import remove_file
+    key = executor.context['request']['parameters']['runtime_key']
+    scope = stable_scope(scope_for(executor.policy, executor.context, executor.agent()))
+    for credential in revoked:
+        phase = credential['phase']
+        pair = Path(executor.policy['roots']['pki']) / phase / key
+        token = Path(executor.policy['roots']['tokens']) / phase / (key + '.token')
+        files = {'certificate': (pair / ('agent-' + key + '.crt'), 0o444),
+                 'private': (pair / ('agent-' + key + '.key'), 0o400),
+                 'csr': (pair / ('agent-' + key + '.csr'), 0o400),
+                 'receipt': (pair / '.authority-receipt.json', 0o400),
+                 'token': (token, 0o400), 'request': (pair / '.authority-request.json', 0o400)}
+        cleanups = entry.setdefault('credential_cleanup', {})
+        plan = cleanups.get(phase)
+        if plan is None:
+            present = {name: (filename, mode) for name, (filename, mode) in files.items() if os.path.lexists(filename)}
+            if present:
+                request = json.loads(checked_file(files['request'][0], True))
+                if request.get('scope') != scope or request.get('phase') != phase:
+                    raise SafeFailure('replacement authority unverified')
+                if 'certificate' in present:
+                    pem = checked_file(files['certificate'][0]).decode()
+                    if hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest() != credential['certificate_sha256']:
+                        raise SafeFailure('replacement authority unverified')
+                if 'token' in present and hashlib.sha256(checked_file(token, True).strip()).hexdigest() != credential['token_sha256']:
+                    raise SafeFailure('replacement authority unverified')
+            plan = {**credential, 'files': {name: hashlib.sha256(checked_file(filename, mode == 0o400)).hexdigest()
+                                           for name, (filename, mode) in present.items()}}
+            cleanups[phase] = plan
+            executor.save()
+        if any(plan.get(name) != credential[name] for name in credential):
+            raise SafeFailure('replacement authority unverified')
+        for name, (filename, mode) in files.items():
+            if name not in plan['files']:
+                if os.path.lexists(filename):
+                    raise SafeFailure('replacement authority unverified')
+                continue
+            remove_file(filename, plan['files'][name], mode)
+        try:
+            pair.rmdir()
+        except FileNotFoundError:
+            pass
+        plan['complete'] = True
+        executor.save()
+
+
+def preserve_container(executor, agent: dict, observed: dict, entry: dict) -> None:
+    from fleet_executor_container import adapter_restart_state, stop_running_adapter
+    try:
+        state = adapter_restart_state(executor.policy, agent, observed)
+        current = agent
+    except SafeFailure:
+        current = executor.agent()
+        state = adapter_restart_state(executor.policy, current, observed)
+    if state.get('adapter_running') is False:
+        return
+    if state.get('adapter_running') is not True:
+        raise SafeFailure('replacement original unverified')
+    if state.get('adapter_bootstrap') is False \
+            and state.get('adapter_operation_id') == entry['adapter_state'].get('adapter_operation_id'):
+        return
+    if state.get('adapter_operation_id') != executor.context['operation_id']:
+        raise SafeFailure('replacement original unverified')
+    entry['phase'] = 'stopping_operation_adapter'
+    executor.save()
+    stop_running_adapter(current, observed)
+
+
+def compensate(executor) -> dict | None:
+    if not restoration(executor.context):
+        return None
+    journal = executor.journal
+    same_container = executor.context['previous_agents'][0]['container_name'] \
+        == executor.context['request']['parameters']['placement']['container_name']
+    if same_container and executor.context.get('restore_previous_runtime') is True \
+            and 'compensation_snapshot' not in executor.context.get('snapshot', {}) \
+            and 'replacement_compensation' not in journal \
+            and all(step in {'prepare', 'stop'} for step in journal.get('attempted', [])) \
+            and not any(name in journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime',
+                'runtime_launch_attempted', 'compensation_credential_effects', 'revocation_complete', 'terminal_provision')) \
+            and not any(journal.get(name) for name in ('central_revocations', 'compensated', 'revoked', 'legacy_authority_absence')):
+        return None
+    value = snapshot(executor.context)
+    entry = executor.journal.get('replacement_compensation')
+    if not isinstance(entry, dict) or entry.get('snapshot_sha256') != value['snapshot_sha256']:
+        raise SafeFailure('replacement authority unverified')
+    restarting = entry.get('original_restart_attempted') is True
+    agent, observed = original(executor, entry, restarting=restarting)
+    try:
+        if normal_pins(executor, agent) != {key: entry[key] for key in ('normal_certificate_sha256', 'normal_token_sha256')}:
+            raise ValueError
+        if executor.journal.get('terminal_provision'):
+            from fleet_executor_terminal_provision import rollback_terminal
+            rollback_terminal(executor.policy, executor.context, executor.agent(), executor.journal, executor.save)
+        from fleet_executor_container import discard_operation, inspect_container, restore_existing_adapter
+        desired = executor.agent()
+        if desired['container_name'] == agent['container_name']:
+            preserve_container(executor, agent, observed, entry)
+        else:
+            entry['phase'] = 'removing_destination'
+            executor.save()
+            discard_operation(executor.policy, desired, executor.context['operation_id'])
+            if inspect_container(desired['container_name']) is not None:
+                raise SafeFailure('replacement original unverified')
+        from fleet_executor_authority import rollback_credentials
+        entry['phase'] = 'rolling_back_authority'
+        executor.save()
+        authority = rollback_credentials(executor.policy, executor.context, agent, entry)
+        cleanup_credentials(executor, entry, authority['revoked_credentials'])
+        entry['authority_sha256'] = authority['authority_sha256']
+        entry['phase'] = 'restoring_snapshot'
+        entry['original_restart_attempted'] = True
+        executor.save()
+        receipt = restore_source(executor, value)
+        state = entry['adapter_state']
+        entry['phase'] = 'restoring_adapter'
+        executor.save()
+        restored_agent = {**agent, '_trusted_accounts': executor.context.get('trusted_accounts', []),
+                          '_trusted_accounts_present': 'trusted_accounts' in executor.context}
+        proof = restore_existing_adapter(executor.policy, restored_agent, was_running=True, bootstrap=False,
+                                         operation_id=state.get('adapter_operation_id'), allow_refresh=False)
+        if not isinstance(proof.get('runtime_digest'), str):
+            raise SafeFailure('replacement original unverified')
+        entry['phase'] = 'verifying_original'
+        executor.save()
+        original(executor, entry, restarting=True)
+        entry['phase'] = 'verifying_authority'
+        executor.save()
+        authority = rollback_credentials(executor.policy, executor.context, agent, entry)
+        binding = ['fleet-replacement-restored:v1', value['snapshot_sha256'], entry['original_container_id'],
+                   entry['checkpoint_sha256'], authority['authority_sha256']]
+        runtime = hashlib.sha256('\n'.join(binding).encode()).hexdigest()
+        restored = {'snapshot_sha256': value['snapshot_sha256'], 'original_container_id': entry['original_container_id'],
+                    'checkpoint_sha256': entry['checkpoint_sha256'], 'authority_sha256': authority['authority_sha256'],
+                    'runtime_digest': runtime, 'shared_authority_preserved': True, 'created_authority_revoked': True}
+        entry.update(phase='restored', runtime_proof_sha256=proof['runtime_digest'], evidence=restored)
+        executor.save()
+        return {'replacement_restored': restored, 'runtime_digest': runtime, 'artifact_sha256': receipt['generation'],
+                'stopped_verified': True, 'revocation_verified': True}
+    except (OSError, KeyError, TypeError, ValueError, SafeFailure) as error:
+        frames = traceback.extract_tb(error.__traceback__)
+        entry['diagnostic'] = {'phase': entry['phase'], 'exception_type': type(error).__name__,
+                               'last_function': frames[-1].name, 'last_lineno': frames[-1].lineno}
+        try:
+            executor.save()
+        except OSError:
+            pass
+        if isinstance(error, SafeFailure) and str(error) in {'replacement original unverified', 'replacement snapshot missing'}:
+            raise
+        raise SafeFailure('replacement authority unverified') from None

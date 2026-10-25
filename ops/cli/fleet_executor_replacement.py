@@ -148,6 +148,15 @@ def retire_replaced(policy: dict, previous: dict, receipt: dict | None = None, *
     expected_commit = {'operation_id': replacement['operation_id'], 'status': 'succeeded',
                        'runtime_digest': replacement['runtime_digest'],
                        'container_id': replacement['pin']['container_id'], 'started_at': replacement['pin']['started_at']}
+    if 'configuration_commit' in receipt:
+        commit = configuration_commit(receipt['configuration_commit'])
+        if commit['operation_id'] != replacement['operation_id'] or commit['host_id'] != policy['host_id'] \
+                or commit['original_container_id'] != receipt['previous']['container_id'] \
+                or commit['replacement_container_id'] != replacement['pin']['container_id'] \
+                or commit['replacement_started_at'] != replacement['pin']['started_at'] \
+                or commit['runtime_digest'] != replacement['runtime_digest']:
+            raise SafeFailure('replacement configuration commitment differs from its physical receipt')
+        expected_commit.update(status=commit['decision'], commit_sha256=commit['commit_sha256'])
     if receipt.get('confirmed_operation') != expected_commit:
         raise SafeFailure('replacement retirement requires its confirmed operation and runtime identity')
     identity = receipt['previous']['container_id']
@@ -206,3 +215,68 @@ def record_normal_verification(executor, agent: dict, normal: dict, runtime_dige
     executor.journal['replacement_retirement'] = receipt
     executor.journal['admission_normal_proof'] = {**{field: True for field in REQUIRED_PROOF},
         'operation_id': executor.context['operation_id'], 'runtime_digest': receipt['replacement']['runtime_digest']}
+
+
+def admission_replacement_evidence(executor) -> dict:
+    receipt = executor.journal.get('replacement_retirement')
+    if receipt is None:
+        return {}
+    replacement = receipt['replacement']
+    return {'replacement_verified': {
+        'snapshot_sha256': executor.journal['replacement_compensation']['snapshot_sha256'],
+        'original_container_id': receipt['previous']['container_id'],
+        'replacement_container_id': replacement['pin']['container_id'],
+        'replacement_started_at': replacement['pin']['started_at'], 'runtime_digest': replacement['runtime_digest']}}
+
+
+def configuration_commit(commit: dict) -> dict:
+    from fleet_executor_replacement_rollback import canonical
+    body = {key: value for key, value in commit.items() if key not in {'commit_canonical', 'commit_sha256'}}
+    encoded = commit['commit_canonical']
+    if not isinstance(encoded, str) or hashlib.sha256(encoded.encode()).hexdigest() != commit['commit_sha256'] \
+            or canonical(json.loads(encoded)) != canonical(body) or type(commit['version']) is not int or commit['version'] != 1 \
+            or commit['decision'] != 'configuration_committed':
+        raise SafeFailure('replacement configuration commitment is invalid')
+    return commit
+
+
+def retire_committed(executor) -> dict:
+    try:
+        commit = configuration_commit(executor.context['snapshot']['replacement_commit'])
+        receipt = copy.deepcopy(executor.journal['replacement_retirement'])
+        replacement = receipt['replacement']
+        normal = executor.journal['admission_normal_proof']
+        if commit['operation_id'] != executor.context['operation_id'] or commit['host_id'] != executor.policy['host_id'] \
+                or commit['snapshot_sha256'] != executor.journal['replacement_compensation']['snapshot_sha256'] \
+                or receipt['previous']['container_id'] != commit['original_container_id'] \
+                or replacement['pin']['container_id'] != commit['replacement_container_id'] \
+                or replacement['pin']['started_at'] != commit['replacement_started_at'] \
+                or replacement['runtime_digest'] != commit['runtime_digest'] \
+                or normal['operation_id'] != commit['operation_id'] or normal['runtime_digest'] != commit['runtime_digest'] \
+                or any(normal.get(field) is not True for field in REQUIRED_PROOF):
+            raise ValueError
+        previous = executor.context['previous_agents']
+        desired = executor.agent()
+        if len(previous) != 1 or previous[0]['container_name'] == desired['container_name'] \
+                or executor.context['request']['kind'] != 'update' \
+                or any(previous[0].get(key) != desired.get(key) for key in ('tenant_id', 'alias', 'runtime_key', 'host_id')):
+            raise ValueError
+        entry = executor.journal.get('replacement_retirement_commit')
+        if entry is not None and entry.get('commit_sha256') != commit['commit_sha256']:
+            raise ValueError
+        receipt['configuration_commit'] = commit
+        receipt['confirmed_operation'] = {'operation_id': commit['operation_id'], 'status': commit['decision'],
+            'commit_sha256': commit['commit_sha256'],
+            'runtime_digest': commit['runtime_digest'], 'container_id': commit['replacement_container_id'],
+            'started_at': commit['replacement_started_at']}
+        executor.journal['replacement_retirement_commit'] = {'commit_sha256': commit['commit_sha256'], 'phase': 'retiring'}
+        executor.save()
+        completed = retire_replaced(executor.policy, previous[0], receipt, apply=True)
+        proof = {'commit_sha256': commit['commit_sha256'], 'original_container_id': commit['original_container_id'],
+                 'replacement_container_id': commit['replacement_container_id'], 'runtime_digest': commit['runtime_digest'],
+                 'volumes_retained': True}
+        executor.journal['replacement_retirement_commit'].update(phase='complete', receipt=completed, evidence=proof)
+        executor.save()
+        return {'stopped_verified': True, 'removed': completed['removed'], 'replacement_retired': proof}
+    except (KeyError, TypeError, ValueError, OSError, SafeFailure):
+        raise SafeFailure('replacement original unverified') from None
