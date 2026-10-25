@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { apiGet, bodySnippet } from './v4-console-real-browser.helpers.js';
+import { apiGet, bodySnippet, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 import {
-  ackCanonicalReply, assertRouted, capture, countRows, detailIdOf, messageRow, openSession, OWNER, skillFile, startMeasuredRuntime,
+  ackCanonicalReply, assertRouted, capture, countRows, DESKTOP, detailIdOf, messageRow, openSession, OWNER, PHONE, skillFile, startMeasuredRuntime,
   type MeasuredRuntime,
 } from './v4-a18-sin-e2e.helpers.js';
 
@@ -199,4 +201,85 @@ describe('controles de escritura que el mapa dejó sin E2E', () => {
     await capture(page, 'nativa-recuperada', native.getByText('Guardado recuperado con recibo durable y archivo verificado. Pendiente de recarga.', { exact: true }));
     process.stdout.write(`a18 native recover: owner=${OWNER} upstream=${String(upstream)} piece=${id}\n`);
   }, 180_000);
+
+  it('a 390 la barra de motivo no tapa el campo enfocado y a 1440 sigue fija', async () => {
+    if (!runtime) throw new Error('measured runtime missing');
+    const active = runtime;
+    const page = await openSession(active.fixture, `/messages/${active.fixture.tenant}/${active.fixture.targetAlias}?view=context`);
+    const profile = page.getByRole('region', { name: `Perfil y contexto de ${active.fixture.targetAlias}` });
+    await profile.getByRole('textbox', { name: 'Responsabilidades', exact: true }).waitFor({ timeout: 20_000 });
+    const bar = profile.locator('[data-profile-reason-bar]');
+    await page.setViewportSize(DESKTOP);
+    await bar.evaluate((element) => { element.scrollIntoView({ block: 'center' }); });
+    await shot(page, 'perfil-1440.png');
+    await page.setViewportSize(PHONE);
+    const last = profile.getByRole('textbox', { name: 'Instrucciones fijas de funcionamiento', exact: true });
+    await last.evaluate((element) => { element.scrollIntoView({ block: 'center' }); });
+    await shot(page, 'perfil-390.png');
+    for (const name of PROFILE_FIELDS) {
+      const field = profile.getByRole('textbox', { name, exact: true });
+      const placed = await place(field);
+      const barBox = await measure(bar);
+      const viewport = page.viewportSize();
+      if (!viewport) throw new Error('viewport missing');
+      const overlap = overlaps(placed.box, barBox);
+      const visible = insideViewport(placed.box, viewport);
+      if (overlap || !visible || !placed.hit) {
+        await shot(page, 'perfil-390-tapada.png');
+        throw new Error(`reason bar covers the focused profile field ${name} overlap=${String(overlap)} visible=${String(visible)} hit=${String(placed.hit)}`);
+      }
+    }
+    await page.setViewportSize(DESKTOP);
+    expect(await bar.evaluate((element) => getComputedStyle(element).position)).toBe('sticky');
+    await bar.evaluate((element) => { element.scrollIntoView({ block: 'center' }); });
+    await shot(page, 'perfil-1440.png');
+  }, 120_000);
 });
+
+const PROFILE_FIELDS = [
+  'Identidad y propósito',
+  'Rol declarado',
+  'Tu humano y cómo tratarlo',
+  'Responsabilidades',
+  'Restricciones',
+  'Herramientas declaradas en el contexto',
+  'Instrucciones fijas de funcionamiento',
+] as const;
+
+const BAR_SHOTS = join(process.cwd(), '.delegados/v4/recibos/a18b-barra-390-1025');
+
+interface Rect { top: number; right: number; bottom: number; left: number }
+
+async function shot(page: V4Page, name: string): Promise<void> {
+  await mkdir(BAR_SHOTS, { recursive: true });
+  await page.screenshot({ path: join(BAR_SHOTS, name), fullPage: false });
+}
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+}
+
+function insideViewport(box: Rect, viewport: { width: number; height: number }): boolean {
+  return box.top >= -1 && box.left >= -1 && box.bottom <= viewport.height + 1 && box.right <= viewport.width + 1;
+}
+
+async function measure(target: V4Locator): Promise<Rect> {
+  return target.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+  });
+}
+
+async function place(target: V4Locator): Promise<{ box: Rect; hit: boolean }> {
+  return target.evaluate((element) => {
+    element.focus();
+    const rect = element.getBoundingClientRect();
+    const x = Math.min(rect.right - 2, Math.max(rect.left + 2, rect.left + rect.width / 2));
+    const y = Math.min(rect.bottom - 2, Math.max(rect.top + 2, rect.top + rect.height / 2));
+    const hit = document.elementFromPoint(x, y);
+    return {
+      box: { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left },
+      hit: hit === element || (hit !== null && element.contains(hit)),
+    };
+  });
+}

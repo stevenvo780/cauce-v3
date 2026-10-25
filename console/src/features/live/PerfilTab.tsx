@@ -452,9 +452,9 @@ export function PerfilTab({
         ) : null}
       </div>
 
-      {/* Compact and sticky: it only gets a warning frame while the draft has unsaved changes. */}
-      <div className={cn(
-        'sticky bottom-2 z-10 grid gap-2 rounded-xl border bg-surface/95 p-3 shadow-pop backdrop-blur-sm md:grid-cols-[minmax(0,1fr)_auto] md:items-end',
+      {/* Below the phone breakpoint the bar stays in normal flow: a sticky bar at 390 covers the canonical fields. */}
+      <div data-profile-reason-bar="" className={cn(
+        'z-10 grid gap-2 rounded-xl border bg-surface/95 p-3 shadow-pop backdrop-blur-sm min-[761px]:sticky min-[761px]:bottom-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-end',
         sucio ? 'border-warn ring-1 ring-warn/40' : 'border-line',
       )}>
         <ReasonField label="Motivo de este cambio de perfil" value={motivo} onChange={setMotivo}
