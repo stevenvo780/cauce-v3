@@ -254,6 +254,27 @@ describe('bounded application of versioned context to the live agent', () => {
     expect(await turns()).toBe(0);
     expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_offline', parked: true });
   });
+  it('re-arms an offline refusal when the agent returns and leaves it to the natural turn', async () => {
+    await context(); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    await request();
+    expect(await processContextOutbox(pool, { git, runtime })).toMatchObject({ error: 'context_runtime_offline' });
+    const epoch = await lease(0, READY);
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: false });
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    expect(await turns()).toBe(0);
+    await ack(0, epoch, await naturalTurn(0, epoch), true);
+    expect(await applied()).toBe(1);
+  });
+  it('an offline refusal answered by a lease without the capability becomes the honest unsupported refusal', async () => {
+    await context(); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    await request();
+    expect(await processContextOutbox(pool, { git, runtime })).toMatchObject({ error: 'context_runtime_offline' });
+    await lease(0, ['harness.codex']);
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: false });
+    expect(await processContextOutbox(pool, { git, runtime })).toMatchObject({ error: 'context_runtime_unsupported' });
+    expect(await outbox()).toMatchObject({ apply_error: 'context_runtime_unsupported', parked: true });
+    expect(await turns()).toBe(0);
+  });
   it('ends in a terminal error after three dedicated turns without a witness, waiting longer before each retry', async () => {
     await context(); const epoch = await lease(0, READY); const runtime = new DeliveryContextRuntimeSink(pool, 300);
     await request();
