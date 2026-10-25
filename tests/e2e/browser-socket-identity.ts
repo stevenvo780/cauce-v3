@@ -30,3 +30,10 @@ export function mountedSocketMatches(
   if (!deviceNumbersAreComparable(dockerHost)) return true;
   return socket.dev === identity.dev;
 }
+
+/** The workstation connects to a VM tunnel only when the container network is not directly reachable. */
+export function cdpUpstream(containerHost: string, tunnelPort: number | undefined): { host: string; port: number } {
+  if (tunnelPort === undefined) return { host: containerHost, port: 9223 };
+  if (!Number.isInteger(tunnelPort) || tunnelPort < 1 || tunnelPort > 65535) throw new Error('CDP tunnel port is invalid');
+  return { host: '127.0.0.1', port: tunnelPort };
+}

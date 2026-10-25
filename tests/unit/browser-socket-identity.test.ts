@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
-import { deviceNumbersAreComparable, mountedSocketMatches, type PrivateSocketView } from '../e2e/browser-socket-identity.js';
+import { cdpUpstream, deviceNumbersAreComparable, mountedSocketMatches, type PrivateSocketView } from '../e2e/browser-socket-identity.js';
+import { labTcpTarget } from '../e2e/lab-private-socket.js';
 
 const identity = { uid: 1000, ino: 3757023, dev: 69 };
 const forwarded = 'unix:///run/user/1000/docker-lab.sock';
@@ -28,5 +29,15 @@ describe('mounted private browser socket', () => {
   test('rejects an inode collision across devices when the daemon is local', () => {
     expect(mountedSocketMatches(view({ dev: identity.dev }), identity, undefined)).toBe(true);
     expect(mountedSocketMatches(view({ dev: identity.dev + 1 }), identity, 'unix:///var/run/docker.sock')).toBe(false);
+  });
+
+  test('publishes CDP on the container address unless a VM tunnel reserved a loopback port', () => {
+    expect(cdpUpstream('10.201.4.2', undefined)).toEqual({ host: '10.201.4.2', port: 9223 });
+    expect(cdpUpstream('10.201.4.2', 38111)).toEqual({ host: '127.0.0.1', port: 38111 });
+    expect(() => cdpUpstream('10.201.4.2', 0)).toThrow(/tunnel port/);
+    expect(labTcpTarget('10.201.4.2', 9223)).toBe('10.201.4.2:9223');
+    expect(() => labTcpTarget('10.201.4.2:9223', 9223)).toThrow(/IPv4/);
+    expect(() => labTcpTarget('docker-lab', 9223)).toThrow(/IPv4/);
+    expect(() => labTcpTarget('10.201.4.2', 65536)).toThrow(/tcp port/);
   });
 });

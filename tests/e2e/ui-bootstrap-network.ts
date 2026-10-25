@@ -3,9 +3,9 @@ import { chmod, lstat, mkdtemp, readdir, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
-import { deviceNumbersAreComparable } from './browser-socket-identity.js';
+import { cdpUpstream, deviceNumbersAreComparable } from './browser-socket-identity.js';
 import { createNetworkWithFallback } from './docker-network-subnet.js';
-import { publishLabPrivateSocket } from './lab-private-socket.js';
+import { forwardLabTcp, publishLabPrivateSocket } from './lab-private-socket.js';
 
 interface DockerResult { stdout: string }
 type Docker = (args: string[]) => Promise<DockerResult>;
@@ -97,9 +97,12 @@ export async function restrictedBrowserProxy(host: string | { socketPath: string
 }
 
 export async function publishBrowserCdp(host: string) {
+  // An internal docker-lab network drops packets forwarded from the workstation. The VM can open the port.
+  const tunnel = deviceNumbersAreComparable() ? undefined : await forwardLabTcp(host, 9223);
+  const upstreamTarget = cdpUpstream(host, tunnel?.port);
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
-    const upstream = createConnection({ host, port: 9223 });
+    const upstream = createConnection({ host: upstreamTarget.host, port: upstreamTarget.port });
     for (const channel of [socket, upstream]) {
       sockets.add(channel);
       channel.once('close', () => { sockets.delete(channel); socket.destroy(); upstream.destroy(); });
@@ -108,15 +111,28 @@ export async function publishBrowserCdp(host: string) {
     socket.pipe(upstream);
     upstream.pipe(socket);
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  } catch (error) {
+    await tunnel?.close();
+    throw error;
+  }
   const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('Private CDP publication failed');
+  if (address === null || typeof address === 'string') {
+    await new Promise<void>((resolve) => { server.close(() => { resolve(); }); });
+    await tunnel?.close();
+    throw new Error('Private CDP publication failed');
+  }
   return { port: address.port, close: async () => {
     for (const socket of sockets) socket.destroy();
-    await new Promise<void>((resolve, reject) => { server.close((error) => { if (error) reject(error); else resolve(); }); });
+    try {
+      await new Promise<void>((resolve, reject) => { server.close((error) => { if (error) reject(error); else resolve(); }); });
+    } finally {
+      await tunnel?.close();
+    }
   } };
 }
 
