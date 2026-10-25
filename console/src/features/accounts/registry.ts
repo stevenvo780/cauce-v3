@@ -519,6 +519,16 @@ export function describeRegistryError(
   mutation: ConfigMutation,
   context: RegistryContext,
 ): { message: string; conflict: boolean } {
+  const aliasPrefix = 'quota account alias must be deleted with canonical account ';
+  const aliasSuffix = ' from My quotas';
+  if (error instanceof ApiError && error.status === 409 && error.message.startsWith(aliasPrefix)
+    && error.message.endsWith(aliasSuffix) && error.message.length > aliasPrefix.length + aliasSuffix.length) {
+    const canonical = error.message.slice(aliasPrefix.length, -aliasSuffix.length);
+    return {
+      conflict: false,
+      message: `Esta fila es un alias de la cuenta «${canonical}» y no aparece en «Mis cuotas». Se elimina al eliminar esa cuenta en «Mis cuotas».`,
+    };
+  }
   if (error instanceof ApiError && error.status === 409
     && error.message === 'quota accounts must be deleted from My quotas') {
     return { conflict: false, message: 'Esta cuenta se administra en «Mis cuotas». Usa «Eliminar en Mis cuotas» para comprobar sus dependencias y eliminarla con su historial de cuotas.' };

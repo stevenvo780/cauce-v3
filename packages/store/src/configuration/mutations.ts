@@ -551,7 +551,13 @@ export abstract class ConfigurationMutations {
       shared_with_pool: old.shared_with_pool, enabled: old.enabled,
     };
     if (mutation.action === 'delete') {
-      if (old.quota_registration_key != null || old.quota_identity_hash != null || old.canonical_account_id != null
+      if (old.canonical_account_id != null) {
+        throw new ConfigurationError(
+          'conflict',
+          `quota account alias must be deleted with canonical account ${old.canonical_account_id} from My quotas`,
+        );
+      }
+      if (old.quota_registration_key != null || old.quota_identity_hash != null
         || old.paused_until != null || old.paused_reason != null || Number(old.quota_version) > 1) {
         throw new ConfigurationError('conflict', 'quota accounts must be deleted from My quotas');
       }

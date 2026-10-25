@@ -214,6 +214,18 @@ it('señala la suscripción externa ya registrada en vez de repetir el error gen
   expect(described.message).toMatch(/UNIQUE \(company_id, provider, external_account_id\)/);
 });
 
+it('explica que un alias de cuota no es la tarjeta de Mis cuotas', () => {
+  const described = describeRegistryError(
+    conflict('quota account alias must be deleted with canonical account humanizar-account from My quotas'),
+    deleteAccountMutation('zz-canary-r2-alias'),
+    contextFrom(),
+  );
+  expect(described.conflict).toBe(false);
+  expect(described.message).toContain('«humanizar-account»');
+  expect(described.message).toContain('no aparece en «Mis cuotas»');
+  expect(described.message).not.toContain('Usa «Eliminar en Mis cuotas»');
+});
+
 it('explica los permisos de rol y empresa ante un 403 sin sugerir un reintento', () => {
   const described = describeRegistryError(
     new ApiError('configuration resource is outside the actor tenant', 403, 'forbidden'),
