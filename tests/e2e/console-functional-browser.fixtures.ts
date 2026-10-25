@@ -7,6 +7,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { createServer as createTcpServer } from 'node:net';
+import type { FleetCapability } from '@cauce/protocol';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { MtlsAuthProvider, HashedMtlsIdentityFileProvider } from '../../services/gateway/src/auth.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
@@ -349,6 +350,8 @@ interface FunctionalFixtureOptions {
   sessionTtlMs?: number;
   browserLifetimeSeconds?: number;
   configureGateway?: (app: Fixture['app'], database: TestDatabase, auth: PasswordAuthProvider) => void;
+  /** When set, the gateway advertises this catalog. Omitted keeps the executor unconfigured. */
+  fleetCapability?: FleetCapability;
 }
 
 export async function startConsoleFunctionalFixture(options: FunctionalFixtureOptions = {}): Promise<Fixture> {
@@ -395,7 +398,8 @@ export async function startConsoleFunctionalFixture(options: FunctionalFixtureOp
     await auth.ready();
     app = await buildGateway({ pool: database.pool, authProvider: auth, logger: { level: 'info', stream: gatewayDiagnostics }, https: {
       key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca.cert), requestCert: true, rejectUnauthorized: true,
-    }, consoleOrigins: [`https://localhost:${String(frontendPort)}`] });
+    }, consoleOrigins: [`https://localhost:${String(frontendPort)}`],
+    ...(options.fleetCapability === undefined ? {} : { fleetCapability: options.fleetCapability }) });
     options.configureGateway?.(app, database, auth);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const gatewayAddress = app.server.address() as import('node:net').AddressInfo;
