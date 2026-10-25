@@ -5,6 +5,7 @@ import { usePolling } from '../../api/use-polling';
 import { ErrorNotice } from '../../components/ErrorNotice';
 import { FleetContext, useQuotaAccounts } from '../../shell/fleet-context';
 import { QuotaAccountCard } from './QuotaAccountCard';
+import { AccountAuthenticationNotice } from './AccountAuthenticationNotice';
 import { AgentQuotaReader } from './AgentQuotaReader';
 import { quotaReadFailure } from './quota-messages';
 import { agentQuotaBar } from '../office/agent-quota-bar';
@@ -17,8 +18,12 @@ export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: s
   const quotas = useQuotaAccounts();
   const fleet = useContext(FleetContext);
   const snapshot = useResource(`agent-quota:${tenant}/${alias}`, () => api.getAgentQuota(tenant, alias));
-  usePolling(() => { void snapshot.reload(); }, 30_000);
   const accounts = agentQuotaAccounts(quotas.data?.accounts ?? [], tenant, alias);
+  const companyId = quotas.data?.company_id ?? '';
+  const accountIds = compact ? [] : accounts.map(account => account.id).sort();
+  const authentication = useResource(`agent-account-auth:${companyId}:${tenant}/${alias}:${accountIds.join(',')}`,
+    () => accountIds.length ? api.getQuotaEnvironments() : Promise.resolve(null));
+  usePolling(() => { void snapshot.reload(); void authentication.reload(); }, 30_000);
   const notRunning = activityRowNotRunning(fleet?.activity.data?.agents?.find(agent => agent.tenant_id === tenant && agent.alias === alias));
   const noReader = notRunning || accounts.length > 0 ? null : readerUnavailableReason(snapshot.data);
   const unavailableTarget = notRunning ? null : quotaTargetUnavailableReason(snapshot.data);
@@ -36,7 +41,11 @@ export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: s
     {!compact && noReader !== null ? <p className="m-0 text-xs text-muted">{noReader}</p> : null}
     {!compact && unavailableTarget !== null ? <p className="m-0 text-xs text-muted">{unavailableTarget}</p> : null}
     {!compact && quotas.error ? <ErrorNotice failure={quotaReadFailure(quotas.error, 'No se pudo leer la cuota de la cuenta. Relee la cuota del agente.')} /> : null}
-    {!compact && accounts.map(account => <QuotaAccountCard key={account.id} account={quotas.error ? failedQuotaRead(account) : account} pinned={false} />)}
+    {!compact && accounts.length > 0 && authentication.error ? <ErrorNotice failure={quotaReadFailure(authentication.error,
+      'No se pudo leer el último intento de inicio de sesión de la cuenta.')} /> : null}
+    {!compact && accounts.map(account => <QuotaAccountCard key={account.id} account={quotas.error ? failedQuotaRead(account) : account} pinned={false}
+      login={<AccountAuthenticationNotice account={account} companyId={companyId}
+        snapshot={quotas.error || authentication.error ? undefined : authentication.data} />} />)}
     {!compact && !notRunning && quotas.data && !quotas.error && !accounts.length && noReader === null && snapshot.data ? <p className="m-0 text-xs text-muted">{snapshot.data.binding
       ? `Cuenta ${snapshot.data.binding.account_id} vinculada, sin datos de cuota disponibles para esta sesión.`
       : 'No hay una cuenta vinculada con cuota disponible para esta sesión.'}</p> : null}

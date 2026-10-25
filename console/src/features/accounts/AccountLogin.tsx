@@ -7,6 +7,7 @@ import { FormDialog } from '../../components/dialogs';
 import { Button, Notice } from '../../components/kit';
 import { randomUuid } from '../../random-id';
 import { accountLoginTargets, type AccountLoginTarget } from './account-login-targets';
+import { AccountAuthenticationNotice } from './AccountAuthenticationNotice';
 /* The auth terminal pulls in xterm: load it only when a login actually starts. */
 const ProviderAuthPanel = lazy(async () => ({ default: (await import('./ProviderAuthPanel')).ProviderAuthPanel }));
 import { providerSignInTitle } from './quotas';
@@ -16,8 +17,8 @@ import { describeQuotaEnvironmentError, describeQuotaOperationFailure } from './
 const BUSY = ['pending', 'running', 'awaiting_auth'];
 const verifiedReadFailureMessage = 'La sesión quedó verificada, pero no se pudo releer la cuenta. Pulsa «Actualizar cuotas y entornos».';
 
-export function AccountLogin({ account, snapshot, allowed, reload, readReady }: {
-  account: QuotaAccount; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>; readReady: boolean;
+export function AccountLogin({ account, companyId, snapshot, allowed, reload, readReady }: {
+  account: QuotaAccount; companyId: string; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>; readReady: boolean;
 }) {
   const api = useApi();
   const [requested, setRequested] = useState(false);
@@ -156,6 +157,7 @@ export function AccountLogin({ account, snapshot, allowed, reload, readReady }: 
     {block && !requested && !error && (snapshot || !allowed) ? <p className="m-0 text-sm text-muted">{block}</p> : null}
     {verified && !requested ? <Notice tone="ok" role="status">Sesión iniciada y verificada.</Notice> : null}
     {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+    {!requested && readReady ? <AccountAuthenticationNotice account={account} companyId={companyId} snapshot={snapshot} hideVerified={verified} /> : null}
     {requested ? <FormDialog open={requested} wide anchorTop title={providerSignInTitle(account.provider)}
       description={`${account.provider}${destination ? ` · ${destination.label}` : ''}`} onClose={close}>
       {progress ? <p className="m-0 text-sm" role="status">{progress}</p> : null}

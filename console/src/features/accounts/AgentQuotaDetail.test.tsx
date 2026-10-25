@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ConsoleAuthState, ConsoleAuthority } from '../../api/types';
@@ -7,6 +7,7 @@ import { testApi, renderWithApi } from '../../test/render';
 import { CompanySession } from '../auth/company-authority';
 import { AgentQuotaDetail } from './AgentQuotaDetail';
 import type { AgentQuotaQuery, AgentQuotaReading } from './agent-quota-client';
+import type { QuotaAccount, QuotaEnvironmentsSnapshot } from '../../api/client/my-quotas-client';
 
 const captured = '2026-10-12T19:37:00.000Z';
 const empty: AgentQuotaReading = {
@@ -43,6 +44,43 @@ afterEach(() => {
 function show(authority: ConsoleAuthState | undefined = session) {
   return renderWithApi(<CompanySession.Provider value={authority}><AgentQuotaDetail tenant="One" alias="janus" /></CompanySession.Provider>);
 }
+
+it('comparte el saldo y la caducidad publicada de la cuenta vinculada sin iniciar otro login', async () => {
+  const account: QuotaAccount = { id: 'shared-subscription', provider: 'codex', label: 'Suscripción', enabled: false, version: 1,
+    payer_tenant_id: 'one', shared: true, agent_count: 1, agents: [{ tenant_id: 'One', alias: 'janus', enabled: true }],
+    paused_until: null, paused_reason: null, observation_status: 'unknown', remaining_percent: null, note: null, windows: [] };
+  vi.spyOn(testApi, 'getQuotaAccounts').mockResolvedValue({ company_id: 'one', observed_at: captured, accounts: [account] });
+  const environment = { id: 'environment', company_id: 'one', account_id: account.id, host_id: 'host', provider: 'codex' as const,
+    label: 'Entorno', status: 'ready' as const, version: 1, created_at: captured, updated_at: captured };
+  const expiresAt = '2026-10-12T19:47:00.000Z';
+  let published: QuotaEnvironmentsSnapshot = { company_id: 'one', environments: [environment,
+    { ...environment, id: 'foreign', account_id: 'another-account' }, { ...environment, id: 'deleted', status: 'deleted' }], operations: [
+    { id: 'expired', environment_id: environment.id, action: 'authenticate', status: 'failed', error_code: 'AUTH_EXPIRED',
+      result: { expires_at: expiresAt }, created_at: captured, updated_at: expiresAt },
+    { id: 'foreign-newer', environment_id: 'foreign', action: 'authenticate', status: 'done', error_code: null,
+      result: { authenticated_verified: true, account_id: 'another-account' }, created_at: expiresAt, updated_at: expiresAt },
+    { id: 'deleted-newer', environment_id: 'deleted', action: 'query', status: 'done', error_code: null,
+      result: null, created_at: expiresAt, updated_at: expiresAt },
+  ], capabilities: { available: false, providers: [], hosts: [], actions: [] } };
+  vi.spyOn(testApi, 'getQuotaEnvironments').mockImplementation(async () => published);
+  const authenticate = vi.spyOn(testApi, 'actQuotaEnvironment');
+  const intervals = vi.spyOn(window, 'setInterval'); show();
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Suscripción' }));
+  const authentication = await card.findByRole('region', { name: 'Inicio de sesión de la cuenta' });
+  expect(authentication).toHaveTextContent('La autenticación venció. Autentica la cuenta de nuevo.');
+  expect(authentication.querySelector('time')).toHaveAttribute('dateTime', expiresAt);
+  expect(card.queryByRole('button', { name: 'Iniciar sesión' })).not.toBeInTheDocument();
+  published = { ...published, operations: published.operations.map(operation => operation.id === 'expired'
+    ? { ...operation, error_code: null, result: null } : operation) };
+  act(() => { for (const [tick, period] of intervals.mock.calls) if (period === 30_000 && typeof tick === 'function') tick(); });
+  await waitFor(() => { expect(authentication).toHaveTextContent('«Iniciar sesión» falló'); });
+  expect(authentication).not.toHaveTextContent('Inicio de sesión en curso.');
+  published = { ...published, operations: [{ id: 'query', environment_id: environment.id,
+    action: 'query', status: 'done', error_code: null, result: null, created_at: expiresAt, updated_at: expiresAt }] };
+  act(() => { for (const [tick, period] of intervals.mock.calls) if (period === 30_000 && typeof tick === 'function') tick(); });
+  await waitFor(() => { expect(card.queryByRole('region', { name: 'Inicio de sesión de la cuenta' })).not.toBeInTheDocument(); });
+  expect(authenticate).not.toHaveBeenCalled();
+});
 
 it('muestra la última medición con su hora y la suscripción compartida', async () => {
   read.mockResolvedValue(measured); const view = show();
