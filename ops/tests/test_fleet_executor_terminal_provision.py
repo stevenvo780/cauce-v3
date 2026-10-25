@@ -95,18 +95,41 @@ class TerminalVerifiedInventoryTest(unittest.TestCase):
 
 
 class TerminalPresenceTest(unittest.TestCase):
-    def check_presence(self, invocation, *, process_uid=None, wire='logical'):
+    def check_presence(self, invocation, *, process_uid=None, wire='logical', record_fields=None,
+                       missing_fields=(), environment=None, process_starttimes=(77, 77), after_invocation=None):
         current = 'a' * 32
-        state = 'ActiveState=active\nMainPID=101\nInvocationID=' + current
-        records = [{'MESSAGE': message, '_SYSTEMD_INVOCATION_ID': invocation} for message in
+        unit = 'cauce-v3-pty@physical.service'
+        state = 'ActiveState=active\nMainPID=101\nExecMainStartTimestampMonotonic=100\nInvocationID=' + current
+        fields = {'_SYSTEMD_USER_UNIT': unit, '_UID': str(os.geteuid()), '_PID': '101',
+                  '_BOOT_ID': 'd' * 32, '__MONOTONIC_TIMESTAMP': '101', **(record_fields or {})}
+        for name in missing_fields:
+            fields.pop(name, None)
+        records = [{'MESSAGE': message, **fields} for message in
                    ('starting alias=' + wire + ' container=fixture uid=1000 version=' + 'b' * 64,
                     'relay accepted alias=' + wire + ' modes=shell,harness')]
         result = mock.Mock(returncode=0, stdout=b'\n'.join(json.dumps(row).encode() for row in records))
-        with mock.patch.object(manager, 'systemctl', side_effect=[state, 'MainPID=101\nInvocationID=' + current]), \
-                mock.patch.object(manager.pathlib.Path, 'read_bytes', return_value=('CAUCE_PTY_AGENT_VERSION=' + 'b' * 64).encode() + b'\0'), \
+        starttimes = iter(process_starttimes)
+
+        def process_text(filename, **_options):
+            if filename == pathlib.Path('/proc/sys/kernel/random/boot_id'):
+                return 'dddddddd-dddd-dddd-dddd-dddddddddddd\n'
+            self.assertEqual(filename, pathlib.Path('/proc/101/stat'))
+            return '101 (docker) ' + ' '.join(['0'] * 19 + [str(next(starttimes))])
+
+        raw = environment if environment is not None else [
+            'CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + invocation]
+        with mock.patch.object(manager, 'systemctl', side_effect=[
+                state, 'MainPID=101\nInvocationID=' + (after_invocation or current)]), \
+                mock.patch.object(manager.pathlib.Path, 'read_bytes', return_value='\0'.join(raw).encode() + b'\0'), \
+                mock.patch.object(manager.pathlib.Path, 'read_text', autospec=True, side_effect=process_text), \
                 mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_uid=os.geteuid() if process_uid is None else process_uid)), \
-                mock.patch.object(manager.subprocess, 'run', return_value=result):
-            return manager.presence('cauce-v3-pty@physical.service', wire, 'b' * 64, attempts=1)
+                mock.patch.object(manager.subprocess, 'run', return_value=result) as journal:
+            observed = manager.presence(unit, wire, 'b' * 64, attempts=1)
+        command = journal.call_args.args[0]
+        for field in ('_SYSTEMD_USER_UNIT=' + unit, '_UID=' + str(os.geteuid()), '_PID=101', '_BOOT_ID=' + 'd' * 32):
+            self.assertIn(field, command)
+        self.assertIn('--user-unit=' + unit, command)
+        return observed
 
     def test_a_valid_wire_alias_ending_in_a_hyphen_is_acknowledged(self):
         self.assertTrue(self.check_presence('a' * 32, wire='logical-')['relay_acknowledged'])
@@ -116,6 +139,28 @@ class TerminalPresenceTest(unittest.TestCase):
         for invocation, uid in [('c' * 32, None), ('a' * 32, os.geteuid() + 1)]:
             with self.subTest(invocation=invocation, uid=uid), self.assertRaises(SafeFailure):
                 self.check_presence(invocation, process_uid=uid)
+
+    def test_acknowledgements_require_the_current_user_unit_pid_boot_and_monotonic_time(self):
+        for field, value in [('_SYSTEMD_USER_UNIT', 'cauce-v3-pty@foreign.service'), ('_UID', str(os.geteuid() + 1)),
+                             ('_PID', '102'), ('_BOOT_ID', 'e' * 32), ('__MONOTONIC_TIMESTAMP', '99'),
+                             ('__MONOTONIC_TIMESTAMP', 'invalid')]:
+            with self.subTest(field=field, value=value), self.assertRaises(SafeFailure):
+                self.check_presence('a' * 32, record_fields={field: value})
+        for field in ('_SYSTEMD_USER_UNIT', '_UID', '_PID', '_BOOT_ID', '__MONOTONIC_TIMESTAMP'):
+            with self.subTest(missing=field), self.assertRaises(SafeFailure):
+                self.check_presence('a' * 32, missing_fields=(field,))
+
+    def test_process_release_and_invocation_environment_must_be_exact_and_unique(self):
+        approved = ['CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + 'a' * 32]
+        for environment in ([approved[0]], [approved[1]], ['CAUCE_PTY_AGENT_VERSION=' + 'c' * 64, approved[1]],
+                            [*approved, approved[0]], [*approved, approved[1]], [*approved, 'INVOCATION_ID=' + 'c' * 32]):
+            with self.subTest(environment=environment), self.assertRaises(SafeFailure):
+                self.check_presence('a' * 32, environment=environment)
+
+    def test_the_process_and_unit_invocation_are_repinned_after_the_acknowledgement(self):
+        for options in ({'process_starttimes': (77, 78)}, {'after_invocation': 'c' * 32}):
+            with self.subTest(options=options), self.assertRaises(SafeFailure):
+                self.check_presence('a' * 32, **options)
 
     def test_a_managed_selector_cannot_hide_an_execution_override_or_missing_identity(self):
         unit = 'cauce-v3-pty@physical.service'

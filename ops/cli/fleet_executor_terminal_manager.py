@@ -131,30 +131,60 @@ def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: byte
     return row
 
 
+def process_identity(pid: str, version: str, invocation: str) -> int:
+    process = pathlib.Path('/proc') / pid
+    try:
+        starttime = (process / 'stat').read_text(encoding='ascii').rsplit(') ', 1)[1].split()[19]
+        expected = {b'CAUCE_PTY_AGENT_VERSION': version.encode(), b'INVOCATION_ID': invocation.encode()}
+        selected = {}
+        for entry in (process / 'environ').read_bytes().split(b'\0'):
+            name, separator, value = entry.partition(b'=')
+            if name in expected:
+                if not separator or name in selected:
+                    raise SafeFailure('terminal unit process has ambiguous release or invocation identity')
+                selected[name] = value
+        if process.stat().st_uid != os.geteuid() or selected != expected \
+                or re.fullmatch(r'[0-9]+', starttime) is None or int(starttime) <= 0:
+            raise SafeFailure('terminal unit process is outside its approved release or invocation')
+        return int(starttime)
+    except (OSError, ValueError, IndexError, UnicodeError):
+        raise SafeFailure('terminal unit process identity is unavailable') from None
+
+
 def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
     runtime = pathlib.Path('/run/user') / str(os.geteuid())
+    try:
+        boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip().replace('-', '')
+    except (OSError, UnicodeError):
+        raise SafeFailure('terminal current boot identity is unavailable') from None
+    if re.fullmatch(r'[a-f0-9]{32}', boot) is None:
+        raise SafeFailure('terminal current boot identity is invalid')
     for attempt in range(attempts):
         details = dict(line.split('=', 1) for line in systemctl('show', unit,
             '--property=ActiveState,MainPID,InvocationID,ExecMainStartTimestampMonotonic').splitlines())
         pid = details.get('MainPID', '')
         invocation = details.get('InvocationID', '')
-        if details.get('ActiveState') == 'active' and pid.isdigit() and int(pid) > 1 \
+        started = details.get('ExecMainStartTimestampMonotonic', '')
+        if details.get('ActiveState') == 'active' and re.fullmatch(r'[0-9]+', pid) and int(pid) > 1 \
+                and re.fullmatch(r'[0-9]+', started) and int(started) > 0 \
                 and re.fullmatch(r'[a-f0-9]{32}', invocation or ''):
-            process = pathlib.Path('/proc') / pid
-            try:
-                raw = (process / 'environ').read_bytes().split(b'\0')
-                if process.stat().st_uid != os.geteuid() or raw.count(('CAUCE_PTY_AGENT_VERSION=' + version).encode()) != 1:
-                    raise SafeFailure('terminal unit process is outside its approved release')
-            except OSError:
-                raise SafeFailure('terminal unit process identity is unavailable') from None
-            result = subprocess.run(['/usr/bin/journalctl', '--user', '-u', unit, '_SYSTEMD_INVOCATION_ID=' + invocation,
+            pinned_starttime = process_identity(pid, version, invocation)
+            journal_fields = {'_SYSTEMD_USER_UNIT': unit, '_UID': str(os.geteuid()), '_PID': pid, '_BOOT_ID': boot}
+            result = subprocess.run(['/usr/bin/journalctl', '--user', '--user-unit=' + unit,
+                *(name + '=' + value for name, value in journal_fields.items()),
                 '--no-pager', '-o', 'json', '-n', '100'], capture_output=True, timeout=10, check=False,
                 env={'PATH': '/usr/bin:/bin', 'XDG_RUNTIME_DIR': str(runtime),
                      'DBUS_SESSION_BUS_ADDRESS': 'unix:path=' + str(runtime / 'bus')})
             if result.returncode == 0 and len(result.stdout) <= 1024 * 1024:
                 records = [json.loads(line) for line in result.stdout.splitlines() if line]
-                messages = [row.get('MESSAGE', '') for row in records
-                            if row.get('_SYSTEMD_INVOCATION_ID') == invocation and isinstance(row.get('MESSAGE'), str)]
+                messages = []
+                for row in records:
+                    if not isinstance(row, dict) or any(row.get(name) != value for name, value in journal_fields.items()):
+                        continue
+                    timestamp = row.get('__MONOTONIC_TIMESTAMP')
+                    if isinstance(timestamp, str) and re.fullmatch(r'[0-9]+', timestamp) and int(timestamp) >= int(started) \
+                            and isinstance(row.get('MESSAGE'), str):
+                        messages.append(row['MESSAGE'])
                 start = any(re.search(r'\bstarting alias=' + re.escape(wire) + r' .*\bversion=' + version + r'(?:\s|$)', row)
                             for row in messages)
                 accepted = [index for index, row in enumerate(messages)
@@ -163,7 +193,8 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
                                    for row in messages[accepted[-1] + 1:]) if accepted else True
                 if start and accepted and not disconnected:
                     after = systemctl('show', unit, '--property=MainPID,InvocationID')
-                    if dict(line.split('=', 1) for line in after.splitlines()) == {'MainPID': pid, 'InvocationID': invocation}:
+                    if dict(line.split('=', 1) for line in after.splitlines()) == {'MainPID': pid, 'InvocationID': invocation} \
+                            and process_identity(pid, version, invocation) == pinned_starttime:
                         return {'main_pid': int(pid), 'invocation_id': invocation, 'relay_acknowledged': True}
         if attempt + 1 < attempts:
             time.sleep(0.5)
