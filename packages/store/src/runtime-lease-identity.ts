@@ -20,13 +20,16 @@ export async function assertRuntimeLeaseIdentity(
   client: DatabaseClient, tenantId: Tenant, alias: string, identity: RuntimeLeaseIdentity | undefined,
 ): Promise<void> {
   if (identity === undefined) return;
+  // A V3 baseline that recorded no host proves nothing about where the agent runs: V3 agents also live on other
+  // hosts (kant and salva on server2, astra on its own PC), so only a recorded baseline host can fence them.
   const row = (await client.query<{ allowed: boolean }>(`SELECT (
       $3='adapter' AND NOT $10 AND (
         (agent.runtime_mode IS NULL AND EXISTS (
           SELECT 1 FROM fleet_runtime_identities original WHERE original.tenant_id=agent.tenant_id
             AND original.alias=agent.alias AND original.runtime_key=agent.runtime_key AND original.baseline
             AND original.baseline_state->>'runtime_mode' IS NULL
-            AND (agent.host_id IS NULL OR agent.host_id=COALESCE(original.baseline_state->>'host_id',$7))))
+            AND (agent.host_id IS NULL OR agent.host_id=$7::text OR original.baseline_state->>'host_id' IS NULL
+              OR agent.host_id=original.baseline_state->>'host_id')))
         OR (agent.runtime_mode IS NOT NULL AND $5='adapter-' || agent.runtime_key
           AND $8=agent.runtime_key AND $9::timestamptz>clock_timestamp()
           AND ($4::text IS NULL OR (agent.host_id=$4 AND $6::timestamptz>clock_timestamp())))
