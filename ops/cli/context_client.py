@@ -28,20 +28,36 @@ class ContextFailure(ValueError):
     pass
 
 
+class ContextArgumentParser(argparse.ArgumentParser):
+    def error(self, _message):
+        self.print_usage(sys.stderr)
+        self.exit(2, 'Argumentos inválidos; usa --help para consultar la operación de contexto o terminal.\n')
+
+
 def console_failure_message(error: ContextFailure) -> str:
     message = str(error)
-    status = re.fullmatch(r'console request rejected with HTTP (\d{3}); redirects are disabled', message)
+    status = re.fullmatch(r'(?:console|context) request rejected with HTTP (\d{3})(?:; redirects are disabled)?', message)
     if status:
         code = int(status[1])
         if code == 401:
             return 'La sesión o las credenciales fueron rechazadas (HTTP 401); vuelve a iniciar sesión con cauce login.'
         if code == 403:
             return 'La consola rechazó el acceso (HTTP 403); revisa los permisos y la empresa activa en la consola.'
+        if code == 409:
+            return 'Hay un conflicto de versión o estado (HTTP 409); vuelve a consultar antes de reintentar el cambio.'
         if 300 <= code < 400:
             return f'El gateway respondió con una redirección (HTTP {code}); comprueba --gateway. No se envió la sesión a otro destino.'
         return f'La consola rechazó la solicitud (HTTP {code}); revisa el estado en la consola antes de reintentar.'
     return {
         'console gateway is unavailable': 'No se pudo conectar con la consola; comprueba --gateway, la red y los certificados.',
+        'context gateway is unavailable': 'No se pudo conectar con la consola; comprueba --gateway, la red y los certificados.',
+        'context target is unavailable': 'El destino del contexto no es válido; comprueba --tenant y --alias.',
+        'context path is unavailable': 'La ruta del contexto no está permitida; usa archivos de context/ o directives/ sin datos sensibles.',
+        'context file exceeds its safe boundary': 'El archivo supera el límite permitido o no es un archivo regular.',
+        'context file changed during its read': 'El archivo cambió durante la lectura; vuelve a intentar la operación.',
+        'context export root must be a real directory': 'El destino de exportación debe ser un directorio real y vacío.',
+        'console response exceeds limit': 'La respuesta de la consola supera el límite permitido.',
+        'console request path must stay on its gateway': 'La solicitud debe permanecer en el gateway elegido.',
         'gateway and origin must use HTTPS or loopback HTTP without credentials or paths':
             'Indica --gateway y --origin con HTTPS, sin credenciales ni rutas; HTTP solo se admite en localhost.',
         'console session file must be private and owned by this user':
@@ -50,6 +66,8 @@ def console_failure_message(error: ContextFailure) -> str:
         'console session is bound to a different gateway or origin; log in again':
             'La sesión pertenece a otro gateway u origen; inicia sesión con cauce login para el destino elegido.',
         'console session requires a valid csrf_token for mutations':
+            'La sesión no permite cambios; vuelve a iniciar sesión con cauce login.',
+        'console session file requires a valid csrf_token for mutations':
             'La sesión no permite cambios; vuelve a iniciar sesión con cauce login.',
     }.get(message, message)
 
@@ -252,7 +270,7 @@ def export_context(snapshot: dict, directory: str) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Contextos versionados con sesión humana de la consola')
+    parser = ContextArgumentParser(description='Contextos versionados con sesión humana de la consola')
     arguments(parser)
     commands = parser.add_subparsers(dest='operation', required=True)
     for name in ('read', 'status', 'history', 'retry', 'apply'):
@@ -296,7 +314,7 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except ContextFailure as error:
-        print(str(error), file=sys.stderr)
+        print(console_failure_message(error), file=sys.stderr)
         return 1
     except (OSError, ValueError):
         print('La operación de contexto no pudo completarse; revisa sesión, destino, CAS y rutas permitidas.', file=sys.stderr)
@@ -515,9 +533,10 @@ def terminal_transport(client: ConsoleSessionClient, grant: dict, mode: str, col
 
 
 def terminal_main() -> int:
-    parser = argparse.ArgumentParser(prog='cauce <alias>', allow_abbrev=False,
+    parser = ContextArgumentParser(prog='cauce <alias>', allow_abbrev=False,
                                     description='Terminal remoto con la sesión nominal de cauce login')
     parser.add_argument('alias')
+    parser.add_argument('action', nargs='?', choices=('ver',), help='ver la TUI sin tomar el control')
     parser.add_argument('--tenant')
     parser.add_argument('--gateway', default=os.environ.get('CAUCE_GATEWAY_URL'))
     parser.add_argument('--origin')
@@ -526,12 +545,14 @@ def terminal_main() -> int:
     parser.add_argument('--mode', choices=('shell', 'harness', 'harness_rw'))
     args = parser.parse_args(sys.argv[2:])
     try:
+        if args.action == 'ver' and args.mode not in (None, 'harness'):
+            raise ContextFailure('Para ver sin tomar el control usa --mode harness o elimina --mode.')
         module = runpy.run_path(str(pathlib.Path(__file__).resolve().with_name('cauce-login')),
                                 run_name='cauce_console_session')
         client = ConsoleSessionClient(args.session_file or module['default_session_file'](),
                                       args.gateway, args.origin, args.ca_file)
         target, mode = terminal_target(client.request('GET', '/v3/console/terminal/targets'),
-                                       args.alias, args.tenant, args.mode)
+                                       args.alias, args.tenant, 'harness' if args.action == 'ver' else args.mode)
         if shutil.which('node') is None:
             raise ContextFailure('Instala Node.js y el runtime Cauce para abrir el terminal.')
         size = shutil.get_terminal_size((100, 30))

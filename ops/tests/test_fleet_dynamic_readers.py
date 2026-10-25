@@ -213,7 +213,7 @@ class DynamicMutationBlockTests(unittest.TestCase):
                                         env={**environment, "CAUCE_FLEET_RUNTIME_STATE": inventory},
                                         capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn("container alias lookup failed", result.stderr)
+                self.assertIn("no se pudo resolver el alias", result.stderr)
             self.assertFalse(log.exists(), "invalid inventory reached a terminal command")
 
     def test_panel_guard_rejects_before_creating_state_or_lock(self) -> None:

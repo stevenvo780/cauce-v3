@@ -55,7 +55,7 @@ if [[ -n ${1:-} ]]; then
     flota|estado|ver|cuotas|coutas|-h|--help|help|ayuda|pila-test) ;;
     *)
       session_file=${CAUCE_CONSOLE_SESSION_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/cauce-v3/console-session.json}
-      if [[ ${2:-} == --* || $# == 1 && ( -e $session_file || -v CAUCE_CONSOLE_SESSION_FILE || -v CAUCE_GATEWAY_URL ) ]]; then
+      if [[ ${2:-} == --* || ${2:-} == ver && ${3:-} == --* || ( $# == 1 || ${2:-} == ver ) && ( -e $session_file || -v CAUCE_CONSOLE_SESSION_FILE || -v CAUCE_GATEWAY_URL ) ]]; then
         cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
         [[ -f $cli_directory/context_client.py ]] || cli_directory=$OPS/cli
         exec python3 -I -B -c 'import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module("context_client",run_name="__main__")' \

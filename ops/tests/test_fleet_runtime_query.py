@@ -56,7 +56,7 @@ class RuntimeFleetQueryTests(unittest.TestCase):
     def test_bare_logical_alias_is_rejected_when_tenants_share_it(self) -> None:
         result = self.query("shared_alias", "--runtime-key")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("ambiguous", result.stderr)
+        self.assertIn("El alias es ambiguo; indica TENANT/ALIAS", result.stderr)
 
     def test_tampered_desired_artifact_fails_without_falling_back_to_repository(self) -> None:
         receipt = json.loads((self.state / "desired-fleet.json").read_bytes())
@@ -70,7 +70,7 @@ class RuntimeFleetQueryTests(unittest.TestCase):
         self.apply()
         result = self.query("physical-one", "--runtime-key")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("not declared", result.stderr)
+        self.assertIn("El alias no figura en el inventario aplicado", result.stderr)
 
     def test_desired_generation_alone_does_not_authorize_runtime_routing(self) -> None:
         (self.state / "applied-fleet.json").unlink()
