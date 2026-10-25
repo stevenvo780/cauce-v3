@@ -346,7 +346,9 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   await app.register(websocket, { options: { maxPayload: GATEWAY_WS_MAX_PAYLOAD_BYTES } });
   const hostCapabilities = options.hostCapabilityRegistry ?? new HostCapabilityRegistry(options.pool);
-  if (signedFleetAuthority) registerHostAuthorityRoutes(app, signedFleetAuthority);
+  const hostSetup = options.authProvider instanceof PasswordAuthProvider ? options.hostSetup ?? await configuredHostSetup() : undefined;
+  const backupOnlyHost = (identity: { company_id: string; host_id: string }) => hostSetup?.isBackupOnlyHost(identity.company_id, identity.host_id) ?? false;
+  if (signedFleetAuthority) registerHostAuthorityRoutes(app, signedFleetAuthority, backupOnlyHost);
   const configuredCapability = options.fleetCapability ?? { available: false, actions: [], placements: [], reason: 'executor_unconfigured' };
   const fleetCapability = options.authProvider instanceof PasswordAuthProvider
     ? createCompanyFleetCapabilitySource(options.pool, options.authProvider, hostCapabilities, configuredCapability)
@@ -378,10 +380,10 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerCompanyOfficeRoutes(app, options.authProvider, options.pool);
     registerHostEnrollmentRoutes(app, options.authProvider, options.pool,
       options.fleetCapability?.available ? options.fleetCapability.placements.map(host => host.host_id) : [],
-      options.hostSetup ?? await configuredHostSetup());
-    registerHostChannelRoutes(app, options.pool);
-    if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication);
-    if (agentAuthentication) registerAgentProviderAuthHostRoute(app, options.pool, agentAuthentication);
+      hostSetup);
+    registerHostChannelRoutes(app, options.pool, { backupOnlyHost });
+    if (quotaAuthentication) registerQuotaAuthHostRoute(app, options.pool, quotaAuthentication, backupOnlyHost);
+    if (agentAuthentication) registerAgentProviderAuthHostRoute(app, options.pool, agentAuthentication, backupOnlyHost);
     if (backupStorage !== undefined) {
       registerSpaceBackupConsoleRoutes(app, options.authProvider, options.pool, backupStorage);
       registerSpaceBackupHostRoutes(app, options.pool, backupStorage);

@@ -6,14 +6,14 @@ import { AuthError, AuthorizationError } from '../auth.js';
 import { replyError } from '../routes/shared.js';
 import { HostChannelCommandSchema, type HostAgentQuotaCommand, type HostFleetCommand, type HostQuotaCommand } from './host-channel.contracts.js';
 import { hostFleetExecution } from './host-channel.execution.js';
-import { recordHostCapabilities } from './host-channel.capabilities.js';
+import { assertHostManagementAllowed, recordHostCapabilities, type BackupOnlyHost } from './host-channel.capabilities.js';
 import { readFleetProviderAccounts } from './accounts.js';
 import { enqueueHostMaintenance, isMaintenanceOperation, MaintenanceDeferredError } from '@cauce/store';
 import type { HostMaintenanceCommand } from './host-channel.contracts.js';
 
 const Params = z.object({host_id:HostId}).strict();
 interface HostIdentity {host_id:string;company_id:string}
-export interface HostChannelOptions { controllerHost?:string; coordinatorEnabled?:boolean; coordinatorHosts?:readonly string[] }
+export interface HostChannelOptions { controllerHost?:string; coordinatorEnabled?:boolean; coordinatorHosts?:readonly string[]; backupOnlyHost?:BackupOnlyHost }
 async function fleetClaim(client:DatabaseClient,identity:HostIdentity,
   fence:{operation_id:string;claim_token:string;epoch:number}):Promise<FleetOperationClaim> {
   await lockFleetRevision(client);
@@ -99,7 +99,11 @@ export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,
       const {host_id}=Params.parse(request.params);
       const result=await identity.request(host_id,'POST',`/v3/fleet/hosts/${host_id}/channel`,request.body,async(client,verified)=>{
         const packet=request.body as {payload:unknown}; const command=HostChannelCommandSchema.parse(packet.payload);
-        if (command.resource==='host') return recordHostCapabilities(client,verified,command);
+        if (command.resource==='host') {
+          if (options.backupOnlyHost?.(verified)===true&&command.execution_scope!=='backups') throw new StoreError('forbidden','host setup only admits space backups');
+          return recordHostCapabilities(client,verified,command);
+        }
+        await assertHostManagementAllowed(client,verified,options.backupOnlyHost);
         if (command.resource==='host_maintenance') return maintenanceCommand(fleet,client,verified,command);
         if (command.resource==='agent_quota') {
           try { return await agentQuotaCommand(agentQuota,client,verified,command); }

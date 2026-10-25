@@ -36,7 +36,8 @@ export class SpaceBackupRepository {
       const capability=(await client.query<{policy_sha256:string}>(`SELECT identity.capabilities->>'policy_sha256' AS policy_sha256
         FROM fleet_host_identities identity JOIN fleet_hosts host ON host.host_id=identity.host_id AND host.company_id=identity.company_id
         WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled
-          AND identity.capabilities_seen_at>now()-interval '120 seconds' AND identity.capabilities->>'fleet_executor'='true' FOR SHARE OF identity,host`,
+          AND identity.capabilities_seen_at>now()-interval '120 seconds'
+          AND (identity.capabilities->>'space_backup'='true' OR identity.capabilities->>'fleet_executor'='true') FOR SHARE OF identity,host`,
         [agent.host_id,authority.actingCompany])).rows[0];
       await client.query('SELECT pg_advisory_xact_lock($1)',[783_003_060]);
       await client.query(`UPDATE space_backups SET status='failed',error='EXPIRED',lease_until=NULL

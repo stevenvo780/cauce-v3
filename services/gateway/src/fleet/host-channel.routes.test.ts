@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, sign } from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentQuotaOperationsRepository, ConfigurationRepository, FleetOperationsRepository, QuotaEnvironmentRepository, type DatabasePool, type FleetOperationClaim,
+import { AgentQuotaOperationsRepository, ConfigurationRepository, FleetOperationsRepository, QuotaEnvironmentRepository, hostRequestMessage, type DatabasePool, type FleetOperationClaim,
   type QuotaOperationClaim, type RegisteredCompany } from '@cauce/store';
 import type { AgentQuotaClaim, AgentQuotaExecution } from '@cauce/protocol';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -15,6 +15,9 @@ import { HostCapabilityRegistry } from './host-channel.capabilities.js';
 import { channelCapabilities, channelCompany, channelCreate, channelHost, channelPacket, channelPost, companySource, type ChannelHost } from './host-channel.fixtures.js';
 import type { FleetExecution } from './executor.js';
 import { configuredFleetGateway } from './gateway-config.js';
+import { registerAgentProviderAuthHostRoute } from './agent-provider-auth-route.js';
+import { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
+import { QuotaAuthBroker, registerQuotaAuthHostRoute } from './quota-auth-broker.js';
 
 let database:TestDatabase|undefined;let current:EmptyTestDatabase|undefined;let pool:DatabasePool;let admin:DatabasePool;let app:FastifyInstance;
 let north:RegisteredCompany;let south:RegisteredCompany;let host:ChannelHost;let other:ChannelHost;
@@ -40,6 +43,29 @@ async function fleetClaim():Promise<FleetOperationClaim> {
   return response.json<{claim:FleetOperationClaim}>().claim;
 }
 describe('signed company host channel',()=>{
+  it('rejects management claims and capability escalation for a host restricted by its signed setup configuration',async()=>{
+    const isolated=Fastify();const backupOnlyHost=(identity:{company_id:string;host_id:string})=>identity.company_id===north.company.id&&identity.host_id===host.host_id;
+    registerHostChannelRoutes(isolated,pool,{backupOnlyHost});
+    registerAgentProviderAuthHostRoute(isolated,pool,new AgentProviderAuthBroker(pool),backupOnlyHost);
+    registerQuotaAuthHostRoute(isolated,pool,new QuotaAuthBroker(pool),backupOnlyHost);
+    try {
+      expect((await channelPost(isolated,host,channelCapabilities())).statusCode).toBe(403);
+      for(const route of ['agent-auth','quota-auth']) {
+        const path=`/v3/fleet/hosts/${host.host_id}/${route}`;const packet=channelPacket(host,{action:'reconcile',receipts:[]});
+        packet.proof=sign(null,Buffer.from(hostRequestMessage('POST',path,packet)),host.keys.privateKey).toString('base64');
+        expect((await isolated.inject({method:'POST',url:path,payload:packet})).statusCode).toBe(403);
+      }
+      const capabilities={...channelCapabilities(),execution_scope:'backups',space_backup:true,fleet_executor:false,quota_executor:false,
+        quota_providers:[],quota_provider_actions:{},templates:[]};
+      expect((await channelPost(isolated,host,capabilities)).statusCode).toBe(200);
+      expect(await new HostCapabilityRegistry(pool).fleet(north.company.id)).toMatchObject({available:false,placements:[]});
+      for(const resource of ['fleet_operation','quota_environment','agent_quota']) {
+        expect((await channelPost(isolated,host,{resource,action:'claim'})).statusCode).toBe(403);
+      }
+      expect((await channelPost(isolated,host,{resource:'host_maintenance',action:'reconcile',release_sha256:'a'.repeat(64)})).statusCode).toBe(403);
+      expect((await channelPost(isolated,host,channelCapabilities())).statusCode).toBe(403);
+    } finally {await isolated.close();}
+  });
   it('persists optional quota action reasons without declaring those actions available',async()=>{
     const quota_provider_unavailable={codex:{authenticate:'operations.authenticate: command is unavailable'}};
     const capabilities={...channelCapabilities(),quota_provider_actions:{codex:['query']},quota_provider_unavailable};

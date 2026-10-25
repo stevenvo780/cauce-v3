@@ -9,7 +9,7 @@ function legacyRuntimeMode(row:Record<string,unknown>):string {
 }
 export async function assertSpaceBackupPolicy(client:DatabaseClient,row:SpaceBackupRow):Promise<void> {
   const capability=(await client.query<{policy_sha256:string}>(`SELECT capabilities->>'policy_sha256' AS policy_sha256 FROM fleet_host_identities
-    WHERE host_id=$1 AND company_id=$2 AND enabled AND capabilities->>'fleet_executor'='true'
+    WHERE host_id=$1 AND company_id=$2 AND enabled AND (capabilities->>'space_backup'='true' OR capabilities->>'fleet_executor'='true')
       AND capabilities_seen_at>now()-interval '120 seconds'`,[row.host_id,row.company_id])).rows[0];
   if (capability?.policy_sha256!==row.policy_sha256) throw new StoreError('conflict','space backup host policy changed');
 }

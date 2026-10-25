@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { FleetCapabilitySchema, FleetRuntimeCapabilitySchema, type FleetCapability } from '@cauce/protocol';
-import type { DatabaseClient, DatabasePool } from '@cauce/store';
+import { StoreError, type DatabaseClient, type DatabasePool } from '@cauce/store';
 
 const Identifier=z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 const Template=FleetRuntimeCapabilitySchema.safeExtend({template_id:Identifier,
@@ -13,18 +13,28 @@ const QuotaActions=z.array(QuotaAction).max(5)
 export const HostCapabilitiesSchema=z.object({resource:z.literal('host'),action:z.literal('capabilities'),schemaVersion:z.literal(1),
   executor_version:z.string().min(1).max(128),policy_sha256:z.string().regex(/^[a-f0-9]{64}$/u),
   fleet_executor:z.boolean(),quota_executor:z.boolean(),templates:z.array(Template).max(100),agent_recovery:z.boolean().optional(),
+  space_backup:z.boolean().optional(),execution_scope:z.literal('backups').optional(),
   agent_recovery_preflight:z.boolean().optional(),
   quota_providers:z.array(QuotaProvider).max(6).default([]),
   quota_provider_actions:z.partialRecord(QuotaProvider,QuotaActions).default({}),
   quota_provider_unavailable:z.partialRecord(QuotaProvider,z.partialRecord(QuotaAction,
     z.string().min(1).max(512).regex(/\S/u).regex(/^[^\p{Cc}]*$/u))).optional(),
-}).strict().refine(value=>new Set(value.templates.map(template=>template.template_id)).size===value.templates.length)
+}).strict().refine(value=>value.execution_scope!=='backups'||value.space_backup===true&&!value.fleet_executor&&!value.quota_executor
+    &&value.templates.length===0&&!value.agent_recovery&&!value.agent_recovery_preflight&&value.quota_providers.length===0
+    &&Object.keys(value.quota_provider_actions).length===0&&Object.keys(value.quota_provider_unavailable??{}).length===0)
+  .refine(value=>new Set(value.templates.map(template=>template.template_id)).size===value.templates.length)
   .refine(value=>new Set(value.quota_providers).size===value.quota_providers.length)
   .refine(value=>Object.keys(value.quota_provider_actions).every(provider=>value.quota_providers.some(candidate=>candidate===provider)))
   .refine(value=>Object.entries(value.quota_provider_unavailable??{}).every(([provider,reasons])=>
     Object.keys(reasons).every(action=>!(value.quota_provider_actions[QuotaProvider.parse(provider)]??[]).some(available=>available===action))));
 export type HostCapabilities=z.infer<typeof HostCapabilitiesSchema>;
 interface Identity {host_id:string;company_id:string}
+export type BackupOnlyHost = (identity: Identity) => boolean;
+export async function assertHostManagementAllowed(client:DatabaseClient,identity:Identity,backupOnlyHost?:BackupOnlyHost):Promise<void> {
+  const scope=(await client.query<{scope:string|null}>(`SELECT capabilities->>'execution_scope' AS scope
+    FROM fleet_host_identities WHERE host_id=$1 AND company_id=$2`,[identity.host_id,identity.company_id])).rows[0]?.scope;
+  if (backupOnlyHost?.(identity)===true||scope==='backups') throw new StoreError('forbidden','backup-only host cannot execute fleet, quota, authentication or maintenance work');
+}
 const unavailable: FleetCapability={available:false,actions:[],placements:[],reason:'executor_unconfigured'};
 const actions=['create','update','start','stop','retire','restore','purge'] as const;
 function quotaReady(capabilities:HostCapabilities):boolean {
