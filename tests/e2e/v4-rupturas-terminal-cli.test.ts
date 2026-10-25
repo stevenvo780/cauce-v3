@@ -63,7 +63,7 @@ describe('V4 real terminal and CLI ruptures located using operator records', () 
       expect(accepted.code).toBe(0);
       const rejected = await runCli(active.contextArgs);
       expect(rejected.code).toBe(1);
-      expect(rejected.stderr).toContain('context request rejected with HTTP 409');
+      expect(rejected.stderr).toContain('conflicto de versión o estado (HTTP 409)');
       await expect.poll(async () => jsonLogLines(await active.logs()).some(row => row.event === 'console_request_rejected'
         && row.error_code === 'conflict'), { timeout: 10_000 }).toBe(true);
       const records = jsonLogLines(await active.logs());

@@ -26,10 +26,11 @@ const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, '../..');
 export interface DynamicCliResult { code: number | null; stdout: string; stderr: string }
 
-export async function runDynamicCli(args: string[], sessionFile: string, input = '', detachWhen?: string): Promise<DynamicCliResult> {
+export async function runDynamicCli(args: string[], sessionFile: string | undefined, input = '', detachWhen?: string): Promise<DynamicCliResult> {
   return await new Promise((resolveResult, reject) => {
     const child = spawn('bash', [join(root, 'ops/cli/cauce'), ...args], {
-      cwd: root, env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1', CAUCE_CONSOLE_SESSION_FILE: sessionFile },
+      cwd: root, env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: '1',
+        ...(sessionFile === undefined ? { XDG_STATE_HOME: '/nonexistent-cauce-session' } : { CAUCE_CONSOLE_SESSION_FILE: sessionFile }) },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = ''; let stderr = ''; let expired = false; let detached = false;
@@ -129,6 +130,7 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
   let tmuxOwned = false;
   let tmuxSocketPath: string | undefined;
   let tmuxSocketIdentity: string | undefined;
+  const movedContainers: string[] = [];
   const socketStatus = async (path: string) => await lstat(path).catch((error: unknown) => {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined;
     throw error;
@@ -141,6 +143,15 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
   };
   const close = async () => {
     const errors: unknown[] = [];
+    for (const name of movedContainers) {
+      try {
+        const owned = await execute('docker', ['inspect', '--format', '{{index .Config.Labels "cauce.e2e.owner"}}', name]);
+        if (owned.stdout.trim() !== 'e2e-a9-cli-1025b') throw new Error('relocated PTY container ownership changed');
+        await execute('docker', ['rm', '--force', name]);
+      } catch (error) {
+        if (!(error instanceof Error && /No such (?:object|container)/u.test(error.message))) errors.push(error);
+      }
+    }
     for (const child of children.reverse()) { try { await stopChild(child); } catch (error) { errors.push(error); } }
     if (tmuxOwned) {
       try {
@@ -271,13 +282,14 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
     children.push(relay);
     const capture = (chunk: Buffer) => { logs = (logs + chunk.toString()).slice(-12 * 1024); };
     relay.stdout.on('data', capture); relay.stderr.on('data', capture);
-    const bundle = await privateFile('agent-bundle.json', JSON.stringify({ tenant_id: tenant, alias, container_id: container,
+    const bundleConfiguration = { tenant_id: tenant, alias, container_id: container,
       generation: `g${suffix}`, image_id: `sha256:${'a'.repeat(64)}`, runtime_user: runtimeUser, runtime_uid: runtimeUid,
       runtime_gid: runtimeGid, home, shell_candidates: ['/bin/sh'], harness: options.tui ? 'codex' : 'shell', relay_host: '127.0.0.1',
       relay_port: ports.ports.agent, relay_server_name: 'localhost', alias_key_hex: deriveAliasKey(ticketKey, tenant, alias).toString('hex'),
       client_cert_pem: tls.cert.toString(), client_key_pem: tls.key.toString(), ca_pem: tls.cert.toString(), agent_version: 'cli-pty-e2e',
       ...(options.tui ? { tmux_tui: { path: '/usr/bin/tmux', socket: tmuxSocket } } : {}),
-    }));
+    };
+    const bundle = await privateFile('agent-bundle.json', JSON.stringify(bundleConfiguration));
     const python = spawn('python3', ['-m', 'cauce_pty_agent', '--bundle', bundle], {
       cwd: home, env: { PATH: process.env.PATH, LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: join(root, 'ops/pty-agent') },
       stdio: ['ignore', 'pipe', 'pipe'], ...identity,
@@ -297,6 +309,42 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
       tmuxSessionExists: async () => (await tmux(['has-session', '-t', `cauce-${alias}`])).stderr === '',
       loginOutput: login.stdout + login.stderr,
       secrets: [password, relayToken, ticketKey.toString('hex'), tls.key.toString(), session.cookie, session.csrf_token],
+      relocate: async () => {
+        if (!database) throw new Error('relocation requires the owned database');
+        if (options.tui) throw new Error('relocation requires the shell fixture');
+        await stopChild(python);
+        const destination = `zz-canary-e2e-a9-cli-1025b-${suffix}`;
+        const destinationHome = join(directory, 'destination-home');
+        await mkdir(destinationHome, { mode: 0o700 });
+        if (process.getuid?.() === 0) await chown(destinationHome, runtimeUid, runtimeGid);
+        const host = `zz-canary-e2e-a9-cli-1025b-${suffix}`;
+        await database.pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id)
+          SELECT $1,$1,company_id FROM agents WHERE tenant_id=$2 AND alias=$3`, [host, tenant, alias]);
+        await database.pool.query('UPDATE agents SET container_name=$1,host_id=$2,home_directory=$3 WHERE tenant_id=$4 AND alias=$5',
+          [destination, host, destinationHome, tenant, alias]);
+        const generation = `moved-${suffix}`;
+        const movedBundle = await privateFile('destination-bundle.json', JSON.stringify({
+          ...bundleConfiguration,
+          container_id: destination, generation, home: destinationHome,
+        }));
+        movedContainers.push(destination);
+        const moved = spawn('docker', ['run', '--rm', '--name', destination, '--label', 'cauce.e2e.owner=e2e-a9-cli-1025b',
+          '--network', 'host', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+          '--user', `${String(runtimeUid)}:${String(runtimeGid)}`,
+          '--mount', `type=bind,src=${directory},dst=${directory}`,
+          '--mount', `type=bind,src=${join(root, 'ops/pty-agent')},dst=/opt/cauce-pty-agent,readonly`,
+          '--workdir', destinationHome, '--env', 'PYTHONPATH=/opt/cauce-pty-agent', '--env', 'PYTHONDONTWRITEBYTECODE=1',
+          'python:3.13-slim', 'python3', '-m', 'cauce_pty_agent', '--bundle', movedBundle],
+          { env: { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST }, stdio: ['ignore', 'pipe', 'pipe'] });
+        children.push(moved); moved.stdout.on('data', capture); moved.stderr.on('data', capture);
+        const deadline = Date.now() + 90_000;
+        while (registry.get(tenant, alias, Date.now())?.presence.container_id !== destination
+          || registry.state(tenant, alias, Date.now()) !== 'online') {
+          if (Date.now() >= deadline || moved.exitCode !== null) throw new Error('relocated PTY did not become online');
+          await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
+        }
+        return { container: destination, home: destinationHome, host, generation };
+      },
       denyTarget: async () => {
         await writeFile(grants, JSON.stringify({ version: 1, grants: [] }), { mode: 0o600 });
         await new Promise(resolveDelay => setTimeout(resolveDelay, 1_100));
