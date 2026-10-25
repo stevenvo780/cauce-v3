@@ -61,9 +61,9 @@ it('lista recibos de su espacio, rechaza identidades cruzadas y elimina con conf
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ credentials: 'include', headers: { 'X-CSRF-Token': 'test-csrf' }, body: '{"confirm":true}' });
 });
-it('acepta un recibo y un estado de 100 MiB, hasta el límite de 1 GiB del backend', () => {
-  const big = { ...ready, bytes: 100 * 1024 * 1024 };
-  expect(MAX_SPACE_BACKUP_BYTES).toBe(1024 * 1024 * 1024);
+it('acepta recibos de más de 2 GiB y el límite de 16 GiB más manifiesto y estructura ZIP', () => {
+  const big = { ...ready, bytes: 3 * 1024 * 1024 * 1024 };
+  expect(MAX_SPACE_BACKUP_BYTES).toBe(17_255_366_656);
   expect(spaceBackupReceipt(big, target)).toEqual(big);
   expect(spaceBackupReceipt({ ...big, bytes: MAX_SPACE_BACKUP_BYTES }, target).bytes).toBe(MAX_SPACE_BACKUP_BYTES);
   const api = new CauceApi('https://console.example', async () => Response.json(big));

@@ -1,6 +1,6 @@
 import type { RequestFn } from './system-client';
 
-export const MAX_SPACE_BACKUP_BYTES = 1024 * 1024 * 1024;
+export const MAX_SPACE_BACKUP_BYTES = 16 * 1024 * 1024 * 1024 + 8 * 1024 * 1024 + 64 * 1024 * 1024;
 export interface SpaceBackupTarget { company_id: string; tenant_id: string; alias: string }
 export interface SpaceBackupFailure { type: string; message: string; stage: 'runtime' | 'local' | 'worker' }
 export interface SpaceBackup extends SpaceBackupTarget {

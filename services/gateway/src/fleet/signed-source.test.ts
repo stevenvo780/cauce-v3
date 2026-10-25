@@ -3,8 +3,8 @@ import { createServer, type Server } from 'node:http';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { SignedHostRequestSchema, hostRequestMessage } from '@cauce/store';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SPACE_BACKUP_CHUNK_BYTES, SignedHostRequestSchema, hostRequestMessage } from '@cauce/store';
 import { SignedHostChannel } from './signed-source.js';
 import { QuotaHostTransportError } from './quota-executor.js';
 
@@ -14,6 +14,7 @@ afterEach(async () => {
   if (server) await new Promise<void>((resolve, reject) => { server?.close(error => { if (error) reject(error); else resolve(); }); });
   if (directory) await rm(directory, { recursive: true, force: true });
   server = undefined; directory = undefined;
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 async function fixture(gateway: string) {
   directory = await mkdtemp(join(tmpdir(), 'cauce-signed-channel-'));
@@ -26,6 +27,44 @@ async function fixture(gateway: string) {
   return { directory, key: createPublicKey({ key: der, format: 'der', type: 'spki' }) };
 }
 describe('outgoing host channel', () => {
+  it('allows a signed 4 MiB backup append only on its exact route and preserves every other body cap', async () => {
+    const received: unknown[] = [];
+    server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => { chunks.push(chunk); });
+      request.on('end', () => { received.push(JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown); response.end('{"offset":4194304}'); });
+    });
+    await new Promise<void>(resolve => { server?.listen(0, '127.0.0.1', resolve); });
+    const address = server.address(); if (!address || typeof address === 'string') throw new Error('test server unavailable');
+    const local = await fixture(`http://127.0.0.1:${String(address.port)}`); const channel = await SignedHostChannel.load(local.directory);
+    const path = '/v3/fleet/hosts/local-a/space-backups';
+    const claim = { id: 'ab000000-0000-4000-8000-000000000002', claim_token: 'ab000000-0000-4000-8000-000000000003', claim_epoch: 1 };
+    const append = { action: 'append', claim, offset: 3 * 1024 ** 3, data: Buffer.alloc(SPACE_BACKUP_CHUNK_BYTES, 90).toString('base64') };
+    expect(await channel.request('POST', path, append)).toEqual({ offset: SPACE_BACKUP_CHUNK_BYTES });
+    const packet = SignedHostRequestSchema.parse(received[0]);
+    expect(verify(null, Buffer.from(hostRequestMessage('POST', path, packet)), local.key, Buffer.from(packet.proof, 'base64'))).toBe(true);
+    for (const other of ['/v3/fleet/hosts/local-a/channel', `${path}/extra`, '/v3/fleet/hosts/foreign/space-backups']) {
+      await expect(channel.request('POST', other, append)).rejects.toThrow('could not be verified');
+    }
+    await expect(channel.request('POST', path, { ...append, data: Buffer.alloc(SPACE_BACKUP_CHUNK_BYTES + 1, 90).toString('base64') })).rejects.toThrow();
+    await expect(channel.request('POST', path, { action: 'finish', claim, padding: 'x'.repeat(262_144) })).rejects.toThrow();
+    await expect(channel.request('POST', '/v3/fleet/hosts/local-a/channel', { data: 'x'.repeat(262_144) })).rejects.toThrow();
+    expect(received).toHaveLength(1);
+  });
+  it('extends only a valid own backup finish timeout and propagates caller cancellation', async () => {
+    const local = await fixture('https://example.org'); const channel = await SignedHostChannel.load(local.directory);
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => new AbortController().signal);
+    const calls: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => { calls.push(init); return Response.json({ ready: true }); }));
+    const claim = { id: 'ab000000-0000-4000-8000-000000000002', claim_token: 'ab000000-0000-4000-8000-000000000003', claim_epoch: 1 };
+    const abort = new AbortController();
+    await channel.request('POST', '/v3/fleet/hosts/local-a/space-backups', { action: 'finish', claim }, abort.signal);
+    await channel.request('POST', '/v3/fleet/hosts/local-a/channel', { action: 'finish', claim });
+    await channel.request('POST', '/v3/fleet/hosts/local-a/space-backups/extra', { action: 'finish', claim });
+    await channel.request('POST', '/v3/fleet/hosts/local-a/space-backups', { action: 'finish' });
+    expect(timeout.mock.calls.map(call => call[0])).toEqual([1_800_000, 30_000, 30_000, 30_000]);
+    abort.abort(); expect(calls[0]?.signal?.aborted).toBe(true);
+  });
   it('classifies transport loss separately from HTTP rejection and malformed receipts', async () => {
     let behavior: 'forbidden' | 'invalid' | 'disconnect' = 'forbidden';
     server = createServer((request, response) => {

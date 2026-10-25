@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { AliasSchema, TenantSchema } from '@cauce/protocol';
-export const SPACE_BACKUP_MAX_BYTES=1024*1024*1024;
-export const SPACE_BACKUP_CHUNK_BYTES=64*1024;
+export const SPACE_BACKUP_CONTENT_BYTES=16*1024*1024*1024;
+export const SPACE_BACKUP_MAX_BYTES=SPACE_BACKUP_CONTENT_BYTES+8*1024*1024+64*1024*1024;
+export const SPACE_BACKUP_CHUNK_BYTES=4*1024*1024;
+export const SPACE_BACKUP_CHUNK_BASE64_BYTES=4*Math.ceil(SPACE_BACKUP_CHUNK_BYTES/3);
+export const SPACE_BACKUP_HOST_BODY_BYTES=8*1024*1024;
 export interface SpaceBackupQuotaLimits {companyMaxBytes?:number;globalMaxBytes?:number}
 export const SPACE_BACKUP_COMPANY_BYTES=4*SPACE_BACKUP_MAX_BYTES;
 export const SPACE_BACKUP_GLOBAL_BYTES=16*SPACE_BACKUP_MAX_BYTES;
@@ -27,7 +30,18 @@ export interface SpaceBackupRow {
   error:'HOST_UNAVAILABLE'|'SCOPE_CHANGED'|'EXPORT_FAILED'|'EXPIRED'|'LIMIT_EXCEEDED'|null;claim_token:string|null;claim_epoch:number;
   lease_until:Date|null;created_at:Date;expires_at:Date;received_bytes:number;bytes:number|null;sha256:string|null;manifest_sha256:string|null;
 }
-export function spaceBackupReceipt(row:SpaceBackupRow) {
+export type SpaceBackupStoredRow=Omit<SpaceBackupRow,'received_bytes'|'bytes'>&{received_bytes:number|string;bytes:number|string|null};
+export function normalizeSpaceBackupRow(row:SpaceBackupStoredRow):SpaceBackupRow {
+  const bytes=(value:number|string,min:number):number=>{
+    if (typeof value==='string'&&!/^(?:0|[1-9][0-9]*)$/u.test(value)) throw new Error('Space backup byte receipt is invalid');
+    const parsed=Number(value);
+    if (!Number.isSafeInteger(parsed)||parsed<min||parsed>SPACE_BACKUP_MAX_BYTES) throw new Error('Space backup byte receipt is invalid');
+    return parsed;
+  };
+  return {...row,received_bytes:bytes(row.received_bytes,0),bytes:row.bytes===null?null:bytes(row.bytes,1)};
+}
+export function spaceBackupReceipt(stored:SpaceBackupStoredRow) {
+  const row=normalizeSpaceBackupRow(stored);
   return {id:row.id,company_id:row.company_id,tenant_id:row.tenant_id,alias:row.alias,status:row.status,
     bytes:row.bytes,sha256:row.sha256,manifest_sha256:row.manifest_sha256,error:row.error,
     created_at:row.created_at.toISOString(),expires_at:row.expires_at.toISOString(),

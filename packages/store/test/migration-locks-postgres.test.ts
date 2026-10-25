@@ -128,6 +128,23 @@ describe('migration lock footprints', () => {
 });
 
 describe('migration lock waits', () => {
+  it('prelocks the large backup bigint change before applying its schema or ledger', async () => {
+    await applyMigrationsThrough(pool, '090_runtime_catalog_guard.sql');
+    const reader = await idleReader('space_backups');
+    try {
+      const attempt = await timed(applyMigrationsThrough(pool, '091_space_backups_large.sql', { lockTimeoutMs: 1_000 }));
+      expect(String(attempt.error)).toContain('lock timeout');
+      expect(attempt.ms).toBeLessThan(4_000);
+      expect(await appliedHead()).toBe('090_runtime_catalog_guard.sql');
+      expect((await pool.query<{ data_type: string }>(`SELECT data_type FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='space_backups' AND column_name='bytes'`)).rows[0]?.data_type).toBe('integer');
+    } finally { await release(reader); }
+    await applyMigrationsThrough(pool, '091_space_backups_large.sql');
+    expect(await appliedHead()).toBe('091_space_backups_large.sql');
+    expect((await pool.query<{ data_type: string }>(`SELECT data_type FROM information_schema.columns
+      WHERE table_schema='public' AND table_name='space_backups' AND column_name='bytes'`)).rows[0]?.data_type).toBe('bigint');
+  }, 60_000);
+
   it('fails within the lock timeout behind an idle transaction that read a table the bundle alters', async () => {
     await applyMigrationsThrough(pool, '057_quota_environments.sql');
     const reader = await idleReader('deliveries');

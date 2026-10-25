@@ -1,10 +1,10 @@
-import { createHash,randomBytes,randomUUID,sign } from 'node:crypto';
+import { createHash,generateKeyPairSync,randomBytes,randomUUID,sign } from 'node:crypto';
 import { chmod,mkdir,mkdtemp,readFile,readdir,rm,truncate,writeFile } from 'node:fs/promises';
 import { tmpdir,userInfo } from 'node:os';
 import { join } from 'node:path';
 import Fastify,{type FastifyInstance} from 'fastify';
 import { afterAll,afterEach,beforeEach,describe,expect,it } from 'vitest';
-import { SPACE_BACKUP_MAX_BYTES,SpaceBackupRepository,hostRequestMessage,type DatabaseClient,type DatabasePool,type RegisteredCompany,type SpaceBackupClaim } from '../src/index.js';
+import { SPACE_BACKUP_CHUNK_BYTES,SPACE_BACKUP_CONTENT_BYTES,SPACE_BACKUP_MAX_BYTES,SpaceBackupRepository,hostRequestMessage,type DatabaseClient,type DatabasePool,type RegisteredCompany,type SpaceBackupClaim } from '../src/index.js';
 import { startTestCaseDatabase,startTestDatabase,type EmptyTestDatabase,type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { channelCapabilities,channelCompany,channelHost,channelPost,companySource,type ChannelHost } from '../../../services/gateway/src/fleet/host-channel.fixtures.js';
@@ -72,7 +72,10 @@ async function createClaim() {
   return {id,claim:responseClaim.json<{claim:SpaceBackupClaim}>().claim};
 }
 const fence=(claim:SpaceBackupClaim)=>({id:claim.id,claim_token:claim.claim_token,claim_epoch:claim.claim_epoch});
-async function exported(claim:SpaceBackupClaim) {return await invokeSpaceBackupHelper({python:'/usr/bin/python3',projectRoot,policyFile},{action:'export',claim},new AbortController().signal) as {bytes:number;sha256:string;manifest_sha256:string};}
+async function exported(claim:SpaceBackupClaim) {
+  const {bytes,sha256,manifest_sha256}=await invokeSpaceBackupHelper({python:'/usr/bin/python3',projectRoot,policyFile},{action:'export',claim},new AbortController().signal) as {bytes:number;sha256:string;manifest_sha256:string};
+  return {bytes,sha256,manifest_sha256};
+}
 async function upload(claim:SpaceBackupClaim) {
   const receipt=await exported(claim);expect((await command({action:'begin',claim:fence(claim),...receipt})).json()).toEqual({offset:0});
   let offset=0;while(offset<receipt.bytes) {
@@ -81,7 +84,47 @@ async function upload(claim:SpaceBackupClaim) {
   }
   return receipt;
 }
+async function finishAtPublishBarrier(claim:SpaceBackupClaim,mutation:string,change:()=>Promise<unknown>,expected:number) {
+  let release:()=>void=()=>undefined;const barrier=new Promise<void>(resolve=>{release=resolve;});
+  let connections=0;let paused=false;
+  const gatedPool={query:pool.query.bind(pool),connect:async()=>{
+    connections++;if(connections===2) {paused=true;await barrier;}return pool.connect();
+  }} as unknown as DatabasePool;
+  const isolated=Fastify();isolated.addHook('onRequest',createConsoleSecurityHook());registerSpaceBackupHostRoutes(isolated,gatedPool,storage);
+  const {path,packet}=hostPacket(host,{action:'finish',claim:fence(claim)});
+  const finishing=Promise.resolve(isolated.inject({method:'POST',url:path,payload:packet}));
+  const timer=setTimeout(release,15_000);timer.unref();
+  try {
+    await expect.poll(()=>paused,{timeout:10_000,interval:10}).toBe(true);
+    expect(connections).toBe(2);
+    expect(await readdir(storage.directory)).toContain(`${claim.id}.${String(claim.claim_epoch)}.part`);
+    expect(await readdir(storage.directory)).not.toContain(`${claim.id}.zip`);
+    await change();release();const response=await finishing;
+    expect(response.statusCode).toBe(expected);
+    const row=(await admin.query<{status:string}>('SELECT status FROM space_backups WHERE id=$1',[claim.id])).rows[0];
+    expect(row?.status).not.toBe('ready');expect(await readdir(storage.directory)).not.toContain(`${claim.id}.zip`);
+    console.log('BACKUP_FINISH_PUBLICATION_BARRIER',JSON.stringify({mutation,connections,http_status:response.statusCode,status:row?.status,zip_ready:false}));
+  } finally {clearTimeout(timer);release();await finishing.catch(()=>undefined);await isolated.close();}
+}
 describe('durable space backup with real PostgreSQL runtime role and signed HTTP',()=>{
+  it.each(['revoked','rotated'] as const)('rejects %s host identity after verification and before publishing ready',async mutation=>{
+    const {claim}=await createClaim();await upload(claim);
+    await finishAtPublishBarrier(claim,mutation,async()=>{
+      if(mutation==='revoked') return admin.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1',[host.host_id]);
+      const key=generateKeyPairSync('ed25519').publicKey;
+      return admin.query('UPDATE fleet_host_identities SET public_key=$2,key_fingerprint=$3 WHERE host_id=$1',
+        [host.host_id,key.export({type:'spki',format:'pem'}),digest(key.export({type:'spki',format:'der'}))]);
+    },403);
+  });
+  it.each(['authority','expired','replaced','failed'] as const)('rechecks %s authority or fence after verification and never publishes a stale ZIP',async mutation=>{
+    const {claim}=await createClaim();await upload(claim);
+    await finishAtPublishBarrier(claim,mutation,async()=>{
+      if(mutation==='authority') return admin.query('UPDATE human_tenant_memberships SET enabled=false,revoked_at=now() WHERE human_id=$1',[north.user.id]);
+      if(mutation==='expired') return admin.query("UPDATE space_backups SET lease_until=now()-interval '1 second' WHERE id=$1",[claim.id]);
+      if(mutation==='replaced') return admin.query('UPDATE space_backups SET claim_epoch=claim_epoch+1,claim_token=gen_random_uuid() WHERE id=$1',[claim.id]);
+      return admin.query("UPDATE space_backups SET status='failed',error='EXPORT_FAILED',lease_until=NULL WHERE id=$1",[claim.id]);
+    },mutation==='authority'?403:409);
+  });
   it('rediscovers dated receipts and deletes the selected ZIP and every epoch before releasing its row',async()=>{
     expect((await app.inject({method:'GET',url:base(),headers:{cookie}})).json()).toEqual({backups:[]});
     const {claim}=await createClaim();await upload(claim);expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(200);
@@ -217,11 +260,12 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     const {path,packet}=hostPacket(host,{action:'append',claim:fence(claim),...chunk});
     expect((await app.inject({method:'POST',url:path,payload:packet})).statusCode).toBe(200);
     expect((await app.inject({method:'POST',url:path,payload:packet})).statusCode).toBe(409);
-    expect((await command({action:'append',claim:fence(claim),...chunk})).json()).toEqual({offset:65_536});
-    expect((await command({action:'append',claim:fence(claim),offset:0,data:Buffer.alloc(65_536,66).toString('base64')})).statusCode).toBe(409);
+    const chunkBytes=Buffer.byteLength(chunk.data,'base64');
+    expect((await command({action:'append',claim:fence(claim),...chunk})).json()).toEqual({offset:chunkBytes});
+    expect((await command({action:'append',claim:fence(claim),offset:0,data:Buffer.alloc(chunkBytes,66).toString('base64')})).statusCode).toBe(409);
     await admin.query('UPDATE space_backups SET received_bytes=0 WHERE id=$1',[claim.id]);
-    expect((await command({action:'append',claim:fence(claim),...chunk})).json()).toEqual({offset:65_536});
-    expect((await readFile(join(storage.directory,`${claim.id}.1.part`))).length).toBe(65_536);
+    expect((await command({action:'append',claim:fence(claim),...chunk})).json()).toEqual({offset:chunkBytes});
+    expect((await readFile(join(storage.directory,`${claim.id}.1.part`))).length).toBe(chunkBytes);
     await admin.query("UPDATE space_backups SET lease_until=now()-interval '1 second' WHERE id=$1",[claim.id]);
     const next=(await command({action:'claim'})).json<{claim:SpaceBackupClaim}>().claim;expect(next.claim_epoch).toBe(claim.claim_epoch+1);
     await expect(readFile(join(storage.directory,`${claim.id}.1.part`))).rejects.toThrow();
@@ -245,7 +289,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     const response=await post({idempotency_key:'oversized-source'});expect(response.statusCode).toBe(202);const id=response.json<{id:string}>().id;
     const agent=(await pool.query<{state_directory:string}>("SELECT state_directory FROM agents WHERE tenant_id=$1 AND alias='worker'",[north.hub.id])).rows[0];
     if(!agent) throw new Error('placed agent absent');const excessive=join(agent.state_directory,'space/projects/large.dat');
-    await writeFile(excessive,'',{mode:0o600});await truncate(excessive,128*1024*1024+1);
+    await writeFile(excessive,'',{mode:0o600});await truncate(excessive,SPACE_BACKUP_CONTENT_BYTES+1);
     const worker=new SpaceBackupHost({identity:host,request:async(_method,_path,payload)=>{
       const result=await command(payload);if(result.statusCode!==200) throw new Error('signed host request failed');return result.json<unknown>();
     }},{python:'/usr/bin/python3',projectRoot,policyFile});
@@ -374,13 +418,13 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect((await post({idempotency_key:'quota-after-expiry'})).statusCode).toBe(202);
     const partial=(await command({action:'claim'})).json<{claim:SpaceBackupClaim}>().claim;
     const value=await exported(partial);await command({action:'begin',claim:fence(partial),...value});
-    const chunk=await invokeSpaceBackupHelper({python:'/usr/bin/python3',projectRoot,policyFile},{action:'read',claim:partial,offset:0},new AbortController().signal);
-    expect((await command({action:'append',claim:fence(partial),...(chunk as {offset:number;data:string})})).statusCode).toBe(200);
+    const chunk=await invokeSpaceBackupHelper({python:'/usr/bin/python3',projectRoot,policyFile},{action:'read',claim:partial,offset:0},new AbortController().signal) as {offset:number;data:string};
+    expect((await command({action:'append',claim:fence(partial),...chunk})).statusCode).toBe(200);
     expect((await command({action:'fail',claim:fence(partial),error:'EXPORT_FAILED'})).statusCode).toBe(200);
     await admin.query("UPDATE space_backups SET expires_at=now()-interval '1 second' WHERE id<>$1",[partial.id]);
     storage.companyMaxBytes=SPACE_BACKUP_MAX_BYTES;storage.globalMaxBytes=4*SPACE_BACKUP_MAX_BYTES;
     expect((await post({idempotency_key:'quota-retained-partial'})).statusCode).toBe(409);
-    expect((await readFile(join(storage.directory,`${partial.id}.${String(partial.claim_epoch)}.part`))).length).toBe(65_536);
+    expect((await readFile(join(storage.directory,`${partial.id}.${String(partial.claim_epoch)}.part`))).length).toBe(Buffer.byteLength(chunk.data,'base64'));
   });
   it('rechecks reservation capacity at begin and admits large bounded receipts without ready metadata',async()=>{
     const {claim}=await createClaim();
@@ -394,6 +438,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect((await command({action:'finish',claim:fence(claim)})).statusCode).toBe(409);
   });
   it('persists export-failed after a disk error without advertising a partial copy as ready',async()=>{
+    await writeFile(join(root,'runtime/worker/space/projects/work.txt'),Buffer.alloc(SPACE_BACKUP_CHUNK_BYTES+1,65),{mode:0o600});
     const response=await post({idempotency_key:'disk-failure-backup'});const id=response.json<{id:string}>().id;
     const worker=new SpaceBackupHost({identity:host,request:async(_method,_path,payload)=>{
       const result=await command(payload);if(result.statusCode!==200) throw new Error('signed host request failed');return result.json<unknown>();
@@ -404,7 +449,7 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     expect(await worker.runOnce(new AbortController().signal)).toBe(true);
     expect((await app.inject({method:'GET',url:`${base()}/${id}`,headers:{cookie}})).json())
       .toMatchObject({status:'failed',error:'EXPORT_FAILED',download_url:null});
-    expect((await pool.query<{received_bytes:number}>('SELECT received_bytes FROM space_backups WHERE id=$1',[id])).rows[0]?.received_bytes).toBe(65_536);
+    expect(Number((await pool.query<{received_bytes:string}>('SELECT received_bytes FROM space_backups WHERE id=$1',[id])).rows[0]?.received_bytes)).toBe(SPACE_BACKUP_CHUNK_BYTES);
     expect((await app.inject({method:'GET',url:`${base()}/${id}/download`,headers:{cookie}})).statusCode).toBe(409);
   });
 });

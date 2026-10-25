@@ -4,7 +4,8 @@ import { lstat, open, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetOperationSchema, type FleetError, type FleetEvidence, type FleetStepName } from '@cauce/protocol';
-import { HostId, stableHostJson, type FleetOperationClaim } from '@cauce/store';
+import { HostId, SPACE_BACKUP_HOST_BODY_BYTES, stableHostJson, type FleetOperationClaim } from '@cauce/store';
+import { SpaceBackupHostCommandSchema } from './space-backup.contracts.js';
 import { FleetProviderAccountsSchema } from './accounts.js';
 import type { FleetExecution, FleetExecutionRepository } from './executor.js';
 import { QuotaHostTransportError } from './quota-executor.js';
@@ -51,16 +52,21 @@ export class SignedHostChannel {
       return new SignedHostChannel(identity, key, gateway.origin);
     } catch { throw unavailable(); }
   }
-  async request(method: 'POST', path: string, payload: Record<string, unknown>): Promise<unknown> {
+  async request(method: 'POST', path: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (!path.startsWith(`/v3/fleet/hosts/${this.identity.host_id}/`) || /[?#\\\p{Cc}]/u.test(path)) throw unavailable();
+    const backup = path === `/v3/fleet/hosts/${this.identity.host_id}/space-backups`
+      ? SpaceBackupHostCommandSchema.safeParse(payload) : undefined;
+    const append = backup?.success === true && backup.data.action === 'append';
+    const finish = backup?.success === true && backup.data.action === 'finish';
     const packet = { company_id: this.identity.company_id, host_id: this.identity.host_id,
       issued_at: Date.now(), nonce: randomBytes(32).toString('hex'), payload };
     const proof = sign(null, Buffer.from(stableHostJson({ version: 1, method, path, ...packet })), this.key).toString('base64');
     const body = stableHostJson({ ...packet, proof });
-    if (Buffer.byteLength(body) > 262_144) throw unavailable();
+    if (Buffer.byteLength(body) > (append ? SPACE_BACKUP_HOST_BODY_BYTES : 262_144)) throw unavailable();
+    const timeout = AbortSignal.timeout(finish ? 1_800_000 : 30_000);
     try {
       const response = await fetch(this.gateway + path, { method, body, redirect: 'error',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) })
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]) })
         .catch(() => { throw new QuotaHostTransportError(); });
       if (!response.ok || !response.body) { await response.body?.cancel(); throw unavailable(); }
       const reader = response.body.getReader(); let total = 0; const chunks: Uint8Array[] = [];

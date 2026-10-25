@@ -1,15 +1,22 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { lstat,mkdir,open,readdir,realpath,rename,unlink } from 'node:fs/promises';
+import { lstat,mkdir,open,readdir,realpath,rename,statfs,unlink } from 'node:fs/promises';
 import { isAbsolute,join,resolve } from 'node:path';
-import { StoreError,SPACE_BACKUP_MAX_BYTES,type SpaceBackupQuotaLimits,type SpaceBackupRow } from '@cauce/store';
-import { assertLoginPins,boundedProviderReceipt } from './provider-login.js';
+import { normalizeSpaceBackupRow,StoreError,SPACE_BACKUP_MAX_BYTES,type SpaceBackupQuotaLimits,type SpaceBackupRow,type SpaceBackupStoredRow } from '@cauce/store';
+import { assertLoginPins } from './provider-login.js';
+import { invokeSpaceBackupProcess } from './space-backup.process.js';
 export interface SpaceBackupStorage extends SpaceBackupQuotaLimits {directory:string;projectRoot:string;python?:string}
 export async function prepareSpaceBackupDirectory(options:SpaceBackupStorage):Promise<void> {
   const path=options.directory;
   if (!isAbsolute(path)||resolve(path)!==path||path==='/') throw new Error('Space backup storage must be a canonical directory');
   await mkdir(path,{recursive:true,mode:0o700});const info=await lstat(path);
   if (!info.isDirectory()||info.uid!==process.geteuid?.()||(info.mode&0o077)!==0||await realpath(path)!==path) throw new Error('Space backup storage must be private');
+}
+export async function spaceBackupHasCapacity(options:SpaceBackupStorage,bytes:number,reserved:bigint):Promise<boolean> {
+  await prepareSpaceBackupDirectory(options);
+  if (!Number.isSafeInteger(bytes)||bytes<0||bytes>SPACE_BACKUP_MAX_BYTES||reserved<0n) throw new Error('Space backup storage reservation is invalid');
+  const available=await statfs(options.directory,{bigint:true});
+  return available.bavail*available.bsize>=BigInt(bytes)+reserved;
 }
 export function spaceBackupPath(options:SpaceBackupStorage,row:Pick<SpaceBackupRow,'id'|'claim_epoch'>,ready=false):string {
   return join(options.directory,ready?`${row.id}.zip`:`${row.id}.${String(row.claim_epoch)}.part`);
@@ -22,7 +29,8 @@ async function privateFile(path:string,flags:number) {
   }
   return file;
 }
-export async function appendSpaceBackup(options:SpaceBackupStorage,row:SpaceBackupRow,offset:number,bytes:Buffer):Promise<number> {
+export async function appendSpaceBackup(options:SpaceBackupStorage,stored:SpaceBackupStoredRow,offset:number,bytes:Buffer):Promise<number> {
+  const row=normalizeSpaceBackupRow(stored);
   await prepareSpaceBackupDirectory(options);
   if (row.bytes===null||offset+bytes.byteLength>row.bytes||offset>row.received_bytes) throw new StoreError('conflict','space backup chunk is outside its receipt');
   const file=await privateFile(spaceBackupPath(options,row),constants.O_RDWR|constants.O_CREAT);
@@ -35,11 +43,13 @@ export async function appendSpaceBackup(options:SpaceBackupStorage,row:SpaceBack
     }
     const info=await file.stat();if (info.size<offset) throw new StoreError('conflict','space backup durable copy is incomplete');
     await file.truncate(offset);let written=0;
-    while(written<bytes.length) {const result=await file.write(bytes,written,bytes.length-written,offset+written);written+=result.bytesWritten;}
+    while(written<bytes.length) {const result=await file.write(bytes,written,bytes.length-written,offset+written);
+      if (result.bytesWritten===0) throw new Error('Space backup write made no progress');written+=result.bytesWritten;}
     await file.sync();return offset+bytes.length;
   } finally {await file.close();}
 }
-export async function verifySpaceBackup(options:SpaceBackupStorage,row:SpaceBackupRow):Promise<void> {
+export async function verifySpaceBackup(options:SpaceBackupStorage,stored:SpaceBackupStoredRow,signal=new AbortController().signal,publish=true):Promise<string> {
+  const row=normalizeSpaceBackupRow(stored);signal.throwIfAborted();
   await prepareSpaceBackupDirectory(options);
   if (row.bytes===null||row.sha256===null||row.manifest_sha256===null||row.received_bytes!==row.bytes) throw new StoreError('conflict','space backup is incomplete');
   let candidate=spaceBackupPath(options,row);
@@ -49,21 +59,28 @@ export async function verifySpaceBackup(options:SpaceBackupStorage,row:SpaceBack
   try {
     if ((await file.stat()).size!==row.bytes) throw new StoreError('conflict','space backup byte receipt differs');
     const hash=createHash('sha256');const chunk=Buffer.alloc(65_536);
-    for (;;) {const read=await file.read(chunk,0,chunk.length,null);if (!read.bytesRead) break;hash.update(chunk.subarray(0,read.bytesRead));}
+    for (;;) {signal.throwIfAborted();const read=await file.read(chunk,0,chunk.length,null);if (!read.bytesRead) break;hash.update(chunk.subarray(0,read.bytesRead));}
     if (hash.digest('hex')!==row.sha256) throw new StoreError('conflict','space backup digest differs');
   } finally {await file.close();}
   const directory=join(options.projectRoot,'ops/cli');const pins:Record<string,string>={};
-  for (const name of ['space_backup_validate.py','space_archive.py']) {
+  for (const name of ['space_backup_validate.py','space_archive.py','space_archive_stream.py']) {
     const path=join(directory,name);const source=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);
     try {pins[path]=createHash('sha256').update(await source.readFile()).digest('hex');} finally {await source.close();}
   }
   await assertLoginPins(pins);
-  const receipt=await boundedProviderReceipt(options.python??'/usr/bin/python3',[join(directory,'space_backup_validate.py')],
-    JSON.stringify({archive:candidate,identity:{company_id:row.company_id,tenant_id:row.tenant_id,alias:row.alias,runtime_key:row.agent_snapshot.runtime_key},manifest_sha256:row.manifest_sha256}),new AbortController().signal,60_000);
+  const receipt=await invokeSpaceBackupProcess(options.python??'/usr/bin/python3',[join(directory,'space_backup_validate.py')],
+    {archive:candidate,identity:{company_id:row.company_id,tenant_id:row.tenant_id,alias:row.alias,runtime_key:row.agent_snapshot.runtime_key},manifest_sha256:row.manifest_sha256},signal);
   if (JSON.stringify(receipt)!==JSON.stringify({verified:true})) throw new StoreError('conflict','space backup manifest could not be verified');
+  signal.throwIfAborted();
+  if (publish) await publishSpaceBackup(options,row,candidate);
+  return candidate;
+}
+export async function publishSpaceBackup(options:SpaceBackupStorage,row:SpaceBackupRow,candidate:string):Promise<void> {
+  if (candidate!==spaceBackupPath(options,row)&&candidate!==spaceBackupPath(options,row,true)) throw new Error('Space backup verification path differs');
   if (candidate!==spaceBackupPath(options,row,true)) await rename(candidate,spaceBackupPath(options,row,true));
 }
-export async function openSpaceBackupDownload(options:SpaceBackupStorage,row:SpaceBackupRow) {
+export async function openSpaceBackupDownload(options:SpaceBackupStorage,stored:SpaceBackupStoredRow) {
+  const row=normalizeSpaceBackupRow(stored);
   await prepareSpaceBackupDirectory(options);
   if (row.status!=='ready'||row.bytes===null||row.sha256===null) throw new StoreError('conflict','space backup is not ready');
   const file=await privateFile(spaceBackupPath(options,row,true),constants.O_RDONLY);
