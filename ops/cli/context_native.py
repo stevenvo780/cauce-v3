@@ -5,7 +5,15 @@ import pathlib
 import sys
 import time
 
-from context_client import ContextArgumentParser, ContextClient, ContextFailure, arguments, console_failure_message, read_scoped, valid_path
+from context_client import (
+    ContextArgumentParser,
+    ContextClient,
+    ContextFailure,
+    arguments,
+    console_failure_message,
+    read_scoped,
+    valid_path,
+)
 
 
 def sync(client: ContextClient, tenant: str, alias: str, root: str, paths: list[str], removed: list[str], expected: int) -> dict:
