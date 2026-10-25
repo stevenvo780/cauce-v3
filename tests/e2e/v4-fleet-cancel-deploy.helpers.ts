@@ -75,7 +75,7 @@ export async function startCancelDeployFixture(options: { runtimeBundle?: typeof
         'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts', 'packages/store/src/context-version-reevaluation.ts',
         'packages/protocol/src/fleet-recovery.ts', 'services/gateway/src/fleet/recovery-host-command.ts',
         'services/gateway/src/fleet/agent-recovery-preflight.ts',
-        'ops/cli/fleet_executor_container_tui.py',
+        'ops/cli/fleet_executor_container_tui.py', 'ops/container-runtime/cauce_container_restart.py',
         'ops/cli/fleet_provider_capability_probe.py', 'ops/cli/fleet_executor_terminal.py',
         'packages/store/src/device-authorization.ts', 'packages/store/src/device-authorization-authority.ts',
         'services/gateway/src/device-authorization.ts', 'services/gateway/src/fleet/space-backup.failure.ts',
