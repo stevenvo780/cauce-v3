@@ -19,6 +19,14 @@ LIVE_TMUX_HARNESSES = frozenset({"muse", "grok"})
 MAX_SESSION_STORE_BYTES = 1 << 20
 
 
+def dynamic_tmux_capability(bundle: dict[str, Any]) -> bool:
+    config = bundle.get("tmux_tui")
+    return bundle.get("harness") in LIVE_TMUX_HARNESSES or (
+        bundle.get("harness") in {"claude", "codex", "grok", "muse"}
+        and isinstance(config, dict) and "state_directory" in config
+    )
+
+
 def _openclaw_tui_config(value: Any, harness: str, home: str) -> dict[str, Any] | None:
     if value in (None, "", {}):
         return None

@@ -704,8 +704,8 @@ publish_bundle() {
       if derive_harness_command; then
         printf 'cauce-pty-launcher: live tmux context measured alias=%s socket=%s measured_session_id=%s\n' \
           "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
-      elif [[ -n $tmux_state ]]; then
-        die_transient 'approved shared TUI panel is not ready'
+      elif [[ -n $tmux_state && -z $TMUX_PATH_FOUND ]]; then
+        die_transient 'approved shared TUI executable is unavailable'
       elif [[ -n $TMUX_PATH_FOUND ]]; then
         if [[ $TMUX_MEASUREMENT_CONFLICT -eq 1 ]]; then
           printf 'cauce-pty-launcher: tmux context not accredited alias=%s socket=%s; OPEN will revalidate\n' \

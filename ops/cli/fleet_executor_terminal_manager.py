@@ -156,7 +156,7 @@ def process_identity(pid: str, version: str, invocation: str) -> int:
         raise SafeFailure('terminal unit process identity is unavailable') from None
 
 
-def presence(unit: str, wire: str, version: str, *, attempts: int = 20, shared_tui: bool = False) -> dict:
+def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
     runtime = pathlib.Path('/run/user') / str(os.geteuid())
     try:
         boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip().replace('-', '')
@@ -198,12 +198,11 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20, shared_t
                 start = any(re.search(r'\bstarting alias=' + re.escape(wire) + r' .*\bversion=' + version + r'(?:\s|$)', row)
                             for row in messages)
                 accepted = []
-                required_modes = {'shell', 'harness', 'harness_rw'} if shared_tui else {'shell'}
                 for index, row in enumerate(messages):
                     acknowledgement = re.search(r'\brelay accepted alias=' + re.escape(wire) + r' modes=([a-z_,]+)(?:\s|$)', row)
                     if acknowledgement is not None:
                         modes = acknowledgement[1].split(',')
-                        if required_modes <= set(modes) and len(modes) == len(set(modes)):
+                        if 'shell' in modes and len(modes) == len(set(modes)):
                             accepted.append(index)
                 disconnected = any('relay connect failed:' in row or 'relay session ended:' in row
                                    for row in messages[accepted[-1] + 1:]) if accepted else True
