@@ -342,6 +342,30 @@ class SpaceBackupContainerTest(container_fixtures.ReleaseFixture):
             space_backup_runtime.read_container_binding(self.policy, self.agent)
 
 
+class LegacyContainerApprovalTest(unittest.TestCase):
+    snapshot = {'company_id': 'company-x', 'tenant_id': 'Equipo_42', 'alias': 'legado', 'runtime_key': 'legado-rt',
+                'host_id': 'host-x', 'harness_id': 'codex', 'runtime_mode': 'legacy-container',
+                'container_name': 'ws-legado', 'runtime_user': 'dev', 'home_directory': None,
+                'state_directory': '/home/dev/state/legado-rt', 'systemd_user': None}
+
+    def test_sin_vinculacion_compartida_aprobada_no_hay_copia(self):
+        with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'not approved'):
+            space_backup_runtime.approve_legacy_container({'shared_containers': {}}, dict(self.snapshot))
+
+    def test_con_vinculacion_aprobada_convierte_a_contenedor_y_rellena_desde_la_politica(self):
+        policy = {'shared_containers': {'ws-legado': {'home_directory': '/home/dev', 'systemd_user': 'dev'}}}
+        binding = {'container_id': 'a' * 64, 'generation': '1'}
+        with mock.patch.object(space_backup_runtime, 'read_container_binding',
+                               return_value=({'runtime_mode': 'container'}, binding)) as called:
+            approved, result = space_backup_runtime.approve_legacy_container(policy, dict(self.snapshot))
+        converted = called.call_args.args[1]
+        self.assertEqual(converted['runtime_mode'], 'container')
+        self.assertEqual(converted['home_directory'], '/home/dev')
+        self.assertEqual(converted['systemd_user'], 'dev')
+        self.assertEqual(converted['state_directory'], '/home/dev/state/legado-rt')
+        self.assertEqual((approved, result), ({'runtime_mode': 'container'}, binding))
+
+
 class SpaceBackupFailureTest(unittest.TestCase):
     def test_failure_diagnostics_redact_before_truncation_and_keep_closed_bounded_schema(self):
         private = ('-----BEGIN PRIVATE KEY-----\nprivate-value\n-----END PRIVATE KEY----- '

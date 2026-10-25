@@ -80,6 +80,16 @@ def validate_request(request: dict) -> dict:
     return claim
 
 
+def approve_legacy_container(policy: dict, snapshot: dict) -> tuple[dict, dict]:
+    shared = policy.get('shared_containers', {}).get(snapshot.get('container_name'))
+    if not isinstance(shared, dict):
+        raise SafeFailure('legacy backup container is not approved')
+    converted = {**snapshot, 'runtime_mode': 'container',
+                 'home_directory': snapshot.get('home_directory') or shared.get('home_directory'),
+                 'systemd_user': snapshot.get('systemd_user') or shared.get('systemd_user')}
+    return read_container_binding(policy, converted)
+
+
 def execute(policy_file: pathlib.Path, request: dict) -> dict:
     claim = validate_request(request)
     if digest(policy_file) != claim['policy_sha256']:
@@ -87,14 +97,20 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
     policy = load_policy(policy_file)
     if digest(policy_file) != claim['policy_sha256']:
         raise SafeFailure('space backup policy changed during read')
-    agent = approve_agent(policy, claim['agent_snapshot'])
+    legacy = claim['agent_snapshot'].get('runtime_mode') == 'legacy-container'
+    agent = claim['agent_snapshot'] if legacy else approve_agent(policy, claim['agent_snapshot'])
     local = {'action': request['action'], 'id': claim['id'], 'claim_epoch': claim['claim_epoch'],
              'state_directory': agent['state_directory'],
              'identity': {field: agent[field] for field in ('company_id', 'tenant_id', 'alias', 'runtime_key')}}
     if request['action'] == 'read':
         local['offset'] = request['offset']
     binding = None
-    if agent['runtime_mode'] == 'container':
+    if legacy:
+        from fleet_executor_container import isolated_python
+        agent, binding = approve_legacy_container(policy, agent)
+        command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
+                   *isolated_python(str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py')]
+    elif agent['runtime_mode'] == 'container':
         from fleet_executor_container import isolated_python
         agent, binding = read_container_binding(policy, agent)
         command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
@@ -110,7 +126,8 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
             command = ['/usr/sbin/runuser', '-u', agent['runtime_user'], '--', *command]
     result = subprocess.run(command, input=json.dumps(local).encode(), capture_output=True,
                             timeout=1750 if request['action'] == 'export' else 120,
-                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
+                            env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1',
+                                 **{key: os.environ[key] for key in ('DOCKER_CONTEXT', 'DOCKER_HOST', 'DOCKER_CONFIG') if key in os.environ}}, check=False)
     if binding is not None:
         _, after = read_container_binding(policy, agent)
         if after['container_id'] != binding['container_id'] or after['generation'] != binding['generation']:
