@@ -17,6 +17,7 @@ import { controlledSharedProvider } from './s2d-provider.js';
 
 const ROOT = process.cwd();
 const OWNER = 's2b-espacio-estandar-prod-1025';
+const CAMPAIGN = 'g2-guardia-historial-1025';
 export const BASELINE = '5dcb70e733ede767d7d7281930ed4b87113a73c8';
 const CANDIDATE_COMMIT = process.env.CAUCE_S2D_CANDIDATE_COMMIT;
 const execute = promisify(execFile);
@@ -48,6 +49,7 @@ export interface SharedWindowFixture {
   run: string;
   snapshot(): Promise<Observation>;
   pane(actor: Actor): Promise<string>;
+  cursor(actor: Actor): Promise<{ x: number; y: number }>;
   provider(actor: Actor): Promise<{ inputBytes: number; submits: number; draftLength: number; pid: number }>;
   keys(actor: Actor, keys: string[], literal?: boolean): Promise<void>;
   apply(actor: Actor, phase: string): Promise<{ result: ToolResult; receipt: unknown }>;
@@ -89,7 +91,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
   assert.equal(process.env.CAUCE_TEST_DATABASE_URL, undefined);
   assert.ok(CANDIDATE_COMMIT === undefined || CANDIDATE_COMMIT === BASELINE);
   const run = randomUUID().replaceAll('-', '').slice(0, 12), prefix = 'zz-canary-' + OWNER + '-' + run;
-  const evidence = join(ROOT, '.delegados/v4/recibos/s2d-ventana-ws-humanizar-1025', run);
+  const evidence = join(ROOT, '.delegados/v4/recibos', CAMPAIGN, run);
   const directory = await mkdtemp('/datos/' + prefix + '-');
   const home = join(directory, 'home'), workspace = join(directory, 'workspace'), control = '/run/zz-canary-s2d';
   const wsName = prefix + '-ws', managerRoot = '/home/cauce/s2d';
@@ -100,9 +102,9 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
   });
   const save = async (name: string, value: unknown) => {
     await mkdir(evidence, { recursive: true, mode: 0o700 });
-    await writeFile(join(evidence, name + '.json'), JSON.stringify({ owner: OWNER, campaign: 's2d-ventana-ws-humanizar-1025', run, value }, null, 2) + '\n', { mode: 0o600 });
+    await writeFile(join(evidence, name + '.json'), JSON.stringify({ owner: CAMPAIGN, runtime_owner: OWNER, campaign: CAMPAIGN, run, value }, null, 2) + '\n', { mode: 0o600 });
   };
-  console.info('S2D_EVIDENCE', JSON.stringify({ run, directory: evidence, owner: OWNER }));
+  console.info('S2D_EVIDENCE', JSON.stringify({ run, directory: evidence, owner: CAMPAIGN, runtime_owner: OWNER }));
   let computer: ComputerHarness | undefined, ws: StartedTestContainer | undefined, database: StartedTestContainer | undefined;
   let pool: DatabasePool | undefined, app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   const close = async () => {
@@ -256,6 +258,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
       '--email', auth.email, '--password-stdin', '--session-file', session], auth.password + '\n');
     const sources = await sourceHashes();
     await save('sources', { baseline_revision: BASELINE, baseline_ops_digest: baselineDigest, candidate_ops_digest: candidateDigest,
+      candidate_head: (await command('git', ['-C', ROOT, '-c', 'core.fsmonitor=false', 'rev-parse', 'HEAD'])).stdout.trim(),
       candidate_source: CANDIDATE_COMMIT === undefined ? 'workingtree candidate' : 'gitarchive5dcb',
       canonical_digest_revision: BASELINE, sdk_digest: bundleDigest, source_sha256: sources, original_runtime_expected_authority: null });
     const start = async (actor: Actor) => {
@@ -333,6 +336,13 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
         String(process.pid), process.ticks]) === 'True',
       keys: async (actor, keys, literal = false) => { await docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'send-keys',
         '-t', 'cauce-' + actor.alias + ':agente', ...(literal ? ['-l'] : []), ...keys]); },
+      cursor: async actor => {
+        const value = await docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'display-message',
+          '-p', '-t', 'cauce-' + actor.alias + ':agente', '#{cursor_x}|#{cursor_y}']);
+        const columns = value.trim().split('|'); assert.equal(columns.length, 2);
+        const x = Number(columns[0]), y = Number(columns[1]); assert.ok(Number.isInteger(x) && Number.isInteger(y));
+        return { x, y };
+      },
       provider: async actor => JSON.parse(await docker(['exec', '--user', '1000', wsName, 'python3', '-I', '-B', '-c',
         'import pathlib,sys;print(pathlib.Path(sys.argv[1]).read_text())', actor.profile + '/s2d-provider-state.json'])) as { inputBytes: number; submits: number; draftLength: number; pid: number },
       directStop: actor => {
