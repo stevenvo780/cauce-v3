@@ -68,7 +68,8 @@ def unit_state(unit: str, root: pathlib.Path) -> dict:
     return {'active': row.get('ActiveState') == 'active', 'enabled': row.get('UnitFileState', '').startswith('enabled')}
 
 
-LEGACY_RELEASE_FILES = frozenset({'container-aliases.json', 'pty-agent/cauce-pty-launcher.sh', 'pty-agent/systemd/cauce-v3-pty@.service'})
+LEGACY_RELEASE_FILES = frozenset({'container-aliases.json', 'pty-agent/cauce-pty-launcher.sh', 'pty-agent/cauce_pty_agent/__main__.py',
+                                  'pty-agent/systemd/cauce-v3-pty@.service', 'pty-agent/reap_orphan_agent.py'})
 
 
 def legacy_release(release_sha: str):
@@ -96,10 +97,23 @@ def legacy_release(release_sha: str):
             or any(not isinstance(name, str) or name.startswith('/') or '..' in pathlib.PurePosixPath(name).parts
                    for name in files):
         fail('manifest del release publicado es invalido')
-    calculated = {}
-    for relative in files:
-        safe_regular(root / relative, f'input publicado {relative}')
-        calculated[relative] = sha256((root / relative).read_bytes())
+    # The launcher may load any file of the tree, so the whole tree must be exactly the pinned set: no link, no
+    # unlisted file and no entry another uid could have written.
+    present = set()
+    for directory, folders, names in os.walk(root):
+        for name in [*folders, *names]:
+            entry = pathlib.Path(directory) / name
+            relative = str(entry.relative_to(root))
+            if entry.is_symlink():
+                fail(f'el release publicado contiene un enlace: {relative}')
+            if name in names:
+                safe_regular(entry, f'input publicado {relative}')
+                present.add(relative)
+            else:
+                safe_directory(entry)
+    if present != set(files) | {'manifest.json'}:
+        fail('el release publicado contiene ficheros fuera de su manifest')
+    calculated = {relative: sha256((root / relative).read_bytes()) for relative in files}
     if files != calculated:
         fail('un release publicado cambio de contenido')
     if sha256(canonical_json({'schemaVersion': SCHEMA_VERSION, 'files': calculated})) != release_sha \

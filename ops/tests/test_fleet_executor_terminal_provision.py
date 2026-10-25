@@ -422,6 +422,14 @@ class TerminalLegacyUnitTest(unittest.TestCase):
         rollout, work, sha = self.published_release(files)
         with mock.patch.object(rollout.ManagerWorker, 'release_path', return_value=work), self.assertRaises(rollout.RolloutError):
             manager.legacy_release('e' * 64)
+        for plant in (lambda root: (root / 'pty-agent/unlisted.py').write_bytes(b'planted'),
+                      lambda root: (root / 'pty-agent/linked.py').symlink_to(root / 'container-aliases.json'),
+                      lambda root: os.chmod(root / 'pty-agent/cauce-pty-launcher.sh', 0o666)):
+            rollout, work, sha = self.published_release(files)
+            plant(work)
+            with self.subTest(plant=plant), mock.patch.object(rollout.ManagerWorker, 'release_path', return_value=work), \
+                    mock.patch.object(rollout.Fleet, 'load', return_value='fleet'), self.assertRaises(rollout.RolloutError):
+                manager.legacy_release(sha)
 
     def test_a_noncanonical_generic_template_without_a_release_selector_still_fails_closed(self):
         row = {'LoadState': 'loaded', 'FragmentPath': '/fixture/systemd/cauce-v3-pty@.service', 'DropInPaths': ''}
