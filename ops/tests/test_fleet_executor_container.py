@@ -219,6 +219,22 @@ class DisposableContainerExecutorTest(unittest.TestCase):
         self.assertEqual(len(self.containers()), 1)
         self.assertEqual(set(self.volumes()), {self.container + '-state', self.container + '-provider-profiles'})
 
+    def test_a_restored_original_carries_its_provenance_and_survives_its_operations_discard(self):
+        module, policy = self.operation_fixture()
+        operation = str(uuid.uuid4())
+        restored = module.create_container(policy, self.agent, extra_labels={
+            'cauce.fleet.restored_by': operation, 'cauce.fleet.tenant': 'Intruder'})
+        labels = restored['Config']['Labels']
+        self.assertEqual(labels['cauce.fleet.restored_by'], operation)
+        self.assertEqual(labels['cauce.fleet.tenant'], self.agent['tenant_id'])
+        self.assertNotIn(module.OPERATION_LABEL, labels)
+        module.validate_container(policy, self.agent, restored)
+        for name in self.volumes():
+            volume = json.loads(subprocess.run(['docker', 'volume', 'inspect', name], capture_output=True, text=True, check=True).stdout)[0]
+            self.assertNotIn('cauce.fleet.restored_by', volume['Labels'])
+        module.discard_operation(policy, self.agent, operation)
+        self.assertEqual(self.containers(), [restored['Id'][:12]])
+
     def test_real_purge_removes_container_and_provider_volumes_before_the_sweep(self):
         import test_fleet_executor_lifecycle as lifecycle_fixtures
         module, policy = self.operation_fixture()

@@ -312,7 +312,8 @@ def owned_volumes(policy: dict, agent: dict) -> tuple[dict, list]:
 OPERATION_LABEL = 'cauce.fleet.operation'
 
 
-def create_container(policy: dict, agent: dict, binds: dict | None = None, operation_id: str | None = None) -> dict:
+def create_container(policy: dict, agent: dict, binds: dict | None = None, operation_id: str | None = None,
+                     extra_labels: dict | None = None) -> dict:
     placement = agent['_placement']
     mounts = runtime_mounts(policy, agent) if binds is None else binds
     shape = extension_shape(policy, agent, mounts)
@@ -331,7 +332,9 @@ def create_container(policy: dict, agent: dict, binds: dict | None = None, opera
             docker('volume', 'create', *[value for key, value in {**labels, **operation_labels}.items() for value in ('--label', f'{key}={value}')], name)
     volume = agent['container_name'] + '-state'
     extension_labels = {EXTENSIONS_LABEL: extensions_label(agent)} if agent.get('extensions') else {}
-    label_arguments = [value for key, value in {**expected_labels(policy, agent), **operation_labels, **extension_labels}.items() for value in ('--label', f'{key}={value}')]
+    # Extra provenance labels never override the ownership, operation or extension labels.
+    label_arguments = [value for key, value in {**(extra_labels or {}), **expected_labels(policy, agent), **operation_labels, **extension_labels}.items()
+                       for value in ('--label', f'{key}={value}')]
     profile_arguments = ['--mount', f'type=volume,source={agent["container_name"]}-provider-profiles,destination={placement["profile_root"]}'] \
         if placement.get('profile_root') else []
     fallback = shape['fallback']

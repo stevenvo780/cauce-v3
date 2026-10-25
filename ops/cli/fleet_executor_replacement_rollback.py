@@ -8,7 +8,9 @@ import ssl
 import traceback
 from pathlib import Path
 
-from fleet_executor_policy import SafeFailure
+from fleet_executor_policy import SafeFailure, approve_agent
+
+RESTORED_LABEL = 'cauce.fleet.restored_by'
 
 
 def canonical(value) -> str:
@@ -70,13 +72,92 @@ def original(executor, entry: dict, *, restarting: bool = False) -> tuple[dict, 
         if observed is None:
             raise ValueError
         pin = container_pin(observed)
-        expected = entry['original']['previous']
+        # An in-place update removed the captured container; its rebuild was pinned when it was created.
+        expected = entry.get('recreated_original') or entry['original']['previous']
         fields = set(expected) - ({'started_at'} if restarting else set())
         if any(pin.get(key) != expected[key] for key in fields) \
                 or volume_pins(executor.policy, agent) != entry['original']['volumes']:
             raise ValueError
         return agent, observed
     except (KeyError, TypeError, ValueError, SafeFailure):
+        raise SafeFailure('replacement original unverified') from None
+
+
+def recreate_original(executor, entry: dict) -> None:
+    """An update that changes extensions or resources recreates the container under its own name, so the captured
+    original no longer exists when admission fails. Restoring it rebuilds the captured placement: the approved previous
+    shape, the captured image and the very volumes pinned at capture. The rebuild carries this operation as its
+    provenance and is pinned in the journal; from then on it is verified as the original, field by field."""
+    if 'recreated_original' in entry:
+        return
+    from fleet_executor_container import (
+        OPERATION_LABEL,
+        create_container,
+        discard_operation,
+        docker,
+        expected_labels,
+        inspect_container,
+        validate_container,
+    )
+    from fleet_executor_image import previous_agent
+    from fleet_executor_replacement import container_pin, volume_pins
+    context, journal = executor.context, executor.journal
+    operation = context['operation_id']
+    previous = context['previous_agents'][0]
+    desired = executor.agent()
+    if desired['container_name'] != previous['container_name'] or not isinstance(entry.get('original'), dict):
+        return
+    try:
+        pin = entry['original']['previous']
+        if docker('ps', '-a', '-q', '--no-trunc', '--filter', 'id=' + pin['container_id']).strip():
+            return
+        # Only this operation's runtime step removes the original in place; anything else stays unverified.
+        if 'runtime' not in journal.get('attempted', []) or journal.get('runtime_launch_attempted') is not True:
+            raise ValueError
+        agent = approve_agent(executor.policy, previous)
+        if agent['runtime_mode'] != 'container' or agent['_placement'].get('ownership') == 'shared' \
+                or any(agent.get(key) != desired.get(key) for key in ('tenant_id', 'alias', 'runtime_key', 'host_id')):
+            raise ValueError
+        # The rebuild needs the captured image and the captured volumes; without them the destination is kept.
+        restored = previous_agent(agent, pin['image_id'])
+        image = json.loads(docker('image', 'inspect', pin['image_id']))
+        if len(image) != 1 or image[0].get('Id') != pin['image_id'] \
+                or volume_pins(executor.policy, agent) != entry['original']['volumes']:
+            raise ValueError
+        current = inspect_container(agent['container_name'])
+        if current is not None:
+            labels = current['Config'].get('Labels') or {}
+            if any(labels.get(key) != value for key, value in expected_labels(executor.policy, agent).items()):
+                raise ValueError
+            if labels.get(RESTORED_LABEL) != operation:
+                if labels.get(OPERATION_LABEL) != operation:
+                    raise ValueError
+                entry['phase'] = 'removing_destination'
+                executor.save()
+                discard_operation(executor.policy, desired, operation)
+                if inspect_container(agent['container_name']) is not None:
+                    raise ValueError
+                current = None
+        if current is None:
+            entry['phase'] = 'recreating_original'
+            executor.save()
+            current = create_container(executor.policy, restored, extra_labels={RESTORED_LABEL: operation})
+        validate_container(executor.policy, restored, current)
+        labels = current['Config'].get('Labels') or {}
+        if current['Image'] != pin['image_id'] or labels.get(RESTORED_LABEL) != operation or OPERATION_LABEL in labels \
+                or current['State']['Running'] or volume_pins(executor.policy, agent) != entry['original']['volumes']:
+            raise ValueError
+        entry.update(recreated_original=container_pin(current), phase='recreated_original')
+        executor.save()
+    except (OSError, KeyError, TypeError, ValueError, IndexError, SafeFailure) as error:
+        frames = traceback.extract_tb(error.__traceback__)
+        entry['diagnostic'] = {'phase': entry.get('phase'), 'exception_type': type(error).__name__,
+                               'last_function': frames[-1].name if frames else None,
+                               'last_lineno': frames[-1].lineno if frames else None}
+        try:
+            executor.save()
+        except OSError:
+            pass
         raise SafeFailure('replacement original unverified') from None
 
 
@@ -235,6 +316,7 @@ def compensate(executor) -> dict | None:
     if not isinstance(entry, dict) or entry.get('snapshot_sha256') != value['snapshot_sha256']:
         raise SafeFailure('replacement authority unverified')
     restarting = entry.get('original_restart_attempted') is True
+    recreate_original(executor, entry)
     agent, observed = original(executor, entry, restarting=restarting)
     try:
         if normal_pins(executor, agent) != {key: entry[key] for key in ('normal_certificate_sha256', 'normal_token_sha256')}:

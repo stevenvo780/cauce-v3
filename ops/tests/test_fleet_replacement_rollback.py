@@ -291,6 +291,211 @@ class ReplacementPhysicalRollbackTest(unittest.TestCase):
         self.assertEqual(first['runtime_digest'], hashlib.sha256('\n'.join(binding).encode()).hexdigest())
 
 
+class InPlaceRecreationRollbackTest(unittest.TestCase):
+    """Production, 25-oct: adding pids 512 to Hades recreated its container under the same name; admission failed and the
+    compensation looped on replacement_original_unverified because the captured original no longer existed."""
+
+    OPERATION = '72000000-0000-4000-8000-000000000002'
+    IMAGE = 'sha256:' + '1' * 64
+
+    def setUp(self):
+        import fleet_executor_replacement as replacement
+        self.replacement = replacement
+        self.agent = {'tenant_id': 'Tenant', 'alias': 'agent', 'runtime_key': 'runtime', 'host_id': 'host',
+                      'runtime_mode': 'container', 'container_name': 'original', 'enabled': True, 'lifecycle_state': 'ready',
+                      'extensions': []}
+        self.desired = {**self.agent, 'extensions': [{'type': 'resources', 'pids': 512}]}
+        self.context = {'operation_id': self.OPERATION, 'previous_agents': [self.agent],
+            'request': {'kind': 'update', 'target': {'resource': 'agent', 'tenant_id': 'Tenant', 'alias': 'agent'},
+                        'parameters': {'runtime_key': 'runtime', 'placement': {'mode': 'container', 'host_id': 'host',
+                                                                                'container_name': 'original'}}}}
+        body = {'version': 1, 'operation_id': self.OPERATION, 'company_id': 'company', 'target': self.context['request']['target'],
+                'previous_agents': [copy.deepcopy(self.agent)], 'previous_memberships': []}
+        encoded = rollback.canonical(body)
+        self.value = {**body, 'snapshot_canonical': encoded, 'snapshot_sha256': hashlib.sha256(encoded.encode()).hexdigest()}
+        self.context['snapshot'] = {'compensation_snapshot': self.value}
+        self.volumes = [{'name': 'original-state', 'created_at': '2026-10-25T22:30:00Z', 'identity_sha256': '5' * 64}]
+        self.pins = {'a' * 64: {'container_id': 'a' * 64, 'created_at': 'A', 'started_at': 'A', 'image_id': self.IMAGE,
+                                'configuration_sha256': '6' * 64}}
+        # Exactly the production journal: captured before stop, every step attempted up to admission.
+        self.entry = {'snapshot_sha256': self.value['snapshot_sha256'], 'original_container_id': 'a' * 64,
+                      'original': {'previous': self.pins['a' * 64], 'volumes': self.volumes},
+                      'checkpoint_sha256': 'b' * 64, 'normal_certificate_sha256': 'c' * 64, 'normal_token_sha256': 'd' * 64,
+                      'adapter_state': {'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': None},
+                      'phase': 'captured'}
+        self.journal = {'replacement_compensation': self.entry, 'runtime_launch_attempted': True, 'runtime': 'e' * 64,
+                        'attempted': ['stop', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission']}
+        self.policy = {'host_id': 'host', 'executor_user': 'cauce'}
+        self.executor = types.SimpleNamespace(context=self.context, policy=self.policy, journal=self.journal,
+                                              save=mock.Mock(), agent=lambda: self.desired)
+        self.approved = {**self.agent, '_placement': {'image': 'sha256:' + '2' * 64}}
+        owner = container.expected_labels(self.policy, self.agent)
+        self.destination = {'Id': 'f' * 64, 'Image': 'sha256:' + '2' * 64, 'State': {'Running': True},
+                            'Config': {'Labels': {**owner, container.OPERATION_LABEL: self.OPERATION}}}
+        self.rebuilt = {'Id': '9' * 64, 'Image': self.IMAGE, 'State': {'Running': False},
+                        'Config': {'Labels': {**owner, rollback.RESTORED_LABEL: self.OPERATION}}}
+        self.pins['9' * 64] = {'container_id': '9' * 64, 'created_at': 'B', 'started_at': '0001-01-01T00:00:00Z',
+                               'image_id': self.IMAGE, 'configuration_sha256': '7' * 64}
+        self.containers = [self.destination]
+
+    def docker(self, *arguments):
+        if arguments[:2] == ('ps', '-a'):
+            return b'' if arguments[-1] == 'id=' + 'a' * 64 else b'x'
+        if arguments[:2] == ('image', 'inspect'):
+            return json.dumps([{'Id': arguments[2]}]).encode()
+        raise AssertionError(arguments)
+
+    def inspect(self, _name):
+        return self.containers[0] if self.containers else None
+
+    def patches(self, stack, **overrides):
+        def discard(policy, agent, operation):
+            self.assertEqual((agent, operation), (self.desired, self.OPERATION))
+            self.containers.clear()
+        def create(policy, agent, binds=None, operation_id=None, extra_labels=None):
+            self.assertEqual(agent['_placement']['image'], self.IMAGE)
+            self.assertEqual(agent['extensions'], [])
+            self.assertIsNone(operation_id)
+            self.assertEqual(extra_labels, {rollback.RESTORED_LABEL: self.OPERATION})
+            self.containers.append(self.rebuilt)
+            return self.rebuilt
+        values = {'docker': mock.patch.object(container, 'docker', side_effect=self.docker),
+                  'inspect': mock.patch.object(container, 'inspect_container', side_effect=self.inspect),
+                  'discard': mock.patch.object(container, 'discard_operation', side_effect=discard),
+                  'create': mock.patch.object(container, 'create_container', side_effect=create),
+                  'validate': mock.patch.object(container, 'validate_container'),
+                  'approve': mock.patch.object(rollback, 'approve_agent', return_value=self.approved),
+                  'volumes': mock.patch.object(self.replacement, 'volume_pins', return_value=self.volumes),
+                  'pin': mock.patch.object(self.replacement, 'container_pin', side_effect=lambda observed: dict(self.pins[observed['Id']]))}
+        values.update(overrides)
+        return {name: stack.enter_context(patch) for name, patch in values.items()}
+
+    def test_production_journal_rebuilds_the_captured_original_and_completes_the_restoration(self):
+        import contextlib
+        result = {'checkpoint_sha256': 'b' * 64, 'authority_sha256': 'e' * 64,
+                  'shared_authority_preserved': True, 'created_authority_revoked': True, 'revoked_credentials': []}
+        def observation(policy, previous):
+            self.assertEqual(previous, self.agent)
+            return self.approved, self.inspect(previous['container_name'])
+        def restore(policy, agent, **options):
+            self.assertEqual(options, {'was_running': True, 'bootstrap': False, 'operation_id': None, 'allow_refresh': False})
+            self.rebuilt['State'] = {'Running': True}
+            self.pins['9' * 64]['started_at'] = 'C'
+            return {'runtime_digest': '1' * 64}
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack)
+            stack.enter_context(mock.patch.object(self.replacement, 'approved_observation', side_effect=observation))
+            stack.enter_context(mock.patch.object(rollback, 'normal_pins', return_value={key: self.entry[key]
+                for key in ('normal_certificate_sha256', 'normal_token_sha256')}))
+            stack.enter_context(mock.patch.object(rollback, 'restore_source', return_value={'generation': 'f' * 64}))
+            stack.enter_context(mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': False}))
+            stack.enter_context(mock.patch.object(container, 'restore_existing_adapter', side_effect=restore))
+            revoke = stack.enter_context(mock.patch.object(authority, 'rollback_credentials', return_value=result))
+            proof = rollback.compensate(self.executor)
+            replay = rollback.compensate(self.executor)
+        self.assertEqual(proof, replay)
+        mocks['discard'].assert_called_once()
+        mocks['create'].assert_called_once()
+        self.assertEqual(self.entry['phase'], 'restored')
+        self.assertEqual(self.entry['recreated_original']['container_id'], '9' * 64)
+        # The evidence and the authority stay bound to the captured original, never to the rebuild.
+        self.assertEqual(proof['replacement_restored']['original_container_id'], 'a' * 64)
+        self.assertEqual(revoke.call_args_list[0].args[3]['original_container_id'], 'a' * 64)
+        self.assertEqual(self.containers, [self.rebuilt])
+
+    def test_an_interrupted_rebuild_is_adopted_only_with_this_operations_provenance(self):
+        import contextlib
+        self.containers[:] = [self.rebuilt]
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack)
+            rollback.recreate_original(self.executor, self.entry)
+        mocks['discard'].assert_not_called()
+        mocks['create'].assert_not_called()
+        self.assertEqual(self.entry['recreated_original'], self.pins['9' * 64])
+        self.entry.pop('recreated_original')
+        self.rebuilt['Config']['Labels'][rollback.RESTORED_LABEL] = '73000000-0000-4000-8000-000000000003'
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack)
+            with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                rollback.recreate_original(self.executor, self.entry)
+        mocks['discard'].assert_not_called()
+        mocks['create'].assert_not_called()
+        self.assertNotIn('recreated_original', self.entry)
+        self.assertEqual(self.entry['diagnostic']['exception_type'], 'ValueError')
+
+    def test_a_rebuild_already_started_is_never_adopted(self):
+        import contextlib
+        self.rebuilt['State'] = {'Running': True}
+        self.containers[:] = [self.rebuilt]
+        with contextlib.ExitStack() as stack:
+            self.patches(stack)
+            with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                rollback.recreate_original(self.executor, self.entry)
+        self.assertNotIn('recreated_original', self.entry)
+
+    def test_unrecoverable_rebuild_keeps_the_destination_and_fails_closed(self):
+        import contextlib
+        cases = {'foreign container': {'containers': [{**self.destination, 'Config': {'Labels': {
+                     **self.destination['Config']['Labels'], container.OPERATION_LABEL: '73000000-0000-4000-8000-000000000003'}}}]},
+                 'another owner': {'containers': [{**self.destination, 'Config': {'Labels': {container.OPERATION_LABEL: self.OPERATION}}}]},
+                 'runtime never attempted': {'attempted': ['stop', 'artifacts', 'credentials']},
+                 'volumes changed': {'volumes': [{**self.volumes[0], 'identity_sha256': '0' * 64}]},
+                 'image pruned': {'image': True},
+                 'shared placement': {'approved': {**self.approved, '_placement': {'ownership': 'shared'}}}}
+        for name, case in cases.items():
+            with self.subTest(name), contextlib.ExitStack() as stack:
+                self.setUp()
+                if 'containers' in case:
+                    self.containers[:] = case['containers']
+                if 'attempted' in case:
+                    self.journal['attempted'] = case['attempted']
+                overrides = {}
+                if 'volumes' in case:
+                    overrides['volumes'] = mock.patch.object(self.replacement, 'volume_pins', return_value=case['volumes'])
+                if 'image' in case:
+                    def pruned(*arguments):
+                        if arguments[:2] == ('image', 'inspect'):
+                            raise SafeFailure('docker command failed')
+                        return self.docker(*arguments)
+                    overrides['docker'] = mock.patch.object(container, 'docker', side_effect=pruned)
+                if 'approved' in case:
+                    overrides['approve'] = mock.patch.object(rollback, 'approve_agent', return_value=case['approved'])
+                mocks = self.patches(stack, **overrides)
+                with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                    rollback.recreate_original(self.executor, self.entry)
+                mocks['discard'].assert_not_called()
+                mocks['create'].assert_not_called()
+                self.assertNotIn('recreated_original', self.entry)
+                self.assertIn('diagnostic', self.entry)
+
+    def test_a_present_original_or_a_renamed_replacement_never_rebuilds(self):
+        import contextlib
+        def present(*arguments):
+            return b'a' * 64 if arguments[:2] == ('ps', '-a') else self.docker(*arguments)
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack, docker=mock.patch.object(container, 'docker', side_effect=present))
+            rollback.recreate_original(self.executor, self.entry)
+        mocks['create'].assert_not_called()
+        self.desired = {**self.desired, 'container_name': 'new'}
+        with contextlib.ExitStack() as stack:
+            mocks = self.patches(stack)
+            rollback.recreate_original(self.executor, self.entry)
+        mocks['docker'].assert_not_called()
+        mocks['create'].assert_not_called()
+        self.assertNotIn('recreated_original', self.entry)
+
+    def test_the_rebuild_pin_replaces_the_captured_pin_in_original_verification(self):
+        observed = {'Id': '9' * 64}
+        self.entry['recreated_original'] = dict(self.pins['9' * 64])
+        with mock.patch.object(self.replacement, 'approved_observation', return_value=(self.approved, observed)), \
+                mock.patch.object(self.replacement, 'volume_pins', return_value=self.volumes), \
+                mock.patch.object(self.replacement, 'container_pin', side_effect=lambda value: dict(self.pins[value['Id']])):
+            self.assertEqual(rollback.original(self.executor, self.entry), (self.approved, observed))
+            self.pins['9' * 64]['configuration_sha256'] = '0' * 64
+            with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                rollback.original(self.executor, self.entry)
+
+
 class ReplacementLocalCredentialCleanupTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
