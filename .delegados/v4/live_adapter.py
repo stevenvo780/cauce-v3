@@ -143,7 +143,9 @@ def remote(agent, argv, data=None, timeout=180):
     manager = agent["manager"]
     if not re.fullmatch(r"[a-z_][a-z0-9_-]*", manager) or not isinstance(agent["uid"], int):
         raise Failure("invalid manager identity")
-    command = ["env", f"XDG_RUNTIME_DIR=/run/user/{agent['uid']}", "PYTHONDONTWRITEBYTECODE=1", *argv]
+    # Start in / so a manager reached through runuser does not inherit root's
+    # unreadable home as its cwd (find aborts there and the check fails).
+    command = ["env", "-C", "/", f"XDG_RUNTIME_DIR=/run/user/{agent['uid']}", "PYTHONDONTWRITEBYTECODE=1", *argv]
     if agent.get("ssh_user", manager) != manager:
         command = ["runuser", "-u", manager, "--", *command]
     return checked(["ssh", "-oBatchMode=yes", "-oConnectTimeout=8", "-oStrictHostKeyChecking=yes", "-oUpdateHostKeys=no",
@@ -233,6 +235,12 @@ def stop(agent):
     if agent.get("lifecycle") == "supervisor":
         supervisor(agent, "stop")
     else:
+        # PartOf= companions (the native PTY unit) stop with the adapter but never start with it again.
+        members = systemctl(agent, "show", agent["unit"], "-p", "ConsistsOf", "--value").split()
+        if any(not re.fullmatch(r"[A-Za-z0-9@._-]+\.service", unit) for unit in members):
+            raise Failure("adapter companion units cannot be preserved")
+        agent["_companions"] = [unit for unit in members
+                                if systemctl(agent, "show", unit, "-p", "ActiveState", "--value").strip() == "active"]
         systemctl(agent, "stop", agent["unit"])
     if agent["kind"] == "container":
         supervisor(agent, "stopped")
@@ -245,6 +253,8 @@ def start(agent):
         supervisor(agent, "start", background=True)
     else:
         systemctl(agent, "start", agent["unit"])
+        for unit in agent.get("_companions", []):
+            systemctl(agent, "start", unit)
 
 
 def install_bundle(agent, source, release, expected_digest):
@@ -371,18 +381,34 @@ def build(args, ref):
         if (source / ".release-sha").read_text().strip() != ref:
             raise Failure("laboratory bundle commit differs")
         return source
+    # pnpm writes timestamps and absolute paths into the bundle, so a rebuild of
+    # the same ref gets another digest. Reuse the oldest finished build whose
+    # modes already match the container copy (builds before that fix do not).
+    if not args.trabajo:
+        builds = (HERE / "recibos" / "t3-adaptador-vivo-1025").glob("build-*/bundle/.release-sha")
+        for marker in sorted(builds, key=lambda path: path.stat().st_mtime):
+            if not marker.parent.is_symlink() and stat.S_IMODE(marker.stat().st_mode) == 0o444 \
+                    and marker.read_text().strip() == ref:
+                return marker.parent
     work = pathlib.Path(absolute(args.trabajo or str(HERE / "recibos" / "t3-adaptador-vivo-1025" / ("build-" + uuid.uuid4().hex))))
     work.mkdir(parents=True, mode=0o700, exist_ok=False)
     checkout = work / "source"
-    checked(["git", "worktree", "add", "--detach", str(checkout), ref], cwd=ROOT)
-    checked(["pnpm", "install", "--offline", "--frozen-lockfile"], cwd=checkout, timeout=600)
-    source = work / "bundle"
-    checked(["bash", str(checkout / "ops/scripts/build-adapter-release.sh"), str(source)], cwd=checkout, timeout=1200)
-    source.chmod(0o755)
-    (source / ".release-sha").write_text(ref + "\n")
+    previous_umask = os.umask(0o022)
+    try:
+        checked(["git", "worktree", "add", "--detach", str(checkout), ref], cwd=ROOT)
+        checked(["pnpm", "install", "--offline", "--frozen-lockfile"], cwd=checkout, timeout=600)
+        source = work / "bundle"
+        checked(["bash", str(checkout / "ops/scripts/build-adapter-release.sh"), str(source)], cwd=checkout, timeout=1200)
+        source.chmod(0o755)
+        (source / ".release-sha").write_text(ref + "\n")
+    finally:
+        os.umask(previous_umask)
+    # The container supervisor copies the bundle and applies `chmod -R u=rX,go=rX`
+    # before it attests the digest, so the bundle must already have those modes.
     for path in [*source.rglob("*"), source]:
         if not path.is_symlink():
-            path.chmod(stat.S_IMODE(path.stat().st_mode) & ~0o222)
+            mode = stat.S_IMODE(path.stat().st_mode)
+            path.chmod(0o555 if path.is_dir() or mode & 0o111 else 0o444)
     return source
 
 
@@ -525,6 +551,10 @@ def main():
     if source:
         local = {"transport": "local", "ops_root": str(ROOT / "ops")}
         bundle_digest = digest(local, str(source))
+        # Content-addressed name: a different bundle of the same ref can never
+        # collide with an immutable release already installed on a shared host.
+        release = "live-" + ref[:12] + "-" + bundle_digest.removeprefix("sha256:")[:12]
+        plan["release"] = release
         plan["bundle_digest"] = bundle_digest
         save(output, plan)
     for alias, record in plan["agents"].items():

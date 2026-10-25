@@ -232,10 +232,19 @@ def run_probe(agent, alias, release, nonce, started_at, client, timeout_seconds=
     state = request(client, "GET", "/v3/auth/session")
     if state.get("authenticated") is not True:
         fail("PROBE_CONSOLE_SESSION_NOT_AUTHENTICATED")
-    proof = physical_check(agent, release, client)
+    deadline = time.monotonic() + timeout_seconds
+    # A container adapter is only running after the supervisor has copied and
+    # attested its bundle, which takes seconds after systemd reports the start.
+    while True:
+        try:
+            proof = physical_check(agent, release, client)
+            break
+        except ProbeFailure as error:
+            if str(error) != "PROBE_CANONICAL_PROCESS_CHECK_FAILED" or time.monotonic() >= deadline:
+                raise
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
     if proof.get("process_alive") is not True or proof.get("effective_release") != release:
         fail("PROBE_EFFECTIVE_RELEASE_MISMATCH")
-    deadline = time.monotonic() + timeout_seconds
     while not presence(client, tenant, alias, start, proof.get("expected_instance_id")):
         if time.monotonic() >= deadline:
             fail("PROBE_FRESH_LEASE_TIMEOUT")
