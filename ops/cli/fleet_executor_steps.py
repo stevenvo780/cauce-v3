@@ -321,6 +321,8 @@ class Executor:
         return evidence
 
     def stop(self):
+        from fleet_executor_replacement import capture_update
+        capture_update(self)
         rows = scoped_agents(self.policy, self.context)
         for row in rows:
             if self.context['request']['kind'] == 'update' and placement_role(self.context) is None \
@@ -527,6 +529,8 @@ class Executor:
             normal = invoke(self.policy, self.context, agent, 'verify', phase='normal')
             if any(normal.get(field) is not True for field in ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')):
                 raise SafeFailure('normal runtime provider, profile, hello or nonce roundtrip was not demonstrated')
+            from fleet_executor_replacement import record_normal_verification
+            record_normal_verification(self, agent, normal, evidence['runtime_digest'])
             publish_applied(self.state, receipt['generation'], self.journal.get('expected_applied'))
         except BaseException:
             stop(self.policy, agent)
