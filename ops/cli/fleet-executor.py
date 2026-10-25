@@ -34,6 +34,11 @@ FAILURE_REASONS = {
 
 def fleet_failure_reason(error: SafeFailure) -> str | None:
     from fleet_executor_recovery import failure_reason
+    from harness_operations import HarnessOperationFailure
+    if type(error) is SafeFailure and str(error) == 'fleet descriptor is unavailable' \
+            and type(error.__context__) is HarnessOperationFailure \
+            and str(error.__context__) == 'bundle digest: approved bundle changed':
+        return 'runtime_bundle_changed'
     return failure_reason(error) or FAILURE_REASONS.get(str(error))
 
 

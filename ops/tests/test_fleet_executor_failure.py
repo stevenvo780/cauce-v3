@@ -12,9 +12,11 @@ from unittest import mock
 OPS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(OPS / 'container-runtime'))
 sys.path.insert(0, str(OPS / 'cli'))
+import fleet_executor_runtime as runtime  # noqa: E402
 from fleet_executor_policy import SafeFailure  # noqa: E402
 from fleet_executor_recovery import REASONS, RecoveryFailure  # noqa: E402
 from fleet_executor_runtime import NamespaceMismatch  # noqa: E402
+from harness_operations import HarnessOperationFailure  # noqa: E402
 
 CLI = OPS / 'cli/fleet-executor.py'
 KINDS = ('create', 'update', 'start', 'stop', 'retire', 'restore', 'purge', 'recover')
@@ -88,6 +90,43 @@ class FleetFailureReasonTest(unittest.TestCase):
     def test_untyped_exception_with_known_text_remains_unverified_without_reason(self):
         output = self.failure_output(RuntimeError('running runtime has another SDK identity or transport'))
         self.assertEqual(output, 'fleet effect failed: unverified operational effect\n')
+
+    def test_real_bundle_digest_wrapper_preserves_its_exact_typed_context_and_marker(self):
+        policy = {'bundles': {'codex': {'directory': '/tmp/fixture-approved-bundle', 'digest': 'sha256:' + '0' * 64}}}
+        with mock.patch.object(runtime, 'bundle_digest', return_value='sha256:' + '1' * 64), \
+                self.assertRaises(SafeFailure) as raised:
+            runtime.start(policy, {'harness_id': 'codex'})
+        error = raised.exception
+        self.assertIs(type(error), SafeFailure)
+        self.assertEqual(str(error), 'fleet descriptor is unavailable')
+        self.assertIs(type(error.__context__), HarnessOperationFailure)
+        self.assertEqual(str(error.__context__), 'bundle digest: approved bundle changed')
+        self.assertIsNone(error.__cause__)
+        self.assertTrue(error.__suppress_context__)
+        self.assertEqual(self.cli.fleet_failure_reason(error), 'runtime_bundle_changed')
+        for step in ('runtime', 'compensate'):
+            with self.subTest(step=step):
+                output = self.failure_output(error, kind='create', step=step)
+                self.assertEqual([line for line in output.splitlines() if line.startswith('CAUCE_')],
+                                 ['CAUCE_FLEET_FAILURE=runtime_bundle_changed'])
+
+    def test_descriptor_wrapper_does_not_classify_unknown_spoofed_or_different_context(self):
+        fake_type = type('HarnessOperationFailure', (ValueError,), {})
+        contexts = (None, ValueError('bundle digest: approved bundle changed'),
+                    fake_type('bundle digest: approved bundle changed'),
+                    HarnessOperationFailure('bundle digest: approved bundle is unavailable'),
+                    HarnessOperationFailure('bundle digest: approved bundle changed /tmp/private'))
+        for context in contexts:
+            with self.subTest(context_type=type(context).__name__):
+                error = SafeFailure('fleet descriptor is unavailable')
+                error.__context__ = context
+                self.assertIsNone(self.cli.fleet_failure_reason(error))
+                output = self.failure_output(error)
+                self.assertFalse(any(line.startswith('CAUCE_') for line in output.splitlines()))
+        for error in (SafeFailure('another descriptor failure'), NamespaceMismatch('fleet descriptor is unavailable')):
+            with self.subTest(outer_type=type(error).__name__, message=str(error)):
+                error.__context__ = HarnessOperationFailure('bundle digest: approved bundle changed')
+                self.assertIsNone(self.cli.fleet_failure_reason(error))
 
 
 if __name__ == '__main__':

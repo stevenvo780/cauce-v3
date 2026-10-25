@@ -155,7 +155,7 @@ beforeAll(async () => {
   await ports.releaseAll();
   baseUrl = `https://localhost:${String(ports.ports.frontend)}`;
   harness = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [baseUrl], workRoot: '/datos', resourceOwner: OWNER,
-    runtimeBundle: standardRecoveryBundle });
+    runtimeBundle: standardRecoveryBundle, extraSourceFiles: ['packages/store/src/context-version-reevaluation.ts'] });
   vite = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
     configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory, cacheDir: join(directory, 'vite-cache'),
     server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true, watch: null, hmr: false,
