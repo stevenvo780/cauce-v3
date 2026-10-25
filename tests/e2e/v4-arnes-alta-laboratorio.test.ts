@@ -15,7 +15,7 @@ function run(command: string, args: string[], input: string, path: string): Prom
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     child.once('error', reject);
-    child.once('close', code => resolveRun({ code: code ?? -1, stdout, stderr }));
+    child.once('close', code => { resolveRun({ code: code ?? -1, stdout, stderr }); });
     child.stdin.end(input);
   });
 }
