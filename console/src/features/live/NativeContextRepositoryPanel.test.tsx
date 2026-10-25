@@ -35,7 +35,7 @@ it('stays compact, reads on demand and displays source text without active marku
   await open(); expect(mock.inspect).not.toHaveBeenCalled();
   await inspect();
   expect(await screen.findByText(content)).toBeInTheDocument();
-  expect(screen.getByText(/runtime y adopción de sesión no comprobados/)).toBeInTheDocument();
+  expect(screen.getByText(/entorno del agente y adopción de sesión no comprobados/)).toBeInTheDocument();
   expect(view.container.querySelector('script,img,a')).toBeNull();
   expect(screen.queryByRole('button', { name: /aplicar|guardar/i })).not.toBeInTheDocument();
   expect(mock.inspect).toHaveBeenCalledWith('Steven', 'helper', 'fixture', COMMIT, undefined);

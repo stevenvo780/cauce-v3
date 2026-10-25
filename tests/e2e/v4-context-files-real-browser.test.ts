@@ -225,7 +225,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
     const versions = await step(page, 'abrir versiones desde la ficha', () => openFromSheet(page));
     await mkdir(artifactDirectory, { recursive: true });
     await step(page, 'acreditar el espacio sin copias guardadas', async () => {
-      const emptyBackups = page.getByRole('region', { name: 'Backup del espacio', exact: true })
+      const emptyBackups = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true })
         .getByText('No hay copias guardadas de este espacio.', { exact: true });
       await emptyBackups.waitFor({ timeout: 20_000 });
       const backupPath = `/v3/console/spaces/${tenant}/${agentAlias}/backups`;

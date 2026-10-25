@@ -141,5 +141,5 @@ it('offers a membership role select from role_policies with agent preselected', 
   await user.click(screen.getByRole('checkbox', { name: /Incluir/ }));
   const role = screen.getByRole('combobox', { name: /Rol en/ });
   expect(role).toHaveValue('agent');
-  expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(expect.arrayContaining(['observer', 'agent']));
+  expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(expect.arrayContaining(['Observador', 'Agente']));
 });

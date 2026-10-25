@@ -43,7 +43,7 @@ function foreignDetail(count: number | null, names: readonly string[]): string {
  */
 function editBlocker(account: ProviderAccount): string | undefined {
   if (account.sharedWithPool === null || account.enabled === null) {
-    return 'El snapshot no trae shared_with_pool y/o enabled para esta cuenta. El update reescribe los tres campos a la vez, así que sin el estado actual no se puede editar sin pisar algo: actualiza el snapshot.';
+    return 'El servidor no informa si la cuenta está habilitada y compartida. Actualiza el inventario antes de editar para conservar sus valores actuales.';
   }
   return undefined;
 }
@@ -106,7 +106,7 @@ export function AccountsInventory({ config, access, registry }: {
     : [];
   const deleteInvalid = form?.kind === 'delete'
     ? !ceiling.available
-      ? 'No se puede borrar con seguridad: el gateway no publicó los accesos y no se sabe si algún agente todavía usa la cuenta.'
+      ? 'No se puede borrar con seguridad: el servidor no publicó los accesos y no se sabe si algún agente todavía usa la cuenta.'
       : accountCeilings.length > 0
         ? accountCeilings.length === 1
           ? `Primero quita el acceso que todavía usa esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
@@ -142,14 +142,14 @@ export function AccountsInventory({ config, access, registry }: {
 
   return <div className="grid gap-4">
     <KpiGrid label="Indicadores">
-      <Kpi label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias más las del pool' : 'el servidor no publica el inventario'} />
-      <Kpi label="Publicadas al pool" value={pooled} detail="prestadas por su pagador" />
+      <Kpi label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias y compartidas' : 'el servidor no publica el inventario'} />
+      <Kpi label="Compartidas" value={pooled} detail="prestadas por su pagador" />
       <Kpi label="Habilitadas" value={enabled} detail="las que el despacho puede usar" />
       <Kpi label="Pagadas por otra empresa" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={foreignDetail(foreign, foreignNames)} />
     </KpiGrid>
 
     <section aria-label="Inventario de cuentas">
-      <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» acá significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
+      <p className="m-0 mb-3 text-xs text-muted">«Deshabilitada» aquí significa que la cuenta no admite uso. Si todavía no inició sesión, la misma cuenta figura como «Pendiente de autenticación» en «Mis cuotas»: son dos vistas del mismo estado, no dos fallos distintos.</p>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <h2 className="m-0 text-sm font-semibold">Inventario</h2>
         {inventoryEmpty ? null : <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Registrar en Mis cuotas</LinkButton>}
@@ -157,9 +157,9 @@ export function AccountsInventory({ config, access, registry }: {
       <Notice tone="info" className="mb-3">Cauce no autentica cuentas mediante rutas o variables declaradas en el inventario.
         Registra la cuenta e inicia sesión en «Mis cuotas». La ejecución del agente usa el perfil autenticado de su cuenta principal.</Notice>
       {!accounts.available
-        ? <EmptyState>
-          No disponible: este gateway no publica el inventario de cuentas (<code>provider_accounts</code>). No se muestra nada porque no hay dato, y la consola no lo simula.
-        </EmptyState>
+        ? <><EmptyState>
+          No disponible: el servidor no publica el inventario de cuentas. No se muestra nada porque no hay dato, y la consola no lo simula.
+        </EmptyState><details><summary>Detalles técnicos</summary><code>provider_accounts</code></details></>
         : accounts.items.length === 0
           ? <EmptyState>
             Todavía no hay cuentas. Es lo normal en una empresa nueva.{' '}
@@ -170,7 +170,7 @@ export function AccountsInventory({ config, access, registry }: {
             <table className={CARD_TABLE}>
               <caption className="sr-only">Inventario de cuentas de proveedores de IA</caption>
               <thead><tr>
-                <th>Cuenta</th><th>Proveedor</th><th>Paga</th><th>Pool</th>
+                <th>Cuenta</th><th>Proveedor</th><th>Paga</th><th>Compartida</th>
                 <th>Estado</th><th>Actualizada</th><th>Acciones</th>
               </tr></thead>
               <tbody>
@@ -184,7 +184,7 @@ export function AccountsInventory({ config, access, registry }: {
                           ? <span className="chip ml-1.5">prestada</span>
                           : null}
                       </td>
-                      <td data-label="Pool">{account.sharedWithPool === null
+                      <td data-label="Compartida">{account.sharedWithPool === null
                         ? <Badge tone="unknown">SIN DATO</Badge>
                         : <Badge tone={account.sharedWithPool ? 'info' : 'offline'}>{account.sharedWithPool ? 'PUBLICADA' : 'PRIVADA'}</Badge>}</td>
                       <td data-label="Estado">{account.enabled === null
@@ -205,8 +205,8 @@ export function AccountsInventory({ config, access, registry }: {
                           {account.enabled === true ? <PowerOff size={13} aria-hidden="true" /> : <Power size={13} aria-hidden="true" />}
                         </RowAction>
                         <RowAction
-                          label={account.sharedWithPool === true ? `Despublicar «${account.id}» del pool` : `Publicar «${account.id}» al pool`}
-                          text={account.sharedWithPool === true ? 'Despublicar' : 'Publicar'}
+                          label={account.sharedWithPool === true ? `Dejar de compartir «${account.id}»` : `Compartir «${account.id}»`}
+                          text={account.sharedWithPool === true ? 'Dejar de compartir' : 'Compartir'}
                           {...writeProps}
                           undoes={account.sharedWithPool === true}
                           onClick={() => { open({ kind: 'edit', edit: editFrom(account, { sharedWithPool: account.sharedWithPool !== true }) }); }}
@@ -224,26 +224,26 @@ export function AccountsInventory({ config, access, registry }: {
           </Desplazable>}
       <Explain title="¿Cómo se conecta una cuenta?">
         <p>La credencial se mantiene en el perfil autenticado del proveedor y no se devuelve en el inventario.
-          Publicar una cuenta al pool permite asignarla dentro de la empresa; cada agente debe autenticar su perfil de ejecución.</p>
-        <p>Deshabilitar conserva el registro; borrar lo retira del inventario y exige confirmación más dry-run.</p>
+          Compartir una cuenta permite asignarla a otros espacios; cada agente debe autenticar su perfil de ejecución.</p>
+        <p>Deshabilitar conserva el registro; borrar lo retira del inventario y exige revisar una vista previa antes de confirmar.</p>
       </Explain>
     </section>
 
     <FormDialog open={shown && form?.kind === 'edit'} onClose={close} busy={runner.busy}
       title={form?.kind === 'edit' ? `Edición de «${form.edit.id}»` : 'Edición'}
-      description="Solo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
+      description="Solo la etiqueta, si se comparte y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
       {form?.kind === 'edit' ? <>
         <div className="grid gap-3">
           <label>Etiqueta <span className={HINT}>vacío guarda null</span>
             <input {...writeProps} value={form.edit.label} onChange={(event) => { patchEdit({ label: event.target.value }); }} />
           </label>
-          <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Publicada al pool</label>
+          <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Compartida con otros espacios</label>
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
         </div>
         <Notice>
-          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta. Quita antes ese acceso, que también borra su orden de consulta.
+          No puedes dejar de compartir mientras otra empresa tenga acceso a la cuenta. Quita antes ese acceso, que también borra su orden de consulta.
         </Notice>
-        <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
+        <MutationBar snapshot={config.data} runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
       </> : null}
     </FormDialog>
 
@@ -272,7 +272,7 @@ export function AccountsInventory({ config, access, registry }: {
             autoComplete="off"
           />
         </label>
-        <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="retiro o rotación de cuenta" />
+        <MutationBar snapshot={config.data} runner={runner} mutation={mutation} invalid={invalid} previewLabel="retiro o rotación de cuenta" />
       </> : null}
     </FormDialog>
   </div>;

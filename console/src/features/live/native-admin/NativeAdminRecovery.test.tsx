@@ -134,7 +134,7 @@ it('rechaza descubrimientos con otro escritor o tokens y mantiene el bloqueo ori
   server.use(http.post(path + '/' + id + '/discover', () => HttpResponse.json({ tenant_id: 'Steven', alias: 'zeus',
     identity: { ...identity, writer_instance_id: '00000000-0000-4000-8000-000000000099' }, state: 'pending', operation_id: operationId })));
   await user.click(screen.getByRole('button', { name: 'Verificar operación nativa pendiente' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/otro destino o runtime/);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/otro destino o entorno del agente/);
   expect(screen.getByRole('button', { name: 'Guardar pieza nativa' })).toBeDisabled();
   server.use(http.post(path + '/' + id + '/discover', () => HttpResponse.json({ tenant_id: 'Steven', alias: 'zeus', identity,
     state: 'pending', operation_id: operationId, operation_token: 'PRIVATE_SENTINEL' })));
@@ -154,6 +154,6 @@ it('acredita nuevo escritor con generation igual y reconocimiento ligado a ese e
     http.get(path + '/' + id, () => HttpResponse.json(piece(changed, 'b'.repeat(64)))));
   await user.click(screen.getByRole('button', { name: 'Guardar pieza nativa' })); await screen.findByText(/Guardado con respaldo privado/);
   await user.click(screen.getByRole('button', { name: 'Reiniciar este agente y verificar archivos' }));
-  expect(await screen.findByText(/nuevo escritor y archivo exacto reconocido/)).toHaveTextContent(/adopción por una sesión sigue pendiente/);
+  expect(await screen.findByText(/archivo actualizado y reconocido para las próximas tareas/)).toHaveTextContent(/adopción por una sesión sigue pendiente/);
   expect(reload).toHaveBeenCalledOnce();
 });

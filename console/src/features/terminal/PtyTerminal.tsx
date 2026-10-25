@@ -88,7 +88,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, authorit
         <p
           className={cn(STRIP, 'm-0 truncate border-b bg-warn/15 text-warn-ink')}
           role="status"
-          title={`La ventana del agente mide ${String(view.columnasRemotas ?? COLUMNAS_MINIMAS)} columnas y acá entran ${String(view.columnas)} incluso con el cuerpo más chico. Gira el teléfono o abrila en una pantalla más ancha.`}
+          title={`La ventana del agente mide ${String(view.columnasRemotas ?? COLUMNAS_MINIMAS)} columnas y aquí entran ${String(view.columnas)} incluso con el cuerpo más pequeño. Gira el teléfono o ábrela en una pantalla más ancha.`}
         >
           Caben {String(view.columnas)} columnas y la TUI del agente mide {String(view.columnasRemotas ?? COLUMNAS_MINIMAS)}: se corta por la derecha.
         </p>

@@ -9,6 +9,7 @@ import { describeConfigError } from './config-change';
 import { dependencySummary } from './config-dependencies';
 import { efectoDeRol, GUIA_DE_ROLES } from './efecto-de-rol';
 import type { ConfigWrites } from './use-config-writes';
+import { configMutationSummary } from './config-change-summary';
 
 interface CatalogNotice { text: string; tone: 'success' | 'error' | 'parcial' }
 
@@ -95,7 +96,7 @@ function usePlatformCatalog(ctx: ConfigWrites) {
       const reload = await ctx.config.reload();
       setNotice({
         tone: reload.error ? 'parcial' : 'success',
-        text: `Aplicado en revisión ${String(result.revision)}: ${String(result.summary)}.`
+        text: `Aplicado en revisión ${String(result.revision)}: ${result.mutation ? configMutationSummary(result.mutation, snapshot) : 'Cambio del catálogo'}.`
           + (reload.error ? ` PERO la relectura no llegó (${reload.error.message}); lo visible puede estar vencido.` : ''),
       });
       return true;
@@ -215,7 +216,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
                 {available.map((id) => <option key={id} value={id}>{id}</option>)}
               </select>
               : <input aria-label="Id del arnés" value={draft.id} disabled />}
-            <small className="text-muted">Solo arneses con descriptor publicado y aprobado; el descriptor no se crea ni se edita acá.</small>
+            <small className="text-muted">Solo arneses con descriptor publicado y aprobado; el descriptor no se crea ni se edita aquí.</small>
           </label>
           <label className="grid gap-1 text-[13px]">
             <span>Nombre visible</span>
@@ -411,7 +412,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
               return <tr key={role}>
                 <td><span className="grid max-w-72 gap-0.5">
                   <span>{efecto.nombre}</span>
-                  <code className="text-xs text-muted">{role}</code>
+                  <details><summary className="text-xs text-muted">Identificador técnico</summary><code className="text-xs text-muted">{role}</code></details>
                   <span className="text-xs text-muted">{efecto.efecto}</span>
                 </span></td>
                 <td>{flag(row, 'allow_route') ? 'Sí' : 'No'}</td>

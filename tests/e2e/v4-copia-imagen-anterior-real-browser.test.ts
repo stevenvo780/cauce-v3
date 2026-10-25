@@ -29,9 +29,9 @@ async function requestCopy(target: ImageBackupTarget): Promise<string> {
   const { page, agent } = target;
   await target.refresh();
   await page.goto(`${active().consoleFixture.baseUrl}/messages/${agent.tenant_id}/${agent.alias}?view=context`, { waitUntil: 'domcontentloaded' });
-  const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
-  await panel.getByRole('button', { name: 'Crear backup del espacio', exact: true }).click();
-  await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
+  const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
+  await panel.getByRole('button', { name: 'Crear copia del espacio', exact: true }).click();
+  await panel.getByText('Copia pendiente', { exact: true }).waitFor({ timeout: 30_000 });
   const id = (await active().consoleFixture.database.pool.query<{ id: string }>(
     'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 ORDER BY created_at DESC LIMIT 1', [agent.tenant_id, agent.alias])).rows[0]?.id;
   if (!id) throw new Error('UI omitted its durable backup request');
@@ -64,14 +64,14 @@ async function verifyUnchanged(target: ImageBackupTarget): Promise<void> {
 }
 
 async function downloadAndRestore(target: ImageBackupTarget, receipt: BackupRow): Promise<void> {
-  const panel = target.page.getByRole('region', { name: 'Backup del espacio', exact: true });
-  await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
+  const panel = target.page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
+  await panel.getByText('Copia disponible', { exact: true }).waitFor({ timeout: 30_000 });
   if (!receipt.sha256 || !receipt.manifest_sha256 || !receipt.bytes) throw new Error('ready receipt is incomplete');
   await panel.getByText(receipt.sha256, { exact: true }).waitFor({ timeout: 20_000 });
   await capture(target.page, `${target.agent.harness_id}-${target.agent.alias}-ready`);
   await target.page.evaluate(() => { if ('showSaveFilePicker' in window) Reflect.deleteProperty(window, 'showSaveFilePicker'); });
   const downloadWait = (target.page as DownloadPage).waitForEvent('download', { timeout: 30_000 });
-  await panel.getByRole('button', { name: 'Descargar backup ZIP', exact: true }).click();
+  await panel.getByRole('button', { name: 'Descargar copia ZIP', exact: true }).click();
   const browserFile = await (await downloadWait).path();
   if (!browserFile?.startsWith('/tmp/playwright-artifacts-') || browserFile.includes('..')) throw new Error('download escaped the owned browser artifact directory');
   const downloads = join(target.directory, 'download');
@@ -148,11 +148,11 @@ describe.sequential('copia física desde contenedor con imagen anterior a la apr
       expect(audit.rows).toHaveLength(1);
       expect(audit.rows[0]?.metadata).toMatchObject({ id, error: 'EXPORT_FAILED', failure: { type: 'SafeFailure', stage: 'runtime' } });
       await target.page.reload({ waitUntil: 'domcontentloaded' });
-      const panel = target.page.getByRole('region', { name: 'Backup del espacio', exact: true });
+      const panel = target.page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
       await panel.getByRole('button', { name: `Ver copia ${id.slice(0, 8)}`, exact: true }).click();
       await panel.getByText(/Causa: SafeFailure: container.*(?:isolation|resources|limits).*differ/iu).waitFor({ timeout: 30_000 });
       await panel.getByText('Restablece la propiedad, los permisos y el aislamiento aprobados del contenedor antes de crear otra copia.', { exact: false }).waitFor();
-      expect(await panel.getByRole('button', { name: 'Descargar backup ZIP', exact: true }).count()).toBe(0);
+      expect(await panel.getByRole('button', { name: 'Descargar copia ZIP', exact: true }).count()).toBe(0);
       await capture(target.page, `negative-isolation-${target.agent.alias}`);
       await writeFile(join(evidence, 'negative-isolation-result.json'), JSON.stringify({ backup_id: id,
         api: detail.body, audit: audit.rows[0]?.metadata, reloaded_ui_has_cause_and_action: true }, null, 2));

@@ -26,12 +26,12 @@ it('previews and applies a default-deny ACL mutation through the protected API',
   expect(await screen.findByText(/Rol de esta sesión/i)).toBeInTheDocument();
 
   await irA(user, HISTORIAL);
-  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
-  expect(await screen.findByLabelText(/resultado de preview/i)).toHaveTextContent('"dry_run": true');
-  expect(screen.getByLabelText(/resultado de preview/i)).toHaveTextContent('"allow_route": false');
+  await user.click(screen.getByRole('button', { name: /previsualizar cambio/i }));
+  expect(await screen.findByLabelText(/resultado de la vista previa/i)).toHaveTextContent('"dry_run": true');
+  expect(screen.getByLabelText(/resultado de la vista previa/i)).toHaveTextContent('"allow_route": false');
 
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
-  expect(await screen.findByText(/cambio atómico aplicado/i)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
+  expect(await screen.findByText(/cambio aplicado/i)).toBeInTheDocument();
 });
 
 it('no acredita preview ni apply cuando un 2xx omite el recibo exacto de configuración', async () => {
@@ -47,13 +47,13 @@ it('no acredita preview ni apply cuando un 2xx omite el recibo exacto de configu
   renderWithApi(<ConfigPage />);
   await irA(user, HISTORIAL);
 
-  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
-  expect(await screen.findByText(/2xx sin el recibo exacto del dry-run/i)).toBeInTheDocument();
-  expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /previsualizar cambio/i }));
+  expect(await screen.findByText(/respondió sin el recibo exacto de la vista previa/i)).toBeInTheDocument();
+  expect(screen.queryByLabelText(/resultado de la vista previa/i)).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
   expect(await screen.findByText(/puede haberse aplicado/i)).toBeInTheDocument();
-  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/cambio aplicado/i)).not.toBeInTheDocument();
 }, 20_000);
 
 it('distingue el 409 por revisión vencida y pide volver a previsualizar', async () => {
@@ -64,13 +64,13 @@ it('distingue el 409 por revisión vencida y pide volver a previsualizar', async
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, HISTORIAL);
-  await user.click(await screen.findByRole('button', { name: /preview \/ dry-run/i }));
+  await user.click(await screen.findByRole('button', { name: /previsualizar cambio/i }));
 
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/conflicto de revisión/i);
   expect(alert).toHaveTextContent(/revisión 1 y el servidor ya va por la 4/i);
   expect(alert).toHaveTextContent(/vuelve a previsualizar/i);
-  expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/resultado de la vista previa/i)).not.toBeInTheDocument();
 });
 
 it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async () => {
@@ -86,10 +86,10 @@ it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async 
     value: { role_brief: 'Eres kant.' },
   }) } });
 
-  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  await user.click(screen.getByRole('button', { name: /previsualizar cambio/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/proyección diagnóstica de solo lectura/i);
   expect(screen.getByRole('alert')).toHaveTextContent(/«Perfil y contexto»/);
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
   expect(changes).toEqual([]);
 });
 
@@ -110,10 +110,10 @@ it('centraliza cuentas, techos y bindings en /accounts: no repite tablas ni acep
   fireEvent.change(screen.getByLabelText('Mutación JSON'), { target: { value: JSON.stringify({
     resource: 'provider_account', action: 'delete', id: 'codex-steven',
   }) } });
-  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
+  await user.click(screen.getByRole('button', { name: /previsualizar cambio/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/únicamente en «Cuentas»/i);
   expect(screen.getByRole('alert')).toHaveTextContent(/\/accounts/);
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
   expect(changes).toEqual([]);
 });
 
@@ -174,8 +174,8 @@ it('bloquea fail-closed el rollback de cuentas y solo ejecuta una revisión no-a
 
   const allowedRow = audit.getByText('cambio de tenant permitido').closest('tr');
   expect(allowedRow).not.toBeNull();
-  if (allowedRow) await user.click(within(allowedRow).getByRole('button', { name: /^Preview$/ }));
-  expect(await audit.findByText(/preview del rollback de la revisión 11 aceptado/i)).toBeInTheDocument();
+  if (allowedRow) await user.click(within(allowedRow).getByRole('button', { name: /^Previsualizar$/ }));
+  expect(await audit.findByText(/vista previa para deshacer la revisión 11 aceptada/i)).toBeInTheDocument();
   expect(rollbackRequests).toEqual(['11']);
 });
 
@@ -194,11 +194,11 @@ it('FAMILIA 1: no acredita un receipt válido que corresponde a otra revisión',
   renderWithApi(<ConfigPage />);
   await irA(user, HISTORIAL);
 
-  await user.click(await screen.findByRole('button', { name: /^Rollback$/ }));
+  await user.click(await screen.findByRole('button', { name: /^Deshacer$/ }));
 
-  expect(await screen.findByText(/2xx sin el recibo durable exacto del rollback 1/i))
+  expect(await screen.findByText(/respondió sin el recibo exacto de la reversión 1/i))
     .toBeInTheDocument();
-  expect(screen.queryByText(/rollback atómico de la revisión 1 aplicado/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/reversión de la revisión 1 aplicada/i)).not.toBeInTheDocument();
 });
 
 it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el preview anteriores', async () => {
@@ -208,18 +208,18 @@ it('FAMILIA 2: tocar el JSON del editor crudo se lleva puestos el verde y el pre
   await irA(user, HISTORIAL);
   const editor = screen.getByLabelText('Mutación JSON');
 
-  await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
-  await screen.findByLabelText(/resultado de preview/i);
+  await user.click(screen.getByRole('button', { name: /previsualizar cambio/i }));
+  await screen.findByLabelText(/resultado de la vista previa/i);
   await user.type(editor, ' ');
-  expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/resultado de la vista previa/i)).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
-  await screen.findByText(/cambio atómico aplicado/i);
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
+  await screen.findByText(/cambio aplicado/i);
   await user.type(editor, ' ');
-  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/cambio aplicado/i)).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
-  await screen.findByText(/cambio atómico aplicado/i);
-  await user.selectOptions(screen.getByLabelText('Resource'), 'tenant');
-  expect(screen.queryByText(/cambio atómico aplicado/i)).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /aplicar cambio/i }));
+  await screen.findByText(/cambio aplicado/i);
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Recurso' }), 'tenant');
+  expect(screen.queryByText(/cambio aplicado/i)).not.toBeInTheDocument();
 });

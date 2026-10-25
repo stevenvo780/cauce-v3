@@ -42,7 +42,7 @@ export function textoRecarga(recarga: EstadoRecarga | undefined): string {
   if (!recarga) return '';
   return recarga.releido
     ? ` Releído del servidor: las tablas de abajo están en la revisión ${String(recarga.revision ?? 'desconocida')}.`
-    : ` PERO la relectura del snapshot NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
+    : ` PERO la relectura de la configuración NO llegó (${recarga.motivo}): las tablas de abajo pueden estar`
       + ' vencidas, usa «Actualizar» antes de seguir tocando.';
 }
 
@@ -70,9 +70,9 @@ export type CaminoDeCambio = 'previsualizado' | 'directo' | 'rollback';
 
 /** What to do after the clash, depending on the path that triggered it. */
 const QUE_HACER: Record<CaminoDeCambio, string> = {
-  previsualizado: 'revisa los datos efectivos, vuelve a previsualizar y recién ahí aplica.',
+  previsualizado: 'revisa los datos efectivos, vuelve a previsualizar y después aplica.',
   directo: 'revisa los datos efectivos y vuelve a pedir el cambio sobre la revisión nueva.',
-  rollback: 'revisa los datos efectivos y vuelve a elegir en el audit trail la revisión a deshacer '
+  rollback: 'revisa los datos efectivos y vuelve a elegir en el historial la revisión a deshacer '
     + 'sobre el estado nuevo.',
 };
 
@@ -80,7 +80,7 @@ const QUE_HACER: Record<CaminoDeCambio, string> = {
 const COMO_LLEGO: Record<CaminoDeCambio, string> = {
   previsualizado: 'previsualizaste sobre la revisión',
   directo: 'pediste el cambio sobre la revisión',
-  rollback: 'pediste el rollback sobre la revisión',
+  rollback: 'pediste deshacer el cambio sobre la revisión',
 };
 
 const CONFLICTOS: Record<string, string> = {
@@ -209,7 +209,7 @@ export async function executeConfigurationChange(
         conflict: false,
         uncertain: !options.dryRun,
         message: options.dryRun
-          ? 'El servidor devolvió un 2xx sin el recibo exacto del dry-run; no se habilitó aplicar.'
+          ? 'El servidor respondió sin el recibo exacto de la vista previa; no se habilitó aplicar.'
           : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verifica la relectura antes de repetirla.',
         ...(recarga === undefined ? {} : { recarga }),
       };

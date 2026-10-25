@@ -376,7 +376,7 @@ function Editor({
     if (problemaMotivo !== undefined) {
       setFallo({
         titulo: 'Falta el motivo de este guardado',
-        detalle: `${problemaMotivo} La fila de auditoría se escribe con lo que escribas acá; `
+        detalle: `${problemaMotivo} La fila de auditoría se escribe con lo que escribas aquí; `
           + 'no se manda nada sin ese texto.',
       });
       return;

@@ -71,7 +71,7 @@ export function OfficeDialog({ model, state, onClose }: { model: OfficeDialogMod
         </button>
 
         <ol aria-label="Últimos mensajes" aria-live="polite" className="m-0 mt-1 grid list-none gap-1 p-0 pr-8 text-[13px] leading-snug">
-          {model.lines.length === 0 ? <li className="text-muted">Todavía no se escribieron. Decile algo.</li> : null}
+          {model.lines.length === 0 ? <li className="text-muted">Todavía no se escribieron. Dile algo.</li> : null}
           {model.lines.map((line) => (
             <li key={line.id} className="line-clamp-2 break-words">
               <strong className={line.mine ? 'text-brand-ink' : 'text-fg'}>{line.who}:</strong> <span className="text-fg-2">{line.text}</span>
@@ -102,7 +102,7 @@ export function OfficeDialog({ model, state, onClose }: { model: OfficeDialogMod
               value={model.draft}
               onChange={(event) => { model.setDraft(event.target.value); }}
               aria-label={`Mensaje para ${model.name}`}
-              placeholder={`Escribile a ${model.name}…`}
+              placeholder={`Escríbele a ${model.name}…`}
               enterKeyHint="send"
               autoComplete="off"
               className="h-9 min-w-0 flex-1 border-2 border-line bg-subtle px-2.5 text-[13px] text-fg outline-none placeholder:text-muted focus:border-brand pointer-coarse:h-11 pointer-coarse:text-base"

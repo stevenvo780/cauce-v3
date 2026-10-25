@@ -51,7 +51,7 @@ function NativeInspection({ tenantId, alias, instanceId, commit, previous }: Pro
     }
   }
   return <div className="grid gap-2 pt-2">
-    <p className="m-0 text-xs text-muted">Usa los commits indicados arriba. Fuente Git declarada; archivo vigente, runtime y adopción de sesión no comprobados. No se puede aplicar desde este visor.</p>
+    <p className="m-0 text-xs text-muted">Usa los commits indicados arriba. Fuente Git declarada; archivo vigente, entorno del agente y adopción de sesión no comprobados. No se puede aplicar desde este visor.</p>
     <div><Button size="sm" disabled={(current?.busy ?? false) || !OID.test(commit) || (previous !== '' && !OID.test(previous))}
       onClick={() => { void inspect(); }}>{current?.busy ? 'Inspeccionando manual…' : current?.error ? 'Reintentar manual' : 'Inspeccionar manual'}</Button></div>
     {current?.busy ? <p role="status" className="m-0 text-xs text-muted">Consultando el manual nativo…</p> : null}

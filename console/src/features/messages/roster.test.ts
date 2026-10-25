@@ -62,7 +62,7 @@ describe('el universo del roster de mensajería', () => {
     if (!gaia) throw new Error('Missing gaia');
     expect(gaia.origenes).toEqual(['mensajes']);
     expect(gaia.mensajesVisibles).toBe(1);
-    expect(motivoDeAgenteSuelto(gaia)).toMatch(/solo porque el servidor publicó mensajes suyos/i);
+    expect(motivoDeAgenteSuelto(gaia)).toMatch(/solo aparece en el historial de mensajes/i);
   });
 
   it('un agente retirado o purgado no vuelve a la lista por sus mensajes viejos', () => {

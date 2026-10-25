@@ -44,6 +44,10 @@ export function efectoDeRol(rol: string): EfectoDeRol {
   };
 }
 
+export function nombreDeRol(role: string): string {
+  return Object.hasOwn(EFECTOS, role) ? EFECTOS[role].nombre : `Rol personalizado: ${role}`;
+}
+
 export const GUIA_DE_ROLES =
   'El rol se elige en la membresía del agente, en «Espacios y salas». Operador administra. Agente conversa. '
   + 'Adaptador entrega mensajes. «Agente que avisa» escribe a una persona sin que se lo pidan. '

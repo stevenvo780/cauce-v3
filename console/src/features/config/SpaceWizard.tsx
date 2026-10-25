@@ -1,12 +1,13 @@
 import { ArrowLeft, ArrowRight, Braces, CircleCheck, RotateCcw, Save, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type { ConfigMutation } from '../../api/types';
+import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { Button, Outcome, PREVIEW } from '../../components/kit';
 import { Badge, EmptyState } from '../../components/ui';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 import { ConfigChangeReceipt } from './ConfigChangeReceipt';
+import { configMutationSummary } from './config-change-summary';
 
 type SpaceStep = 'tenant' | 'room' | 'membership';
 type WizardStep = SpaceStep | 'review';
@@ -101,8 +102,9 @@ function stepError(step: WizardStep, draft: SpaceDraft): string | undefined {
  * depends on the rows the previous one created, so the plan is previewed and applied one step
  * at a time: there is no possible dry-run of the room before the tenant exists.
  */
-export function SpaceWizard({ canWrite, busy, onChange }: {
+export function SpaceWizard({ canWrite, busy, onChange, snapshot }: {
   canWrite: boolean;
+  snapshot?: ConfigurationSnapshot | undefined;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
 }) {
@@ -165,7 +167,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     if (dryRun) {
       setValidated(pendingKey);
       setPreview(JSON.stringify(outcome.result, null, 2));
-      setNotice({ text: `Previsualización de ${stepTitles[pending.step]} aceptada: revisa el resultado antes de aplicar.`, tone: 'success' });
+      setNotice({ text: `Vista previa aceptada: ${configMutationSummary(pending.mutation, snapshot)}. Revisa el cambio antes de aplicar.`, tone: 'success' });
       return;
     }
     // The mutation the server accepted is recorded, even if the draft changed during the await.
@@ -192,7 +194,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
     </div>
 
     {step === 'tenant' ? <div className={FORM_GRID}>
-      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el espacio <span className={HINT}>desmarcalo si ya existe; el identificador se sigue usando después</span></label>
+      <label className={`${CHECK_LABEL} md:col-span-2`}><input {...writeControls} type="checkbox" checked={draft.withTenant} onChange={(event) => { edit({ withTenant: event.target.checked }); }} /> Crear el espacio <span className={HINT}>desmárcalo si ya existe; el identificador se sigue usando después</span></label>
       <label>Identificador del espacio<input {...writeControls} value={draft.tenantId} onChange={(event) => { edit({ tenantId: event.target.value }); }} /></label>
       <label>Nombre visible <span className={HINT}>opcional</span><input {...writeControls} value={draft.tenantLabel} onChange={(event) => { edit({ tenantLabel: event.target.value }); }} /></label>
       <label className={CHECK_LABEL}><input {...writeControls} type="checkbox" checked={draft.tenantIsHub} onChange={(event) => { edit({ tenantIsHub: event.target.checked }); }} /> Es el espacio principal</label>
@@ -214,7 +216,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
       {!plan.length ? <EmptyState>El plan quedó vacío: vuelve a los pasos e incluye al menos un recurso.</EmptyState> : <ul className="m-0 grid list-none gap-2 p-0" aria-label="Plan del espacio">
         {progress.map((entry) => <li key={entry.step} className="rounded-lg border border-line p-2.5">
           <Badge tone={entry.done ? 'done' : entry === pending ? 'info' : 'unknown'}>{entry.done ? 'aplicado' : entry === pending ? 'en curso' : 'en cola'}</Badge>{' '}
-          <code className="text-xs break-all">{JSON.stringify(entry.mutation)}</code>
+          <span className="text-sm wrap-anywhere">{configMutationSummary(entry.mutation, snapshot)}</span>
         </li>)}
       </ul>}
       {/* The pending step's JSON is not lost: it stops being open. What matters for the decision is
@@ -229,7 +231,7 @@ export function SpaceWizard({ canWrite, busy, onChange }: {
         <Button variant="primary" disabled={!canWrite || busy || !applicable} onClick={() => void run(false)}><Save size={16} aria-hidden="true" />Aplicar paso</Button>
         <Button size="sm" onClick={reset}><RotateCcw size={14} aria-hidden="true" />Empezar de nuevo</Button>
       </div>
-      <ConfigChangeReceipt preview={preview} label="Dry-run del wizard" />
+      <ConfigChangeReceipt preview={preview} label="Vista previa del alta guiada" />
     </> : null}
 
     {invalid ? <Outcome tone="error">{invalid}</Outcome> : null}

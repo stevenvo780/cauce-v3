@@ -73,7 +73,7 @@ function rollbackLeafPolicy(operation: unknown, snapshot?: ConfigurationSnapshot
     return {
       allowed: false,
       accountResource: true,
-      message: `Bloqueado: esta revisión modifica ${resource}; su única autoridad es Cuentas.`,
+      message: 'Bloqueado: esta revisión cambia una cuenta o su acceso; su única autoridad es Cuentas.',
     };
   }
   if (resource === 'agent' && candidate.action === 'delete') {
@@ -132,7 +132,7 @@ export function parseMutation(text: string, snapshot?: ConfigurationSnapshot): C
   if (ACCOUNT_RESOURCES.has(String(mutation.resource) as AnyConfigResource)) {
     throw new Error(
       'Las cuentas, sus techos y sus bindings se modifican únicamente en «Cuentas». '
-      + 'Abre /accounts para usar formularios tipados, confirmación y dry-run.',
+      + 'Abre /accounts para usar formularios tipados, confirmación y vista previa.',
     );
   }
   if (!allActions.includes(String(mutation.action) as ConfigAction)) throw new Error('action no reconocida.');

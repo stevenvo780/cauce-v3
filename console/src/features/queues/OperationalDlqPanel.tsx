@@ -295,7 +295,7 @@ export function OperationalDlqPanel() {
   return (
     <SectionCard
       title={title}
-      description="Incidentes causales separados de las entregas. Cerrar acá registra una decisión sin replay; nunca reenvía Telegram ni vuelve a ejecutar un agente."
+      description="Incidentes relacionados con las entregas. Cerrar aquí registra una decisión; nunca reenvía Telegram ni vuelve a ejecutar un agente."
     >
       <Toolbar className="mb-0">
         <label className="flex items-center gap-2 font-normal text-fg-2"><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Solo abiertos</label>

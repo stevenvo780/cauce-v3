@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fleetHostUsable, type FleetHost } from '@cauce/protocol/fleet-hosts';
 import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
+import type { ConfigurationSnapshot } from '../../api/types';
 
 const READ_ERROR = 'No se pudo leer el registro de computadoras. Reintenta la lectura.';
 
-/** `revision` is the configuration revision; a change means the registry may have moved, so the list is read again. */
-export function useFleetHosts(open = true, revision?: number | null) {
+/** Host enrollment can change the registry without changing the configuration revision. */
+export function useFleetHosts(open = true, refreshKey?: ConfigurationSnapshot | number | null) {
   const api = useApi();
   const [hosts, setHosts] = useState<FleetHost[]>();
   const [error, setError] = useState<string>();
@@ -32,7 +33,7 @@ export function useFleetHosts(open = true, revision?: number | null) {
     if (!open) return undefined;
     void reload();
     return () => { sequence.current += 1; };
-  }, [open, reload, revision]);
+  }, [open, reload, refreshKey]);
   return { hosts, error, forbidden, loading, reload };
 }
 

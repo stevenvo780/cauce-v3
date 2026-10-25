@@ -240,7 +240,7 @@ export function PerfilTab({
         setMotivo('');
         settle({
           tone: 'parcial',
-          text: 'La revisión deseada y los ficheros del runtime quedaron actualizados, pero la sesión compartida '
+          text: 'La revisión deseada y los archivos del agente quedaron actualizados, pero la sesión compartida '
             + 'todavía no acreditó recibir esa revisión. No se presenta como aplicada.',
         }, { draft: undefined });
         return;
@@ -260,7 +260,7 @@ export function PerfilTab({
       if (recarga.error) {
         settle({
           tone: 'parcial',
-          text: `El runtime acreditó la revisión ${String(result.revision)}, pero no pude releer el perfil `
+          text: `El agente en ejecución confirmó la revisión ${String(result.revision)}, pero no pude releer el perfil `
             + `(${recarga.error.message}). Conservo el borrador para no volver a mostrar un snapshot viejo.`,
         });
         return;
@@ -269,7 +269,7 @@ export function PerfilTab({
         || !profileIsAdopted(recarga.data)) {
         settle({
           tone: 'parcial',
-          text: `El runtime acreditó la revisión ${String(result.revision)}, pero la relectura ya muestra `
+          text: `El agente en ejecución confirmó la revisión ${String(result.revision)}, pero la relectura ya muestra `
             + `la revisión deseada ${String(recarga.data.revision ?? 'ausente')} y aplicado ${String(recarga.data.applied_revision ?? 'ninguno')}. `
             + 'No limpio el borrador ni presento esa revisión más nueva como aplicada.',
         });
@@ -278,7 +278,7 @@ export function PerfilTab({
       setMotivo('');
       settle({
         tone: 'success',
-        text: `Aplicado: la revisión deseada y el runtime acreditan la revisión ${String(result.revision)}; `
+        text: `Aplicado: la revisión deseada y el agente en ejecución coinciden en la revisión ${String(result.revision)}; `
           + `${String(result.acknowledgements.length)} ficheros respondieron SHA y bytes.`,
       }, { draft: undefined });
     } catch (error) {
@@ -337,16 +337,16 @@ export function PerfilTab({
   }
   if (publicado && agenteHabilitado) {
     if (perfil.data?.runtime_state === 'pending') {
-      estados.push({ key: 'pending', tone: 'warn', role: 'status', body: `La revisión deseada ${String(perfil.data.revision ?? 'sin dato')} pendiente; el runtime solo tiene acreditada la revisión ${String(perfil.data.applied_revision ?? 'ninguna')}. La vista previa no se presenta como aplicada. Puedes reintentar aunque el texto no haya cambiado.` });
+      estados.push({ key: 'pending', tone: 'warn', role: 'status', body: `La revisión deseada ${String(perfil.data.revision ?? 'sin dato')} pendiente; el agente en ejecución solo confirmó la revisión ${String(perfil.data.applied_revision ?? 'ninguna')}. La vista previa no se presenta como aplicada. Puedes reintentar aunque el texto no haya cambiado.` });
     }
     if (perfil.data?.runtime_state === 'drifted') {
-      estados.push({ key: 'drifted', tone: 'danger', role: 'alert', body: `La base conserva la revisión ${String(perfil.data.revision ?? 'sin dato')} como aplicada, pero los SHA medidos del runtime ya no coinciden. La vista no se presenta como aplicada; puedes restaurar el lote canónico sin cambiar el borrador.` });
+      estados.push({ key: 'drifted', tone: 'danger', role: 'alert', body: `La base conserva la revisión ${String(perfil.data.revision ?? 'sin dato')} como aplicada, pero las huellas de los archivos del agente ya no coinciden. La vista no se presenta como aplicada; puedes restaurar el perfil guardado sin cambiar el borrador.` });
     }
     if (perfil.data?.runtime_state === 'pending_session_refresh') {
       estados.push({ key: 'refresh', tone: 'warn', role: 'status', body: <><strong>Sesión sin adoptar todavía:</strong> {MENSAJES_DE_APLICACION.pending_session_refresh} Un ACK de escritura no se presenta como adopción.</> });
     }
     if (runtimeNoVerificado) {
-      estados.push({ key: 'unverified', tone: 'danger', role: 'alert', body: 'El runtime no publicó una generación acreditable. Edición y aplicación quedan bloqueadas: una igualdad de revisiones sin ruta, SHA y generación no prueba adopción.' });
+      estados.push({ key: 'unverified', tone: 'danger', role: 'alert', body: 'No se pudo verificar la instancia del agente en ejecución. Edición y aplicación quedan bloqueadas hasta comprobar sus archivos y su revisión.' });
     }
     if (!aplicable) {
       estados.push({ key: 'inapplicable', tone: 'danger', role: 'alert', body: 'Este arnés no publica un conjunto de ficheros gobernados acreditable; no se puede confirmar una aplicación completa.' });
@@ -504,7 +504,7 @@ export function PerfilTab({
         <div className="mt-3 grid gap-3">
           {sucio ? <Notice tone="warn">Esta composición corresponde al perfil guardado. El borrador aún no se ha guardado ni proyectado.</Notice> : null}
           {pendiente ? (
-            <Notice tone="warn">Esta composición corresponde a la revisión deseada pendiente; no describe el runtime aplicado.</Notice>
+            <Notice tone="warn">Esta composición corresponde a la revisión deseada pendiente; no describe lo que usa el agente en ejecución.</Notice>
           ) : null}
           <p className="m-0 text-xs text-muted">
             {perfil.data?.harness
@@ -513,7 +513,7 @@ export function PerfilTab({
             {' '}
             {perfil.data?.base === 'fichero-vacio'
               ? 'Compuesto sobre fichero vacío: el gateway no lee el disco del contenedor, así que lo '
-                + 'que una persona haya escrito a mano NO aparece acá — sigue en el fichero y no se toca.'
+                + 'que una persona haya escrito a mano NO aparece aquí — sigue en el fichero y no se toca.'
               : null}
           </p>
           {perfil.data?.aviso ? <EmptyState>{perfil.data.aviso}</EmptyState> : null}

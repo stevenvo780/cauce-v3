@@ -1,6 +1,6 @@
 import { Braces, Plus, SearchCheck } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import type { ConfigMutation } from '../../api/types';
+import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { CONFIG_SIN_CONTROL_REASON } from '../../router';
 import { Button, Notice, Outcome, PREVIEW } from '../../components/kit';
 import {
@@ -10,6 +10,8 @@ import {
 import { textoRecarga, type ConfigChangeOutcome } from './config-change';
 import { CHECK_LABEL, FORM_GRID, HINT } from './config-ui';
 import { ConfigChangeReceipt } from './ConfigChangeReceipt';
+import { configMutationSummary } from './config-change-summary';
+import { nombreDeRol } from './efecto-de-rol';
 
 /**
  * Onboarding for a resource via form. Replaces "type the mutation by hand in JSON" for the four
@@ -19,8 +21,9 @@ import { ConfigChangeReceipt } from './ConfigChangeReceipt';
  * `api.changeConfiguration` with `expected_revision` — so there is no second write path that
  * could fall behind the first one.
  */
-export function AltaRapida({ soloLectura, busy, onChange }: {
+export function AltaRapida({ soloLectura, busy, onChange, snapshot }: {
   soloLectura: boolean;
+  snapshot?: ConfigurationSnapshot | undefined;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
 }) {
@@ -69,7 +72,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     }
     if (dryRun) {
       setPreview(JSON.stringify(desenlace.result, null, 2));
-      setAviso({ text: 'La previsualización fue aceptada: todavía no se escribió nada.', tone: 'success' });
+      setAviso({ text: `Vista previa aceptada: ${configMutationSummary(mutation, snapshot)}. Todavía no se ha guardado.`, tone: 'success' });
       return;
     }
     setPreview(undefined);
@@ -78,7 +81,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     setAviso({
       tone: fallo ? 'parcial' : 'success',
       text: `${TITULOS_ALTA[recurso]}: creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
-        + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`
+        + `: ${configMutationSummary(mutation, snapshot)}.${textoRecarga(desenlace.recarga)}`
         + (recurso === 'membership' ? ' Si esa persona o ese agente todavía no existe, dalo de alta en Agentes y elige esta sala.' : ''),
     });
     // The resource ALREADY exists: leaving the fields filled reassembles "Create" on top of it
@@ -130,7 +133,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
 
     <details className="text-[13px]">
       <summary className="cursor-pointer font-medium">Opciones de alta: {borrador.habilitado ? 'habilitado' : 'deshabilitado'}
-        {recurso === 'membership' ? ` · rol ${borrador.role.trim() || 'sin definir'}` : ''}
+        {recurso === 'membership' ? ` · rol ${borrador.role.trim() ? nombreDeRol(borrador.role.trim()) : 'sin definir'}` : ''}
         {recurso === 'tenant' ? ` · ${borrador.esHub ? 'espacio principal' : 'espacio normal'}` : ''}
       </summary>
       <div className={`${FORM_GRID} mt-2`}>
@@ -175,7 +178,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
         ? <Outcome tone="error">{invalido}</Outcome>
         : <p className="m-0 text-xs text-muted">Completa el formulario para habilitar el alta: {invalido}</p>
       : null}
-    <ConfigChangeReceipt preview={preview} label="Dry-run del alta" />
+    <ConfigChangeReceipt preview={preview} label="Vista previa del alta" />
     {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}
   </div>;
 }

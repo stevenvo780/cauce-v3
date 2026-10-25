@@ -20,7 +20,7 @@ import { columnasInertesDe, motivoInerte } from './campos-inertes';
 import {
   CabeceraConAyuda, ConfirmarQuitarControl, FilaDeFallo, InterruptorDeCelda,
 } from './Interruptor';
-import { efectoDeRol, GUIA_DE_ROLES } from './efecto-de-rol';
+import { efectoDeRol, GUIA_DE_ROLES, nombreDeRol } from './efecto-de-rol';
 import { esCampoConmutable, explicacionDeCampo, interruptorDeFila } from './interruptores';
 import type { ControlDeInterruptores } from './use-interruptores';
 
@@ -107,7 +107,7 @@ export function CollectionTable({
               publica, y esconder un dato que existe es la otra forma de mentir sobre lo que hay
               configurado. */}
           {inertesPresentes.length ? <Notice role="note">
-            Las columnas marcadas «declarativo» no configuran por sí solas el runtime.
+            Las columnas marcadas «declarativo» no configuran por sí solas la ejecución del agente.
             Cada una indica sus lectores y de dónde sale el valor en ejecución.
           </Notice> : null}
 
@@ -245,7 +245,7 @@ function Celda({
     const efecto = efectoDeRol(valor);
     return <span className="grid max-w-72 gap-0.5">
       <span>{efecto.nombre}</span>
-      <code className="text-xs text-muted">{valor}</code>
+      <details><summary className="text-xs text-muted">Identificador técnico</summary><code className="text-xs text-muted">{valor}</code></details>
       <span className="text-xs text-muted">{efecto.efecto}</span>
     </span>;
   }
@@ -284,8 +284,8 @@ function Celda({
           if (accion) onPedir({ coleccion, filaId, accion });
         }}
       >
-        {actual === '' ? <option value="">UNKNOWN</option> : null}
-        {opciones.map((rol) => <option key={rol} value={rol}>{rol}</option>)}
+        {actual === '' ? <option value="">Sin rol publicado</option> : null}
+        {opciones.map((rol) => <option key={rol} value={rol}>{nombreDeRol(rol)}</option>)}
       </select>
       {motivo ? <span className="mt-1 block max-w-64 text-xs font-medium text-muted italic">{motivo}</span> : null}
     </>;

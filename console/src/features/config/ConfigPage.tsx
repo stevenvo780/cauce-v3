@@ -19,6 +19,8 @@ import { RemovalDialog } from './RemovalDialog';
 import { TablasDeSeccion } from './ConfigTables';
 import { CONFIG_SECTIONS, SECCION_POR_DEFECTO, type ConfigSectionId } from './sections';
 import { useConfigWrites } from './use-config-writes';
+import { nombreDeRol } from './efecto-de-rol';
+import { COMPANY_ROLE_LABEL } from '../auth/company-authority';
 
 /* One chunk per section: opening Ajustes downloads only the section on screen, not all seven. */
 const GeneralSection = lazy(async () => ({ default: (await import('./GeneralSection')).GeneralSection }));
@@ -164,7 +166,9 @@ function PermisoDeEscritura({ access, estado }: {
       // lead the operator to believe they are two different problems.
       ? `Solo lectura: ${CONFIG_SIN_CONTROL_REASON} Los datos se muestran igual; lo que está apagado es todo lo que escribe.`
       : `Solo lectura: ${CONFIG_WRITE_NO_ACREDITADO_REASON}`;
-  const roles = access?.roles?.length ? access.roles.join(', ') : 'UNKNOWN';
+  const roles = access?.roles?.length ? access.roles.map(role =>
+    Object.entries(COMPANY_ROLE_LABEL).find(([id]) => id === role)?.[1] ?? nombreDeRol(role),
+  ).join(', ') : 'Sin rol informado';
   return <Notice tone={estado === 'allowed' ? 'ok' : 'warn'} role="note" data-estado={estado}
     className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
     <span>{texto}</span>

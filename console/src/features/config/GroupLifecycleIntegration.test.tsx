@@ -77,10 +77,10 @@ it('moves a draft membership and primary room in one accepted batch from the exi
       rolled_back_revision_id: null, summary: 'movement accepted' }, { status: input.dry_run ? 200 : 201 });
   }));
   const user = await openMovement();
-  expect(screen.getByRole('button', { name: 'Confirmar movimiento atómico' })).toBeDisabled();
-  await user.click(screen.getByRole('button', { name: 'Previsualizar movimiento atómico' }));
-  await screen.findByLabelText('Movimiento atómico propuesto');
-  await user.click(screen.getByRole('button', { name: 'Confirmar movimiento atómico' }));
+  expect(screen.getByRole('button', { name: 'Confirmar movimiento' })).toBeDisabled();
+  await user.click(screen.getByRole('button', { name: 'Previsualizar movimiento' }));
+  await screen.findByLabelText('Movimiento propuesto');
+  await user.click(screen.getByRole('button', { name: 'Confirmar movimiento' }));
   await waitFor(() => { expect(submitted).toHaveLength(2); });
   expect(screen.getAllByText(/Aplicado en revisión 5/).length).toBeGreaterThan(0);
   await waitFor(() => { expect(screen.getByRole('combobox', { name: 'Grupo de destino' })).toHaveValue(''); });

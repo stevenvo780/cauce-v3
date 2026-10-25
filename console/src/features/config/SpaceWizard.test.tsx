@@ -81,7 +81,7 @@ it('devuelve a pendiente los pasos cuyo contenido cambió después de aplicar el
   expect(screen.queryByText(/espacio completo/i)).not.toBeInTheDocument();
   const entries = within(screen.getByLabelText('Plan del espacio')).getAllByRole('listitem');
   expect(entries[0]).toHaveTextContent(/^en curso/);
-  expect(entries[0]).toHaveTextContent('"id":"Beta"');
+  expect(screen.getByLabelText('Mutación pendiente del wizard')).toHaveTextContent('"id": "Beta"');
   expect(entries[1]).toHaveTextContent(/^en cola/);
   expect(entries[2]).toHaveTextContent(/^en cola/);
   expect(screen.getByLabelText(/mutación pendiente del wizard/i)).toHaveTextContent('"id": "Beta"');
@@ -130,7 +130,7 @@ it('bloquea el apply de nuevo cuando el servidor responde conflicto de revisión
   expect(screen.queryByLabelText(/dry-run del wizard/i)).not.toBeInTheDocument();
 });
 
-it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO llegó', async () => {
+it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura de la configuración NO llegó', async () => {
   const user = userEvent.setup();
   // The wizard was the only one of the four write paths that ignored `outcome.recarga`: it sang
   // "applied at revision 2" even though the subsequent GET had died with a 500.
@@ -144,7 +144,7 @@ it('FAMILIA 4: no dice «aplicado» a secas cuando la relectura del snapshot NO 
   await user.click(await screen.findByRole('button', { name: /aplicar paso/i }));
 
   const aviso = await screen.findByText(/espacio aplicado en revisión 2/i);
-  expect(aviso).toHaveTextContent(/la relectura del snapshot NO llegó \(config store caído\)/i);
+  expect(aviso).toHaveTextContent(/la relectura de la configuración NO llegó \(config store caído\)/i);
   expect(aviso).toHaveTextContent(/pueden estar vencidas/i);
   // Neither green nor red: it was applied, but what shows below may be stale.
   expect(aviso).toHaveClass('bg-warn-soft');

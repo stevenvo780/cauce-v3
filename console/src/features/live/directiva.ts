@@ -149,8 +149,8 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
         + 'AGENTS.override.md gana sobre AGENTS.md dentro del mismo nivel.'
       : directiva.manual_order === 'claude_load_order'
         ? 'Claude los carga en el orden mostrado (usuario, ancestros y nivel local). La vista no '
-          + 'convierte ese orden de carga en una regla de precedencia que el runtime no acreditó.'
-        : 'Se muestran en el orden medido por el runtime.';
+          + 'convierte ese orden de carga en una regla de precedencia que el agente en ejecución no confirmó.'
+        : 'Se muestran en el orden comprobado en el agente en ejecución.';
     avisos.push({
       id: 'dos-manuales',
       tono: 'nota',

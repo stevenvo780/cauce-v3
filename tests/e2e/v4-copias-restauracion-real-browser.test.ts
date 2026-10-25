@@ -114,11 +114,11 @@ print(json.dumps({'files':count,'bytes':sum(p.stat().st_size for p in space.rglo
 `, [f.agent.state_directory, f.scenario, String(LARGE_BYTES), String(SMALL_FILES)])) as Seed;
 }
 async function downloadCopy(f: CopyRestorationFixture, ready: BackupRow) {
-  const page = f.page; const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+  const page = f.page; const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
   const pickerAvailable = await page.evaluate(() => typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker);
   await page.evaluate(() => { Reflect.deleteProperty(window, 'showSaveFilePicker'); });
   const waitDownload = (page as DownloadPage).waitForEvent('download', { timeout: 180_000 });
-  await panel.getByRole('button', { name: 'Descargar backup ZIP', exact: true }).click();
+  await panel.getByRole('button', { name: 'Descargar copia ZIP', exact: true }).click();
   const download = await waitDownload; const archive = join(f.directory, 'downloaded-space.zip'); const browserPath = await download.path();
   if (!browserPath || !/^\/tmp\/playwright-artifacts-[A-Za-z0-9]+\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(browserPath)) {
     throw new Error('download path is outside the owned Chromium artifacts');
@@ -168,9 +168,9 @@ describe.each(['large', 'many'] as const)('copia completa por streaming del espa
     else expect(seed.files).toBe(SMALL_FILES + 4);
     await installBackupMeasurement(f);const preparationMs=performance.now()-preparation;const started=performance.now();const budget=measuredBudget(scenario);
     await page.goto(`${f.baseUrl}/messages/${f.tenant}/${f.alias}?view=context`, { waitUntil: 'domcontentloaded' });
-    const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
     await panel.getByText('No hay copias guardadas de este espacio.', { exact: true }).waitFor({ timeout: 30_000 }); f.errors.assertClean();
-    await panel.getByRole('button', { name: 'Crear backup del espacio', exact: true }).click();
+    await panel.getByRole('button', { name: 'Crear copia del espacio', exact: true }).click();
     let ready: BackupRow | undefined;
     try {
       await expect.poll(async () => {
@@ -185,7 +185,7 @@ describe.each(['large', 'many'] as const)('copia completa por streaming del espa
     const diagnostics = await backupDiagnostics(f, ready, 'terminal');
     expect(ready, JSON.stringify(diagnostics)).toMatchObject({ status: 'ready', error: null });
     expect(Number(ready.bytes)).toBeGreaterThan(seed.bytes);
-    const available = panel.getByText('Backup disponible', { exact: true }); await available.waitFor({ timeout: 30_000 });
+    const available = panel.getByText('Copia disponible', { exact: true }); await available.waitFor({ timeout: 30_000 });
     await capture(page, `${scenario}-backup-ready`, available); const exportMs = performance.now() - started;
     const measurement=await collectBackupMeasurement(f,readyId);
     await receipt(`${scenario}-upload-measurement`,{...measurement,ready_ms:exportMs,preparation_ms:preparationMs,budget});

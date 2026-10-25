@@ -702,7 +702,7 @@ async function walkthrough(): Promise<void> {
   const absence = missing.getByText('El servidor no observa a', { exact: false });
   await absence.waitFor({ timeout: 30_000 });
   expect(await absence.innerText()).toContain(`${tenantId}:${ALIAS}`);
-  const backupPanels = await current.getByRole('region', { name: 'Backup del espacio', exact: true }).count();
+  const backupPanels = await current.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true }).count();
   expect(backupPanels).toBe(0);
   await capture('purged-context-missing');
   assertBackupContract(backupPanels);

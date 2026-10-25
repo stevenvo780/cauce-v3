@@ -166,8 +166,8 @@ async function openAccounts(page: V4Page): Promise<void> {
 
 async function previewAndApply(page: V4Page, dialog: V4Locator, label: string): Promise<void> {
   const actions = dialog.getByRole('group', { name: `Acciones de ${label}`, exact: true });
-  await actions.getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+  await actions.getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Vista previa aceptada:' }).waitFor({ timeout: 20_000 });
   await actions.getByRole('button', { name: 'Aplicar', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Aplicado en revisión' }).waitFor({ timeout: 20_000 });
   await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
@@ -444,13 +444,13 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await dialog.getByLabel(`Confirmar borrado de ${accountId}`).fill('zz-canary-equivocado');
       await dialog.getByText(`Escribe exactamente «${accountId}» para confirmar el borrado.`, { exact: true }).waitFor({ timeout: 15_000 });
       expect(await dialog.getByRole('group', { name: 'Acciones de retiro o rotación de cuenta', exact: true })
-        .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
+        .getByRole('button', { name: 'Previsualizar cambio', exact: true }).isDisabled()).toBe(true);
       expect(await storedAccount()).toHaveLength(1);
       await dialog.getByLabel(`Confirmar borrado de ${accountId}`).fill(accountId);
       const revision = (await apiGet(page, '/v3/console/config')).body.revision;
       errors.expectHttpError('/v3/console/config/changes', 409);
       await dialog.getByRole('group', { name: 'Acciones de retiro o rotación de cuenta', exact: true })
-        .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).click();
+        .getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
       await dialog.getByRole('alert').filter({ hasText: 'Esta cuenta se administra en «Mis cuotas».' }).waitFor({ timeout: 20_000 });
       expect(await storedAccount()).toHaveLength(1);
       expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(revision);

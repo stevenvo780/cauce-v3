@@ -110,7 +110,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'el servidor no contestó';
       setOutcome(isRevisionConflict(error)
-        ? { tone: 'warn', text: 'Otra persona cambió este icono mientras lo editabas. Cargamos su versión (la ves como «En el servidor»); tu borrador sigue acá y puedes guardarlo encima.' }
+        ? { tone: 'warn', text: 'Otra persona cambió este icono mientras lo editabas. Cargamos su versión (la ves como «En el servidor»); tu borrador sigue aquí y puedes guardarlo encima.' }
         : { tone: 'danger', text: kind === 'save' ? `No se guardó: ${detail}` : `No se restableció: ${detail}` });
     } finally {
       setBusy(undefined);

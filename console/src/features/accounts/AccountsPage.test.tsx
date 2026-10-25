@@ -127,7 +127,7 @@ it('no habilita ni acredita escrituras del registro con recibos 2xx truncados', 
 
   await openInventory();
   await user.click(await screen.findByRole('button', { name: /deshabilitar/i }));
-  await user.click(accountActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(accountActions().getByRole('button', { name: /previsualizar cambio/i }));
   await user.click(accountActions().getByRole('button', { name: /^aplicar$/i }));
 
   expect(await screen.findByText(/la escritura puede haberse aplicado/i)).toBeInTheDocument();

@@ -40,7 +40,7 @@ const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entr
 const FINEPRINT = (
   <p className="m-0 text-xs text-muted">
     Tu sesión queda guardada solo en este navegador y el servidor la valida en cada paso.
-    No tienes que configurar nada: si algo no coincide, te lo pedimos de nuevo acá mismo.
+    No tienes que configurar nada: si algo no coincide, te lo pedimos de nuevo aquí mismo.
   </p>
 );
 

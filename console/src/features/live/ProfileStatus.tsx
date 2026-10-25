@@ -50,7 +50,7 @@ export function ProfileStatus({ profile }: { profile: AgentPerfil | undefined })
       <p className="m-0 text-xs text-muted">
         <span className="font-mono font-medium text-fg-2">{profile.harness ?? 'Arnés sin verificar'}</span>
         {' · '}
-        {HARNESS_CONTEXT[profile.harness ?? ''] ?? 'Las opciones disponibles dependen de los hechos y documentos publicados por este runtime.'}
+        {HARNESS_CONTEXT[profile.harness ?? ''] ?? 'Las opciones disponibles dependen de los hechos y documentos publicados por el agente en ejecución.'}
       </p>
     </div>
   );

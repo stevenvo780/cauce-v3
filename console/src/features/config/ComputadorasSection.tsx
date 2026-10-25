@@ -31,7 +31,7 @@ function hostPermission(snapshot: ConfigurationSnapshot | undefined, action: 'cr
 
 export function ComputadorasSection({ snapshot, soloLectura, onReloaded }: { snapshot?: ConfigurationSnapshot; soloLectura: boolean; onReloaded?: (snapshot: ConfigurationSnapshot) => void }) {
   const api = useApi();
-  const flota = useFleetHosts(true, snapshot?.revision);
+  const flota = useFleetHosts(true, snapshot);
   const escribe = !soloLectura && hostPermission(snapshot, 'update');
   const crea = !soloLectura && hostPermission(snapshot, 'create');
   const borra = !soloLectura && hostPermission(snapshot, 'delete');

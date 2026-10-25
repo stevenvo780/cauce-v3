@@ -86,7 +86,7 @@ const EXPLICACION_DE_CAMPO: Record<string, Record<string, string>> = {
     enabled: 'Apagar una sala corta las entregas que pasan por ella. Los miembros siguen existiendo.',
   },
   memberships: {
-    enabled: 'De acá sale la flota que recibe entregas. Un alias con la membresía apagada no recibe '
+    enabled: 'De aquí sale la flota que recibe entregas. Un alias con la membresía apagada no recibe '
       + 'nada, aunque esté en el registro de agentes.',
   },
 };
@@ -193,7 +193,7 @@ function confirmacion(campo: string, valor: boolean, sujeto: string): string | u
   if (campo !== 'allow_control' || !valor) return undefined;
   return `Quitar Control en ${sujeto} deja sin poder escribir configuración, reinyectar entregas ni `
     + 'abrir terminales del otro lado. Si el permiso que estás quitando es el tuyo, no vas a poder '
-    + 'devolvértelo desde acá: va a hacer falta otra identidad que todavía lo tenga.';
+    + 'devolvértelo desde aquí: va a hacer falta otra identidad que todavía lo tenga.';
 }
 
 /**

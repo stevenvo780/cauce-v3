@@ -28,7 +28,7 @@ const DETALLE: Record<string, string> = {
 const CONCEPTOS: readonly [string, string][] = [
   ['Contexto declarado', 'Propósito, rol, responsabilidades, restricciones, herramientas declaradas y '
     + 'reglas estables que se redactan en «Contexto».'],
-  ['Capacidades del runtime', 'Lo que el proceso acredita que sabe hacer; describir una herramienta en '
+  ['Capacidades del agente en ejecución', 'Lo que el proceso acredita que sabe hacer; describir una herramienta en '
     + 'el contexto no habilita un binario ni un MCP.'],
   ['Permisos efectivos', 'Membresías, roles de permisos, ACL y RBAC deciden qué operaciones están '
     + 'autorizadas. No salen del texto del contexto.'],

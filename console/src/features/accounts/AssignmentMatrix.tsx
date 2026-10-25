@@ -110,7 +110,7 @@ export function AssignmentMatrix({ config, access, registry }: {
   const needsPriority = assignment.operation === 'create-binding' || assignment.operation === 'update-binding';
 
   const invalid = !assignment.agentKey || !selectedTenant || !selectedAlias
-    ? 'Elige un agente: la mutación identifica al alias por tenant y alias.'
+    ? 'Elige un agente y el espacio al que pertenece.'
     : !assignment.accountId
       ? 'Elige una cuenta.'
       : needsPriority && !priorityValid
@@ -135,8 +135,9 @@ export function AssignmentMatrix({ config, access, registry }: {
 
   return <div className="grid gap-4">
     {missing.length ? <Notice tone="danger" role="alert">
-      No disponible: este gateway no publica {missing.map((name) => <code key={name}>{name} </code>)}
-      en su configuración. La matriz se muestra incompleta a propósito; la consola no rellena lo que el servidor no informa.
+      No disponible: el servidor no publica todos los datos de agentes y cuentas.
+      La matriz se muestra incompleta a propósito; la consola no rellena lo que el servidor no informa.
+      <details><summary>Detalles técnicos</summary>{missing.map((name) => <code key={name}>{name} </code>)}</details>
     </Notice> : null}
 
     <section aria-label="Qué cuenta puede usar cada agente">
@@ -168,7 +169,7 @@ export function AssignmentMatrix({ config, access, registry }: {
                   <th className="md:sticky md:left-0 md:z-[2]">Agente</th>
                   {accounts.items.map((account) => <th key={account.id}>
                     <span className="mono">{account.id}</span>
-                    <div className={HINT}>{account.provider ?? 'UNKNOWN'} · paga {account.payerTenant ?? 'UNKNOWN'}</div>
+                    <div className={HINT}>{account.provider ?? 'Sin informar'} · paga {account.payerTenant ?? 'Sin informar'}</div>
                   </th>)}
                 </tr></thead>
                 <tbody>
@@ -179,7 +180,7 @@ export function AssignmentMatrix({ config, access, registry }: {
                         <AgentOrb seed={key} size={22} />
                         <div className="min-w-0">
                           <strong>{row.agent.alias}</strong>
-                          <small className="subline">{row.agent.tenantId} · harness {row.agent.harnessId ?? 'UNKNOWN'}</small>
+                          <small className="subline">{row.agent.tenantId} · tipo de agente {row.agent.harnessId ?? 'Sin informar'}</small>
                         </div>
                       </div></td>
                       {row.cells.map((cell) => {
@@ -236,7 +237,7 @@ export function AssignmentMatrix({ config, access, registry }: {
         Esta asignación no cambia la cuenta principal ni la ejecución del agente, y no activa un respaldo automático.</Notice>
       <div className={FIELD}>
         <label>Agente
-          <select {...writeProps} value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
+          <select {...writeProps} aria-label="Agente" value={assignment.agentKey} onChange={(event) => { patch({ agentKey: event.target.value }); }}>
             <option value="">— elegir —</option>
             {agents.items.map((agent) => {
               const key = agentKeyOf(agent.tenantId, agent.alias);
@@ -245,15 +246,15 @@ export function AssignmentMatrix({ config, access, registry }: {
           </select>
         </label>
         <label>Cuenta
-          <select {...writeProps} value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
+          <select {...writeProps} aria-label="Cuenta" value={assignment.accountId} onChange={(event) => { patch({ accountId: event.target.value }); }}>
             <option value="">— elegir —</option>
             {accounts.items.map((account) => <option key={account.id} value={account.id}>
-              {account.id} · paga {account.payerTenant ?? 'UNKNOWN'}{account.sharedWithPool === true ? ' · en el pool' : ''}
+              {account.id} · paga {account.payerTenant ?? 'Sin informar'}{account.sharedWithPool === true ? ' · compartida' : ''}
             </option>)}
           </select>
         </label>
         <label className="sm:col-span-2">Operación
-          <select {...writeProps} value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
+          <select {...writeProps} aria-label="Operación" value={assignment.operation} onChange={(event) => { patch({ operation: event.target.value as Operation }); }}>
             {(Object.keys(operationLabels) as Operation[]).map((operation) => <option key={operation} value={operation}>{operationLabels[operation]}</option>)}
           </select>
         </label>
@@ -266,9 +267,9 @@ export function AssignmentMatrix({ config, access, registry }: {
         <Link2Off size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Quitar el acceso borra también el orden de consulta de ese agente hacia esa cuenta.
       </Notice> : null}
       {assignment.operation === 'grant-ceiling' ? <Notice role="note" className="flex items-start gap-1.5">
-        <ShieldQuestion size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Si la cuenta la paga otro tenant, solo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
+        <ShieldQuestion size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Si la cuenta la paga otro espacio, solo puedes dar acceso cuando su pagador la haya compartido. El servidor comprueba ese permiso antes de guardar.
       </Notice> : null}
-      <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="asignación" />
+      <MutationBar snapshot={config.data} runner={runner} mutation={mutation} invalid={invalid} previewLabel="asignación" />
     </FormDialog>
   </div>;
 }

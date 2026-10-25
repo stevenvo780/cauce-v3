@@ -337,14 +337,14 @@ describe('copia de espacio desde navegador real con exportación física firmada
     await step(page, 'open canary agent backup panel', async () => {
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 30_000 });
-      await page.getByRole('region', { name: 'Backup del espacio', exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true }).waitFor({ timeout: 20_000 });
       await page.getByText('No hay copias guardadas de este espacio.', { exact: true })
         .waitFor({ timeout: 20_000 });
     });
-    const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
     await step(page, 'request backup from the real panel', async () => {
-      await panel.getByRole('button', { name: 'Crear backup del espacio', exact: true }).click();
-      await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
+      await panel.getByRole('button', { name: 'Crear copia del espacio', exact: true }).click();
+      await panel.getByText('Copia pendiente', { exact: true }).waitFor({ timeout: 30_000 });
     });
     backupId = (await pool().query<{ id: string }>(
       'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 ORDER BY created_at DESC LIMIT 1', [hub, alias])
@@ -361,10 +361,10 @@ describe('copia de espacio desde navegador real con exportación física firmada
     });
 
     await step(page, 'panel rereads the ready receipt', async () => {
-      await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
+      await panel.getByText('Copia disponible', { exact: true }).waitFor({ timeout: 30_000 });
       await panel.getByText(receiptSha256, { exact: true }).waitFor({ timeout: 20_000 });
-      await panel.getByRole('button', { name: 'Actualizar estado del backup', exact: true }).click();
-      await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 20_000 });
+      await panel.getByRole('button', { name: 'Actualizar estado de la copia', exact: true }).click();
+      await panel.getByText('Copia disponible', { exact: true }).waitFor({ timeout: 20_000 });
     });
 
     const pickerKind = await page.evaluate(() => typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker);
@@ -373,7 +373,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
     if (typeof downloadable.waitForEvent === 'function') {
       downloadWait = downloadable.waitForEvent('download', { timeout: 25_000 }).catch(() => null);
     }
-    await panel.getByRole('button', { name: 'Descargar backup ZIP', exact: true }).click();
+    await panel.getByRole('button', { name: 'Descargar copia ZIP', exact: true }).click();
     const browserDownload = await downloadWait;
     const downloadDirectory = join(canaryRoot, 'download');
     await mkdir(downloadDirectory, { mode: 0o700 });
@@ -475,16 +475,16 @@ describe('copia de espacio desde navegador real con exportación física firmada
 
   it('recupera copias tras reabrir y recargar, descarga la anterior y elimina solo la confirmada con su archivo físico', async () => {
     const page = ownerPage();
-    const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
     await writeFile(join(sourceSpaceDirectory, 'projects/large.bin'), randomBytes(2 * 1024 * 1024 + 4097), { mode: 0o600 });
-    await panel.getByRole('button', { name: 'Crear otro backup', exact: true }).click();
-    await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
+    await panel.getByRole('button', { name: 'Crear otra copia', exact: true }).click();
+    await panel.getByText('Copia pendiente', { exact: true }).waitFor({ timeout: 30_000 });
     retainedBackupId = (await pool().query<{ id: string }>(
       'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 AND id<>$3', [hub, alias, backupId])).rows[0]?.id ?? '';
     expect(retainedBackupId).toMatch(/^[0-9a-f-]{36}$/u);
     const retained = await step(page, 'second signed physical export', () => exportBackup(retainedBackupId));
     expect(retained.sha256).not.toBe(receiptSha256);
-    await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
+    await panel.getByText('Copia disponible', { exact: true }).waitFor({ timeout: 30_000 });
 
     await step(page, 'reopen and reload persisted backup list', async () => {
       await page.goto(base(), { waitUntil: 'domcontentloaded' });
@@ -575,7 +575,7 @@ describe('copia de espacio desde navegador real con exportación física firmada
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByText('No encontramos esa conversación', { exact: true }).waitFor({ timeout: 20_000 });
       const body = await page.locator('body').innerText();
-      expect(body).not.toContain('Backup del espacio');
+      expect(body).not.toContain('Copia de seguridad del espacio');
       expect(body).not.toContain(receiptSha256);
     });
     errors.assertClean();

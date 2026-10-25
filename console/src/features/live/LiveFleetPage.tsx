@@ -204,7 +204,7 @@ export function LiveFleetPage() {
     ? requestedMember?.registered === false
       ? `«${selectedKey}» solo aparece como miembro de una sala: no tiene registro de agente, por eso no tiene ficha en la oficina. Regístralo desde Agentes si tiene que trabajar.`
       : requestedMember
-        ? `«${selectedKey}» está en una sala pero todavía no tiene actividad en la oficina: sin entregas abiertas ni lease reciente no se puede abrir su ficha acá.`
+        ? `«${selectedKey}» está en una sala pero todavía no tiene actividad en la oficina: sin entregas abiertas ni conexión reciente no se puede abrir su ficha aquí.`
         : `No se encontró el agente «${selectedKey}» en esta empresa. Puede haberse retirado o el enlace es de otra empresa.`
     : null;
   const talking = officeAgents.find((agent) => agent.id === talkKey);

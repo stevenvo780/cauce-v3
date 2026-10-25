@@ -65,7 +65,7 @@ it.each(['applied', 'pending', 'error'] as const)('settles %s after closing the 
     expect(await screen.findByText(/canal de prueba no disponible/)).toBeInTheDocument();
     expect(screen.getByText(/Borrador sin guardar/)).toBeInTheDocument();
   } else {
-    expect(await screen.findByText(mode === 'applied' ? /Aplicado: la revisión deseada y el runtime/ : /La revisión deseada y los ficheros del runtime quedaron actualizados/)).toBeInTheDocument();
+    expect(await screen.findByText(mode === 'applied' ? /Aplicado: la revisión deseada y el agente en ejecución/ : /La revisión deseada y los archivos del agente quedaron actualizados/)).toBeInTheDocument();
     expect(screen.queryByText(/Borrador sin guardar/)).not.toBeInTheDocument();
     expect(screen.queryByText('El perfil cambió mientras editabas.')).not.toBeInTheDocument();
   }
@@ -106,7 +106,7 @@ it('keeps the in-flight lock and draft when the page is left and opened again', 
   expect(screen.queryByRole('button', { name: /Restaurar esta revisión/i })).not.toBeInTheDocument();
   await user.click(screen.getByRole('tab', { name: /^Perfil/ }));
   await act(async () => { release(); await pending; });
-  expect(await screen.findByText(/Aplicado: la revisión deseada y el runtime/)).toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: la revisión deseada y el agente en ejecución/)).toBeInTheDocument();
   expect(screen.queryByText('El perfil cambió mientras editabas.')).not.toBeInTheDocument();
   expect(writes).toBe(1);
 });

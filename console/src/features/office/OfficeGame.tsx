@@ -438,7 +438,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
         {siteSlot ? (
           <>
             <strong>{siteSlot.name}</strong>
-            <span className="mt-1 block text-xs">{siteSlot.kind === 'group' ? `${String(siteSlot.people)} ${siteSlot.people === 1 ? 'agente trabaja' : 'agentes trabajan'} acá` : `${String(siteSlot.people)} adentro ahora`}</span>
+            <span className="mt-1 block text-xs">{siteSlot.kind === 'group' ? `${String(siteSlot.people)} ${siteSlot.people === 1 ? 'agente trabaja' : 'agentes trabajan'} aquí` : `${String(siteSlot.people)} dentro ahora`}</span>
             {siteSlot.alerts > 0 ? <span className="mt-0.5 block text-xs text-danger-ink">{siteSlot.alerts} {siteSlot.alerts === 1 ? 'necesita' : 'necesitan'} atención</span> : null}
             <p>Clic para entrar.</p>
           </>

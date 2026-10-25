@@ -305,7 +305,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await panel.getByRole('checkbox', { name: 'El daemon Docker es exclusivo de esta empresa', exact: true }).check();
       await panel.getByRole('textbox', { name: /Redes permitidas/u }).fill('zzcanary');
       await panel.getByRole('button', { name: 'Vista previa', exact: true }).click();
-      await panel.getByRole('status').filter({ hasText: 'Dry-run aceptado' }).waitFor({ timeout: 20_000 });
+      await panel.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
       expect((await hostRow())[0]?.extensions_allowed).toEqual({ types: [], mount_roots: [], networks: [] });
       await panel.getByRole('button', { name: 'Aplicar permisos', exact: true }).click();
       await panel.getByRole('status').filter({ hasText: 'Aplicado en revisión' }).waitFor({ timeout: 20_000 });

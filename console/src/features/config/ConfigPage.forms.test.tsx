@@ -46,12 +46,12 @@ it('crea un tenant con campos visibles y exige otro dry-run al editar el nombre'
   await user.type(form.getByLabelText('Nombre visible'), 'Equipo nuevo');
   expect(form.getByRole('button', { name: 'Confirmar creación' })).toBeDisabled();
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   expect(changes[0]).toMatchObject({ dry_run: true, expected_revision: 1, mutation: { resource: 'tenant', action: 'create', id: 'Nuevo', value: { display_name: 'Equipo nuevo', enabled: true, is_hub: false } } });
   await user.type(form.getByLabelText('Nombre visible'), ' editado');
   expect(form.getByRole('button', { name: 'Confirmar creación' })).toBeDisabled();
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   await user.click(form.getByRole('button', { name: 'Confirmar creación' }));
   await screen.findByText(/inventario releído en revisión 2/i);
   expect(screen.queryByRole('form', { name: 'Crear espacio' })).not.toBeInTheDocument();
@@ -69,7 +69,7 @@ it('edita el nombre visible del grupo sin cambiar su identidad ni otros campos',
   await user.clear(form.getByLabelText('Nombre visible'));
   await user.type(form.getByLabelText('Nombre visible'), 'Mesa técnica');
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   expect(changes[0]?.mutation).toEqual({ resource: 'room', action: 'update', tenant_id: 'Miguel', id: 'grp.miguel', value: { display_name: 'Mesa técnica' } });
   await user.click(form.getByRole('button', { name: 'Confirmar edición' }));
   await screen.findByText(/inventario releído/i);
@@ -108,7 +108,7 @@ it('ofrece solo edición del singleton de cadena con sus límites numéricos', a
   await user.clear(form.getByLabelText('Máximo de eventos de progreso'));
   await user.type(form.getByLabelText('Máximo de eventos de progreso'), '12');
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   expect(changes[0]?.mutation).toEqual({ resource: 'chain_policy', action: 'update', id: 'default', value: { progress_relay_max_events: 12 } });
 });
 
@@ -120,7 +120,7 @@ it.each([403, 409])('no acredita eliminación cuando apply devuelve %s', async (
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   await user.click(form.getByRole('button', { name: 'Confirmar eliminación' }));
   await form.findByRole('alert');
   expect(form.queryByText(/aplicado en revisión/i)).not.toBeInTheDocument();
@@ -135,7 +135,7 @@ it('señala relectura incierta tras eliminar y no afirma retirada física', asyn
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   await user.click(form.getByRole('button', { name: 'Confirmar eliminación' }));
   expect(await screen.findByText(/relectura.*no llegó/i)).toBeInTheDocument();
   expect(screen.queryByRole('form', { name: 'Eliminar sala/grupo' })).not.toBeInTheDocument();
@@ -174,7 +174,7 @@ it('añade un miembro desde su sala sin pedir identidades en JSON', async () => 
   expect(form.getByLabelText('Sala/grupo')).toHaveValue('grp.miguel');
   await user.type(form.getByLabelText('Alias del agente'), 'nuevo');
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   expect(changes[0]?.mutation).toEqual({ resource: 'membership', action: 'create', tenant_id: 'Miguel', room_id: 'grp.miguel', alias: 'nuevo', value: { role: 'agent', enabled: true } });
 });
 
@@ -186,7 +186,7 @@ it('rechaza un recibo incompleto de eliminación y no lo acredita como aplicado'
   await user.click(await screen.findByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' }));
   const form = within(screen.getByRole('form', { name: 'Eliminar sala/grupo' }));
   await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  await form.findByText(/dry-run aceptado/i);
+  await form.findByText(/vista previa aceptada/i);
   await user.click(form.getByRole('button', { name: 'Confirmar eliminación' }));
   expect(await form.findByRole('alert')).toHaveTextContent(/puede haberse aplicado/i);
   expect(form.queryByText(/aplicado en revisión/i)).not.toBeInTheDocument();

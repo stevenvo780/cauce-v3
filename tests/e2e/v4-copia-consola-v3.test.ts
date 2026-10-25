@@ -381,14 +381,14 @@ describe('copia de espacio V3 (legacy-container) desde navegador real con export
     await step(page, 'open canary agent backup panel', async () => {
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 30_000 });
-      await page.getByRole('region', { name: 'Backup del espacio', exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true }).waitFor({ timeout: 20_000 });
       await page.getByText('No hay copias guardadas de este espacio.', { exact: true })
         .waitFor({ timeout: 20_000 });
     });
-    const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+    const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
     await step(page, 'request backup from the real panel', async () => {
-      await panel.getByRole('button', { name: 'Crear backup del espacio', exact: true }).click();
-      await panel.getByText('Backup pendiente', { exact: true }).waitFor({ timeout: 30_000 });
+      await panel.getByRole('button', { name: 'Crear copia del espacio', exact: true }).click();
+      await panel.getByText('Copia pendiente', { exact: true }).waitFor({ timeout: 30_000 });
     });
     backupId = (await pool().query<{ id: string }>(
       'SELECT id::text FROM space_backups WHERE tenant_id=$1 AND alias=$2 ORDER BY created_at DESC LIMIT 1', [hub, alias])
@@ -531,7 +531,7 @@ describe('copia de espacio V3 (legacy-container) desde navegador real con export
       await page.goto(agentUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByText('No encontramos esa conversación', { exact: true }).waitFor({ timeout: 20_000 });
       const body = await page.locator('body').innerText();
-      expect(body).not.toContain('Backup del espacio');
+      expect(body).not.toContain('Copia de seguridad del espacio');
       expect(body).not.toContain(receiptSha256);
     });
     errors.assertClean();

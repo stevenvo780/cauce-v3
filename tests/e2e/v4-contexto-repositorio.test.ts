@@ -137,7 +137,7 @@ describe('repositorio de contexto con Chromium, PostgreSQL y Git reales', () => 
       await active().database.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [tenant, alias]);
       await page.goto(`${active().baseUrl}/messages/${tenant}/${alias}?view=context`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 20_000 });
-      const emptyBackups = page.getByRole('region', { name: 'Backup del espacio', exact: true })
+      const emptyBackups = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true })
         .getByText('No hay copias guardadas de este espacio.', { exact: true });
       await emptyBackups.waitFor({ timeout: 20_000 });
       const backupPath = `/v3/console/spaces/${tenant}/${alias}/backups`;

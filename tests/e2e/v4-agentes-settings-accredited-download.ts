@@ -87,13 +87,13 @@ async function listBackups(options: BackupRequestOptions, path: string): Promise
 }
 
 async function readyBackup(options: BackupRequestOptions, path: string): Promise<BackupReceipt> {
-  const panel = options.page.getByRole('region', { name: 'Backup del espacio', exact: true });
+  const panel = options.page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
   await panel.waitFor({ timeout: 30_000 });
   const before = await listBackups(options, path);
   const existing = before.find(row => row.status === 'ready' && Date.parse(row.expires_at) > Date.now())
     ?? before.find(row => row.status === 'pending' || row.status === 'running');
   if (!existing) {
-    const create = panel.getByRole('button', { name: /^Crear (?:otro backup|backup del espacio)$/u });
+    const create = panel.getByRole('button', { name: /^Crear (?:otra copia|copia del espacio)$/u });
     await expect.poll(() => create.isDisabled(), { timeout: 30_000 }).toBe(false);
     await create.click();
   }
@@ -114,7 +114,7 @@ async function readyBackup(options: BackupRequestOptions, path: string): Promise
   expect(latest.download_url).toBe(`${path}/${latest.id}/download`);
   expect(latest.bytes).not.toBeNull(); expect(latest.sha256).not.toBeNull(); expect(latest.manifest_sha256).not.toBeNull();
   await panel.getByRole('button', { name: `Ver copia ${latest.id.slice(0, 8)}`, exact: true }).click();
-  await panel.getByText('Backup disponible', { exact: true }).waitFor({ timeout: 30_000 });
+  await panel.getByText('Copia disponible', { exact: true }).waitFor({ timeout: 30_000 });
   await panel.getByText(latest.sha256 ?? '', { exact: true }).first().waitFor({ timeout: 30_000 });
   return latest;
 }
@@ -166,8 +166,8 @@ export async function verifySpaceBackupDownload(options: SpaceBackupDownloadOpti
   const pickerBefore = await page.evaluate(() => typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker);
   await page.evaluate(() => { Reflect.deleteProperty(window, 'showSaveFilePicker'); });
   const pending = page.waitForEvent('download', { timeout: 180_000 });
-  await page.getByRole('region', { name: 'Backup del espacio', exact: true })
-    .getByRole('button', { name: 'Descargar backup ZIP', exact: true }).click();
+  await page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true })
+    .getByRole('button', { name: 'Descargar copia ZIP', exact: true }).click();
   const download = await pending; expect(await download.failure()).toBeNull();
   const browserPath = await download.path();
   if (!browserPath || !/^\/tmp\/playwright-artifacts-[A-Za-z0-9]+\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(browserPath)) {

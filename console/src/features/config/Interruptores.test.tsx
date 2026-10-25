@@ -160,7 +160,7 @@ it('si el servidor guarda pero la RELECTURA falla, no se afirma que la tabla est
   await irA(user, PERMISOS);
 
   await user.click(await screen.findByRole('switch', { name: LECTURA }));
-  expect(await screen.findByText(/la relectura del snapshot NO llegó/i)).toBeInTheDocument();
+  expect(await screen.findByText(/la relectura de la configuración NO llegó/i)).toBeInTheDocument();
 });
 
 it('conserva el valor pedido en vuelo y respeta un snapshot más nuevo al terminar con una relectura fallida', async () => {
@@ -210,7 +210,7 @@ it('quitar Control SÍ confirma, y cancelar no manda nada ni mueve el interrupto
   await user.click(await screen.findByRole('switch', { name: CONTROL }));
   expect(cambios).toEqual([]);
   expect(screen.getByRole('switch', { name: CONTROL })).toBeChecked();
-  expect(screen.getByText(/no vas a poder devolvértelo desde acá/i)).toBeInTheDocument();
+  expect(screen.getByText(/no vas a poder devolvértelo desde aquí/i)).toBeInTheDocument();
 
   await user.click(screen.getByRole('button', { name: /^cancelar$/i }));
   expect(cambios).toEqual([]);

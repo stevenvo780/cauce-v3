@@ -19,7 +19,7 @@ export const AVISO_DE_PROFUNDIDAD =
 
 /** The document journal keeps a fingerprint and a size, never the text: say so, or the absence reads as a bug. */
 export const SIN_CUERPO =
-  'De cada escritura se guardan la huella y el tamaño, nunca el texto. Acá no se puede leer lo '
+  'De cada escritura se guardan la huella y el tamaño, nunca el texto. Aquí no se puede leer lo '
   + 'que decía el fichero, ni restaurarlo desde el diario.';
 
 export const PALABRAS_DE_OPERACION: Readonly<Record<PerfilRevision['operation'], string>> = {

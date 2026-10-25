@@ -218,7 +218,7 @@ it('ruta /config sin config.write: abre en solo lectura, no 404 ni redirección'
   expect(creaciones.length).toBeGreaterThan(0);
   for (const crear of creaciones) expect(crear).toBeDisabled();
   await userEvent.click(screen.getByRole('tab', { name: 'Avanzado' }));
-  expect(await screen.findByRole('button', { name: /Aplicar atómico/ }, { timeout: 10_000 })).toBeDisabled();
+  expect(await screen.findByRole('button', { name: /Aplicar cambio/ }, { timeout: 10_000 })).toBeDisabled();
   expect(window.location.pathname).toBe('/config');
   expect(screen.queryByRole('heading', { level: 1, name: /ruta no encontrada/i })).not.toBeInTheDocument();
 });

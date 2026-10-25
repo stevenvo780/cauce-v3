@@ -38,7 +38,7 @@ function copia(items: number, aLaVista: number, motivo: MotivoReconciliacionPlaz
   }
   if (items === 0) {
     return {
-      titulo: `Tope de sesiones alcanzado: las ${String(items + aLaVista)} que lo gastan están abiertas acá`,
+      titulo: `Tope de sesiones alcanzado: las ${String(items + aLaVista)} que lo gastan están abiertas aquí`,
       cuerpo: 'El tope de sesiones simultáneas es por operador y ya lo gastaste con las sesiones abiertas en esta pantalla. '
         + 'Cierra una desde el menú de la sesión y vuelve a pedir la que querías: se libera al instante.',
     };

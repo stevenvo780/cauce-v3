@@ -35,7 +35,7 @@ export function nativeAdminClient(request: RequestFn, epoch: () => number): Nati
     if (status === 503 && body && typeof body === 'object' && !Array.isArray(body) && 'operation_id' in body && 'state' in body
       && body.state === 'effect_unknown' && typeof body.operation_id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(body.operation_id)) return new NativeAdminUnconfirmedError(body.operation_id);
     return new ApiError(status === 409
-    ? 'La huella o el runtime cambió. Relee la pieza; se conserva el borrador.'
+    ? 'El archivo o el entorno del agente cambió. Relee la pieza; se conserva el borrador.'
     : status === 501 ? 'Este arnés o esta cuenta no publica edición nativa para este tipo.'
       : 'No se confirmó la operación nativa. Se conserva el borrador.', status, 'native_admin_failed'); } };
   async function call(url: string, init: RequestInit = {}) {
@@ -51,7 +51,7 @@ export function nativeAdminClient(request: RequestFn, epoch: () => number): Nati
           ...(operationId === undefined ? {} : { operation_id: operationId }) }) });
       exact(result, ['tenant_id', 'alias', 'identity', 'state', 'operation_id']);
       const actualIdentity = NativeRuntimeIdentitySchema.parse(result.identity);
-      if (result.tenant_id !== tenant || result.alias !== alias || JSON.stringify(actualIdentity) !== JSON.stringify(identity)) throw new Error('El descubrimiento pertenece a otro destino o runtime.');
+      if (result.tenant_id !== tenant || result.alias !== alias || JSON.stringify(actualIdentity) !== JSON.stringify(identity)) throw new Error('El descubrimiento pertenece a otro destino o entorno del agente.');
       if (result.state === 'not_found' && result.operation_id === null) return { state: 'not_found', operation_id: null };
       if (result.state !== 'pending' || typeof result.operation_id !== 'string'
         || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(result.operation_id)

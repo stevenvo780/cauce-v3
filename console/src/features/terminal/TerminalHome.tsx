@@ -25,7 +25,7 @@ export function TerminalHome({ agentCount, loading, error, onRefresh }: {
       <p className="m-0 mt-1 text-[13px] text-muted">
         {agentCount === 0
           ? 'La flota no tiene agentes todavía. Registra el primero en Ajustes, sección Agentes, y después elígelo aquí.'
-          : 'Su TUI y su shell se abren desde acá.'}
+          : 'Su conversación en terminal y su línea de comandos se abren desde aquí.'}
       </p>
       {onRefresh ? (
         <div className="mt-4 flex justify-center">

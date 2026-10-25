@@ -5,6 +5,8 @@ import { ConflictNotice } from '../../components/ConflictNotice';
 import { buildFormMutation, configFormValues, type ConfigFormDefinition, type ConfigFormField, type ConfigFormTarget } from './config-form-model';
 import type { ConfigMutationRunner } from './use-config-mutation';
 import { canUseConfigForm, scopedFormIdentity } from './config-form-access';
+import { configMutationSummary } from './config-change-summary';
+import { nombreDeRol } from './efecto-de-rol';
 import './config-form.css';
 
 const ACTION_LABEL = { create: 'Crear', update: 'Editar', delete: 'Eliminar', retire: 'Retirar', restore: 'Restaurar' };
@@ -93,7 +95,7 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
     <h3>{title}</h3>
     {target.action === 'delete' ? <p className="notice" role="note">
       Se solicita eliminar este registro de configuración. El servidor comprueba sus dependencias y puede rechazarlo.
-      Revisa el dry-run antes de confirmar.
+      Revisa la vista previa antes de confirmar.
     </p> : null}
     {target.action === 'retire' ? <p className="notice" role="note">El retiro lógico cierra este registro para nuevas entregas. El servidor comprueba las dependencias antes de aplicar.</p> : null}
     {target.action === 'restore' ? <p className="notice" role="note">La restauración recupera el estado de habilitación previo al retiro, según el registro durable del servidor.</p> : null}
@@ -106,7 +108,12 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
         const fieldDisabled = disabled || fixed;
         return <label key={field.key} htmlFor={id}>
           <span id={`${id}-label`}>{field.label}</span>
-          {tenants ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
+          {field.key === 'role' && !field.identity ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
+            onChange={(event) => { edit(field.key, event.target.value); }}>
+            <option value="">Elige un rol</option>
+            {[...new Set([...options, values[field.key]].filter((role): role is string => Boolean(role)))].map((role) =>
+              <option key={role} value={role}>{nombreDeRol(role)}</option>)}
+          </select> : tenants ? <select id={id} aria-labelledby={`${id}-label`} value={values[field.key]} disabled={fieldDisabled}
             onChange={(event) => { edit(field.key, event.target.value); }}>
             <option value="">{target.action === 'create' ? 'Elegir…' : 'Sin dato publicado'}</option>
             {tenants.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -135,7 +142,8 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
         if (freshValues) { setValues(freshValues); setInitial(freshValues); }
         runner.clear();
       }} /> : null}
-    {mutation ? <details className="config-raw"><summary>Ver los datos del cambio</summary>
+    {mutation ? <p className="notice" role="note">Al confirmar: {configMutationSummary(mutation, snapshot)}.</p> : null}
+    {mutation ? <details className="config-raw"><summary>Detalles técnicos del cambio</summary>
       <pre className="config-preview" aria-label="Mutación propuesta">{JSON.stringify(mutation, null, 2)}</pre>
     </details> : null}
     <div className="config-actions">
@@ -144,13 +152,13 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
         onClick={() => void submit(false)}>{CONFIRM_LABEL[target.action]}</button>
       <button className="button small" type="button" disabled={busy} onClick={onCancel}>Cancelar</button>
     </div>
-    {runner.preview && mutation && runner.isValidated(mutation) ? <pre className="config-preview" aria-label="Resultado del dry-run del formulario">{runner.preview}</pre> : null}
+    {runner.preview && mutation && runner.isValidated(mutation) ? <details className="config-raw"><summary>Detalles técnicos de la vista previa</summary><pre className="config-preview" aria-label="Resultado de la vista previa del formulario">{runner.preview}</pre></details> : null}
     {runner.notice ? <p className={`notice ${runner.notice.tone}`} data-canal="formulario"
       role={runner.notice.tone === 'success' ? 'status' : 'alert'}>{runner.notice.text}</p> : null}
     {definition.resource === 'room' && target.action === 'update' ? <div className="config-room-members">
       <h4>Miembros de esta sala/grupo</h4>
       {members.length ? <ul>{members.map((row) => <li key={String(row.alias)}>
-        <span>{String(row.alias)} · {typeof row.role === 'string' ? row.role : 'sin rol publicado'}</span>
+        <span>{String(row.alias)} · {typeof row.role === 'string' ? nombreDeRol(row.role) : 'sin rol publicado'}</span>
         <button type="button" className="button small" disabled={disabled}
           onClick={() => { onRelated({ collection: 'memberships', action: 'update', row }); }}>Editar miembro {String(row.alias)}</button>
         <button type="button" className="button small" disabled={disabled}

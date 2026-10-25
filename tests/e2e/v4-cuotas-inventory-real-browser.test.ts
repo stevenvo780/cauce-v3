@@ -71,8 +71,8 @@ async function labelFromDatabase() {
 
 async function applyAssignment() {
   const actions = page.getByRole('group', { name: 'Acciones de asignación', exact: true });
-  await actions.getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+  await actions.getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Vista previa aceptada:' }).waitFor({ timeout: 20_000 });
   await actions.getByRole('button', { name: 'Aplicar', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Aplicado en revisión' }).waitFor({ timeout: 20_000 });
   await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
@@ -234,7 +234,7 @@ describe('inventario y lecturas reales de cuentas sin respuestas simuladas', () 
           await row.getByRole('button', { name, exact: true }).click();
           const dialog = page.getByRole('dialog');
           await dialog.getByRole('note').filter({ hasText: 'El snapshot no trae shared_with_pool y/o enabled' }).waitFor();
-          expect(await dialog.getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
+          expect(await dialog.getByRole('button', { name: 'Previsualizar cambio', exact: true }).isDisabled()).toBe(true);
           expect(await dialog.getByRole('button', { name: 'Aplicar', exact: true }).isDisabled()).toBe(true);
           const geometry = await dialog.evaluate(element => {
             const bounds = element.getBoundingClientRect();

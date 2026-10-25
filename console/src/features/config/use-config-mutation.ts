@@ -5,6 +5,7 @@ import type {
 } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { permissionState } from '../../lib';
+import { configMutationSummary } from './config-change-summary';
 import {
   executeConfigurationChange, textoRecarga,
   type CaminoDeCambio, type ConfigChangeOutcome,
@@ -25,7 +26,7 @@ const BLOQUEO_POR_DEFECTO = 'Cambio bloqueado: no tienes permiso para escribir c
 
 const REVISION_RELEIDA = 'La configuración cambió mientras editabas; la releí. Revisa y confirma.';
 
-const SIN_DRY_RUN = 'Primero hay que previsualizar exactamente esta mutación sobre la revisión visible: el apply solo se habilita sobre el dry-run que el servidor ya aceptó.';
+const SIN_DRY_RUN = 'Primero previsualiza este cambio sobre la revisión visible. Solo puedes aplicarlo cuando el servidor haya aceptado esa misma vista previa.';
 
 export interface ConfigMutationRunner {
   /**
@@ -190,7 +191,7 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
         if (redo.ok) {
           setValidated({ mutationKey, expectedRevision: fresh });
           setPreview(options.redactar ? options.redactar(redo.result) : JSON.stringify(redo.result, null, 2));
-          setNotice({ text: `${REVISION_RELEIDA} Dry-run aceptado: ${redo.result.summary ?? 'el servidor no devolvió resumen'}.`, tone: 'success' });
+          setNotice({ text: `${REVISION_RELEIDA} Vista previa aceptada: ${configMutationSummary(mutation, options.config.data)}.`, tone: 'success' });
           return dryRun;
         }
         outcome = redo;
@@ -208,14 +209,14 @@ export function useConfigMutation(options: ConfigMutationOptions): ConfigMutatio
     if (dryRun) {
       setValidated({ mutationKey, expectedRevision });
       setPreview(options.redactar ? options.redactar(result) : JSON.stringify(result, null, 2));
-      setNotice({ text: `Dry-run aceptado: ${result.summary ?? 'el servidor no devolvió resumen'}. Revisa el resultado antes de aplicar.`, tone: 'success' });
+      setNotice({ text: `Vista previa aceptada: ${configMutationSummary(mutation, options.config.data)}. Revisa el cambio antes de aplicar; todavía no se ha guardado.`, tone: 'success' });
       return true;
     }
     setValidated(undefined);
     setPreview(undefined);
     const recarga = outcome.recarga;
     setNotice({
-      text: `Aplicado en revisión ${String(result.revision ?? '')}: ${result.summary ?? ''}.`
+      text: `Aplicado en revisión ${String(result.revision ?? '')}: ${configMutationSummary(mutation, options.config.data)}.`
         + (recarga && !recarga.releido
           ? ` PERO la relectura del inventario no llegó (${recarga.motivo}); lo visible puede estar vencido.`
           : ` Inventario releído en revisión ${String(recarga?.revision ?? 'no informada')}.`),

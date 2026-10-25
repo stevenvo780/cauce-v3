@@ -75,7 +75,7 @@ it('mantiene el bloqueo del POST pendiente y presenta su recibo al volver, sin r
   await user.click(screen.getByRole('tab', { name: 'Agentes' }));
   await act(async () => { release?.(); await pending; });
   await user.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
-  expect(await screen.findByText(/creado en la revisión 2/)).toHaveTextContent('alta confirmada');
+  expect(await screen.findByText(/creado en la revisión 2/)).toHaveTextContent('Añadir a «new_alias» a la sala «grp.miguel»');
   expect(screen.getByLabelText('Identificador')).toHaveValue('');
   expect(requests).toHaveLength(1);
 });

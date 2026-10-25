@@ -139,8 +139,8 @@ function NativeEditor({ tenantId, alias, permission, blocked = false, onReload }
       const recognition = await api.recognizeNativePiece(tenantId, alias, draft.kind, draft.id, saved.receipt.sha, read.identity);
       if (token !== sequence.current) return;
       setStatus(recognition.state === 'available_for_new_session'
-        ? 'Runtime reiniciado con nuevo escritor y archivo exacto reconocido para nuevas invocaciones. La adopción por una sesión sigue pendiente.'
-        : 'Runtime reiniciado con nuevo escritor y archivo exacto verificado. El reconocimiento y la adopción por una sesión siguen pendientes.');
+        ? 'Agente reiniciado con el archivo actualizado y reconocido para las próximas tareas. La adopción por una sesión sigue pendiente.'
+        : 'Agente reiniciado con el archivo actualizado y verificado. El reconocimiento y la adopción por una sesión siguen pendientes.');
     } catch (failure) { if (token === sequence.current) setError(failure instanceof Error ? failure.message : 'Recarga no acreditada.'); }
     finally { if (token === sequence.current) setBusy(false); }
   }

@@ -25,7 +25,7 @@ function describe(slot: HotbarSlot, here: boolean): string {
     ? `${String(slot.people)} ${slot.people === 1 ? 'agente' : 'agentes'}`
     : slot.kind === 'campus' ? `${String(slot.people)} afuera` : `${String(slot.people)} adentro`;
   const alerts = slot.alerts > 0 ? `, ${String(slot.alerts)} ${slot.alerts === 1 ? 'necesita' : 'necesitan'} atención` : '';
-  return `${slot.name}${here ? ' (estás acá)' : ''}: ${people}${alerts}${slot.works ? ', en obra' : ''}`;
+  return `${slot.name}${here ? ' (estás aquí)' : ''}: ${people}${alerts}${slot.works ? ', en obra' : ''}`;
 }
 
 /** The buildings as a game hotbar: number keys, arrows between slots, a red count where someone needs a hand. */

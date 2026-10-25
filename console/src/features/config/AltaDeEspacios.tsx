@@ -1,7 +1,7 @@
 import { Toggle } from '@base-ui/react/toggle';
 import { ToggleGroup } from '@base-ui/react/toggle-group';
 import { useState } from 'react';
-import type { ConfigMutation } from '../../api/types';
+import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { SectionCard } from '../../components/kit';
 import { AltaRapida } from './AltaRapida';
 import type { ConfigChangeOutcome } from './config-change';
@@ -28,8 +28,9 @@ const MODOS: readonly { id: ModoDeAlta; label: string; nota: string }[] = [
 
 const SEGMENT = 'cursor-pointer rounded-md border-0 bg-transparent px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:text-fg data-[pressed]:bg-surface data-[pressed]:text-fg data-[pressed]:shadow-card';
 
-export function AltaDeEspacios({ soloLectura, busy, onChange }: {
+export function AltaDeEspacios({ soloLectura, busy, onChange, snapshot }: {
   soloLectura: boolean;
+  snapshot?: ConfigurationSnapshot | undefined;
   busy: boolean;
   onChange: (mutation: ConfigMutation, dryRun: boolean) => Promise<ConfigChangeOutcome>;
 }) {
@@ -47,7 +48,7 @@ export function AltaDeEspacios({ soloLectura, busy, onChange }: {
       <p className="m-0 text-xs text-muted">{activo.nota}</p>
     </div>
     {activo.id === 'rapida'
-      ? <AltaRapida soloLectura={soloLectura} busy={busy} onChange={onChange} />
-      : <SpaceWizard canWrite={!soloLectura} busy={busy} onChange={onChange} />}
+      ? <AltaRapida snapshot={snapshot} soloLectura={soloLectura} busy={busy} onChange={onChange} />
+      : <SpaceWizard snapshot={snapshot} canWrite={!soloLectura} busy={busy} onChange={onChange} />}
   </SectionCard>;
 }

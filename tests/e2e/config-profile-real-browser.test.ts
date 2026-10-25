@@ -377,7 +377,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
       .fill('Verificar persistencia real del perfil canónico en una sesión local aislada.');
     await page.getByRole('button', { name: 'Guardar y aplicar perfil' }).click();
     try {
-      await page.getByText(/La revisión deseada y los ficheros del runtime quedaron actualizados/u).waitFor({ timeout: 30_000 });
+      await page.getByText(/La revisión deseada y los archivos del agente quedaron actualizados/u).waitFor({ timeout: 30_000 });
     } catch (error) {
       const alert = await page.getByRole('alert').innerText().catch(() => 'sin alerta visible');
       throw new Error(`profile PUT feedback timeout; statuses=${responseStatuses.join(',')}; body=${responseBodies.join(' | ')}; alert=${alert}`, { cause: error });
@@ -510,7 +510,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await screenshot(page, 'directive');
     await page.getByRole('button', { name: 'Editar el manual en Ficheros', exact: true }).click();
     await page.getByRole('tab', { name: 'Directiva', exact: true }).click();
-    await page.getByRole('button', { name: 'Editar los campos canónicos', exact: true }).click();
+    await page.getByRole('button', { name: 'Editar el perfil', exact: true }).click();
     const authored = {
       purpose: `Propósito público ${RUN_ID}.`, role_summary: `Perfil actualizado ${RUN_ID}.`,
       human_brief: 'Operador sintético: respuestas breves y verificables.',
@@ -526,7 +526,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     ] as const) await page.getByLabel(label, { exact: true }).fill(value);
     await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Verificar diferencias y restauración del historial canónico.');
     await page.getByRole('button', { name: 'Guardar y aplicar perfil', exact: true }).click();
-    await page.getByText(/La revisión deseada y los ficheros del runtime quedaron actualizados/u).waitFor({ timeout: 30_000 });
+    await page.getByText(/La revisión deseada y los archivos del agente quedaron actualizados/u).waitFor({ timeout: 30_000 });
     const saved = await apiGet(page, `/v3/console/tenants/${fixture.tenant}/agents/${fixture.targetAlias}/perfil`);
     expect(saved.body).toMatchObject({ revision: 2, perfil: authored });
     const savedRow = await fixture.database.pool.query(
@@ -690,7 +690,7 @@ describe('perfil canónico desde configuración móvil y runtime Python medido',
     await otherPurpose.fill(`Perfil concurrente ${RUN_ID}.`);
     await concurrent.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Guardar el perfil de otra pestaña antes del borrador conservado.');
     await otherSave.click();
-    await concurrent.getByText(/La revisión deseada y los ficheros del runtime quedaron actualizados/u).waitFor({ timeout: 30_000 });
+    await concurrent.getByText(/La revisión deseada y los archivos del agente quedaron actualizados/u).waitFor({ timeout: 30_000 });
     await page.getByLabel('Motivo de este cambio de perfil', { exact: true }).fill('Comprobar que el CAS impide perder un perfil guardado desde otra pestaña.');
     await save.click();
     const conflict = page.getByRole('group', { name: 'Conflicto de versión', exact: true });

@@ -18,6 +18,7 @@ import { exactConfigurationReceipt } from './config-receipt';
 import { actionsFor, mutationText, parseMutation, rollbackPolicy } from './mutation-editor';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { useInterruptores } from './use-interruptores';
+import { configMutationSummary } from './config-change-summary';
 
 /** A table-action notice holds only for its collection AND the snapshot revision it was produced under. */
 export function alcanceDeAccion(coleccion: string, revision: number | undefined): string {
@@ -157,13 +158,14 @@ export function useConfigWrites() {
     }
     if (dryRun) {
       canalEditor.mostrar(JSON.stringify(outcome.result, null, 2));
+      canalEditor.informar({ tone: 'success', text: `Vista previa aceptada: ${configMutationSummary(mutation, config.data)}. Todavía no se ha guardado.` });
       return;
     }
     canalEditor.mostrar(undefined);
     canalEditor.informar({
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
-      text: `Cambio atómico aplicado en revisión ${String(outcome.result.revision ?? 'desconocida')}: `
-        + `${outcome.result.summary ?? 'sin resumen del servidor'}.${textoRecarga(outcome.recarga)}`,
+      text: `Cambio aplicado en revisión ${String(outcome.result.revision ?? 'desconocida')}: `
+        + `${configMutationSummary(mutation, config.data)}.${textoRecarga(outcome.recarga)}`,
     });
   }
 
@@ -201,7 +203,7 @@ export function useConfigWrites() {
       alcance,
       tone: outcome.recarga && !outcome.recarga.releido ? 'parcial' : 'success',
       text: `${accion.descripcion}: aplicado en la revisión ${String(outcome.result.revision ?? 'desconocida')} `
-        + `(${outcome.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(outcome.recarga)}`,
+        + `(${configMutationSummary(accion.mutation, config.data)}).${textoRecarga(outcome.recarga)}`,
     });
   }
 
@@ -215,7 +217,7 @@ export function useConfigWrites() {
     }
     if (motivoDeSoloLectura) {
       canalRollback.mostrar(undefined);
-      canalRollback.informar({ tone: 'error', text: `Rollback bloqueado. ${motivoDeSoloLectura}` });
+      canalRollback.informar({ tone: 'error', text: `Reversión bloqueada. ${motivoDeSoloLectura}` });
       return;
     }
     const expectedRevision = canalRollback.expectedRevision;
@@ -232,8 +234,8 @@ export function useConfigWrites() {
           canalRollback.informar({
             tone: 'error',
             text: dryRun
-              ? `El servidor devolvió un 2xx sin el recibo exacto del preview de rollback ${revisionId}; no se acredita.`
-              : `El servidor devolvió un 2xx sin el recibo durable exacto del rollback ${revisionId}. Puede haberse aplicado; verifica la relectura antes de repetirlo.${textoRecarga(recarga)}`,
+              ? `El servidor respondió sin el recibo exacto de la vista previa de la reversión ${revisionId}; no se acredita.`
+              : `El servidor respondió sin el recibo exacto de la reversión ${revisionId}. Puede haberse aplicado; verifica la relectura antes de repetirlo.${textoRecarga(recarga)}`,
           });
           return;
         }
@@ -242,8 +244,8 @@ export function useConfigWrites() {
           // A dry-run that says nothing is indistinguishable from a button that did nothing: the `<pre>` appears below, but the phrase is what gets read first.
           canalRollback.informar({
             tone: 'success',
-            text: `Preview del rollback de la revisión ${revisionId} aceptado por el servidor: `
-              + 'no se escribió nada todavía, revisa el resultado de abajo.',
+            text: `Vista previa para deshacer la revisión ${revisionId} aceptada: ${result.mutation ? configMutationSummary(result.mutation, config.data) : 'Sin detalle del cambio'}. `
+              + 'Todavía no se ha guardado; revisa el cambio antes de confirmar.',
           });
           return;
         }
@@ -252,12 +254,12 @@ export function useConfigWrites() {
         const recarga = await releer();
         canalRollback.informar({
           tone: recarga.releido ? 'success' : 'parcial',
-          text: `Rollback atómico de la revisión ${revisionId} aplicado: revisión `
+          text: `Reversión de la revisión ${revisionId} aplicada: revisión `
             + `${String(result.revision ?? 'desconocida')}.${textoRecarga(recarga)}`,
         });
       } catch (error) {
         // `rollback`: this path does not preview before applying, so a 409 cannot redirect to "back to preview"—it redirects to picking the revision again over the new state.
-        const described = describeConfigError(error, 'Rollback rechazado sin detalle del servidor', 'rollback');
+        const described = describeConfigError(error, 'Reversión rechazada sin detalle del servidor', 'rollback');
         if (!described.conflict) {
           canalRollback.informar({ text: described.message, tone: 'error' });
           return;

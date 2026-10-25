@@ -1,4 +1,5 @@
 import type { ConfigMutation } from '../../api/types';
+import { nombreDeRol } from './efecto-de-rol';
 
 
 /** Column order for collections with a known shape; the rest derive from the rows. */
@@ -299,7 +300,7 @@ export function accionDeRol(fila: Record<string, unknown>, rol: string): AccionD
   if (!ROL.test(pedido) || pedido === actual) return undefined;
   return {
     id: 'role',
-    descripcion: `Cambiar el rol de permisos de ${tenantId}/${roomId}/${alias} de ${actual ?? 'UNKNOWN'} a ${pedido}`,
+    descripcion: `Cambiar el rol de permisos de ${tenantId}/${roomId}/${alias} de ${actual ? nombreDeRol(actual) : 'sin rol publicado'} a ${nombreDeRol(pedido)}`,
     mutation: {
       resource: 'membership', action: 'update', tenant_id: tenantId, room_id: roomId, alias,
       value: { role: pedido },

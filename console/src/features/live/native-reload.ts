@@ -139,5 +139,5 @@ export async function reloadNativeAgent(api: ReloadClient, configuration: Resour
   const afterStart = await fresh();
   const restarted = nativeReloadBinding(afterStart, capability, target, true);
   if (!restarted || Number(afterStart.revision) < Number(started.applied_revision)
-    || JSON.stringify(before) !== JSON.stringify(restarted)) throw new Error('El arranque devolvió un recibo, pero la configuración actual no acredita este runtime. Relee su historial.');
+    || JSON.stringify(before) !== JSON.stringify(restarted)) throw new Error('El arranque devolvió un recibo, pero la configuración actual no confirma este entorno del agente. Relee su historial.');
 }

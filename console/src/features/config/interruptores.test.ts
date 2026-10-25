@@ -65,7 +65,7 @@ it('la ÚNICA confirmación que queda es quitar Control; concederlo no confirma 
   // Confirming twenty times in a row does not protect: it teaches people to mash "Confirm" without
   // reading, and the day the one that matters shows up nobody reads it anymore.
   const quitar = interruptorDeFila('acl_edges', { ...arista, allow_control: true }, 'allow_control', 0);
-  expect(quitar?.confirmar).toMatch(/no vas a poder devolvértelo desde acá/i);
+  expect(quitar?.confirmar).toMatch(/no vas a poder devolvértelo desde aquí/i);
 
   expect(interruptorDeFila('acl_edges', arista, 'allow_control', 0)?.confirmar).toBeUndefined();
   expect(interruptorDeFila('acl_edges', arista, 'allow_route', 0)?.confirmar).toBeUndefined();

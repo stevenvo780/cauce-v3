@@ -151,7 +151,7 @@ describe('huecos de live y contexto en navegador real contra gateway y PostgreSQ
       await shot(page, 'directiva-capas-390');
       await page.setViewportSize({ width: 1440, height: 900 });
 
-      const botonEditarPerfil = page.getByRole('button', { name: 'Editar los campos canónicos', exact: true });
+      const botonEditarPerfil = page.getByRole('button', { name: 'Editar el perfil', exact: true });
       await botonEditarPerfil.click();
       await page.getByText('Campos canónicos de', { exact: false }).waitFor({ timeout: 20_000 });
 

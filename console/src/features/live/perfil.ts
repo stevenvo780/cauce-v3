@@ -68,7 +68,7 @@ export const ETIQUETAS: Record<CampoDelPerfil, { titulo: string; ayuda: string }
   },
   operating_rules: {
     titulo: 'Instrucciones fijas de funcionamiento',
-    ayuda: 'Cómo se trabaja acá. Lo que hoy se reinyecta en cada mensaje y debería estar escrito una sola vez.',
+    ayuda: 'Cómo se trabaja aquí. Lo que hoy se reinyecta en cada mensaje y debería estar escrito una sola vez.',
   },
 };
 
@@ -348,14 +348,14 @@ type EstadoDeAplicacion = (typeof ESTADOS_DE_APLICACION)[number];
 
 export const MENSAJES_DE_APLICACION: Readonly<Record<EstadoDeAplicacion, string>> = {
   absent: 'no hay contexto guardado todavía para este alias.',
-  disabled: 'el alias está apagado: su contexto no se aplica a ningún runtime.',
+  disabled: 'el alias está apagado: su contexto no se aplica mientras está apagado.',
   pending: 'hay una revisión guardada que todavía no llegó a los ficheros del contenedor.',
   written_pending_session: 'el fichero quedó escrito y la sonda acreditó los bytes, pero un ACK de '
     + 'escritura no prueba que el proceso releyera el fichero: se aplicará cuando la sesión '
     + 'recargue su contexto.',
   pending_session_refresh: 'el contexto está en disco y verificado, pero la sesión compartida '
     + 'todavía no acreditó haberlo adoptado.',
-  runtime_unverified: 'no se pudo verificar el runtime, así que no se afirma nada sobre lo que el '
+  runtime_unverified: 'no se pudo verificar el entorno del agente, así que no se afirma nada sobre lo que el '
     + 'proceso lee.',
   drifted: 'lo que hay en el contenedor no coincide con la revisión guardada.',
   applied: 'la sesión acreditó con su propio ACK haber adoptado esta revisión.',

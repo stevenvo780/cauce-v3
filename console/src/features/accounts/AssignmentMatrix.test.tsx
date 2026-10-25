@@ -140,7 +140,10 @@ it('otorga un techo con dry-run previo y una sola mutación de alias_routing_cei
 
   await openMatrix(user);
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Sin acceso/i }));
-  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar cambio/i }));
+
+  expect(await screen.findByText(/vista previa aceptada:/i)).toHaveTextContent('Dar a «kant» del espacio «Steven» acceso a la cuenta «MiniMax»');
+  expect(screen.getByLabelText('Mutación pendiente de asignación').closest('details')).not.toHaveAttribute('open');
 
   expect(changes[0]).toEqual({
     dry_run: true,
@@ -166,7 +169,7 @@ it('el dry-run de una mitad no habilita el apply de la otra: cada formulario tie
   await user.click(screen.getByRole('button', { name: /^cerrar$/i }));
   await user.click(screen.getByRole('tab', { name: 'Asignaciones' }));
   await user.click(screen.getByRole('button', { name: /Steven\/kant × minimax-pablo: Sin acceso/i }));
-  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar cambio/i }));
 
   expect(changes).toHaveLength(1);
   expect(changes[0]?.mutation).toMatchObject({ resource: 'alias_routing_ceiling' });
@@ -189,7 +192,7 @@ it('ordena las consultas con una mutación de binding que lleva prioridad y esta
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
   await user.clear(screen.getByLabelText(/orden de consulta/i));
   await user.type(screen.getByLabelText(/orden de consulta/i), '20');
-  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar cambio/i }));
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',
@@ -210,7 +213,7 @@ it('no convierte una prioridad vacía en 0, que es la más alta', async () => {
   // assembled the highest priority instead of asking for a value.
   await user.clear(screen.getByLabelText(/orden de consulta/i));
 
-  expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(assignmentActions().getByRole('button', { name: /previsualizar cambio/i })).toBeDisabled();
   expect(screen.getByText(/el orden debe ser un entero entre 0 y 32767/i)).toBeInTheDocument();
   expect(changes).toHaveLength(0);
 });
@@ -227,7 +230,7 @@ it('tampoco acepta una prioridad de puros espacios', async () => {
   await user.clear(screen.getByLabelText(/orden de consulta/i));
   await user.type(screen.getByLabelText(/orden de consulta/i), '   ');
 
-  expect(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i })).toBeDisabled();
+  expect(assignmentActions().getByRole('button', { name: /previsualizar cambio/i })).toBeDisabled();
   expect(changes).toHaveLength(0);
 });
 
@@ -242,7 +245,7 @@ it('sigue aceptando la prioridad 0 cuando el operador la escribe de verdad', asy
   await user.click(await screen.findByRole('button', { name: /Steven\/kant × minimax-pablo: Pausada/i }));
   await user.clear(screen.getByLabelText(/orden de consulta/i));
   await user.type(screen.getByLabelText(/orden de consulta/i), '0');
-  await user.click(assignmentActions().getByRole('button', { name: /previsualizar \(dry-run\)/i }));
+  await user.click(assignmentActions().getByRole('button', { name: /previsualizar cambio/i }));
 
   expect(changes[0]?.mutation).toEqual({
     resource: 'agent_account_binding', action: 'update', tenant_id: 'Steven',

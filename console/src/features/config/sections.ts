@@ -31,7 +31,7 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     id: 'espacios',
     label: 'Espacios y salas',
     proposito: 'Los clientes, sus salas y quién está dentro de cada una.',
-    detalle: 'De acá sale el enrutado de la flota: un alias sin membresía habilitada no recibe entregas, aunque '
+    detalle: 'De aquí sale el enrutado de la flota: un alias sin membresía habilitada no recibe entregas, aunque '
       + 'esté en el registro de agentes. El «Rol de permisos» de una membresía elige una política por rol; no es '
       + 'el contexto ni el rol declarado del agente.',
   },
@@ -70,8 +70,8 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   {
     id: 'avanzado',
     label: 'Avanzado',
-    proposito: 'Historial de revisiones con rollback, editor de mutaciones JSON y colecciones sin vista propia.',
-    detalle: 'Cada cambio queda con su inversa y una revisión esperada (control de concurrencia optimista). Acá '
+    proposito: 'Historial de revisiones con reversión de cambios, editor técnico y colecciones sin vista propia.',
+    detalle: 'Cada cambio queda con su inversa y una revisión esperada para evitar sobrescribir cambios de otra persona. Aquí '
       + 'está la válvula de escape para lo que ninguna sección sabe hacer todavía.',
   },
 ];

@@ -347,7 +347,7 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
   expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
   expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
-  expect(notaQueDice(hilo, /solo porque el servidor publicó mensajes suyos/i)).toBe(true);
+  expect(notaQueDice(hilo, /solo aparece en el historial de mensajes/i)).toBe(true);
 }, 25_000);
 
 /**

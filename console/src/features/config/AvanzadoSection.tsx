@@ -10,6 +10,7 @@ import { RecentFleetOperations } from './RecentFleetOperations';
 import { actionsFor, mutationResourceReason, PLATFORM_CLI_REASON, rollbackPolicy, templates } from './mutation-editor';
 import type { ConfigWrites } from './use-config-writes';
 import type { ConfigResource, ConfigAction } from '../../api/types';
+import { CONFIG_ACTION_LABELS, CONFIG_RESOURCE_LABELS, configHistorySummary } from './config-change-summary';
 
 /** The audit trail with rollback, the raw mutation editor and every collection the console cannot present. */
 export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
@@ -26,7 +27,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
   return <div className="grid gap-4">
     <ConfigSectionHeader seccion="avanzado" />
 
-    <SectionCard level={3} title="Historial de revisiones" description="Rollback crea una nueva revisión; el historial nunca se reescribe.">
+    <SectionCard level={3} title="Historial de revisiones" description="Deshacer un cambio crea una nueva revisión; el historial se conserva.">
       {/* The `oldValue` the store keeps as the inverse is the WHOLE ROW that was there before, not the field that was
           touched, even if the mutation that was sent was partial. The operator cannot deduce that from a button labeled
           "Rollback", and the difference could cost them a teammate's change. */}
@@ -39,22 +40,22 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
       {/* The rollback outcome is painted HERE, above the table and in plain sight: it is the only spot the operator
           is looking at when they press one of these buttons. */}
       {canalRollback.notice ? <Outcome tone={canalRollback.notice.tone} canal={canalRollback.canal}>{canalRollback.notice.text}</Outcome> : null}
-      {canalRollback.preview ? <pre className={PREVIEW} aria-label="Preview del rollback">{canalRollback.preview}</pre> : null}
+      {canalRollback.preview ? <details><summary>Detalles técnicos de la reversión</summary><pre className={PREVIEW} aria-label="Vista previa de la reversión">{canalRollback.preview}</pre></details> : null}
 
       {!revisions?.length ? <EmptyState>No hay revisiones.</EmptyState> : <Desplazable etiqueta="Historial de revisiones de configuración" className={SCROLL}>
-        <table className={CARD_TABLE}><thead><tr><th>Rev</th><th>Actor</th><th>Resumen</th><th>Fecha</th><th>Rollback</th></tr></thead><tbody>
+        <table className={CARD_TABLE}><thead><tr><th>Revisión</th><th>Responsable</th><th>Resumen</th><th>Fecha</th><th>Deshacer</th></tr></thead><tbody>
           {revisions.map((revision, index) => {
             const policy = rollbackPolicy(revision.operation, config.data);
             const id = revision.id;
             return <tr key={id ?? index}>
               <td data-label="Rev"><Badge tone="info"><Unknown value={id} /></Badge></td>
               <td data-label="Actor"><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td>
-              <td data-label="Resumen"><Unknown value={revision.summary} /></td>
+              <td data-label="Resumen">{configHistorySummary(revision.operation, config.data)}{revision.summary ? <details><summary>Detalles técnicos</summary><span className="text-xs wrap-anywhere">{revision.summary}</span></details> : null}</td>
               <td data-label="Fecha"><Time value={revision.created_at} /></td>
-              <td data-label="Rollback">{id && policy.allowed
+              <td data-label="Deshacer">{id && policy.allowed
                 ? <span className="inline-flex gap-1.5">
-                  <ActionButton size="sm" label="Preview" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy} action={() => ctx.rollback(id, revision.operation, true)} />
-                  <ActionButton size="sm" label="Rollback" pendingLabel="Revirtiendo…" done={false} announceError={false} disabled={soloLectura || busy} icon={<RotateCcw size={14} aria-hidden="true" />} action={() => ctx.rollback(id, revision.operation, false)} />
+                  <ActionButton size="sm" label="Previsualizar" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy} action={() => ctx.rollback(id, revision.operation, true)} />
+                  <ActionButton size="sm" label="Deshacer" pendingLabel="Revirtiendo…" done={false} announceError={false} disabled={soloLectura || busy} icon={<RotateCcw size={14} aria-hidden="true" />} action={() => ctx.rollback(id, revision.operation, false)} />
                 </span>
                 : id && !policy.allowed
                   ? <span className="text-xs text-muted">{policy.message}{policy.accountResource ? <> <a href="/accounts" onClick={(event) => { onNavClick(event, '/accounts'); }}>Abrir Cuentas</a>.</> : null}</span>
@@ -69,7 +70,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
         their sole authority is /accounts; `agent` remains available, except for its read-only role_brief projection. */}
     <details className="group rounded-xl border border-line bg-surface shadow-card">
       <summary className="flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-semibold">
-        <Braces size={14} aria-hidden="true" /> Editor de mutaciones JSON — válvula de escape para lo que no tiene formulario
+        <Braces size={14} aria-hidden="true" /> Editor técnico de cambios
       </summary>
       <section className="grid gap-3 border-t border-line p-4">
         <h3 className="m-0 text-sm font-semibold">Editor de mutaciones</h3>
@@ -79,22 +80,24 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
         <p className="m-0 text-xs text-muted">Revisión esperada: {String(canalEditor.expectedRevision ?? 'UNKNOWN')}</p>
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); }}>
           <div className={FORM_GRID}>
-            <label>Resource<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item} disabled={Boolean(mutationResourceReason(item, config.data))}>{item}</option>)}</select></label>
-            <label>Action<select disabled={soloLectura || busy} value={ctx.action} onChange={(event) => { ctx.selectTemplate(ctx.resource, event.target.value as ConfigAction); }}>{actionsFor(ctx.resource).map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Recurso<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item} value={item} disabled={Boolean(mutationResourceReason(item, config.data))}>{CONFIG_RESOURCE_LABELS[item as ConfigResource]}</option>)}</select></label>
+            <label>Acción<select disabled={soloLectura || busy} value={ctx.action} onChange={(event) => { ctx.selectTemplate(ctx.resource, event.target.value as ConfigAction); }}>{actionsFor(ctx.resource).map((item) => <option key={item} value={item}>{CONFIG_ACTION_LABELS[item]}</option>)}</select></label>
           </div>
           <label>Mutación JSON<textarea aria-label="Mutación JSON" className="font-mono text-xs" disabled={soloLectura || busy} rows={12} value={ctx.editor} onChange={(event) => { ctx.editarMutacion(event.target.value); }} spellCheck={false} /></label>
           <div className="flex flex-wrap gap-2">
-            <ActionButton label="Preview / dry-run" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<SearchCheck size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, true)} />
-            <ActionButton variant="primary" label="Aplicar atómico" pendingLabel="Aplicando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<Save size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, false)} />
+            <ActionButton label="Previsualizar cambio" pendingLabel="Previsualizando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<SearchCheck size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, true)} />
+            <ActionButton variant="primary" label="Aplicar cambio" pendingLabel="Aplicando…" done={false} announceError={false} disabled={soloLectura || busy || Boolean(editorReason)} icon={<Save size={16} aria-hidden="true" />} action={(event) => ctx.submit(event, false)} />
           </div>
         </form>
-        {canalEditor.preview ? <pre className={PREVIEW} aria-label="Resultado de preview">{canalEditor.preview}</pre> : null}
+        {canalEditor.preview ? <details><summary>Detalles técnicos de la vista previa</summary><pre className={PREVIEW} aria-label="Resultado de la vista previa">{canalEditor.preview}</pre></details> : null}
         {canalEditor.notice ? <Outcome tone={canalEditor.notice.tone} canal={canalEditor.canal}>{canalEditor.notice.text}</Outcome> : null}
       </section>
     </details>
 
     <RecentFleetOperations />
 
-    <TablasDeSeccion ctx={ctx} seccion="avanzado" />
+    <details className="min-w-0"><summary>Datos técnicos de configuración</summary>
+      <TablasDeSeccion ctx={ctx} seccion="avanzado" />
+    </details>
   </div>;
 }

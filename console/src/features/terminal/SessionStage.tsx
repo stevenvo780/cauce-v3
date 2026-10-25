@@ -445,7 +445,7 @@ export function SessionStage({
 
       {view === 'terminal' && shared.length ? (
         <Notice tone="warn" icon={<AlertTriangle size={14} aria-hidden="true" />}>
-          Este contenedor lo comparten <strong>{sharedLabels.join(', ')}</strong>. Una shell acá no es “la terminal de {agent.alias}”:
+          Este contenedor lo comparten <strong>{sharedLabels.join(', ')}</strong>. Una shell aquí no es “la terminal de {agent.alias}”:
           es acceso al home donde conviven {[agent.alias, ...sharedLabels].join(', ')}.
         </Notice>
       ) : null}

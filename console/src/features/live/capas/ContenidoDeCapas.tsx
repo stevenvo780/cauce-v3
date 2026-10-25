@@ -62,7 +62,7 @@ function MiroYNoHay({ children }: { children: ReactNode }) {
 
 export function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
   const medicion = medicionDeCapa(recurso, 'files');
-  if (medicion === 'cargando') return <p className="m-0 text-muted">Buscando el manual medido del runtime…</p>;
+  if (medicion === 'cargando') return <p className="m-0 text-muted">Buscando el manual del agente en ejecución…</p>;
   if (medicion === 'no-se-miro') {
     if (recurso.error) {
       return <LecturaFallida que="el manual del sitio" motivo={recurso.error.message} />;
@@ -87,7 +87,7 @@ export function CapaDeFicheros({ recurso }: { recurso: RecursoDirectiva }) {
           ? 'Orden efectivo de Codex: más profundo prevalece; override gana dentro del nivel.'
           : recurso.data?.manual_order === 'claude_load_order'
             ? 'Orden de carga medido de Claude; no se inventa una precedencia adicional.'
-            : 'Orden medido del runtime.'}
+            : 'Orden comprobado en el agente en ejecución.'}
       </p>
       {(recurso.data?.context_limitations ?? []).map((limitacion) => (
         <p key={limitacion} className={META} role="note">Cobertura limitada: {limitacion}</p>

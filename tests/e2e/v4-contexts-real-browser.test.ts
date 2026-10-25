@@ -140,7 +140,7 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     const versions = page.getByRole('region', { name: 'Versiones de contexto', exact: true });
     await mkdir(artifactDirectory, { recursive: true });
     await step(page, 'acreditar el espacio sin copias guardadas', async () => {
-      const emptyBackups = page.getByRole('region', { name: 'Backup del espacio', exact: true })
+      const emptyBackups = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true })
         .getByText('No hay copias guardadas de este espacio.', { exact: true });
       await emptyBackups.waitFor({ timeout: 20_000 });
       const backupPath = `/v3/console/spaces/${tenant}/${agentAlias}/backups`;

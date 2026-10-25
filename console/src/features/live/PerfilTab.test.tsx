@@ -184,7 +184,7 @@ it('un perfil persistido vacío usa su revisión propia y solo anuncia ACK aplic
       responsibilities: [], restrictions: [], tools: [], operating_rules: [],
     },
   });
-  expect(await screen.findByText(/Aplicado: la revisión deseada y el runtime acreditan la revisión 5/)).toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: la revisión deseada y el agente en ejecución coinciden en la revisión 5/)).toBeInTheDocument();
   expect(screen.getByText(/1 ficheros respondieron SHA y bytes/)).toBeInTheDocument();
 });
 
@@ -238,7 +238,7 @@ it('un desired pendiente se puede reintentar sin cambiar el texto', async () => 
   await motivar(user, 'reintento el lote pendiente');
   await user.click(screen.getByRole('button', { name: /Reintentar aplicación/i }));
   await waitFor(() => { expect(recibido?.expected_revision).toBe(4); });
-  expect(await screen.findByText(/Aplicado: la revisión deseada y el runtime acreditan la revisión 4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: la revisión deseada y el agente en ejecución coinciden en la revisión 4/)).toBeInTheDocument();
 });
 
 it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () => {
@@ -290,7 +290,7 @@ it('drift se pinta rojo y permite restaurar el lote sin cambiar texto', async ()
   const user = userEvent.setup();
   renderWithApi(<Vista />);
 
-  expect(await screen.findByRole('alert', { name: '' })).toHaveTextContent(/SHA medidos.*no coinciden/i);
+  expect(await screen.findByRole('alert', { name: '' })).toHaveTextContent(/huellas de los archivos del agente.*no coinciden/i);
   expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeDisabled();
   await motivar(user, 'restauro el lote canónico');
   expect(screen.getByRole('button', { name: /Reintentar aplicación/i })).toBeEnabled();
@@ -312,7 +312,7 @@ it('runtime sin generación no se presenta aplicado ni deja editar', async () =>
   renderWithApi(<Vista />);
 
   expect(await screen.findByLabelText(/Identidad y propósito/i)).toBeDisabled();
-  expect(screen.getByText(/no publicó una generación acreditable/i)).toBeInTheDocument();
+  expect(screen.getByText(/No se pudo verificar la instancia del agente en ejecución/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeDisabled();
 });
 

@@ -211,7 +211,7 @@ it('guardar lo restaurado exige el motivo escrito a mano y sale por el PUT canó
     },
   });
   expect(cambiosGenericos).toBe(0);
-  expect(await within(cajon).findByText(/la revisión deseada y el runtime acreditan la revisión 5/i))
+  expect(await within(cajon).findByText(/la revisión deseada y el agente en ejecución coinciden en la revisión 5/i))
     .toBeInTheDocument();
 }, 30_000);
 

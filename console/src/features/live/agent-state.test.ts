@@ -443,7 +443,7 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
     // What must not come back: the assertion of a correct closure.
     expect(estado.reason).not.toMatch(/cerró una entrega/i);
     expect(estado.reason).not.toMatch(/terminó el turno/i);
-    expect(estado.reason).toMatch(/no se puede saber/i);
+    expect(estado.reason).toMatch(/no permite confirmar si terminó, falló o venció/i);
   });
 
   it('el estado que produce ese pulso NO es de tono positivo ni dice "respondiendo"', () => {

@@ -18,8 +18,8 @@ it.each([retired, { resource: 'batch', action: 'apply', mutations: [retired] }])
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, /avanzado/i);
-  await user.click(screen.getByRole('button', { name: /^Preview$/ }));
-  expect(await screen.findByText(/preview del rollback de la revisión 1 aceptado/i)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /^Previsualizar$/ }));
+  expect(await screen.findByText(/vista previa para deshacer la revisión 1 aceptada/i)).toBeInTheDocument();
 });
 
 it('bloquea rollback de batch con autoridad de cuentas y de batches anidados', async () => {
@@ -32,7 +32,7 @@ it('bloquea rollback de batch con autoridad de cuentas y de batches anidados', a
   await irA(user, /avanzado/i);
   const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
-  expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
+  expect(within(audit).queryByRole('button', { name: /^Deshacer$/ })).not.toBeInTheDocument();
   expect(within(audit).getByRole('link', { name: /abrir cuentas/i })).toBeInTheDocument();
 });
 
@@ -48,8 +48,8 @@ it('previsualiza un rollback de 200 cambios del historial con recibo completo', 
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
   await irA(user, /avanzado/i);
-  await user.click(screen.getByRole('button', { name: /^Preview$/ }));
-  expect(await screen.findByText(/preview del rollback de la revisión 1 aceptado/i)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: /^Previsualizar$/ }));
+  expect(await screen.findByText(/vista previa para deshacer la revisión 1 aceptada/i)).toBeInTheDocument();
 });
 
 it('conserva el bloqueo de cuentas dentro de una revisión de 200 cambios', async () => {
@@ -63,7 +63,7 @@ it('conserva el bloqueo de cuentas dentro de una revisión de 200 cambios', asyn
   await irA(user, /avanzado/i);
   const audit = screen.getByRole('heading', { name: 'Historial de revisiones' }).closest('section');
   if (!audit) throw new Error('Audit panel missing');
-  expect(within(audit).queryByRole('button', { name: /^Rollback$/ })).not.toBeInTheDocument();
+  expect(within(audit).queryByRole('button', { name: /^Deshacer$/ })).not.toBeInTheDocument();
   expect(within(audit).getByRole('link', { name: /abrir cuentas/i })).toBeInTheDocument();
 });
 

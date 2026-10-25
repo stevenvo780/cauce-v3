@@ -62,6 +62,6 @@ export function bloqueoPorRuntimeDesplegado(text: string): string | undefined {
     `Son ${String(puntos)} caracteres, que la base acepta, pero ${String(utf16)} unidades UTF-16 — y los ` +
     'adaptadores que corren hoy en producción todavía miden así. Guardarlo dejaría al alias ' +
     'SORDO sin dar ningún error. Quita algún emoji o acorta el texto; la restricción se levanta ' +
-    'cuando salga el runtime nuevo.'
+    'cuando se actualice el agente.'
   );
 }

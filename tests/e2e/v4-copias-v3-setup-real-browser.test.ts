@@ -54,9 +54,9 @@ async function latest(alias = active().alias): Promise<Backup | undefined> {
 async function requestCopy(phase: string, alias = active().alias): Promise<Backup> {
   const f = active(); const page = f.page;
   await page.goto(`${f.baseUrl}/messages/${f.tenant}/${alias}?view=context`, { waitUntil: 'domcontentloaded' });
-  const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
+  const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
   const previous = await latest(alias);
-  await panel.getByRole('button', { name: /^Crear (?:backup del espacio|otro backup)$/u }).click();
+  await panel.getByRole('button', { name: /^Crear (?:copia del espacio|otra copia)$/u }).click();
   let row: Backup | undefined;
   await expect.poll(async () => { row = await latest(alias); return row && row.id !== previous?.id && ['ready', 'failed'].includes(row.status); },
     { timeout: 180_000, interval: 500 }).toBe(true);
@@ -64,7 +64,7 @@ async function requestCopy(phase: string, alias = active().alias): Promise<Backu
   const audit = (await f.computer.pool.query(`SELECT action,metadata->'failure' AS failure FROM audit_events
     WHERE company_id=$1 AND action='space.backup.failed' AND metadata->>'id'=$2`, [f.company, row.id])).rows;
   await receipt(`${phase}-backup`, { row, audit });
-  await panel.getByText(row.status === 'ready' ? 'Backup disponible' : 'El backup falló', { exact: true }).waitFor({ timeout: 30_000 });
+  await panel.getByText(row.status === 'ready' ? 'Copia disponible' : 'La copia falló', { exact: true }).waitFor({ timeout: 30_000 });
   await capture(page, phase, panel);
   return row;
 }
@@ -74,8 +74,8 @@ async function downloadAndCompare(phase: string, backup: Backup) {
   expect(backup).toMatchObject({ status: 'ready', error: null });
   await page.evaluate(() => { Reflect.deleteProperty(window, 'showSaveFilePicker'); });
   const waitDownload = (page as DownloadPage).waitForEvent('download', { timeout: 60_000 });
-  const panel = page.getByRole('region', { name: 'Backup del espacio', exact: true });
-  await panel.getByRole('button', { name: 'Descargar backup ZIP', exact: true }).click();
+  const panel = page.getByRole('region', { name: 'Copia de seguridad del espacio', exact: true });
+  await panel.getByRole('button', { name: 'Descargar copia ZIP', exact: true }).click();
   const download = await waitDownload; expect(await download.failure()).toBeNull(); const browserPath = await download.path();
   expect(browserPath).toMatch(/^\/tmp\/playwright-artifacts-[A-Za-z0-9]+\/[a-f0-9-]{36}$/u);
   const browserId = (await browserDocker(['inspect', '--format', '{{.Id}}', f.browser.container])).stdout.trim();

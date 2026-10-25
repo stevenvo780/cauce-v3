@@ -106,8 +106,8 @@ async function disabled(page: BrowserPage, name: string): Promise<boolean> {
 
 async function preview(page: BrowserPage, label: string) {
   const actions = page.getByRole('group', { name: `Acciones de ${label}`, exact: true });
-  await actions.getByRole('button', { name: 'Previsualizar (dry-run)' }).click();
-  await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+  await actions.getByRole('button', { name: 'Previsualizar cambio' }).click();
+  await page.getByRole('status').filter({ hasText: 'Vista previa aceptada:' }).waitFor({ timeout: 20_000 });
   return actions;
 }
 
@@ -229,7 +229,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await page.getByRole('tab', { name: 'Asignaciones', exact: true }).click();
     await page.getByText('¿Qué cambia esta asignación?', { exact: true }).click();
     await page.getByRole('button', { name: 'Nueva asignación', exact: true }).click();
-    expect(await disabled(page, 'Previsualizar (dry-run)')).toBe(true);
+    expect(await disabled(page, 'Previsualizar cambio')).toBe(true);
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
     await assignment(page, 'grant-ceiling');
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
@@ -247,11 +247,11 @@ describe('administración real de cuentas y asignaciones', () => {
     const order = page.getByRole('textbox', { name: /^Orden de consulta/u });
     for (const invalid of ['', '-1', '1.5', '32768', 'abc']) {
       await order.fill(invalid);
-      expect(await disabled(page, 'Previsualizar (dry-run)')).toBe(true);
+      expect(await disabled(page, 'Previsualizar cambio')).toBe(true);
     }
     for (const valid of ['0', '32767', '7']) {
       await order.fill(valid);
-      expect(await disabled(page, 'Previsualizar (dry-run)')).toBe(false);
+      expect(await disabled(page, 'Previsualizar cambio')).toBe(false);
     }
     await apply(page, 'asignación');
     expect(await bindingState()).toEqual([{ priority: 7, enabled: true }]);
@@ -274,7 +274,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await apply(page, 'asignación');
     await assignment(page, 'create-binding', secondAccountId);
     await order.fill('3');
-    await page.getByRole('button', { name: 'Previsualizar (dry-run)' }).click();
+    await page.getByRole('button', { name: 'Previsualizar cambio' }).click();
     await page.getByRole('alert').waitFor({ timeout: 20_000 });
     expect(await bindingState(secondAccountId)).toEqual([]);
     expect(await disabled(page, 'Aplicar')).toBe(true);
@@ -298,7 +298,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
     await page.getByRole('button', { name: `Retirar o rotar «${accountId}»`, exact: true }).click();
     await page.getByLabel(`Confirmar borrado de ${accountId}`).fill(accountId);
-    expect(await disabled(page, 'Previsualizar (dry-run)')).toBe(true);
+    expect(await disabled(page, 'Previsualizar cambio')).toBe(true);
     await screenshot(page, 'inventory-dependent-delete-390');
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
     await page.getByRole('tab', { name: 'Asignaciones', exact: true }).click();
@@ -319,7 +319,7 @@ describe('administración real de cuentas y asignaciones', () => {
 
     await assignment(page, 'grant-ceiling');
     await page.getByRole('combobox', { name: 'Agente', exact: true }).selectOption(`Isa/${active.readerAlias}`);
-    await page.getByRole('button', { name: 'Previsualizar (dry-run)' }).click();
+    await page.getByRole('button', { name: 'Previsualizar cambio' }).click();
     await page.getByRole('alert').filter({ hasText: 'NO está publicada al pool' }).waitFor();
     expect(await disabled(page, 'Aplicar')).toBe(true);
     await screenshot(page, 'assign-private-borrow-rejected-390');
@@ -344,7 +344,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await screenshot(page, 'assign-borrowed-consent-390');
     await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
     await page.getByRole('button', { name: `Despublicar «${accountId}» del pool`, exact: true }).click();
-    await page.getByRole('button', { name: 'Previsualizar (dry-run)' }).click();
+    await page.getByRole('button', { name: 'Previsualizar cambio' }).click();
     await page.getByRole('alert').filter({ hasText: 'No se puede despublicar' }).waitFor();
     expect(await disabled(page, 'Aplicar')).toBe(true);
     expect((await accountState())?.shared_with_pool).toBe(true);
@@ -391,7 +391,7 @@ describe('administración real de cuentas y asignaciones', () => {
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
     await page.getByRole('button', { name: `Retirar o rotar «${accountId}»`, exact: true }).click();
     await page.getByLabel(`Confirmar borrado de ${accountId}`).fill('incorrecto');
-    expect(await disabled(page, 'Previsualizar (dry-run)')).toBe(true);
+    expect(await disabled(page, 'Previsualizar cambio')).toBe(true);
     await page.getByRole('link', { name: 'Eliminar en Mis cuotas', exact: true }).click();
     await page.getByRole('heading', { name: 'Mis cuotas', exact: true }).waitFor();
     await page.goto(`${active.baseUrl}/accounts`);

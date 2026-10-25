@@ -149,7 +149,7 @@ it('confirma los siete campos deseados sin sonda y limpia el borrador sin acredi
   expect(screen.queryByText(/El servidor no acreditó el guardado completo/i)).toBeNull();
   expect(screen.queryByText(/El perfil cambió mientras editabas/i)).toBeNull();
   expect(screen.queryByText(/^Aplicado:/)).toBeNull();
-  expect(screen.queryByText(/los ficheros del runtime quedaron actualizados/i)).toBeNull();
+  expect(screen.queryByText(/los archivos del agente quedaron actualizados/i)).toBeNull();
 });
 
 it('exige recibo desired estricto y relectura del mismo contenido con aplicado sin avanzar', () => {

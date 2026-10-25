@@ -40,7 +40,7 @@ it('conserva texto y motivo ante conflicto CAS y no acredita aplicación', async
   const field = await screen.findByLabelText('Contenido Markdown'); await user.type(field, 'Draft.');
   await user.type(screen.getByLabelText('Motivo del cambio nativo'), 'Modificar skill con evidencia');
   await user.click(screen.getByRole('button', { name: 'Guardar pieza nativa' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/huella o el runtime cambió/);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/archivo o el entorno del agente cambió/);
   expect(field).toHaveValue(content + 'Draft.'); expect(screen.getByLabelText('Motivo del cambio nativo')).toHaveValue('Modificar skill con evidencia');
   expect(screen.queryByText(/Guardado con respaldo/)).toBeNull();
 });

@@ -2,7 +2,8 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../../mocks/server';
-import { renderWithApi } from '../../test/render';
+import { renderWithApi, testApi } from '../../test/render';
+import { ApiProvider } from '../../api/context';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { ComputadorasSection } from './ComputadorasSection';
 
@@ -209,16 +210,16 @@ it('mientras se edita una computadora, su interruptor y su eliminación quedan b
   expect(within(tarjeta).getByRole('button', { name: 'Eliminar', hidden: true })).toBeDisabled();
 });
 
-it('una lectura fallida de computadoras ofrece reintentar y la relectura muestra la lista', async () => {
+it('reintenta una lectura fallida y actualiza tarjetas y permisos aunque la revisión no cambie', async () => {
   const user = userEvent.setup();
   let lecturas = 0;
   server.use(http.get('*/v3/console/fleet/hosts', () => {
     lecturas += 1;
     return lecturas === 1
       ? HttpResponse.json({ error: 'unavailable' }, { status: 500 })
-      : HttpResponse.json({ hosts: [computadora('uno')] });
+      : HttpResponse.json({ hosts: lecturas > 2 ? [computadora('uno'), computadora('dos')] : [computadora('uno')] });
   }));
-  renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
+  const view = renderWithApi(<ComputadorasSection snapshot={HUB_SNAPSHOT} soloLectura={false} />);
 
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo leer el registro de computadoras.');
   await user.click(screen.getByRole('button', { name: 'Reintentar' }));
@@ -226,6 +227,12 @@ it('una lectura fallida de computadoras ofrece reintentar y la relectura muestra
   expect(await screen.findByRole('article', { name: 'Equipo uno' })).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(lecturas).toBe(2);
+  view.rerender(<ApiProvider api={testApi}>
+    <ComputadorasSection snapshot={{ ...HUB_SNAPSHOT }} soloLectura={false} />
+  </ApiProvider>);
+  expect(await screen.findByRole('article', { name: 'Equipo dos' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'Equipo dos (dos)' })).toBeInTheDocument();
+  expect(lecturas).toBe(3);
 });
 
 it('el vacío de computadoras dice cómo registrar la primera', async () => {

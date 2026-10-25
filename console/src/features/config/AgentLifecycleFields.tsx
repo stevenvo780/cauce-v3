@@ -6,6 +6,7 @@ import { estadoDeComputadora } from './fleet-host-model';
 import { PRIMARY_MEMBERSHIP_CHECKBOX_ID } from './fleet-operation-error-translations';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
 import { registryHarnessOptions } from './agent-registry-create';
+import { nombreDeRol } from './efecto-de-rol';
 
 export function AgentLifecycleFields({ draft, snapshot, capability, target, disabled, edit }: {
   draft: AgentLifecycleDraft; snapshot: ConfigurationSnapshot; capability?: FleetCapability; target?: FleetTarget;
@@ -49,7 +50,7 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
         onChange={(event) => { edit({ displayName: event.target.value }); }} /></label>
       <label>Clave física de ejecución<input value={draft.runtimeKey} disabled={immutableRuntime}
         onChange={(event) => { edit({ runtimeKey: event.target.value, ...derivedFrom(event.target.value) }); }} /></label>
-      <p>La clave física runtime_key queda fija. El alias visible conserva su identidad dentro del espacio de trabajo.
+      <p>La clave de ejecución queda fija. El alias visible conserva su identidad dentro del espacio de trabajo.
         {templateIndex >= 0 ? ' Si la cambias, el directorio de estado y el contenedor de la plantilla se recalculan.' : ''}</p>
       <label>Arnés operativo<select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }}>
         <option value="">Elige un arnés registrado</option>{options('harness_definitions')}
@@ -75,7 +76,7 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
             {member ? <><label>Rol en {JSON.stringify(room.id)}<select value={member.role}
               onChange={(event) => { replace({ role: event.target.value }); }}>
               <option value="">Elige un rol</option>
-              {(roles.includes(member.role) || !member.role ? roles : [member.role, ...roles]).map((role) => <option key={role} value={role}>{role}</option>)}
+              {(roles.includes(member.role) || !member.role ? roles : [member.role, ...roles]).map((role) => <option key={role} value={role}>{nombreDeRol(role)}</option>)}
             </select></label>
               <label><input id={draft.primaryRoomId === room.id ? PRIMARY_MEMBERSHIP_CHECKBOX_ID : undefined}
                 data-primary-membership-checkbox={draft.primaryRoomId === room.id ? 'true' : undefined}

@@ -21,7 +21,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12
 const HASH = /^[a-f0-9]{64}$/u;
 const KEYS = ['id', 'company_id', 'tenant_id', 'alias', 'status', 'sha256', 'manifest_sha256', 'bytes', 'error', 'download_url', 'created_at', 'expires_at'];
 const timestamp = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/u.test(value) && Number.isFinite(Date.parse(value));
-function invalid(): never { throw new Error('No se pudo verificar el backup de este espacio. Relee su estado.'); }
+function invalid(): never { throw new Error('No se pudo verificar la copia de seguridad de este espacio. Relee su estado.'); }
 function path(target: SpaceBackupTarget): string {
   if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(target.company_id) || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(target.tenant_id)
     || !/^[a-z][a-z0-9_-]{0,63}$/u.test(target.alias)) invalid();

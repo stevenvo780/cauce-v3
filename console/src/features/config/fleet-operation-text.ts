@@ -15,7 +15,7 @@ export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string
   DEPENDENCIES_PRESENT: 'Quedan dependencias que impiden continuar.',
   STEP_FAILED: 'El ejecutor no pudo completar este paso.',
   PROVIDER_AUTH_REQUIRED: 'El proveedor pide autenticarse de nuevo.',
-  UNSUPPORTED_RUNTIME: 'El runtime del agente no admite esta operación.',
+  UNSUPPORTED_RUNTIME: 'El entorno de ejecución del agente no admite esta operación.',
   VERIFICATION_FAILED: 'El ejecutor no pudo comprobar el efecto del paso.',
   CANCELLED: 'La operación se canceló.',
 };

@@ -11,16 +11,16 @@ import { canBackupSpace } from './space-backup-authority';
 import { Sha256Stream } from './sha256-stream';
 import { backupFailureText } from './space-backup-failure';
 
-const STATUS = { pending: 'Backup pendiente', running: 'Preparando backup', ready: 'Backup disponible', failed: 'El backup falló' };
+const STATUS = { pending: 'Copia pendiente', running: 'Preparando copia de seguridad', ready: 'Copia disponible', failed: 'La copia falló' };
 const LIST_STATUS = { pending: 'Pendiente', running: 'En preparación', ready: 'Lista para descargar', failed: 'Fallida' };
 const backupDate = (value: string) => new Date(value).toLocaleString('es-CO');
 type BackupAction = 'creating' | 'reading' | 'listing' | 'deleting';
 type BackupResult = SpaceBackup | SpaceBackup[] | { deleted: string };
-const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera su conexión antes de crear otro backup.',
-  SCOPE_CHANGED: 'El espacio o su autorización cambiaron. Relee el agente antes de crear otro backup.',
+const ERRORS = { HOST_UNAVAILABLE: 'El ordenador no está disponible. Recupera su conexión antes de crear otra copia.',
+  SCOPE_CHANGED: 'El espacio o su autorización cambiaron. Relee el agente antes de crear otra copia.',
   EXPORT_FAILED: 'No se pudo exportar el espacio. Revisa su estado y vuelve a intentarlo.',
-  LIMIT_EXCEEDED: 'El espacio supera el límite de tamaño del backup. No se creó una copia incompleta.',
-  EXPIRED: 'El backup venció. Crea uno nuevo para descargarlo.' };
+  LIMIT_EXCEEDED: 'El espacio supera el límite de tamaño de la copia de seguridad. No se creó una copia incompleta.',
+  EXPIRED: 'La copia venció. Crea una nueva para descargarla.' };
 const REQUEST_MS = 30_000;
 const PROGRESS_BYTES = 8 * 1024 * 1024;
 const MIB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
@@ -31,9 +31,9 @@ interface SavedFile { write(data: Uint8Array): Promise<void>; close(): Promise<v
 type SaveFilePicker = (options: { suggestedName: string }) => Promise<{ name: string; createWritable(): Promise<SavedFile> }>;
 const shellArgument = (value: string) => /^[A-Za-z0-9_.-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 const FAILURES: Record<number, string> = {
-  404: 'No se encontró el agente, su ubicación o el backup. Relee el agente: puede haberse movido o retirado.',
-  409: 'No se pudo crear el backup ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
-  503: 'El servicio de backups no está disponible. Espera a que se recupere y actualiza el estado del backup antes de reintentar.',
+  404: 'No se encontró el agente, su ubicación o la copia. Relee el agente: puede haberse movido o retirado.',
+  409: 'No se pudo crear la copia ahora: el ordenador del espacio no tiene ejecutor disponible, se alcanzó el límite de copias o de espacio reservado, o cambió la política. Libera copias o recupera el ordenador y vuelve a intentarlo.',
+  503: 'El servicio de copias de seguridad no está disponible. Espera a que se recupere y actualiza el estado de la copia antes de reintentar.',
 };
 export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias: string }) {
   const state = useContext(CompanySession); const authority = sessionAuthority(state);
@@ -108,7 +108,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setBackups([]); setDeleting(undefined); setInvalidated(true); }
       if (kind === 'creating' && cause instanceof ApiError && cause.status === 404) { setUnplaced(true); return; }
       setError(kind === 'deleting' ? 'No se pudo eliminar la copia. Actualiza las copias y comprueba tus permisos antes de reintentar.'
-        : (cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
+        : (cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'No se pudo leer o preparar la copia de seguridad. Actualiza su estado y comprueba tus permisos.');
     } finally {
       window.clearTimeout(timeout);
       requests.current.delete(request);
@@ -139,17 +139,17 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       ensureCurrent();
       const sha256 = hash.hex();
       if (received !== ready.bytes || sha256 !== ready.sha256) {
-        if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con el backup del servidor (SHA-256 ${sha256}, ${backupSize(received)}) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
+        if (requestIsCurrent(request, started)) setError(`El archivo descargado no coincide con la copia del servidor (SHA-256 ${sha256}, ${backupSize(received)}) y se descartó. Actualiza el estado y vuelve a descargarlo.`);
         return;
       }
       await file.close(); saved = true;
       if (!requestIsCurrent(request, started)) return;
-      setVerified({ sha256, file: name }); setNotice('Descarga verificada: el ZIP guardado tiene el tamaño y el SHA-256 del backup del servidor.');
+      setVerified({ sha256, file: name }); setNotice('Descarga verificada: el ZIP guardado tiene el tamaño y el SHA-256 de la copia del servidor.');
     } catch (cause) {
       if (!active.current || started !== generation.current) return;
       if (cause instanceof DOMException && cause.name === 'AbortError') return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setBackups([]); setDeleting(undefined); setInvalidated(true); }
-      setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'La descarga se interrumpió y no se guardó ningún archivo. Actualiza el estado del backup y vuelve a descargarlo.');
+      setError((cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'La descarga se interrumpió y no se guardó ningún archivo. Actualiza el estado de la copia y vuelve a descargarlo.');
     } finally {
       request.abort();
       if (reader) { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
@@ -167,7 +167,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       link.download = fileName(ready);
       link.hidden = true; document.body.append(link); link.click(); link.remove();
       setError(''); setNotice('Descarga iniciada en el navegador: si no aparece, la copia pudo vencer o no tienes permiso; vuelve a generarla.');
-    } catch { setError('No se pudo preparar la descarga. Relee el estado del backup antes de reintentar.'); }
+    } catch { setError('No se pudo preparar la descarga. Relee el estado de la copia antes de reintentar.'); }
   };
   const refresh = () => { if (backup) void perform('reading', signal => api.getSpaceBackup(target, backup.id, signal)); };
   useEffect(() => {
@@ -177,12 +177,12 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     const timer = setTimeout(() => { void perform('reading', signal => api.getSpaceBackup(target, pending.id, signal), true); }, 1500);
     return () => { clearTimeout(timer); };
   }, [api, backup, backups, enabled, busy, perform, target]);
-  return <section aria-label="Backup del espacio" className="my-4 grid gap-3 rounded-xl border border-line bg-surface p-4">
-    <div><h3 className="m-0 text-base font-semibold">Backup del espacio</h3>
+  return <section aria-label="Copia de seguridad del espacio" className="my-4 grid gap-3 rounded-xl border border-line bg-surface p-4">
+    <div><h3 className="m-0 text-base font-semibold">Copia de seguridad del espacio</h3>
       <p className="m-0 mt-1 text-sm text-muted">Guarda contexto, directivas, proyectos, configuración y datos del espacio. El archivo excluye autenticación, credenciales, logs y temporales.</p>
       <p className="m-0 mt-1 text-sm text-muted">Los proyectos se copian sin <code>.git</code>: los commits sin publicar no viajan. Se omiten los archivos <code>.env</code> y de credenciales, y también el contenido que es un secreto literal (clave, token o URL con usuario y contraseña). Una plantilla <code>{'${…}'}</code> o <code>process.env</code> no se trata como secreto.</p>
       <p className="m-0 mt-1 text-sm text-muted">Las omisiones, con su ruta y su motivo, están en <code>space-manifest.json</code> dentro del ZIP.</p></div>
-    {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su backup.</Notice> : null}
+    {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su copia de seguridad.</Notice> : null}
     {!backups.length && !busy && enabled && !error ? <p className="m-0 text-sm text-muted" role="status">{loaded ? 'No hay copias guardadas de este espacio.' : 'Cargando copias del espacio…'}</p> : null}
     {error && !deleting ? <Notice tone="danger" role="alert">{error}</Notice> : null}
     {unplaced && !error ? <p className="m-0 text-sm text-muted" role="status">Este agente todavía no tiene habilitada la copia de su espacio: su ordenador o su contenedor no están vinculados para copias. Cuando lo estén, podrás crearla aquí.</p> : null}
@@ -207,12 +207,12 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
       <Button disabled={!enabled || !!busy || backups.some(row => row.status === 'pending' || row.status === 'running')} onClick={() => {
         setBackup(undefined); setVerified(undefined);
         void perform('creating', signal => api.createSpaceBackup(target, idempotency.current, signal));
-      }}>{busy === 'creating' ? 'Solicitando backup…' : backup ? 'Crear otro backup' : 'Crear backup del espacio'}</Button>
+      }}>{busy === 'creating' ? 'Solicitando copia…' : backup ? 'Crear otra copia' : 'Crear copia del espacio'}</Button>
       <Button disabled={!enabled || !!busy} onClick={() => { void perform('listing', signal => api.listSpaceBackups(target, signal)); }}>{busy === 'listing' ? 'Actualizando copias…' : 'Actualizar copias'}</Button>
-      {backup ? <Button disabled={!enabled || !!busy} onClick={refresh}>{busy === 'reading' ? 'Actualizando…' : 'Actualizar estado del backup'}</Button> : null}
+      {backup ? <Button disabled={!enabled || !!busy} onClick={refresh}>{busy === 'reading' ? 'Actualizando…' : 'Actualizar estado de la copia'}</Button> : null}
       {backup?.status === 'ready' ? <Button variant="primary" disabled={!enabled || !!busy} onClick={() => {
         download(backup);
-      }}>Descargar backup ZIP</Button> : null}
+      }}>Descargar copia ZIP</Button> : null}
     </div>
     <ConfirmDialog open={!!deleting && enabled} title="Eliminar copia del espacio" tone="danger" confirmLabel={busy === 'deleting' ? 'Eliminando copia…' : 'Eliminar copia definitivamente'}
       cancelLabel="Conservar copia" busy={!!busy} onCancel={() => { setDeleting(undefined); }} onConfirm={() => {

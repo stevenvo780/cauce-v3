@@ -32,7 +32,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
       + 'y no desde la personal.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente: los campos canónicos y el editor manual '
-      + 'están juntos, y solo escriben con hechos del runtime medidos.',
+      + 'están juntos, y solo escriben con datos comprobados de la ejecución.',
   },
   {
     id: 'codex',
@@ -59,9 +59,9 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'grok',
     label: 'Grok',
-    aporta: 'El agente ya corre Grok. El manual solo cuenta si el runtime midió su espacio de trabajo.',
+    aporta: 'El agente ya corre Grok. El manual solo cuenta si la ejecución comprobó su espacio de trabajo.',
     directiva: '<WORKSPACE_GROK>/AGENTS.md',
-    detalle: 'El inventario solo acredita el manual con `grok_workspace` medido en el runtime. '
+    detalle: 'El inventario solo acredita el manual con `grok_workspace` comprobado durante la ejecución. '
       + 'La carpeta de autenticación de Grok no demuestra cuál es el proyecto del agente.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
@@ -70,9 +70,9 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
   {
     id: 'muse',
     label: 'Muse',
-    aporta: 'El agente ya corre Muse. El manual solo cuenta si el runtime midió su espacio de trabajo.',
+    aporta: 'El agente ya corre Muse. El manual solo cuenta si la ejecución comprobó su espacio de trabajo.',
     directiva: '<WORKSPACE_MUSE>/AGENTS.md',
-    detalle: 'El inventario solo acredita el manual con `muse_workspace` medido en el runtime. '
+    detalle: 'El inventario solo acredita el manual con `muse_workspace` comprobado durante la ejecución. '
       + 'Un proceso Muse en modo puente sin workspace no acredita una ruta de manual.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
@@ -86,7 +86,7 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     detalle: 'El inventario puede resolver ese manual con hechos medidos, pero el perfil canónico '
       + 'por lote no declara soporte para Hermes. Son capacidades distintas.',
     editableDesdeAjustes: false,
-    dondeSeToca: '«Perfil y contexto» concentra el manual cuando el runtime acredita su ruta. No promete '
+    dondeSeToca: '«Perfil y contexto» concentra el manual cuando la ejecución acredita su ruta. No promete '
       + 'aplicar el perfil canónico por lote a Hermes.',
   },
 ];
@@ -104,9 +104,9 @@ export function arnesesEnLaConsola(
       label: descriptor.harness,
       aporta: 'Programa que esta consola todavía no ficha. La tarjeta muestra el manual declarado, sin inventar una ruta.',
       directiva: document === undefined || document === 'none' || document === '' ? '' : document,
-      detalle: 'El descriptor declara este manual. La carpeta exacta la acredita el runtime; esta ficha no inventa una ruta.',
+      detalle: 'El descriptor declara este manual. La carpeta exacta se comprueba durante la ejecución; esta ficha no inventa una ruta.',
       editableDesdeAjustes: false,
-      dondeSeToca: 'En «Perfil y contexto» del agente, cuando el runtime acredita la ruta.',
+      dondeSeToca: 'En «Perfil y contexto» del agente, cuando la ejecución acredita la ruta.',
     });
   }
   extras.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
