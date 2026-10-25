@@ -83,7 +83,7 @@ runtime_key=$alias_name
 if [[ -n ${CAUCE_PTY_FLEET_STATE:-}${CAUCE_PTY_FLEET_GENERATION:-}${CAUCE_PTY_FLEET_RUNTIME_KEY:-}${CAUCE_PTY_FLEET_IDENTITY:-} ]]; then
   [[ -n ${CAUCE_PTY_FLEET_STATE:-} && ${CAUCE_PTY_FLEET_GENERATION:-} =~ ^[a-f0-9]{64}$ \
     && ${CAUCE_PTY_FLEET_RUNTIME_KEY:-} =~ ^[a-z][a-z0-9-]{0,63}$ && ${CAUCE_PTY_FLEET_IDENTITY:-} =~ ^[a-f0-9]{64}$ \
-    && ${CAUCE_PTY_FLEET_HOST:-} =~ ^[a-z][a-z0-9_-]{0,63}$ ]] \
+    && ${CAUCE_PTY_FLEET_HOST:-} =~ ^[a-z][a-z0-9_-]{0,63}$ && ${CAUCE_PTY_FLEET_SHARED_TUI:-0} =~ ^[01]$ ]] \
     || die 'verified fleet terminal selector is incomplete'
   runtime_key=$CAUCE_PTY_FLEET_RUNTIME_KEY
   mapping_line=$(python3 -I -B "$OPS_ROOT/cli/fleet_executor_terminal_inventory.py" "$CAUCE_PTY_FLEET_STATE" \
@@ -675,13 +675,24 @@ prepare_governance_journal() {
 }
 
 publish_bundle() {
-  local shell_candidates harness_command tmux_tui openclaw_tui runtime_facts
+  local shell_candidates harness_command tmux_tui openclaw_tui runtime_facts tmux_state
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
   harness_command=${CONFIG[HARNESS_COMMAND]:-}
   [[ $harness_command != null ]] || harness_command=''
   tmux_tui=null
   openclaw_tui=null
+  tmux_state=''
   read_adapter_generation || adapter_generation=''
+  if [[ ${ADAPTER_V4_MANAGED:-0} == 1 && ( $harness != openclaw || -v CAUCE_PTY_FLEET_SHARED_TUI ) ]]; then
+    [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} =~ ^[01]$ ]] || die 'approved shared TUI flag is invalid'
+    harness_command=null
+    if [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} == 1 ]]; then
+      [[ $harness == codex || $harness == claude || $harness == muse || $harness == grok ]] \
+        || die 'approved shared TUI harness is unavailable'
+      harness_command=''
+      tmux_state=$state_directory
+    fi
+  fi
   TMUX_PANE_CWD_FOUND=''
   TMUX_MEASUREMENT_CONFLICT=0
   if [[ -z $harness_command ]]; then
@@ -693,6 +704,8 @@ publish_bundle() {
       if derive_harness_command; then
         printf 'cauce-pty-launcher: live tmux context measured alias=%s socket=%s measured_session_id=%s\n' \
           "$alias_name" "$TMUX_SOCKET" "$TMUX_SESSION_FOUND" >&2
+      elif [[ -n $tmux_state ]]; then
+        die_transient 'approved shared TUI panel is not ready'
       elif [[ -n $TMUX_PATH_FOUND ]]; then
         if [[ $TMUX_MEASUREMENT_CONFLICT -eq 1 ]]; then
           printf 'cauce-pty-launcher: tmux context not accredited alias=%s socket=%s; OPEN will revalidate\n' \
@@ -706,9 +719,10 @@ publish_bundle() {
     if [[ -n $TMUX_PATH_FOUND ]]; then
       harness_command=null
       tmux_tui=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
+        CAUCE_TMUX_STATE=$tmux_state \
         CAUCE_TMUX_PHYSICAL_ALIAS=${TMUX_PHYSICAL_ALIAS:-$alias_name} CAUCE_TMUX_WIRE_ALIAS=${wire_alias:-$alias_name} \
         PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"],**({"alias":os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"]} if os.environ.get("CAUCE_TMUX_PHYSICAL_ALIAS") and os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"] != os.environ.get("CAUCE_TMUX_WIRE_ALIAS") else {})},separators=(",",":")))') \
+        'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"],**({"alias":os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"]} if os.environ.get("CAUCE_TMUX_PHYSICAL_ALIAS") and os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"] != os.environ.get("CAUCE_TMUX_WIRE_ALIAS") else {}),**({"state_directory":os.environ["CAUCE_TMUX_STATE"]} if os.environ.get("CAUCE_TMUX_STATE") else {})},separators=(",",":")))') \
         || die "cannot assemble the dynamic tmux harness resolver"
       printf 'cauce-pty-launcher: dynamic tmux resolver enabled alias=%s socket=%s\n' \
         "$alias_name" "$TMUX_SOCKET" >&2

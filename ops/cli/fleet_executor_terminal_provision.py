@@ -231,7 +231,8 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
     publication(entry, env_root / (selected + '.migration.json'), (json.dumps(metadata, sort_keys=True) + '\n').encode(), 0o600, work, save)
     publication(entry, unit_root / unit, template, 0o644, work, save)
     approved_selector = selector(ops, version, policy['roots']['state'], generation.name,
-                                 agent['runtime_key'], identity, policy['host_id'])
+                                 agent['runtime_key'], identity, policy['host_id'],
+                                 shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
     publication(entry, dropins / 'zz-fleet-terminal.conf', approved_selector, 0o600, work, save, advance=True)
     entry.update(stage='published', unit=unit, source_sha256=version, credentials_published=True)
     save()
@@ -240,13 +241,15 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
     try:
         if not was_verified and (entry['new_credentials'] or entry['files']):
             raise SafeFailure('terminal current publication requires a fresh relay acknowledgement')
-        ready = presence(unit, agent['alias'], version, attempts=1)
+        ready = presence(unit, agent['alias'], version, attempts=1,
+                         shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
     except SafeFailure:
         entry['activation_changed'] = True
         save()
         systemctl('enable', unit)
         systemctl('restart', unit)
-        ready = presence(unit, agent['alias'], version)
+        ready = presence(unit, agent['alias'], version,
+                         shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
     entry.update(stage='verified', proof=proof, presence=ready)
     save()
     for name, pin in entry.get('work_files', {}).items():

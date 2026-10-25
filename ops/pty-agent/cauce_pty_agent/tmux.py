@@ -65,13 +65,17 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
         return None
     if harness not in ("claude", "codex", "muse", "grok") or not isinstance(value, dict):
         raise PermanentError("bundle field is invalid: tmux_tui")
-    if set(value) - {"alias"} != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
+    if set(value) - {"alias", "state_directory"} != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
         raise PermanentError("bundle field is invalid: tmux_tui")
     physical_alias = value.get("alias", alias)
     if not isinstance(physical_alias, str) or not TMUX_IDENTITY_RE.fullmatch(physical_alias):
         raise PermanentError("bundle field is invalid: tmux_tui")
     path = value.get("path")
     socket_name = value.get("socket")
+    state = value.get("state_directory")
+    if "state_directory" in value and (not isinstance(state, str) or not os.path.isabs(state)
+                                       or os.path.normpath(state) != state or "\x00" in state):
+        raise PermanentError("bundle field is invalid: tmux_tui")
     if (not isinstance(path, str) or not os.path.isabs(path) or "\x00" in path
             or os.path.normpath(path) != path
             or not isinstance(socket_name, str) or not TMUX_SOCKET_RE.fullmatch(socket_name)):
@@ -83,7 +87,8 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
     if (not stat.S_ISREG(details.st_mode) or details.st_uid != 0
             or details.st_mode & 0o022 or not os.access(path, os.X_OK)):
         raise PermanentError("bundle tmux executable is unsafe")
-    return {"path": path, "socket": socket_name, **({"alias": physical_alias} if "alias" in value else {})}
+    return {"path": path, "socket": socket_name, **({"alias": physical_alias} if "alias" in value else {}),
+            **({"state_directory": state} if state is not None else {})}
 
 
 def tmux_tui_target(bundle: dict[str, Any]) -> str | None:
@@ -111,9 +116,12 @@ def tmux_tui_prefix(bundle: dict[str, Any]) -> list[str] | None:
     recovery = bundle.get("session_recovery")
     if isinstance(recovery, dict) and not environments:
         return None
-    if not any("TMUX_TMPDIR" in environment for environment in environments):
-        return [config["path"], "-L", config["socket"]]
     state = recovery.get("state_directory") if isinstance(recovery, dict) else None
+    if "state_directory" in config:
+        if not environments or config["state_directory"] != state:
+            return None
+    elif not any("TMUX_TMPDIR" in environment for environment in environments):
+        return [config["path"], "-L", config["socket"]]
     alias = config.get("alias", bundle.get("alias"))
     if (not isinstance(state, str) or not os.path.isabs(state) or os.path.normpath(state) != state
             or any(environment.get("TMUX_TMPDIR") != state or environment.get("CAUCE_ALIAS") != bundle.get("alias")

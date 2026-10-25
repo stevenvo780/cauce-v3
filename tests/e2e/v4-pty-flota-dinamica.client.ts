@@ -9,7 +9,7 @@ import { capturePtyFleet, ptyFleetReceipt, type PtyFleetFixture } from './v4-pty
 
 export type PtyFleetCli = Awaited<ReturnType<typeof buildInstalledCli>>;
 
-async function observeBrowserErrors(page: V4Page): Promise<void> {
+export async function observeBrowserErrors(page: V4Page): Promise<void> {
   await page.evaluate(() => {
     const state = window as Window & { h12BrowserErrors?: Record<string, unknown>[] };
     if (state.h12BrowserErrors) return;
@@ -39,7 +39,7 @@ async function observeBrowserErrors(page: V4Page): Promise<void> {
   });
 }
 
-function connection(fixture: PtyFleetFixture, cli: PtyFleetCli): string[] {
+export function connection(fixture: PtyFleetFixture, cli: PtyFleetCli): string[] {
   return ['--gateway', fixture.baseUrl, '--origin', fixture.baseUrl, '--ca-file', fixture.caFile, '--session-file', cli.sessionFile];
 }
 
@@ -63,7 +63,7 @@ export async function loginPtyFleetCli(fixture: PtyFleetFixture, cli: PtyFleetCl
   await ptyFleetReceipt('installed-cli', { manifest: cli.manifest, private_home: true, nominal_device_login: true });
 }
 
-async function released(fixture: PtyFleetFixture): Promise<void> {
+export async function released(fixture: PtyFleetFixture): Promise<void> {
   await expect.poll(async () => (await fixture.computer.pool.query<{ sessions: string; holds: string }>(
     `SELECT (SELECT count(*)::text FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2
        AND closed_at IS NULL AND revoked_at IS NULL) AS sessions,
@@ -108,7 +108,7 @@ export async function usePtyFleetShells(fixture: PtyFleetFixture, cli: PtyFleetC
   const durable = await fixture.computer.pool.query<{ id: string; mode: string; operator_id: string; consumed: boolean; closed: boolean }>(
     `SELECT id,mode,operator_id,consumed_at IS NOT NULL AS consumed,
        (closed_at IS NOT NULL OR revoked_at IS NOT NULL) AS closed
-     FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 ORDER BY issued_at`, [fixture.tenantId, ptyFleetAlias]);
+     FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 AND mode='shell' ORDER BY issued_at`, [fixture.tenantId, ptyFleetAlias]);
   expect(durable.rows.some(row => row.id === sessionId && row.mode === 'shell' && row.closed && row.consumed)).toBe(true);
   expect(durable.rows.every(row => row.mode === 'shell' && row.operator_id === fixture.owner.email && row.closed && row.consumed)).toBe(true);
   await ptyFleetReceipt(phase + '-browser-events', await fixture.page.evaluate(() =>

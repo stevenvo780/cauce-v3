@@ -97,7 +97,7 @@ class TerminalVerifiedInventoryTest(unittest.TestCase):
 class TerminalPresenceTest(unittest.TestCase):
     def check_presence(self, invocation, *, process_uid=None, wire='logical', record_fields=None,
                        missing_fields=(), environment=None, environments=None, process_starttimes=(77, 77),
-                       after_invocation=None, attempts=1, observations=None):
+                       after_invocation=None, attempts=1, observations=None, shared_tui=False, modes='shell,harness'):
         current = 'a' * 32
         unit = 'cauce-v3-pty@physical.service'
         state = 'ActiveState=active\nMainPID=101\nExecMainStartTimestampMonotonic=100\nInvocationID=' + current
@@ -107,7 +107,7 @@ class TerminalPresenceTest(unittest.TestCase):
             fields.pop(name, None)
         records = [{'MESSAGE': message, **fields} for message in
                    ('starting alias=' + wire + ' container=fixture uid=1000 version=' + 'b' * 64,
-                    'relay accepted alias=' + wire + ' modes=shell,harness')]
+                    'relay accepted alias=' + wire + ' modes=' + modes)]
         result = mock.Mock(returncode=0, stdout=b'\n'.join(json.dumps(row).encode() for row in records))
         starttimes = iter(process_starttimes)
 
@@ -133,7 +133,7 @@ class TerminalPresenceTest(unittest.TestCase):
                 mock.patch.object(manager.pathlib.Path, 'read_text', autospec=True, side_effect=process_text), \
                 mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_uid=os.geteuid() if process_uid is None else process_uid)), \
                 mock.patch.object(manager.subprocess, 'run', return_value=result) as journal:
-            observed = manager.presence(unit, wire, 'b' * 64, attempts=attempts)
+            observed = manager.presence(unit, wire, 'b' * 64, attempts=attempts, shared_tui=shared_tui)
         if observations is not None:
             observations['journal_queries'] = journal.call_count
         command = journal.call_args.args[0]
@@ -173,6 +173,12 @@ class TerminalPresenceTest(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(SafeFailure):
                 self.check_presence('a' * 32, **options)
 
+    def test_shared_approval_requires_the_current_ack_to_include_both_real_tui_modes(self):
+        self.assertTrue(self.check_presence('a' * 32, shared_tui=True, modes='shell,harness,harness_rw')['relay_acknowledged'])
+        for modes in ('shell', 'shell,harness', 'shell,harness_rw', 'shell,harness,harness_rw,harness'):
+            with self.subTest(modes=modes), self.assertRaises(SafeFailure):
+                self.check_presence('a' * 32, shared_tui=True, modes=modes)
+
     def test_an_active_unit_waits_for_its_initial_exec_environment_before_accepting_its_ack(self):
         approved = ['CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + 'a' * 32]
         with mock.patch.object(manager.time, 'sleep') as sleep:
@@ -208,6 +214,30 @@ class TerminalPresenceTest(unittest.TestCase):
                     self.assertRaises(SafeFailure):
                 manager.pin_unit(unit, root, b'canonical', agent={'runtime_key': 'physical'})
 
+    def test_the_approved_tui_flag_is_pinned_and_a_verified_previous_selector_can_be_upgraded(self):
+        ops = pathlib.Path(manager.__file__).resolve().parents[1]
+        unit = 'cauce-v3-pty@physical.service'
+        root = pathlib.Path('/fixture/systemd')
+        dropin = root / (unit + '.d') / 'zz-fleet-terminal.conf'
+        agent = {'runtime_key': 'physical', 'alias': 'logical', 'tenant_id': 'Steven'}
+        row = {'LoadState': 'loaded', 'FragmentPath': str(root / unit), 'DropInPaths': str(dropin)}
+        for enabled in (False, True):
+            selected = manager.selector(ops, 'b' * 64, '/fixture/state', 'a' * 64,
+                                        'physical', 'c' * 64, 'host-a', shared_tui=enabled)
+            self.assertIn(('CAUCE_PTY_FLEET_SHARED_TUI=' + str(int(enabled))).encode(), selected)
+            previous = b'\n'.join(line for line in selected.splitlines() if b'CAUCE_PTY_FLEET_SHARED_TUI=' not in line) + b'\n'
+            for raw in (previous, selected):
+                with self.subTest(enabled=enabled, previous=raw == previous), \
+                        mock.patch.object(manager, 'properties', return_value=row), \
+                        mock.patch.object(manager, 'checked_file', side_effect=[b'canonical', raw]), \
+                        mock.patch('fleet_executor_rebind.installed_release'), \
+                        mock.patch.object(terminal_inventory, 'launcher_row', return_value={'tenant': 'Steven', 'alias': 'logical'}):
+                    self.assertEqual(manager.pin_unit(unit, root, b'canonical', agent=agent), row)
+            invalid = selected.replace(b'CAUCE_PTY_FLEET_SHARED_TUI=' + str(int(enabled)).encode(), b'CAUCE_PTY_FLEET_SHARED_TUI=2')
+            with mock.patch.object(manager, 'properties', return_value=row), \
+                    mock.patch.object(manager, 'checked_file', side_effect=[b'canonical', invalid]), self.assertRaises(SafeFailure):
+                manager.pin_unit(unit, root, b'canonical', agent=agent)
+
 
 class TerminalProvisionTest(unittest.TestCase):
     @classmethod
@@ -233,7 +263,7 @@ class TerminalProvisionTest(unittest.TestCase):
                       'state_directory': '/home/dev/.cauce/physical-one', 'harness_id': 'codex', 'runtime_mode': 'container',
                       'systemd_user': pwd.getpwuid(os.geteuid()).pw_name}
         self.policy = {'terminal': {'required': True}, 'roots': {'state': str(self.state)},
-                       'executor_user': self.agent['systemd_user'], 'host_id': 'host-a'}
+                       'executor_user': self.agent['systemd_user'], 'host_id': 'host-a', 'bundles': {'codex': {'shared_tui': False}}}
         self.context = {'operation_id': str(uuid.uuid4())}
         self.generation = self.state / 'generations' / ('a' * 64)
         self.journal = {}
@@ -295,6 +325,15 @@ class TerminalProvisionTest(unittest.TestCase):
         self.assertFalse((pathlib.Path(entry['work']) / 'client.key').exists())
         self.assertNotIn(self.issued['alias_key_hex'], json.dumps(self.journal))
         self.assertIn(mock.call('restart', 'cauce-v3-pty@physical-one.service'), self.systemctl.call_args_list)
+        selected = self.home / '.config/systemd/user/cauce-v3-pty@physical-one.service.d/zz-fleet-terminal.conf'
+        self.assertIn(b'CAUCE_PTY_FLEET_SHARED_TUI=0', selected.read_bytes())
+
+    def test_a_shared_tui_capability_comes_from_the_approved_bundle_policy(self):
+        self.policy['bundles']['codex']['shared_tui'] = True
+        self.ensure()
+        selected = self.home / '.config/systemd/user/cauce-v3-pty@physical-one.service.d/zz-fleet-terminal.conf'
+        self.assertIn(b'CAUCE_PTY_FLEET_SHARED_TUI=1', selected.read_bytes())
+        self.assertTrue(self.mocks[6].call_args.kwargs['shared_tui'])
 
     def test_healthy_existing_channel_reuses_its_credentials_without_issuance_or_rollback_revocation(self):
         self.ensure()

@@ -10,25 +10,42 @@ import { assertPtyFleetOnline, createPtyFleetAgent, enqueuePtyFleet, observePtyF
   ptyFleetAlias, ptyFleetRuntimeKey, retryPtyFleet, type PtyFleetOperation } from './v4-pty-flota-dinamica.flow.js';
 import { capturePtyFleet, PTY_FLEET_OWNER, ptyFleetReceipt, ptyFleetReceipts, startPtyFleetFixture,
   type PtyFleetFixture } from './v4-pty-flota-dinamica.helpers.js';
+import { ptyFleetTuiRuntime, usePtyFleetTui } from './v4-pty-flota-dinamica.tui.js';
 
 const execute = promisify(execFile);
 let installation = '', cli: PtyFleetCli | undefined, fixture: PtyFleetFixture | undefined;
 let completed = false;
-const sources = ['tests/e2e/v4-pty-flota-dinamica-real-browser.test.ts', 'tests/e2e/v4-pty-flota-dinamica.helpers.ts',
+const sources = ['ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_policy.py', 'ops/cli/fleet-executor.py',
+  'ops/cli/host_setup.py', 'ops/scripts/build-host-release.sh', 'packages/protocol/src/fleet-operation.ts',
+  'console/src/features/config/fleet-failure-text.ts', 'services/gateway/src/fleet/host-computer.fixtures.ts',
+  'services/gateway/src/fleet/host-setup.ts', 'services/gateway/src/fleet/host-setup.test.ts',
+  'ops/tests/test_host_setup.py', 'ops/tests/test_fleet_executor_failure.py',
+  'services/gateway/src/fleet/authority/schemas.ts', 'services/gateway/src/fleet/authority/service.ts',
+  'services/gateway/src/fleet/authority/client.ts', 'services/gateway/src/fleet/authority/signed-client.ts',
+  'services/gateway/src/fleet/authority/service.test.ts', 'services/gateway/src/fleet/host-authority-postgres.test.ts',
+  'ops/cli/fleet-authority-issuer.py', 'ops/cli/fleet_executor_authority.py', 'ops/tests/test_fleet_authority_issuer.py',
+  'ops/cli/fleet_executor_terminal.py', 'ops/cli/fleet_executor_terminal_provision.py',
+  'ops/cli/fleet_executor_terminal_inventory.py', 'ops/cli/fleet_executor_terminal_files.py',
+  'ops/cli/fleet_executor_terminal_manager.py', 'ops/pty-agent/cauce-pty-launcher.sh',
+  'ops/tests/test_fleet_executor_terminal_provision.py', 'ops/pty-agent/tests/test_launcher_harness.py',
+  'tests/e2e/v4-pty-flota-dinamica-real-browser.test.ts', 'tests/e2e/v4-pty-flota-dinamica.helpers.ts',
   'tests/e2e/v4-pty-flota-dinamica.infra.ts', 'tests/e2e/v4-pty-flota-dinamica.flow.ts',
   'tests/e2e/v4-pty-flota-dinamica.client.ts', 'tests/e2e/v4-pty-flota-dinamica.observe.py',
-  'tests/e2e/v4-cli-flota-dinamica.install.ts', 'services/gateway/src/fleet/host-computer.fixtures.ts',
-  'ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_terminal.py', 'ops/cli/fleet-authority-issuer.py',
-  'ops/cli/fleet_executor_terminal_provision.py', 'ops/cli/fleet_executor_terminal_files.py',
-  'ops/cli/fleet_executor_terminal_manager.py', 'ops/cli/fleet_executor_terminal_inventory.py',
-  'ops/pty-agent/cauce-pty-launcher.sh', 'ops/pty-agent/systemd/cauce-v3-pty@.service',
-  'services/gateway/src/fleet/authority/schemas.ts', 'services/gateway/src/fleet/authority/service.ts'];
+  'tests/e2e/v4-cli-flota-dinamica.install.ts', 'console/src/features/terminal/pty-session.ts',
+  'console/src/features/terminal/pty-types.ts', 'ops/generated/container-systemd/rootless/OPERATIONS.sha256',
+  'ops/generated/container-systemd/rootless/SHA256SUMS', 'ops/pty-agent/cauce_pty_agent/tmux.py',
+  'ops/pty-agent/tests/test_tmux_dynamic.py', 'tests/e2e/v4-pty-flota-dinamica.tui.ts',
+  'ops/pty-agent/systemd/cauce-v3-pty@.service'];
+const dependencies = ['tests/e2e/v4-cli-flota-dinamica.runtime.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts'];
 
 async function sourceReceipt(phase: string): Promise<void> {
   const hashes: Record<string, string> = {};
   for (const path of sources) hashes[path] = createHash('sha256').update(await readFile(path)).digest('hex');
+  const dependencyHashes: Record<string, string> = {};
+  for (const path of dependencies) dependencyHashes[path] = createHash('sha256').update(await readFile(path)).digest('hex');
   const head = (await execute('git', ['rev-parse', 'HEAD'])).stdout.trim();
-  await ptyFleetReceipt('source-' + phase, { head, hashes, aggregate: createHash('sha256').update(JSON.stringify(hashes)).digest('hex') });
+  await ptyFleetReceipt('source-' + phase, { head, hashes, dependency_hashes: dependencyHashes,
+    aggregate: createHash('sha256').update(JSON.stringify({ hashes, dependencyHashes })).digest('hex') });
 }
 
 async function journalDiagnostics(active: PtyFleetFixture, executor = false): Promise<unknown> {
@@ -90,7 +107,7 @@ beforeAll(async () => {
   await sourceReceipt('before');
   installation = await mkdtemp('/tmp/cauce-h12-installed-');
   cli = await buildInstalledCli(installation, { owner: PTY_FLEET_OWNER });
-  fixture = await startPtyFleetFixture();
+  fixture = await startPtyFleetFixture({ runtimeBundle: ptyFleetTuiRuntime });
   const release = JSON.parse(await readFile(join(dirname(fixture.computer.installRoot), 'host-release/host-release.json'), 'utf8')) as unknown;
   await ptyFleetReceipt('host-release', release);
   await sourceReceipt('during');
@@ -162,6 +179,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   await capturePtyFleet(fixture.page, 'retried-same-operation');
   console.info('H12_FLOW created online; web and installed CLI');
   await usePtyFleetShells(fixture, cli, first.uid, 'created');
+  const shared = await usePtyFleetTui(fixture, cli, 'created');
   let panel = await openPtyFleetPanel(fixture);
   await panel.getByLabel('¿Qué quieres hacer?').selectOption('stop');
   const stopped = await enqueuePtyFleet(fixture, panel, 'stop');
@@ -181,6 +199,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   await capturePtyFleet(fixture.page, 'started-online');
   console.info('H12_FLOW started online; web and installed CLI');
   await usePtyFleetShells(fixture, cli, second.uid, 'started');
+  await usePtyFleetTui(fixture, cli, 'started', shared);
   if (!second.fingerprint) throw new Error('the started PTY has no observed certificate');
   await purgePtyFleet(fixture, second.fingerprint);
   console.info('H12_FLOW purged');
@@ -188,6 +207,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   expect(fixture.errors.unexpected).toEqual([]);
   await ptyFleetReceipt('complete', { alias: ptyFleetAlias, created: created.id, stopped: stopped.id, started: started.id,
     web_and_installed_cli_before_after_start: true, manual_alias_provisioning: false, purged: true,
+    shared_tui_web_and_installed_cli: true, same_native_session_across_start: true,
     real_relay_outage: true, same_operation_retry: failed.id, certificate_preserved_across_retry_start: true });
   completed = true;
 }, 600_000);

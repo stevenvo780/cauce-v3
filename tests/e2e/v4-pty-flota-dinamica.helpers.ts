@@ -11,7 +11,7 @@ import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { SignedFleetAuthorityClient } from '../../services/gateway/src/fleet/authority/signed-client.js';
-import { FIXTURE_PROVIDER_IDENTITY, enrollComputer, startComputerHarness, type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { FIXTURE_PROVIDER_IDENTITY, enrollComputer, startComputerHarness, type ComputerHarness, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { terminalCapabilityAnnouncement, type TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
@@ -49,7 +49,7 @@ export async function capturePtyFleet(page: V4Page, name: string): Promise<void>
   } finally { if (previous) await page.setViewportSize(previous); }
 }
 
-export async function startPtyFleetFixture(): Promise<PtyFleetFixture> {
+export async function startPtyFleetFixture(options: { runtimeBundle?: ComputerRuntimeBundle } = {}): Promise<PtyFleetFixture> {
   if (process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1' || process.env.DOCKER_HOST !== 'unix:///var/run/docker.sock'
       || !process.env.HOME?.startsWith('/tmp/cauce-e2e-home-' + PTY_FLEET_OWNER + '-')) {
     throw new Error('dynamic fleet PTY requires the canonical isolated lab launcher');
@@ -84,7 +84,7 @@ export async function startPtyFleetFixture(): Promise<PtyFleetFixture> {
   };
   try {
     computer = await startComputerHarness({ prefix: ptyFleetPrefix, consoleOrigins: [baseUrl], workRoot: '/datos',
-      resourceOwner: PTY_FLEET_OWNER, runtimeBundle: cancelDeployRuntime,
+      resourceOwner: PTY_FLEET_OWNER, runtimeBundle: options.runtimeBundle ?? cancelDeployRuntime,
       terminal: { masterFile, masterSha256: createHash('sha256').update(master).digest('hex'),
         relayHost: '127.0.0.1', relayPort: ports.ports.agent, serverName: 'localhost' } });
     const active = computer, authority = join(dirname(active.installRoot), 'authority');
@@ -151,13 +151,14 @@ export async function startPtyFleetFixture(): Promise<PtyFleetFixture> {
     const hostId = owner.company.slug + '-pc';
     await enrollComputer(active, { cookie, origin: baseUrl, 'x-csrf-token': login.json<{ csrf_token: string }>().csrf_token }, owner.company.slug, hostId);
     const approved = await active.onComputer(['python3', '-I', '-B', '-c',
-      'import json,sys;p=json.load(open(sys.argv[1]));print(json.dumps({"terminal":p.get("terminal"),"state":p["roots"]["state"]}))',
+      'import json,sys;p=json.load(open(sys.argv[1]));print(json.dumps({"terminal":p.get("terminal"),"state":p["roots"]["state"],"shared_tui":p["bundles"]["codex"].get("shared_tui",True)}))',
       join(active.installRoot, owner.company.slug, hostId, 'executor-policy.json')]);
     expect(approved.code).toBe(0);
-    const applied = JSON.parse(approved.stdout) as { terminal: unknown; state: string };
+    const applied = JSON.parse(approved.stdout) as { terminal: unknown; state: string; shared_tui: boolean };
     expect(applied.terminal).toEqual({ required: true });
+    expect(applied.shared_tui).toBe(options.runtimeBundle?.sharedTui ?? false);
     if (!applied.state.startsWith('/')) throw new Error('the enrolled executor has no canonical runtime state');
-    await ptyFleetReceipt('approved-terminal-policy', { terminal: { required: true }, issuer_ca_is_relay_ca: true });
+    await ptyFleetReceipt('approved-terminal-policy', { terminal: { required: true }, shared_tui: applied.shared_tui, issuer_ca_is_relay_ca: true });
     const tenantId = (await active.pool.query<{ tenant_id: string }>('SELECT tenant_id FROM console_users WHERE email=$1', [owner.email])).rows[0]?.tenant_id;
     if (!tenantId) throw new Error('the dynamic PTY owner has no workspace');
     const room = (await active.pool.query<{ id: string }>('SELECT id FROM rooms WHERE tenant_id=$1 AND enabled ORDER BY id', [tenantId])).rows[0]?.id;
