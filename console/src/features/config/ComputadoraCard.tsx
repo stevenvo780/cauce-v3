@@ -27,11 +27,11 @@ function AgentChips({ host }: { host: FleetHost }) {
   const [todos, setTodos] = useState(false);
   const visibles = todos ? host.agents : host.agents.slice(0, AGENTES_VISIBLES);
   const ocultos = host.agents.length - visibles.length;
-  return <section aria-label={`Agentes de ${host.display_name}`} className="grid gap-1.5">
+  return <section aria-label={`Agentes de ${host.display_name}`} className="grid min-w-0 gap-1.5">
     <h5 className="m-0 text-xs font-medium text-muted">Agentes ({host.agents.length})</h5>
-    {host.agents.length ? <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+    {host.agents.length ? <ul className="m-0 flex min-w-0 list-none flex-wrap gap-1.5 p-0">
       {visibles.map((agent) => <li key={`${agent.tenant_id}/${agent.alias}`} title={`${agent.tenant_id} · ${agent.online ? 'en línea' : 'fuera de línea'}`}
-        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-line bg-subtle px-2 py-0.5 text-xs">
+        className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-line bg-subtle px-2 py-0.5 text-xs">
         <span aria-hidden="true" className={cn('size-1.5 shrink-0 rounded-full', TONE_CLASS[agent.online ? 'ok' : 'neutral'].dot)} />
         <span className="truncate">{agent.alias}</span>
         <span className="sr-only">{agent.tenant_id}, {agent.online ? 'en línea' : 'fuera de línea'}</span>
@@ -67,7 +67,7 @@ export function ComputadoraCard({ host, escribe, crea = escribe, borra = escribe
   const eliminarBlock = !borra ? 'Tu autoridad de empresa no permite eliminar computadoras.' : busy ? esperaText : bloqueada ? bloqueadaText : undefined;
   const registrarBlock = !crea ? 'Tu autoridad de empresa no permite registrar computadoras.' : busy ? esperaText : undefined;
   return <article aria-labelledby={idTitulo}
-    className={cn('grid h-full content-start gap-3 rounded-xl border border-line bg-surface p-4', inactiva && 'bg-subtle')}>
+    className={cn('grid min-w-0 h-full content-start gap-3 rounded-xl border border-line bg-surface p-4', inactiva && 'bg-subtle')}>
     <header className="flex items-start gap-3">
       <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-lg bg-subtle text-fg-2">
         <Monitor size={18} />
