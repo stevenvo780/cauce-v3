@@ -6,6 +6,8 @@ La consola solicita una copia durable de `agent.state_directory/space`, consulta
 
 El contenido exportado y cada archivo admiten 16 GiB. El ZIP durable suma además 8 MiB de manifiesto y 64 MiB de sobrecoste. La cuota predeterminada es cuatro veces ese archivo por empresa y dieciséis veces en global. No se ha validado la restauración de una copia productiva ni la migración física de agentes. El censo y el plan están en `docs/v4-migracion-plan.md`.
 
+Los agentes migrados de V3 con contenedor (con `runtime_mode` en null y un `container_name` válido en el registro) se admiten en el claim como `legacy-container`. Su copia se solicita desde la consola exactamente igual que en V4. La exportación se ejecuta en el host dentro de su contenedor compartido aprobado (`policy.shared_containers[container_name]`) mediante `/usr/bin/docker exec` bajo el usuario de runtime del agente (`runtime_user`), resolviendo `home_directory` y `systemd_user` desde la política aprobada. Si el contenedor compartido no está aprobado en la política, la ejecución se rechaza (`legacy backup container is not approved`). Si el agente no tiene ubicación vinculada (su ordenador o contenedor no están preparados y la solicitud responde 404), el panel de la consola muestra un estado neutro sin error: «Este agente todavía no tiene habilitada la copia de su espacio: su ordenador o su contenedor no están vinculados para copias. Cuando lo estén, podrás crearla aquí.»
+
 ## Contrato y controles
 
 - UUID durable con empresa, tenant, alias, host, solicitante humano, placement exacto y SHA256 de política. Idempotencia por empresa/tenant/alias y clave; retención serializada de 20 solicitudes activas por empresa y 200 globales.

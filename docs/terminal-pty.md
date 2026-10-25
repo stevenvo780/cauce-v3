@@ -200,6 +200,8 @@ cualquiera. Cada alta, cambio y baja queda en `audit_events`
 (`terminal.grant.create|update|revoke`) con su actor, y revocar corta las
 sesiones abiertas de esa concesión en la misma transacción.
 
+Al crear un agente (`grantCreatorTerminalAccess`), el creador humano activo recibe automáticamente concesión de terminal en los tres modos (`shell`, `harness`, `harness_rw`), pero solo si pertenece a la misma empresa que el agente (`company_id = $2 AND active`). Un creador de otra empresa (como un administrador de plataforma operando sobre una empresa ajena) no recibe concesión en el agente creado y no se emiten filas ni eventos de auditoría. Al purgar o eliminar un agente mediante configuración, sus concesiones de terminal en `terminal_grants` se eliminan dentro del plan de purga atómica junto con el resto de su configuración (`PURGE_CONFIGURATION`).
+
 En la consola el panel vive en **Ajustes → Acceso y roles** y se titula **Concesiones de terminal**. No se pinta si quien mira no es dueño, administrador de la empresa o administrador de plataforma. Aunque lo sea, falta mientras el relé no está en estado `available`: mientras se comprueba, o si está `no-desplegado`, `sin-permiso` o `sin-comprobar`, no hay formulario deshabilitado y no se consultan las concesiones. Los modos del formulario son **Shell**, **Visor de TUI** y **TUI escribible**. Un 403 dice «Solo el dueño o un administrador de la empresa del agente puede conceder acceso a su terminal.»
 
 **Precedencia: ninguna fuente prevalece; vale la UNIÓN.** Una sesión se admite
@@ -299,6 +301,18 @@ Alta de un alias de contenedor de solo lectura:
 El traslado de una identidad PTY lo hace `ops/scripts/v4_mover_terminal.py`. Lo despacha `ops/scripts/v4_mover_host.py` para las acciones que empiezan por `terminal-`, salvo `terminal-probe`. El mover de agente llama `terminal-export` y después `terminal-install`. Si hay que revertir, `terminal-start` reactiva el origen cuando el paro se intentó, y `terminal-cleanup` retira el destino cuando la instalación se intentó. Las acciones, sin el prefijo, son `preflight`, `export`, `stop`, `start`, `install`, `destination-preflight` y `cleanup`. En el origen, el usuario systemd tiene que coincidir con el del inventario.
 
 Mueve una sola identidad. Antes de activarla en el destino, cerca el manager anterior: `stop` deshabilita la unidad de origen y siega el proceso viejo; `install` se niega si el destino ya tiene una identidad que no es de esta migración. Reutiliza la PKI que ya existía y no imprime el material. El PTY de un agente cuya colocación es server2 lo atiende el manager de ese host, el usuario `server`, no el manager anterior. Qué alias están en ese host: [La flota y sus participantes](flota-y-participantes.md#máquinas).
+
+#### Canal PTY automático de la flota dinámica (pendiente de desplegar)
+
+Los agentes creados o actualizados por la flota dinámica aprovisionan su canal PTY automáticamente antes de la admisión del agente, sin requerir generación manual de claves ni despliegue manual de unidades:
+
+1. **Aprovisionamiento y autoridad:** el ejecutor del host (`fleet_executor_terminal_provision.py`) solicita a la autoridad firmada los certificados e identidades mTLS con alcance acotado (`fleet-authority-issuer.py`). Instala la unidad systemd de usuario `cauce-v3-pty@<alias>.service` con las variables del selector gestionado (`CAUCE_PTY_FLEET_*`).
+2. **Arranque y verificación:** el ejecutor inicia la unidad de usuario y espera la confirmación en el diario de systemd de que el relé aceptó el alias (`relay accepted alias=<wire> modes=...`). Si el canal PTY no queda verificado, la admisión del agente no se completa.
+3. **Modos publicados:**
+   - Arnés con TUI compartida aprobada (`claude`, `codex`, `muse`, `grok`) con `CAUCE_PTY_FLEET_SHARED_TUI=1`: publica los modos `shell`, `harness` y `harness_rw`. Conecta con la sesión compartida de tmux del contenedor mediante el resolvedor dinámico `tmux_tui`.
+   - Sin TUI compartida aprobada: publica únicamente el modo `shell`.
+   - OpenClaw (PTY nativo): OpenClaw utiliza su resolvedor PTY nativo (`openclaw_tui`: `node`, `entry`, `state_directory`, `history_limit`). OpenClaw rechaza la configuración de TUI compartida del SDK (`CAUCE_PTY_FLEET_SHARED_TUI=1` aborta con `approved shared TUI harness is unavailable`), conservando su PTY nativo cuando está disponible; si el resolvedor nativo no está acreditado, publica solo `shell`.
+4. **Acceso interactivo:** tanto el CLI (`cauce attach <alias>` / `cauce terminal <alias>`) como la consola web (sección **Terminal**) se conectan inmediatamente una vez que el relé acepta la conexión del alias y existe una concesión autorizada.
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 

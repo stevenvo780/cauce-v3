@@ -446,9 +446,33 @@ La TUI compartida de Codex arranca y se reanuda con `--no-daemon`: la sesión co
 
 ### Parar o reiniciar con texto sin enviar
 
-Si la TUI compartida tiene texto sin enviar, la parada no se cumple. El runtime del contenedor, al recibir SIGTERM, SIGINT o SIGHUP, mira el compositor. Si hay texto visible después del prompt, escribe `RESTART_HOLD_COMPOSER_NOT_EMPTY` en su error estándar y sigue. No mata el proceso: el texto se queda en la caja. Un resto atenuado de la barra de estado no cuenta como texto. También retiene la parada `RESTART_HOLD_TURN_OR_PASTE_ACTIVE` (un turno o un pegado: «esc to interrupt», «ctrl+c» para cancelar, «[Pasted text» o «paste again to expand») y el resto de códigos `RESTART_HOLD_*` (identidad, tmux o un líder aún no publicado). La consola no traduce esos códigos.
+Si la TUI compartida tiene texto sin enviar, la parada no se cumple. El runtime del contenedor, al recibir SIGTERM, SIGINT o SIGHUP, inspecciona el compositor. Si hay texto visible después del prompt, escribe `RESTART_HOLD_COMPOSER_NOT_EMPTY` en su error estándar y sigue. No mata el proceso: el texto se queda en la caja. El texto atenuado (`dim`) que hace de marcador de posición (placeholder) no cuenta como texto del borrador.
 
-Para soltar un borrador, envíalo o bórralo hasta dejar la caja vacía y vuelve a parar o a reiniciar. Si el motivo es un turno o un pegado, espera a que termine y repite la parada. Los otros `RESTART_HOLD_*` no se quitan borrando la caja: el proceso sigue y el código queda en el error estándar del runtime.
+Cuándo se retiene la parada:
+- Borrador en la caja de entrada: texto visible en la línea del prompt que no sea placeholder (`RESTART_HOLD_COMPOSER_NOT_EMPTY`).
+- Turno o pegado activo: detección en las últimas 12 líneas de «esc to interrupt», «ctrl+c» para cancelar, «[Pasted text» o «paste again to expand» (`RESTART_HOLD_TURN_OR_PASTE_ACTIVE`).
+- Adjuntos pendientes: imágenes o bloques pendientes en el compositor como `[Image #1]` (`RESTART_HOLD_COMPOSER_ATTACHMENT_PENDING`).
+- Estado o estructura del compositor desconocido o ambiguo: prompt no reconocido en la posición del cursor (`RESTART_HOLD_PROMPT_UNKNOWN`), posición de cursor ambigua (`RESTART_HOLD_COMPOSER_CURSOR_AMBIGUOUS`), líneas de continuación no reconocidas (`RESTART_HOLD_COMPOSER_CONTINUATION_UNKNOWN`), compositor vacío en estado no canónico (`RESTART_HOLD_COMPOSER_EMPTY_STATE_UNKNOWN`) o familia de arnés no admitida (`RESTART_HOLD_COMPOSER_FAMILY_UNKNOWN`).
+- Panel de tmux o procesos en cambio, no ociosos o ilegibles: `RESTART_HOLD_PANE_UNREADABLE`, `RESTART_HOLD_PANE_NOT_IDLE`, `RESTART_HOLD_PANE_CHANGED`, `RESTART_HOLD_PANE_AMBIGUOUS`, `RESTART_HOLD_PANE_IDENTITY_UNKNOWN`, `RESTART_HOLD_PANE_IDENTITY_CHANGED`.
+- Entorno de tmux o procesos alterados: `RESTART_HOLD_TMUX_UNAVAILABLE`, `RESTART_HOLD_TMUX_UNREADABLE`, `RESTART_HOLD_TMUX_HOOKS`, `RESTART_HOLD_TMUX_COMMAND_ALIAS`, `RESTART_HOLD_TMUX_PROCESS_UNKNOWN`, `RESTART_HOLD_TMUX_DIRECTORY_UNKNOWN`, `RESTART_HOLD_SESSION_IDENTITY_UNKNOWN`, `RESTART_HOLD_PROCESS_IDENTITY_UNKNOWN`, `RESTART_HOLD_PROCESS_IDENTITY_CHANGED`, `RESTART_HOLD_PROCESS_ENVIRONMENT_UNKNOWN`, `RESTART_HOLD_PROCESS_COMMAND_CHANGED`, `RESTART_HOLD_ADAPTER_ENTRY_UNKNOWN`, `RESTART_HOLD_RUNTIME_IDENTITY_UNKNOWN`, `RESTART_HOLD_SHARED_SESSION_UNKNOWN`, `RESTART_HOLD_HOME_UNKNOWN`.
+
+Cuándo pasa la parada:
+- TUI ociosa con historial: el historial por encima del compositor ya no retiene la parada si queda separado por una línea en blanco o por una regla trazada (`─━═`). El prompt debe estar en la columna 0 o inmediatamente tras el borde de recuadro `│`.
+- Pie de estado de Codex sin medidor de contexto: `codex_status_line` valida barras de estado con componentes separados por ` · ` coloreado con secuencias ANSI SGR, permitiendo la parada aunque no muestren el medidor numérico de contexto (`context left`).
+- Sesión sin tmux: si el contenedor con `CAUCE_SHARED_SESSION=1` no tiene procesos `tmux` vivos en su espacio de nombres de procesos (o solo zombies), `tmux_absent()` comprueba que no hay panel ni compositor que proteger y la parada o reinicio sigue adelante sin retener (evita el bloqueo con `RESTART_HOLD_TMUX_UNREADABLE`).
+
+Cómo se desbloquea:
+Para soltar un borrador retenido por `RESTART_HOLD_COMPOSER_NOT_EMPTY`, entra en `cauce <alias>` o en la terminal web de la consola, envía o borra el texto hasta dejar la caja vacía y repite la parada o reinicio. Si el motivo es `RESTART_HOLD_TURN_OR_PASTE_ACTIVE`, espera a que el turno o pegado termine y repite la operación. Los otros códigos `RESTART_HOLD_*` no se quitan vaciando la caja: el proceso sigue y el código queda en el error estándar del runtime. La consola no traduce esos códigos.
+
+Aviso de caja de entrada ocupada (`input_busy`):
+Si mandas un mensaje a un agente con sesión compartida y la caja de entrada tiene texto a medio escribir, el turno no entra en la terminal ni llega al modelo. El adaptador emite este aviso literal de degradación:
+```text
+⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA
+Este turno NO pasó por la terminal de <alias>: la caja de entrada quedó ocupada con texto a medio escribir (input_busy). Detalle: <detalle>
+El modelo no recibió este pedido y no se usó ningún ejecutor ni conversación alternativa.
+Para restablecerlo: abre `cauce <alias>` o su terminal web, envía o borra el texto que quedó en la caja de entrada y vuelve a mandar este pedido (mecanismo: tmux + registro de <arnés>).
+```
+Para resolverlo, abre `cauce <alias>` en tu CLI o la terminal web de ese agente en la consola, envía o borra el texto que quedó en la caja y vuelve a enviar tu pedido.
 
 ### Detener e iniciar desde la web
 
