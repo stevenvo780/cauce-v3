@@ -149,7 +149,7 @@ class TracedSubprocess:
 def configure(request: dict, action: str) -> None:
     global OWNER, TRACE
     OWNER = request.get('owner', OWNER)
-    if OWNER not in ('h8b-tui-v4-produccion-1025', 'h8d-regresion-tui-1025'):
+    if OWNER not in ('h8b-tui-v4-produccion-1025', 'h8d-regresion-tui-1025', 'h8f-tiempos-muse-grok-1025'):
         raise ValueError('canary owner is not supported by this driver')
     if request.get('diagnostics'):
         directory = pathlib.Path(request['evidence']).resolve()

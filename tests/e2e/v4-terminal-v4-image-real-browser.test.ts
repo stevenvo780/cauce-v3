@@ -9,7 +9,7 @@ import { observeUiBootstrap } from './ui-bootstrap-diagnostics.js';
 
 const context = currentV4TestContext();
 const { evidence, runId } = context;
-const diagnostics = context.owner === 'h8d-regresion-tui-1025';
+const diagnostics = context.owner === 'h8d-regresion-tui-1025' || context.owner === 'h8f-tiempos-muse-grok-1025';
 
 let image: V4Image;
 let sdk: string;

@@ -140,7 +140,7 @@ async function stopProcess(child: ChildProcess, label: string): Promise<void> {
 export async function startV4Infrastructure(alias: string, runtimeKey: string, harness: string, context = defaultContext) {
   const { evidence, runId, owner } = context;
   const prefix = owner.split('-')[0] ?? 'h8b';
-  const diagnostics = owner === 'h8d-regresion-tui-1025';
+  const diagnostics = owner === 'h8d-regresion-tui-1025' || owner === 'h8f-tiempos-muse-grok-1025';
   const record = (event: string, fields: Record<string, unknown> = {}) => {
     if (diagnostics) appendFileSync(join(evidence, `${harness}-frontend.jsonl`),
       JSON.stringify({ at: new Date().toISOString(), event, ...fields }) + '\n', { mode: 0o600 });
