@@ -609,6 +609,8 @@ class Executor:
             from fleet_executor_authority import revocation_scope
             revocation_policy, scoped = revocation_scope(self.policy, self.context, row)
             references = credential_references(revocation_policy, scoped)
+            self.journal['compensation_credential_effects'] = True
+            self.save()
             key = row['runtime_key']
             if key in revoked and references.get('legacy') is None:
                 if 'authority' in self.policy:
@@ -641,7 +643,9 @@ class Executor:
         previous = self.context['previous_agents']
         if request['kind'] != 'update' or placement_role(self.context) is not None or len(previous) != 1 \
                 or any(step not in {'prepare', 'stop'} for step in self.journal.get('attempted', [])) \
-                or any(name in self.journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime')):
+                or any(name in self.journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime',
+                                                         'compensation_credential_effects', 'revocation_complete')) \
+                or any(self.journal.get(name) for name in ('central_revocations', 'compensated', 'revoked', 'legacy_authority_absence')):
             raise SafeFailure('runtime restoration requires an update before credential or runtime effects')
         agent = previous[0]
         placement = request['parameters']['placement']
