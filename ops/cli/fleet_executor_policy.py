@@ -250,8 +250,17 @@ def load_policy(filename: pathlib.Path) -> dict:
     finally:
         os.close(parent)
     required = {'schemaVersion', 'host_id', 'executor_user', 'roots', 'native', 'containers', 'bundles', 'profiles', 'hooks'}
-    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments', 'extensions_allowed'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
+    if not isinstance(policy, dict) or set(policy) - {'signer', 'authority', 'transport', 'container_templates', 'profile_templates', 'shared_containers', 'legacy_credentials', 'quota_environments', 'extensions_allowed', 'execution_scope'} != required or type(policy['schemaVersion']) is not int or policy['schemaVersion'] != 1:
         raise SafeFailure('invalid executor policy schema')
+    if policy.get('execution_scope', 'full') not in ('full', 'backups'):
+        raise SafeFailure('invalid executor execution scope')
+    if policy.get('execution_scope') == 'backups' and (any(policy.get(key) for key in
+            ('native', 'containers', 'bundles', 'profiles', 'hooks', 'container_templates', 'profile_templates'))
+            or any(key in policy for key in ('authority', 'transport', 'signer', 'terminal', 'legacy_credentials', 'quota_environments', 'extensions_allowed'))
+            or not isinstance(policy.get('shared_containers'), dict) or not policy['shared_containers']
+            or any(not isinstance(row, dict) or row.get('backup_only') is not True
+                                                        for row in policy['shared_containers'].values())):
+        raise SafeFailure('backup-only executor policy grants another execution scope')
     if 'extensions_allowed' in policy:
         validate_extensions_allowed(policy['extensions_allowed'])
     if policy['executor_user'] != pwd.getpwuid(os.geteuid()).pw_name or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', policy['host_id']) is None:
@@ -484,6 +493,8 @@ def target_agent(context: dict) -> dict:
 
 
 def approve_agent(policy: dict, agent: dict) -> dict:
+    if policy.get('execution_scope') == 'backups':
+        raise SafeFailure('backup-only executor rejects fleet agents')
     if re.fullmatch(r'[a-z][a-z0-9-]{0,63}', agent.get('runtime_key') or '') is None or agent['host_id'] != policy['host_id']:
         raise SafeFailure('runtime key or host is not approved')
     if agent['harness_id'] not in policy['bundles']:

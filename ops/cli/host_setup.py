@@ -376,6 +376,11 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
     if 'native' in supplied and supplied['native'] != []:
         raise HostFailure('setup policy cannot add native runtimes')
     supplied.pop('native', None)
+    if supplied.get('execution_scope') == 'backups':
+        if any(supplied.get(key) for key in ('containers', 'bundles', 'profiles', 'hooks', 'container_templates', 'profile_templates')) \
+                or any(key in supplied for key in ('authority', 'transport', 'terminal', 'legacy_credentials', 'quota_environments', 'extensions_allowed')):
+            raise HostFailure('backup-only setup policy grants another execution scope')
+        base['native'] = []
     for harness, bundle in supplied.get('bundles', {}).items():
         if harness in {'claude', 'codex', 'grok', 'muse'}:
             bundle.setdefault('shared_tui', True)
@@ -570,7 +575,9 @@ def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dic
     return {'available': available, 'templates': templates,
         'reason': diagnostic or reason
             or (None if available else 'executor_diagnostic_unavailable: capabilities'),
-        'quota_environments': report.get('quota_environments') if isinstance(report, dict) else None}
+        'quota_environments': report.get('quota_environments') if isinstance(report, dict) else None,
+        'execution_scope': report.get('execution_scope') if isinstance(report, dict) else None,
+        'space_backup': isinstance(report, dict) and report.get('space_backup') is True}
 
 
 def systemctl(*arguments: str) -> subprocess.CompletedProcess:
@@ -673,7 +680,8 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         private_directory(root / 'roots' / 'runtime' / 'quota-login').chmod(0o700)
     changed = write_if_changed(paths['policy'], json.dumps(policy, indent=2, sort_keys=True) + '\n', 0o600)
     report = capabilities_report(release, paths['policy'])
-    if not report['available'] or report['templates'] == 0:
+    backup_ready = policy.get('execution_scope') == 'backups' and report['execution_scope'] == 'backups' and report['space_backup']
+    if not backup_ready and (not report['available'] or report['templates'] == 0):
         raise HostFailure('executor policy was written but the executor rejects it (' + str(report['reason']) + '); service not started')
     auth_file, auth_changed = install_provider_auth(policy, release, root)
     changed |= auth_changed
@@ -690,7 +698,7 @@ def setup(identity_directory: pathlib.Path, install_base: pathlib.Path, dry_run:
         systemctl('restart', paths['unit_name'])
     plan.update(release_installed=True, service_active=systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
         policy_changed=changed, templates=report['templates'], provider_auth=auth_file is not None,
-        quota_environments=report['quota_environments'])
+        quota_environments=report['quota_environments'], space_backup=report['space_backup'], execution_scope=report['execution_scope'])
     if not plan['linger']:
         plan['warning'] = f'enable linger so the service survives logout: sudo loginctl enable-linger {user}'
     return plan
@@ -703,7 +711,7 @@ def status(identity_directory: pathlib.Path, install_base: pathlib.Path) -> dict
     result = {'company_id': channel.identity['company_id'], 'host_id': channel.identity['host_id'],
         'policy_installed': paths['policy'].is_file(), 'unit_installed': paths['unit'].is_file(),
         'service_active': systemctl('is-active', paths['unit_name']).stdout.strip() == b'active',
-        'linger': linger_enabled(user), 'templates': 0, 'executor_ready': False}
+        'linger': linger_enabled(user), 'templates': 0, 'executor_ready': False, 'space_backup_ready': False}
     result['provider_auth'] = result['unit_installed'] and 'CAUCE_FLEET_ENROLLED_AUTH_POLICY_FILE=' in paths['unit'].read_text()
     if result['policy_installed']:
         releases = sorted((paths['install_root'] / 'release').glob('*/.verified'))
@@ -712,7 +720,9 @@ def status(identity_directory: pathlib.Path, install_base: pathlib.Path) -> dict
             report = capabilities_report(mentioned[0], paths['policy'])
             result['templates'] = report['templates']
             result['executor_ready'] = report['available'] and report['templates'] > 0 and result['service_active']
+            result['execution_scope'] = report['execution_scope']
+            result['space_backup_ready'] = report['execution_scope'] == 'backups' and report['space_backup'] and result['service_active']
             result['quota_environments'] = report['quota_environments']
-            result['reason'] = None if result['executor_ready'] else report['reason'] or 'service_inactive'
+            result['reason'] = None if result['executor_ready'] or result['space_backup_ready'] else report['reason'] or 'service_inactive'
     result.setdefault('reason', 'setup_required')
     return result

@@ -365,6 +365,27 @@ class LegacyContainerApprovalTest(unittest.TestCase):
         self.assertEqual(converted['state_directory'], '/home/dev/state/legado-rt')
         self.assertEqual((approved, result), ({'runtime_mode': 'container'}, binding))
 
+    def test_backup_only_observes_identity_and_rejects_foreign_user_home_state_and_container_isolation(self):
+        row = {'backup_only': True, 'runtime_user': 'dev', 'systemd_user': 'dev', 'home_directory': '/home/dev'}
+        policy = {'host_id': 'host-x', 'shared_containers': {'ws-legado': row}}
+        observed = {'Id': 'a' * 64, 'Image': 'sha256:' + 'b' * 64, 'RestartCount': 0, 'Mounts': [],
+                    'HostConfig': {'Privileged': False, 'PidMode': '', 'CapAdd': []},
+                    'State': {'Running': True, 'Pid': 17, 'StartedAt': 'generation-one'}}
+        with mock.patch.object(container_fixtures.container, 'inspect_container', return_value=observed):
+            approved, binding = space_backup_runtime.approve_legacy_container(policy, self.snapshot)
+            self.assertEqual(approved['_placement']['ownership'], 'backup-only')
+            self.assertEqual(binding['container_id'], observed['Id'])
+            self.assertEqual(space_backup_runtime.read_container_binding(policy, approved)[1], binding)
+            for field, value in [('host_id', 'foreign-host'), ('runtime_user', 'root'), ('home_directory', '/home/other'),
+                                 ('state_directory', '/home/dev/state/sibling'), ('systemd_user', 'root')]:
+                with self.subTest(field=field), self.assertRaises(space_backup_runtime.SafeFailure):
+                    space_backup_runtime.approve_legacy_container(policy, {**self.snapshot, field: value})
+            observed['State']['StartedAt'] = 'generation-two'
+            self.assertNotEqual(space_backup_runtime.read_container_binding(policy, approved)[1], binding)
+            observed['HostConfig']['Privileged'] = True
+            with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'isolation differs'):
+                space_backup_runtime.approve_legacy_container(policy, self.snapshot)
+
 
 class SpaceBackupFailureTest(unittest.TestCase):
     def test_failure_diagnostics_redact_before_truncation_and_keep_closed_bounded_schema(self):

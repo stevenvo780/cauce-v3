@@ -6,6 +6,38 @@ La consola solicita una copia durable de `agent.state_directory/space`, consulta
 
 El contenido exportado y cada archivo admiten 16 GiB. El ZIP durable suma además 8 MiB de manifiesto y 64 MiB de sobrecoste. La cuota predeterminada es cuatro veces ese archivo por empresa y dieciséis veces en global. No se ha validado la restauración de una copia productiva ni la migración física de agentes. El censo y el plan están en `docs/v4-migracion-plan.md`.
 
+Los agentes migrados de V3 con contenedor (con `runtime_mode` en null y un `container_name` válido en el registro) se admiten en el claim como `legacy-container`. Su copia se solicita desde la consola exactamente igual que en V4. La exportación se ejecuta en el host dentro de su contenedor compartido aprobado (`policy.shared_containers[container_name]`) mediante `/usr/bin/docker exec` bajo el usuario de runtime del agente (`runtime_user`), resolviendo `home_directory` y `systemd_user` desde la política aprobada. Si el contenedor compartido no está aprobado en la política, la ejecución se rechaza (`legacy backup container is not approved`). Si el agente no tiene ubicación vinculada (su ordenador o contenedor no están preparados y la solicitud responde 404), el panel de la consola muestra un estado neutro sin error: «Este agente todavía no tiene habilitada la copia de su espacio: su ordenador o su contenedor no están vinculados para copias. Cuando lo estén, podrás crearla aquí.»
+
+La configuración de activación declara `legacy_backup_containers` por **empresa → ordenador → nombre de contenedor**, con `runtime_user`, `systemd_user` y `home_directory`. El paquete firmado que recibe `cauce hosts setup` contiene únicamente las aprobaciones de esa empresa y ese ordenador; el setup escribe `shared_containers` con `backup_only: true`. No se edita `executor-policy.json` a mano ni se deduce autorización del inventario Docker. Una aprobación de copia no autoriza iniciar, parar, recuperar ni administrar el contenedor compartido; las aprobaciones completas de gestión conservan sus controles anteriores.
+
+Ejemplo mínimo para incorporar al archivo de activación existente, manteniendo su política V4:
+
+```json
+{
+  "legacy_backup_containers": {
+    "humanizar": {
+      "server2": {
+        "ws-isa": {
+          "runtime_user": "dev",
+          "systemd_user": "dev",
+          "home_directory": "/home/dev"
+        }
+      }
+    }
+  }
+}
+```
+
+El ejecutor exige Python en `/usr/bin/python3` dentro del V3. Ejecuta los módulos de copia de la release aprobada en memoria con `-I -B`, como usuario no root, sin añadir montajes ni instalar helpers en el contenedor. Comprueba usuario y home, estado bajo el home y terminado en la clave del runtime, contenedor en ejecución, aislamiento y generación de Docker antes y después del efecto. La aprobación persistente identifica el contenedor por su nombre y usuario; cada operación fija el ID, imagen, montajes y generación observados y rechaza cambios durante la copia. Los filtros, las identidades y los hashes del ZIP conservan el contrato común. Es una copia del espacio estándar permitido; no es una imagen del contenedor ni una copia de perfiles o credenciales.
+
+### Ordenadores dedicados a copias
+
+`backup_only_hosts: { "humanizar": ["server"] }` en la activación limita ese ordenador a `execution_scope: "backups"`. Hay que declarar también, bajo `legacy_backup_containers.humanizar.server`, cada contenedor autorizado y su usuario/home. El paquete omite imágenes y permisos de runtime, proveedores, cuotas y transporte; el setup no crea una aprobación de ejecución nativa. El proceso enrolado solo atiende `SpaceBackupHost` y publica `space_backup: true`, `fleet_executor: false`, sin plantillas. El CLI rechaza operaciones de gestión y el gateway aplica la restricción de la configuración de plataforma aunque el ordenador intente anunciar capacidades de gestión. `export`, `read` y la eliminación de su caché de copia son las únicas acciones locales de este carril; la restauración se ensaya por separado.
+
+Para los V3 del VPS, esta vía reutiliza el canal firmado, las autorizaciones humanas y la descarga existente. Evita habilitar un ejecutor de gestión general en el mismo host que el gateway. **La restricción es de la aplicación:** acceder al socket Docker sigue dando privilegios equivalentes a root. El enrolamiento requiere una invitación nueva del dueño y una instalación separada; nunca se reutilizan identidades ni credenciales de otro ordenador. Antes de aplicarlo hay que verificar los cuatro contenedores, sus usuarios, homes, espacios y Python reales, la capacidad libre del host y la copia/reversión de la configuración del gateway. La compresión, validación y caché consumen CPU, RAM, disco e I/O compartidos con el gateway y PostgreSQL; se deben generar las copias de una en una con límites de recursos para el servicio y margen de disco para caché y descarga. No se necesita reiniciar contenedores V3 ni modificar sus redes o montajes.
+
+La activación preparada para server2 y los ensayos de laboratorio no acreditan habilitación productiva. En el estado reportado por la tarea, `server` aún carece de identidad enrolada y su copia responde 409; el dueño debe activar y verificar esta vía antes de considerar cerradas las descargas reales.
+
 ## Contrato y controles
 
 - UUID durable con empresa, tenant, alias, host, solicitante humano, placement exacto y SHA256 de política. Idempotencia por empresa/tenant/alias y clave; retención serializada de 20 solicitudes activas por empresa y 200 globales.

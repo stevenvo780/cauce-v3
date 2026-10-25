@@ -42,6 +42,8 @@ def local_failure(stderr: bytes) -> dict | None:
 
 
 def read_container_binding(policy: dict, agent: dict) -> tuple[dict, dict]:
+    if agent.get('_placement', {}).get('ownership') == 'backup-only':
+        return approve_legacy_container(policy, agent)
     from fleet_executor_container import identity_for, inspect_container, user_identity
     from fleet_executor_hooks import container_binding
     from fleet_executor_image import validate_previous
@@ -84,6 +86,9 @@ def approve_legacy_container(policy: dict, snapshot: dict) -> tuple[dict, dict]:
     shared = policy.get('shared_containers', {}).get(snapshot.get('container_name'))
     if not isinstance(shared, dict):
         raise SafeFailure('legacy backup container is not approved')
+    if shared.get('backup_only') is True:
+        from space_backup_legacy import approve
+        return approve(policy, snapshot, shared)
     converted = {**snapshot, 'runtime_mode': 'container',
                  'home_directory': snapshot.get('home_directory') or shared.get('home_directory'),
                  'systemd_user': snapshot.get('systemd_user') or shared.get('systemd_user')}
@@ -106,10 +111,8 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
         local['offset'] = request['offset']
     binding = None
     if legacy:
-        from fleet_executor_container import isolated_python
         agent, binding = approve_legacy_container(policy, agent)
-        command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
-                   *isolated_python(str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py')]
+        command = container_command(agent, binding)
     elif agent['runtime_mode'] == 'container':
         from fleet_executor_container import isolated_python
         agent, binding = read_container_binding(policy, agent)
@@ -152,6 +155,15 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
             raise SafeFailure('space backup memory receipt is invalid')
         output['metrics'] = {'peak_rss_kib': max(measured, metrics.get('peak_rss_kib', 0))}
     return output
+
+
+def container_command(agent: dict, binding: dict, *arguments: str) -> list[str]:
+    if agent['_placement'].get('ownership') == 'backup-only':
+        from space_backup_legacy import command
+        return command(agent, binding, *arguments)
+    from fleet_executor_container import isolated_python
+    return ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
+            *isolated_python(str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py', *arguments)]
 
 
 def main() -> int:

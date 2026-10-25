@@ -84,6 +84,10 @@ def main() -> int:
         raise SafeFailure('login preparation requires a binding request')
     policy = load_policy(args.policy)
     if args.capabilities:
+        if policy.get('execution_scope') == 'backups':
+            print(json.dumps({'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured',
+                'space_backup': True, 'execution_scope': 'backups'}, sort_keys=True, separators=(',', ':')))
+            return 0
         from fleet_executor_templates import capabilities
         receipt = capabilities(policy)
         if 'quota_environments' in policy:
@@ -91,6 +95,8 @@ def main() -> int:
             receipt['quota_environments'] = quota_capabilities(policy)
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
+    if policy.get('execution_scope') == 'backups':
+        raise SafeFailure('backup-only executor rejects fleet effects')
     encoded = sys.stdin.buffer.read(1024 * 1024 + 1)
     if len(encoded) > 1024 * 1024:
         raise SafeFailure('execution payload exceeds its limit')

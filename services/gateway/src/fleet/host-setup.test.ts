@@ -63,6 +63,30 @@ describe('host setup packages', () => {
     expect(verify(null, Buffer.from(stableHostJson(tampered)), key, Buffer.from(signed.signature, 'base64'))).toBe(false);
   });
 
+  it('signs legacy backup approvals only for their declared company and computer and restricts backup-only hosts', async () => {
+    const { template } = await deployedRelease(true);
+    const approval = { runtime_user: 'node', systemd_user: 'node', home_directory: '/home/node' };
+    const config = await resolveHostSetup({ ...template,
+      legacy_backup_containers: { acme: { 'acme-laptop': { 'ws-legacy': approval } } }, backup_only_hosts: { acme: ['acme-laptop'] } });
+    const subject = new HostSetupPackager(config, generateKeyPairSync('ed25519').privateKey);
+    const signed = subject.build(scope);
+    expect(signed.package.policy).toEqual({ execution_scope: 'backups', bundles: {}, hooks: {}, container_templates: [], profile_templates: [],
+      shared_containers: { 'ws-legacy': { backup_only: true, ...approval } } });
+    expect((signed.package.artifacts as { kind: string }[]).some(item => item.kind === 'image')).toBe(false);
+    for (const outside of [{ ...scope, company_id: 'other' }, { ...scope, host_id: 'other' }]) {
+      expect(subject.build(outside).package.policy).not.toHaveProperty('shared_containers');
+      expect(subject.build(outside).package.policy).not.toHaveProperty('execution_scope');
+    }
+    for (const row of [{ ...approval, command: '/bin/sh' }, { ...approval, home_directory: '/' },
+      { ...approval, home_directory: '/home/node/' }, { ...approval, runtime_user: 'node;id' }]) {
+      expect(HostSetupConfigSchema.safeParse({ ...config, legacy_backup_containers: { acme: { 'acme-laptop': { 'ws-legacy': row } } } }).success).toBe(false);
+    }
+    expect(HostSetupConfigSchema.safeParse({ ...config, policy: { ...config.policy, shared_containers: { 'ws-legacy': approval } } }).success).toBe(false);
+    expect(HostSetupConfigSchema.safeParse({ ...config, backup_only_hosts: { acme: ['acme-laptop', 'acme-laptop'] } }).success).toBe(false);
+    const key = createPublicKey({ key: Buffer.from(signed.signer_public_key, 'base64'), format: 'der', type: 'spki' });
+    expect(verify(null, Buffer.from(stableHostJson(signed.package)), key, Buffer.from(signed.signature, 'base64'))).toBe(true);
+  });
+
   it('drops a template whose harness only exists on the object prototype', () => {
     const base = hostSetupConfig();
     const subject = packager({ policy: { ...base.policy, container_templates: [...base.policy.container_templates, { harness_id: 'constructor', prefix: 'x-' }] } });

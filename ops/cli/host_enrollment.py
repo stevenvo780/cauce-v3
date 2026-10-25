@@ -277,7 +277,7 @@ def main() -> int:
             receipt = host_setup.setup(identity, args.install_root, args.dry_run, args.signer_fingerprint) if args.action == 'setup' \
                 else host_setup.status(identity, args.install_root)
             print(json.dumps(receipt, sort_keys=True))
-            return 0 if args.action == 'setup' or receipt['executor_ready'] else 3
+            return 0 if args.action == 'setup' or receipt['executor_ready'] or receipt.get('space_backup_ready') else 3
         receipt = enroll(args.gateway, invitation_from_stdin(), args.state_root) if args.action == 'enroll' else heartbeat(args.identity_directory)
         print(json.dumps(receipt, sort_keys=True))
         return 0
