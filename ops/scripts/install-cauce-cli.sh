@@ -29,10 +29,20 @@ sintaxis() {  # $1=source
   esac
 }
 
-instalar() {  # $1=source directory under ops/  $2=name, the same on both sides
-  local source="$RAIZ/$1/$2" target="$BIN/$2" backup
-  [ -f "$source" ] || { printf 'no encuentro la fuente: %s\n' "$source" >&2; return 1; }
-  sintaxis "$source" || { printf '%s no pasa la comprobación de sintaxis\n' "$2" >&2; return 1; }
+comprobar() {  # $1=path under ops/. Failure prints the reason and writes nothing.
+  local source="$RAIZ/$1"
+  if [ ! -f "$source" ]; then
+    printf 'no encuentro la fuente: %s\n' "$source" >&2
+    return 1
+  fi
+  if ! sintaxis "$source"; then
+    printf '%s no pasa la comprobación de sintaxis\n' "${1##*/}" >&2
+    return 1
+  fi
+}
+
+colocar() {  # $1=path under ops/. Every source was checked before the destination existed.
+  local source="$RAIZ/$1" target="$BIN/${1##*/}" backup
   if [ -f "$target" ] && ! cmp -s "$source" "$target"; then
     backup="$target.bak-$(date -u +%Y%m%dT%H%M%SZ)"
     cp -p -- "$target" "$backup"
@@ -42,26 +52,37 @@ instalar() {  # $1=source directory under ops/  $2=name, the same on both sides
   printf 'instalado: %s\n' "$target"
 }
 
+# Checked in full before mkdir: a later missing guard must not leave a new `cauce` beside old ones.
+fuentes=(
+  cli/cauce
+  cli/cauce-platform
+  cli/cauce-diagnose
+  cli/cauce-login
+  cli/cauce-spaces
+  cli/host_enrollment.py
+  cli/host_channel_client.py
+  cli/host_setup.py
+  cli/host_image.py
+  cli/context_client.py
+  cli/context_native.py
+  cli/space_archive.py
+  cli/cauce-credenciales.lib.sh
+  cli/cauce-panel
+  cli/cauce-huerfanas
+  cli/cauce-reponer
+  guardias/cauce-estado
+  guardias/cauce-sesiones
+  guardias/cauce-attach
+)
+fallos=0
+for rel in "${fuentes[@]}"; do
+  comprobar "$rel" || fallos=1
+done
+[ "$fallos" = 0 ]
 mkdir -p "$BIN"
-instalar cli cauce
-instalar cli cauce-platform
-instalar cli cauce-diagnose
-instalar cli cauce-login
-instalar cli cauce-spaces
-instalar cli host_enrollment.py
-instalar cli host_channel_client.py
-instalar cli host_setup.py
-instalar cli host_image.py
-instalar cli context_client.py
-instalar cli context_native.py
-instalar cli space_archive.py
-instalar cli cauce-credenciales.lib.sh  # sourced by cauce: login, aprovisionar, retirar
-instalar cli cauce-panel
-instalar cli cauce-huerfanas
-instalar cli cauce-reponer
-instalar guardias cauce-estado
-instalar guardias cauce-sesiones
-instalar guardias cauce-attach
+for rel in "${fuentes[@]}"; do
+  colocar "$rel"
+done
 
 if [ ! -e "$AVISO_ATTACH" ] && [ -n "${CAUCE_DESTINO_AVISO_INICIAL:-}" ]; then
   install -d -m 0700 -- "${AVISO_ATTACH%/*}"

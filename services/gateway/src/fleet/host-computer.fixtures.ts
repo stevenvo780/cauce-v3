@@ -99,8 +99,10 @@ RUN chmod 0755 ${LOGIN_CLI} && chmod 0644 ${LOGIN_CLI_SCRIPT}
 `;
 const AS_USER = ['-u', 'cauce', '-e', 'HOME=/home/cauce', '-e', 'XDG_RUNTIME_DIR=/run/user/1500'];
 const TREE = ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors',
-  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py'];
-const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py'];
+  'ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py',
+  'ops/guardias/cauce-estado', 'ops/guardias/cauce-sesiones', 'ops/guardias/cauce-attach'];
+const RELEASE_PARTS = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py',
+  'ops/guardias/cauce-estado', 'ops/guardias/cauce-sesiones', 'ops/guardias/cauce-attach'];
 const AGENT_FORWARDER = `import { writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 const [socketPath, target, listen = '9443'] = process.argv.slice(2);
@@ -243,7 +245,10 @@ throw new Error('Agent transport did not become ready: '+JSON.stringify({expecte
 
 async function buildRelease(work: string, tree: string, agentImage: string, providers: string[], runtimeBundle?: ComputerRuntimeBundle) {
   const stage = join(work, 'stage');
-  for (const part of RELEASE_PARTS) await cp(join(tree, part), join(stage, part), { recursive: true });
+  for (const part of RELEASE_PARTS) {
+    await mkdir(dirname(join(stage, part)), { recursive: true });
+    await cp(join(tree, part), join(stage, part), { recursive: true });
+  }
   await cp(join(tree, 'packages/adapter-sdk/descriptors'), join(stage, 'adapter/packages/adapter-sdk/dist/descriptors'), { recursive: true });
   const providerCli = runtimeBundle?.providerCli ?? PROVIDER_CLI;
   await writeFile(join(stage, 'adapter/provider-cli.py'), providerCli, { mode: 0o755 });
