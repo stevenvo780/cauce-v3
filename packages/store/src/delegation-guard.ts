@@ -114,24 +114,24 @@ export function describeDelegationRejection(
         code,
         reason: `Abanico agotado: este turno ya delegó ${String(context.cap ?? 0)} veces, que es el máximo`
           + ' por turno interno, y la delegación hacia ' + target + ' no se emitió.',
-        guidance: 'No reintentes. Elegí las delegaciones imprescindibles y mandá esas; el resto'
-          + ' hacelo vos o pedilo en un turno posterior, cuando vuelvan las respuestas.'
+        guidance: 'No reintentes. Elige las delegaciones imprescindibles y manda esas; el resto'
+          + ' hazlo tú o pídelo en un turno posterior, cuando vuelvan las respuestas.'
       };
     case 'edge_repeat_exceeded':
       return {
         code,
         reason: `Ya le pasaste esta misma tarea a ${target} ${String(context.cap ?? 0)} veces dentro de`
           + ' esta cadena; el store no emite una más.',
-        guidance: 'Repetir el mismo pase no está avanzando el trabajo. Resolvelo vos con lo que'
-          + ' ya tenés, o devolvé el resultado parcial hacia arriba explicando qué falta.'
+        guidance: 'Repetir el mismo pase no está avanzando el trabajo. Resuélvelo tú con lo que'
+          + ' ya tienes, o devuelve el resultado parcial hacia arriba explicando qué falta.'
       };
     case 'root_budget_exhausted':
       return {
         code,
         reason: `Esta cadena ya consumió su presupuesto de ${String(context.cap ?? 0)} delegaciones`
           + ' y no admite ninguna más.',
-        guidance: 'Cerrá con lo que tengas: devolvé una respuesta final aunque sea parcial y'
-          + ' decí explícitamente qué quedó sin hacer. Abrir una cadena nueva para lo mismo'
+        guidance: 'Cierra con lo que tengas: devuelve una respuesta final aunque sea parcial y'
+          + ' di explícitamente qué quedó sin hacer. Abrir una cadena nueva para lo mismo'
           + ' repite el problema.'
       };
     case 'chain_gated':
@@ -149,7 +149,7 @@ export function describeDelegationRejection(
         reason: 'La pregunta se registró como gate humano'
           + (context.gateId ? ` (${context.gateId})` : '')
           + ', no como delegación: ningún agente puede contestar por una persona.',
-        guidance: 'Quedate quieto. Tu rama está suspendida, no fallada, y se reanuda sola con'
+        guidance: 'Quédate quieto. Tu rama está suspendida, no fallada, y se reanuda sola con'
           + ' una entrega nueva cuando la persona conteste.'
       };
     case 'cycle_detected':
@@ -157,21 +157,21 @@ export function describeDelegationRejection(
         code,
         reason: `${target} ya está en la cadena de antepasados de esta tarea: devolvérsela`
           + ' cerraría un ciclo.',
-        guidance: 'Mandale el trabajo a un alias que todavía no participó, o resolvelo vos.'
+        guidance: 'Mándale el trabajo a un alias que todavía no participó, o resuélvelo tú.'
       };
     case 'hop_budget_exhausted':
       return {
         code,
         reason: `Presupuesto de saltos agotado (${String(context.hopCount ?? '?')} de`
           + ` ${String(context.hopBudget ?? '?')}).`,
-        guidance: 'Terminá acá y devolvé lo que tengas hacia arriba.'
+        guidance: 'Termina acá y devuelve lo que tengas hacia arriba.'
       };
     case 'ambiguous_alias':
       return {
         code,
         reason: `El alias «${target}» existe en más de un tenant alcanzable desde acá.`,
-        guidance: 'Volvé a mandarlo nombrando el alias exacto que corresponde; si no sabés cuál'
-          + ' es, preguntá en vez de adivinar.'
+        guidance: 'Vuelve a mandarlo nombrando el alias exacto que corresponde; si no sabes cuál'
+          + ' es, pregunta en vez de adivinar.'
       };
     case 'unroutable_alias':
       if (context.humanGateWithheld === true) {
@@ -179,15 +179,15 @@ export function describeDelegationRejection(
           code,
           reason: 'La persona de esta cadena es de otro tenant y no puede ver tu pregunta:'
             + ' no se abrió ningún gate humano.',
-          guidance: 'No vuelvas a preguntar con @human en esta cadena. Resolvelo con lo que tenés'
-            + ' o devolvé el resultado parcial hacia arriba diciendo qué falta.'
+          guidance: 'No vuelvas a preguntar con @human en esta cadena. Resuélvelo con lo que tienes'
+            + ' o devuelve el resultado parcial hacia arriba diciendo qué falta.'
         };
       }
       return {
         code,
         reason: `No hay ruta hacia «${target}» desde este alias (no existe, está deshabilitado,`
-          + ' es vos mismo, o no hay arista entre los tenants).',
-        guidance: 'Revisá routing_targets antes de delegar y usá un alias de esa lista.'
+          + ' eres tú mismo, o no hay arista entre los tenants).',
+        guidance: 'Revisa routing_targets antes de delegar y usa un alias de esa lista.'
       };
     case 'invalid_output':
     default:
@@ -195,7 +195,7 @@ export function describeDelegationRejection(
         code: 'invalid_output',
         reason: 'La salida no cumple el contrato de `messages` (destino o cuerpo inválido, vacío'
           + ' o demasiado grande).',
-        guidance: 'Corregí la forma del mensaje; reintentarlo igual va a fallar igual.'
+        guidance: 'Corrige la forma del mensaje; reintentarlo igual va a fallar igual.'
       };
   }
 }

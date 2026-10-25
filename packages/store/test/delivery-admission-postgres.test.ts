@@ -216,7 +216,7 @@ describe('claim admission with a reserve for humans', () => {
     const lease = await repository.acquireLease(consumerTenant, consumerAlias, 'assistant-1', [], 30_000);
     await publishAgentDelivery('tarea larga entre agentes');
     await publishAgentDelivery('otra tarea larga');
-    await repository.publish(command({ body: { text: '¿cómo venís?' } }));
+    await repository.publish(command({ body: { text: '¿cómo vienes?' } }));
 
     // The general capacity is explicitly zero. Without a reserve this would return zero and the
     // human would be left waiting for the task to finish.
@@ -226,7 +226,7 @@ describe('claim admission with a reserve for humans', () => {
     );
 
     expect(claimed).toHaveLength(1);
-    expect(requireValue(claimed[0], 'claimed').body).toMatchObject({ text: '¿cómo venís?' });
+    expect(requireValue(claimed[0], 'claimed').body).toMatchObject({ text: '¿cómo vienes?' });
     // And the two agent-to-agent tasks keep waiting: the human used its share, not theirs.
     expect((await pool.query(
       `SELECT 1 FROM deliveries WHERE status='pending'`
@@ -316,7 +316,7 @@ describe('agent-derived messages leave the interactive lane', () => {
       result: {
         output: {
           reply: null,
-          messages: [{ to: 'socrates', body: 'hacé la parte dos' }],
+          messages: [{ to: 'socrates', body: 'haz la parte dos' }],
           status: 'done',
           retryable: false,
           artifacts: []

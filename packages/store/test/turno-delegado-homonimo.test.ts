@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isDelegatedSubAgentTurn } from '../src/repository/agents/fanin/helpers.js';
 import type { DeliveryRow } from '../src/repository/observability.js';
 
-// Los alias son únicos sólo dentro de un tenant: un homónimo en otro tenant que recibe una rama de
+// Los alias son únicos solo dentro de un tenant: un homónimo en otro tenant que recibe una rama de
 // la cadena sigue siendo un turno delegado, y su progreso no puede ir al chat del root.
 const row = (recipientTenant: string, recipientAlias: string): DeliveryRow => ({
   recipient_tenant: recipientTenant,

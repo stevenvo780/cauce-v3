@@ -290,13 +290,13 @@ describe('(a) la entrega sigue no terminal, con un intento mayor', () => {
 
     const result = await repository.ackDelivery(
       first.delivery_id, tenant, alias,
-      doneAck(first, instanceId, epoch, 'terminé, sólo que tarde')
+      doneAck(first, instanceId, epoch, 'terminé, solo que tarde')
     );
 
     expect(result).toMatchObject({ status: 'done', applied: true, receipt: 'applied' });
     const row = await deliveryRow(first.delivery_id);
     expect(row.status).toBe('done');
-    expect(row.reply).toBe('terminé, sólo que tarde');
+    expect(row.reply).toBe('terminé, solo que tarde');
     expect(row.late_result_attempt).toBe(first.attempt);
 
     // The in-flight run finds out at its next renewal: the SDK aborts the harness with
@@ -396,7 +396,7 @@ describe('qué NO se acepta tarde', () => {
         result: {
           output: {
             reply: 'listo, y de paso le pedí algo a kant',
-            messages: [{ to: 'kant', body: 'seguí vos' }]
+            messages: [{ to: 'kant', body: 'sigue tú' }]
           }
         }
       })

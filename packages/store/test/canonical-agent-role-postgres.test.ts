@@ -98,7 +98,7 @@ afterAll(async () => {
 
 describe('reconciliación y compatibilidad de la migración 028', () => {
 
-  it('hace ganar el perfil existente y sólo si falta perfil siembra el legacy', async () => {
+  it('hace ganar el perfil existente y solo si falta perfil siembra el legacy', async () => {
     await ensureDown();
     await insertAgent('Steven', 'canonical', 'legacy que debe perder');
     await pool.query(

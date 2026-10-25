@@ -170,7 +170,7 @@ async function stuckRoot(conversation: string): Promise<string> {
   const jarvis = await consumer('Steven', 'jarvis');
   const published = await repository.publish(telegramCommand(conversation));
   await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'analizá esto' }]);
-  await ackWith(socrates, await nextDelivery(socrates), [{ to: 'jarvis', body: 'hacelo vos' }]);
+  await ackWith(socrates, await nextDelivery(socrates), [{ to: 'jarvis', body: 'hazlo tú' }]);
   await ackWith(jarvis, await nextDelivery(jarvis), [], 'no pude', 'failed');
   // argos and socrates are dead: their continuations are never consumed.
   await killOpenDeliveries('socrates');
@@ -245,7 +245,7 @@ describe('anti-spam: cien muertes en una raíz son un aviso', () => {
         }
       }
     }));
-    await ackWith(salva, await nextDelivery(salva), [{ to: 'jarvis', body: 'ayudame' }]);
+    await ackWith(salva, await nextDelivery(salva), [{ to: 'jarvis', body: 'ayúdame' }]);
     await ackWith(jarvis, await nextDelivery(jarvis), [{ to: 'kratos', body: 'rama kratos' }]);
     const leaf = await nextDelivery(kratos);
     await ackWith(kratos, leaf, [], 'no pude', 'failed');

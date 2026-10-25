@@ -16,7 +16,7 @@ describe('proactive egress does not disturb the delegation tree', () => {
       delivery.delivery_id, 'Steven', 'argos',
       ackWith(delivery, 'argos-1', epoch, notifyOutput(
         [{ to: 'steven.dm', kind: 'task_complete', body: 'aviso' }],
-        { messages: [{ to: 'socrates', body: 'seguí vos' }] }
+        { messages: [{ to: 'socrates', body: 'sigue tú' }] }
       ))
     );
     const delegated = await pool.query<{ status: string }>(

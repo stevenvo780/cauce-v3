@@ -326,7 +326,7 @@ describe('cadena que cicla -> se corta', () => {
 
     await ackWith(argos, await nextDelivery(argos), [{ to: 'socrates', body: 'trabajo' }]);
     const toSocrates = await nextDelivery(socrates, (item) => item.body.type === 'agent.message');
-    await ackWith(socrates, toSocrates, [{ to: 'jarvis', body: 'seguí vos' }]);
+    await ackWith(socrates, toSocrates, [{ to: 'jarvis', body: 'sigue tú' }]);
     const toJarvis = await nextDelivery(jarvis, (item) => item.body.type === 'agent.message');
     const result = await ackWith(jarvis, toJarvis, [{ to: 'argos', body: 'te lo devuelvo' }]);
 

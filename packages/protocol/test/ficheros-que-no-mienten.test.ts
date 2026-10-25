@@ -114,7 +114,7 @@ test("no se pisa el bloque de OTRO alias: aliases con home compartido", () => {
 
 // ── 5. Cap measurement over consolidated text ─────────────────────────────────
 
-test("el tope se mide sobre el fichero ENTERO, no sólo sobre nuestro bloque", () => {
+test("el tope se mide sobre el fichero ENTERO, no solo sobre nuestro bloque", () => {
   const humano = "y".repeat(TOPES_OPENCLAW.porFichero - 500);
   const enDisco = new Map([["SOUL.md", humano]]);
   assert.throws(

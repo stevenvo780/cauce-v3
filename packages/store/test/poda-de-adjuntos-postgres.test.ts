@@ -152,7 +152,7 @@ afterAll(async () => {
 });
 
 describe('poda de adjuntos en messages.body', () => {
-  it('se lleva sólo los bytes y conserva texto, tipo, correlación y timeout', async () => {
+  it('se lleva solo los bytes y conserva texto, tipo, correlación y timeout', async () => {
     const messageId = await publicar();
     await envejecer(messageId, '40 days');
 

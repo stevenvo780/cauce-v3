@@ -52,8 +52,8 @@ describe('redaction rules: every family has a positive case', () => {
   });
 
   it('redacts a bare Bearer token pasted into a chat', () => {
-    expect(redactSecrets('probá con Bearer Ab3xY9zK1mN4pQ7rT8wZ9yZ2', ON).value)
-      .toBe(`probá con Bearer ${REDACTION_MARK}`);
+    expect(redactSecrets('prueba con Bearer Ab3xY9zK1mN4pQ7rT8wZ9yZ2', ON).value)
+      .toBe(`prueba con Bearer ${REDACTION_MARK}`);
   });
 
   it('redacts a Telegram bot token', () => {
@@ -112,7 +112,7 @@ describe('redaction rules: every family has a positive case', () => {
 
 describe('redaction rules: a false positive is worse than a miss', () => {
   it.each([
-    'mirá https://preview.example.invalid/empresa/configuracion-clientes',
+    'mira https://preview.example.invalid/empresa/configuracion-clientes',
     'el panel está en http://192.0.2.44:8443/v3/messages',
     'https://github.com/anomalyco/opencode/issues',
     'la ruta es file:///workspace/clases/video/Guion.docx',

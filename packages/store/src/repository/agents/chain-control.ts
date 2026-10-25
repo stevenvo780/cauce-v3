@@ -195,7 +195,7 @@ export abstract class AgentChainControlRepository extends AgentChainMaterializat
             type: 'agent.message',
             text: `Respuesta humana a tu pregunta pendiente.\n\nPregunta: ${row.question}\n\n`
               + `Respuesta de ${actorAlias}: ${bounded}\n\n`
-              + 'Retomá la tarea con esto. No vuelvas a preguntar lo mismo.',
+              + 'Retoma la tarea con esto. No vuelvas a preguntar lo mismo.',
             from_alias: actorAlias,
             correlation
         },

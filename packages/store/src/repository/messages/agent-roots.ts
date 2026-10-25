@@ -29,7 +29,7 @@ export class AgentRootLimitError extends StoreError {
 
   constructor(readonly openRoots: readonly OpenAgentRoot[]) {
     super('conflict', `el actor ya tiene ${String(openRoots.length)} mensajes raíz abiertos`
-      + ` (tope ${String(AGENT_ROOT_OPEN_LIMIT)}); esperá a que alguno termine`);
+      + ` (tope ${String(AGENT_ROOT_OPEN_LIMIT)}); espera a que alguno termine`);
     this.name = 'AgentRootLimitError';
   }
 }

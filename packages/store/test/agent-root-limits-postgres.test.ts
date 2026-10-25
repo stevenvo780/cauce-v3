@@ -137,13 +137,13 @@ describe('tope de raíces abiertas por agente', () => {
     }
   }, 120_000);
 
-  it('una raíz ocupa su lugar mientras corre su cadena, no sólo su primer salto', async () => {
+  it('una raíz ocupa su lugar mientras corre su cadena, no solo su primer salto', async () => {
     await fillOpenRoots(AGENT_ROOT_OPEN_LIMIT - 1);
     const jarvis = await consumer('Steven', 'jarvis');
     const socrates = await consumer('Steven', 'socrates');
     const chain = await agentRoot(command({ recipients: [{ tenant_id: 'Steven', alias: 'jarvis' }] }));
     await applyTerminalAck(repository, jarvis, await claimNext(repository, jarvis), {
-      messages: [{ to: 'socrates', body: 'averiguá vos' }], reply: 'provisional'
+      messages: [{ to: 'socrates', body: 'averiguá tú' }], reply: 'provisional'
     });
     expect((await rejectionOf(command())).openRoots.map((root) => root.message_id)).toContain(chain.message_id);
     const pending = await repository.getMessage(chain.message_id, 'Steven', 'kant', 'agent');
@@ -213,7 +213,7 @@ describe('lectura del resultado por quien publicó', () => {
     }));
     await applyTerminalAck(repository, argos, await claimNext(repository, argos), { reply: 'respuesta propia de argos' });
     await applyTerminalAck(repository, socrates, await claimNext(repository, socrates), {
-      messages: [{ to: 'argos', body: 'ayudame con esto' }], reply: 'le pedí a argos'
+      messages: [{ to: 'argos', body: 'ayúdame con esto' }], reply: 'le pedí a argos'
     });
     await applyTerminalAck(repository, argos,
       await claimNext(repository, argos, (item) => item.body.type === 'agent.message'),

@@ -475,7 +475,7 @@ export abstract class ObservabilityChainSweepRepository extends ObservabilityMai
        WHERE materialization.status='materialized'
          AND materialization.correlation->>'root_message_id'=$1
          AND child.status IN ('dead','failed')
-         -- last_error lo escribe el agente: sólo cuenta como causa la rama que el humano puede leer.
+         -- last_error lo escribe el agente: solo cuenta como causa la rama que el humano puede leer.
          AND ${tenantReadableSql('$2::text', 'materialization.target_tenant')}
        GROUP BY 1
        ORDER BY total DESC,cause

@@ -38,7 +38,7 @@ const TIPO_INSERVIBLE_URI = `data:foo;base64,${INLINE_BASE64}`;
 const TIPO_POR_DEFECTO = 'application/octet-stream';
 
 /** Formas que el puente sube o rechaza, medidas con su propio decodificador. */
-/* La invariante «subidas>0 ⟺ done» sólo vale sin locators: un https:// entrega sin subir nada. */
+/* La invariante «subidas>0 ⟺ done» solo vale sin locators: un https:// entrega sin subir nada. */
 const PARIDAD_CON_EL_EGRESO = [
   { caso: 'canónico', uri: INLINE_URI, subidas: 1 },
   { caso: 'base64 partido en líneas', uri: WRAPPED_URI, subidas: 1 },
@@ -75,7 +75,7 @@ const FORMAS_NORMALIZADAS = [
 const RELLENO_QUE_EL_EGRESO_DESCARTA = [
   { caso: 'entradas que no son objeto', relleno: 'basura' as unknown },
   { caso: 'uri que no es texto', relleno: { name: 'x.pdf', uri: 123 } },
-  { caso: 'rutas que sólo existen en el agente', relleno: { name: 'x.pdf', uri: '/tmp/x.pdf' } }
+  { caso: 'rutas que solo existen en el agente', relleno: { name: 'x.pdf', uri: '/tmp/x.pdf' } }
 ] as const;
 
 const NOMBRES_QUE_NO_SE_GUARDAN = [
@@ -85,7 +85,7 @@ const NOMBRES_QUE_NO_SE_GUARDAN = [
 
 const BROKEN_BASE64 = 'QUJDR';
 const BROKEN_URI = `data:application/pdf;base64,${BROKEN_BASE64}`;
-/* Un tamaño sólo se declara cuando alguien midió los bytes. Estas tres formas tienen la longitud
+/* Un tamaño solo se declara cuando alguien midió los bytes. Estas tres formas tienen la longitud
    que un base64 canónico tendría y no las descodifica nadie —ni el egreso ni el salto de vuelta—,
    así que un tamaño aritmético en la única copia durable se leería igual que una medición. */
 const BASE64_QUE_NADIE_DESCODIFICA = [

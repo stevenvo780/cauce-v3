@@ -97,7 +97,7 @@ describe('describeDelegationRejection', () => {
     });
     expect(notice.reason).toContain('Steven/socrates');
     expect(notice.reason).toContain('3');
-    expect(notice.guidance).toMatch(/devolvé|resolvelo/iu);
+    expect(notice.guidance).toMatch(/devuelve|resuélvelo/iu);
   });
 
   it('el rechazo por gate dice qué se está esperando y que NO hay que reintentar', () => {

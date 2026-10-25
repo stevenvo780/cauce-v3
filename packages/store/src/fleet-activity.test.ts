@@ -160,7 +160,7 @@ describe('FLEET_ACTIVITY_QUERY contract', () => {
       .toEqual({ work_state: 'working', flags: [] });
   });
 
-  it('una reclamación sin ACK sólo alerta tras el umbral, salvo deadline vencido', () => {
+  it('una reclamación sin ACK solo alerta tras el umbral, salvo deadline vencido', () => {
     const row: FleetActivityWorkStateInput = {
       registered: true, in_flight: 1, queued: 0, overdue_in_flight: 0,
       seconds_since_last_ack: null, lease_online: true,
