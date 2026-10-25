@@ -4,19 +4,23 @@ import { ExtensionsSchema } from '@cauce/protocol';
 /** The adapter's exact `tenant:uuid` shape for a human who may share an agent's canonical session. */
 const SHARED_HUMAN = /^[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
+/** Harnesses whose policy can run a shared TUI (plus OpenClaw, whose canonical session is the only one it has). */
+const SHARED_TUI_HARNESS_IDS = new Set(['openclaw', 'claude', 'codex', 'grok', 'muse']);
+
 /**
- * OpenClaw has no isolated human session, so a console message reaches its canonical session only from a human listed
- * in CAUCE_SHARED_HUMAN_IDS. The list is the active owners and admins of the agent's own company: never another company.
+ * A console message reaches an agent's shared TUI only from a human listed in CAUCE_SHARED_HUMAN_IDS,
+ * so every shared-TUI harness row carries the list. The list is the active owners and admins of the
+ * agent's own company: never another company.
  */
 export async function fleetSharedHumans(client: DatabaseClient, companyId: string,
   agents: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
-  if (!agents.some(agent => agent.harness_id === 'openclaw')) return agents;
+  if (!agents.some(agent => SHARED_TUI_HARNESS_IDS.has(String(agent.harness_id)))) return agents;
   const humans = [...new Set((await client.query<{ entry: string }>(`SELECT DISTINCT human.tenant_id||':'||lower(human.id::text) AS entry
     FROM company_admins admin JOIN console_users human ON human.id::text=admin.human_id::text
     WHERE admin.company_id=$1 AND admin.role IN ('owner','admin') AND human.active AND human.company_id=$1
     ORDER BY 1`, [companyId])).rows.map(row => row.entry))].filter(entry => SHARED_HUMAN.test(entry)).slice(0, 32);
   if (humans.length === 0) return agents;
-  return agents.map(agent => agent.harness_id === 'openclaw' ? { ...agent, shared_human_ids: humans } : agent);
+  return agents.map(agent => SHARED_TUI_HARNESS_IDS.has(String(agent.harness_id)) ? { ...agent, shared_human_ids: humans } : agent);
 }
 
 export async function desiredFleetExtensions(client: DatabaseClient, agents: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
