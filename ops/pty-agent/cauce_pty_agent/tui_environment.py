@@ -43,7 +43,11 @@ def _matching_environments(bundle: dict[str, Any]) -> list[dict[str, str]]:
                 name = key.decode("utf-8", "strict")
                 if separator and name in PATH_KEYS | PRIVATE_KEYS | IDENTITY_KEYS | LOCAL_KEYS:
                     environment[name] = value.decode("utf-8", "strict")
-            if (environment.get("CAUCE_RUNTIME_KEY", environment.get("CAUCE_ALIAS")) != bundle["alias"]
+            # CAUCE_ALIAS is the wire alias the PTY bundle names. CAUCE_RUNTIME_KEY is a
+            # distinct physical key on V4 and is only the fallback when the wire alias is absent.
+            wire = environment.get("CAUCE_ALIAS")
+            identity = wire if wire else environment.get("CAUCE_RUNTIME_KEY")
+            if (identity != bundle["alias"]
                     or environment.get("HOME") != bundle["home"]
                     or environment.get("CAUCE_STATE_DIR") != recovery.get("state_directory")
                     or environment.get("CAUCE_CONTAINER_ID") != bundle["container_id"]
