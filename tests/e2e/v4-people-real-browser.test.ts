@@ -147,15 +147,21 @@ async function registerOwner(page: V4Page, owner: V4Person): Promise<void> {
 }
 
 async function openSection(page: V4Page, section: string): Promise<void> {
-  await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
+  const target = `${base()}/config?seccion=${section}`;
+  if (page.url() !== target) {
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+  }
   await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: plazo(20_000) });
 }
 
 async function openPeopleAdmin(page: V4Page): Promise<void> {
   await openSection(page, 'acceso');
   await page.getByRole('heading', { name: 'Personas', exact: true }).waitFor({ timeout: 15_000 });
-  await page.getByRole('button', { name: 'Administrar personas', exact: true }).click();
-  await page.getByRole('region', { name: 'Administración de personas', exact: true }).waitFor({ timeout: 15_000 });
+  const adminRegion = page.getByRole('region', { name: 'Administración de personas', exact: true });
+  if (await adminRegion.count() === 0) {
+    await page.getByRole('button', { name: 'Administrar personas', exact: true }).click();
+  }
+  await adminRegion.waitFor({ timeout: 15_000 });
 }
 
 async function fillPersonForm(page: V4Page, email: string, password: string, displayName = employee.displayName): Promise<void> {
