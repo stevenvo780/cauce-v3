@@ -8,7 +8,7 @@ import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 import { apiGet } from './v4-console-real-browser.helpers.js';
 import { FLEET_CLI_OWNER, fleetCliPrefix, fleetCliReceipts, fleetCliRun, startFleetCliFixture,
   type FleetCliFixture, type FleetCliRuntime } from './v4-cli-flota-dinamica.host.js';
-import { buildInstalledCli, type InstalledCliResult } from './v4-cli-flota-dinamica.install.js';
+import { buildInstalledCli, type InstalledCliResult, type InstalledCliRunOptions } from './v4-cli-flota-dinamica.install.js';
 import { FLEET_CLI_PROVIDER_FIXTURE } from './v4-cli-flota-dinamica.runtime.js';
 
 interface Operation { id: string; kind: string; status: string; error: { code?: string; step?: string } | null }
@@ -27,6 +27,7 @@ let fixture: FleetCliFixture | undefined;
 let installed: Awaited<ReturnType<typeof buildInstalledCli>> | undefined;
 let runtime: FleetCliRuntime | undefined;
 let installationDirectory: string | undefined;
+let diagnosticReceipts: string | undefined;
 const alias = `cli${randomUUID().replaceAll('-', '').slice(0, 10)}`;
 const runtimeKey = `cli-${alias}`;
 const marker = randomBytes(12).toString('hex');
@@ -60,6 +61,86 @@ function connection(session = cli().sessionFile): string[] {
 function terminal(session = cli().sessionFile): string[] { return [alias, '--tenant', active().tenantId, ...connection(session)]; }
 async function receipt(name: string, value: unknown): Promise<void> {
   await writeFile(join(active().receipts, `${name}.json`), JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
+}
+async function nominalDiagnostic(name: string, failure?: { exit: number | null; threw: boolean; mode_rejected: boolean | null; public_code: string }): Promise<void> {
+  const observed: Record<string, unknown> = { observed_at: new Date().toISOString(),
+    approved_shared_tui: null, policy_read_succeeded: false, targets_http_code: null, target_visible: null,
+    target_modes: [], target_pty_states: [], pty_state: null,
+    tmux_observation_available: false, tmux_clients: null, native_session_present: null, native_session_unique: null,
+    native_session_sample: { max_files: 16, max_lines_per_file: 32 },
+    ...(failure ? { cli: failure } : {}) };
+  try { observed.pty_state = active().registry.state(active().tenantId, alias); } catch { observed.pty_state = null; }
+  try {
+    const policy = join(active().computer.installRoot, active().owner.company.slug, active().hostId, 'executor-policy.json');
+    const result = await active().computer.onComputer(['python3', '-I', '-B', '-c',
+      'import json,sys;value=json.load(open(sys.argv[1])).get("bundles",{}).get("codex",{}).get("shared_tui");print(json.dumps(value if type(value) is bool else None))', policy]);
+    observed.policy_read_succeeded = result.code === 0;
+    if (result.code === 0 && ['true', 'false'].includes(result.stdout.trim())) observed.approved_shared_tui = result.stdout.trim() === 'true';
+  } catch { observed.policy_read_succeeded = false; }
+  try {
+    const targets = await apiGet(active().page, '/v3/console/terminal/targets');
+    observed.targets_http_code = targets.status;
+    if (targets.status === 200 && Array.isArray(targets.body.items)) {
+      const own = targets.body.items.filter((row: unknown): row is Record<string, unknown> => typeof row === 'object'
+        && row !== null && 'alias' in row && row.alias === alias && 'tenant_id' in row && row.tenant_id === active().tenantId);
+      observed.target_visible = own.length > 0;
+      observed.target_modes = [...new Set(own.flatMap(row => Array.isArray(row.modes)
+        ? row.modes.filter((mode: unknown): mode is string => typeof mode === 'string' && ['shell', 'harness', 'harness_rw'].includes(mode)) : []))];
+      observed.target_pty_states = [...new Set(own.flatMap(row => typeof row.pty_state === 'string'
+        && ['online', 'agent_offline', 'not_installed', 'unknown'].includes(row.pty_state) ? [row.pty_state] : []))];
+    }
+  } catch { observed.targets_http_code = null; }
+  if (runtime) {
+    try {
+      const script = `import itertools,json,pathlib,subprocess,sys
+socket,target,home=sys.argv[1:4]
+tmux=subprocess.run(['/usr/bin/tmux','-S',socket,'display-message','-p','-t',target,'#{session_attached}'],capture_output=True,text=True,timeout=5)
+clients=int(tmux.stdout.strip()) if tmux.returncode==0 and tmux.stdout.strip().isdigit() else None
+sessions=set();readable=True
+for filename in itertools.islice(pathlib.Path(home,'sessions').glob('rollout-cli-*.jsonl'),16):
+ try:
+  with filename.open() as stream:
+   for _ in range(32):
+    line=stream.readline(16384)
+    if not line: break
+    packet=json.loads(line)
+    if packet.get('type')=='session_meta' and isinstance(packet.get('payload'),dict) and isinstance(packet['payload'].get('id'),str): sessions.add(packet['payload']['id']);break
+ except (OSError,ValueError): readable=False
+print(json.dumps({'tmux_observation_available':clients is not None,'tmux_clients':clients,'native_session_present':bool(sessions) if readable else None,'native_session_unique':len(sessions)==1 if readable else None}))`;
+      const result = JSON.parse(await docker(['exec', '--user', COMPUTER_RUNTIME.user, runtime.id, 'python3', '-I', '-B', '-c', script,
+        `${runtime.stateDirectory}/tmux-${String(runtime.uid)}/cauce`, `cauce-${runtime.runtimeKey}:agente`, runtime.codexHome])) as unknown;
+      if (typeof result === 'object' && result !== null) {
+        for (const key of ['tmux_observation_available', 'native_session_present', 'native_session_unique'] as const) {
+          if (key in result) { const value: unknown = Reflect.get(result, key); if (typeof value === 'boolean') observed[key] = value; }
+        }
+        if ('tmux_clients' in result && typeof result.tmux_clients === 'number' && Number.isInteger(result.tmux_clients) && result.tmux_clients >= 0) {
+          observed.tmux_clients = result.tmux_clients;
+        }
+      }
+    } catch { observed.tmux_observation_available = false; }
+  }
+  try {
+    if (!diagnosticReceipts) throw new Error('nominal diagnostic directory unavailable');
+    await writeFile(join(diagnosticReceipts, `${name}.json`), JSON.stringify(observed, null, 2) + '\n', { mode: 0o600 });
+  } catch { console.info('CLI_NOMINAL_DIAGNOSTIC_WRITE_FAILED'); }
+}
+async function runNominalTerminal(name: string, options: InstalledCliRunOptions): Promise<InstalledCliResult> {
+  try {
+    const result = await cli().run(terminal(), options);
+    if (result.code !== 0) {
+      try {
+        await nominalDiagnostic(name, { exit: result.code, threw: false,
+          mode_rejected: result.stderr.includes('El servidor no autoriza el modo de terminal solicitado.'), public_code: 'CLI_NONZERO_EXIT' });
+      } catch { console.info('CLI_NOMINAL_DIAGNOSTIC_UNAVAILABLE'); }
+    }
+    return result;
+  } catch (error) {
+    try {
+      await nominalDiagnostic(name, { exit: null, threw: true, mode_rejected: null,
+        public_code: error instanceof Error && error.message === 'installed CLI process exceeded its deadline' ? 'CLI_DEADLINE' : 'CLI_RUN_THROWN' });
+    } catch { console.info('CLI_NOMINAL_DIAGNOSTIC_UNAVAILABLE'); }
+    throw error;
+  }
 }
 async function inventory(): Promise<Inventory> {
   return document(await cli().run(['spaces', 'list', '--json', '--tenant', active().tenantId, '--alias', alias, ...connection()]), 'spaces list') as Inventory;
@@ -216,6 +297,7 @@ beforeAll(async () => {
     throw new Error('the installed CLI requires the verified runner owner and its private HOME');
   }
   const evidence = join(process.cwd(), '.delegados/v4/recibos', runnerOwner, 'dynamic-analysis', fleetCliRun);
+  diagnosticReceipts = evidence;
   await mkdir(evidence, { recursive: true, mode: 0o700 });
   await writeFile(join(evidence, '00-docker-runner.json'), JSON.stringify({ runner: outer.runner,
     install_owner: runnerOwner, owner_home_matches: true,
@@ -287,12 +369,14 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
 
 
   it('cauce alias escribe por relay y se reengancha a la misma TUI sin clientes ni controles huérfanos', async () => {
+    await nominalDiagnostic('04-before-terminal-preparation');
     runtime = await active().prepareTerminal(alias);
     const present = await waitTerminalPresence();
     const targets = await apiGet(active().page, '/v3/console/terminal/targets');
     expect(targets.status).toBe(200);
     await receipt('04-target', { items: (targets.body.items as { alias: string }[]).filter(item => item.alias === alias) });
-    const first = await cli().run(terminal(), { input: `REMEMBER ${marker}\r`, detachWhen: `STORED:${marker}`, timeout: 60_000 });
+    await nominalDiagnostic('04-before-first-terminal');
+    const first = await runNominalTerminal('04-first-terminal-failed', { input: `REMEMBER ${marker}\r`, detachWhen: `STORED:${marker}`, timeout: 60_000 });
     await receipt('04-terminal-attempt', { code: first.code, pty_state: active().registry.state(active().tenantId, alias),
       presence_wait_ms: 45_000, presence_observed: present, physical_runtime: runtime,
       diagnostics: cliDiagnostics(first) });
@@ -301,7 +385,7 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     expect(first.stdout.includes(`STORED:${marker}`)).toBe(true);
     await assertTerminalReleased();
     const between = await active().probeTmux(alias);
-    const second = await cli().run(terminal(), { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
+    const second = await runNominalTerminal('04-second-terminal-failed', { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
     successful(second, 'second installed terminal attach');
     expect(second.stdout.includes(`RECALLED:${marker}`)).toBe(true);
     await assertTerminalReleased();
