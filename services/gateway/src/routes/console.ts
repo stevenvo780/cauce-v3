@@ -1,4 +1,5 @@
 import { AgentContextWriteCoordinator } from '../console/agent-context-write-coordinator.js';
+import { registerContextWriteRecoveryRoutes } from '../console/agent-context-write-recovery.js';
 import type { DatabasePool } from '@cauce/store';
 import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
@@ -351,6 +352,7 @@ function registerConsoleAgentRoutes(
     const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
     const coordinator = new AgentContextWriteCoordinator(options.pool, profileProbe,
       (event) => { app.log.warn(event, 'context write effect unknown'); });
+    registerContextWriteRecoveryRoutes(app, { pool: options.pool, authProvider: options.authProvider, coordinator });
     const profileDeps: AgentProfileDeps = {
       ...createAgentProfileDraftBinding(options.authProvider, perfiles, repository),
       authorize: autorizarPerfil,

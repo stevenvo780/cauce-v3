@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { emptyAgentProfile } from '@cauce/protocol';
 import {
-  AgentProfileRepository, CauceRepository, type ContextWriteDescriptor, type ContextWritePlan,
+  AgentProfileRepository, CauceRepository, legacyContextWriteIsProfile, pendingAgentContextWrites, type ContextWriteDescriptor, type ContextWritePlan,
   type ContextWriteRecoveryInput, type ContextWriterRecoveryProof, type DatabaseClient, type DatabasePool, type ReserveContextWriteInput,
 } from '../src/index.js';
 import { resetTestDatabase, startTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -130,6 +130,59 @@ describe('versioned context-write recovery', () => {
     expect(callbacks).toBe(1);
     expect((await repository.readContextWrite(tenant, alias, descriptor.operationId))?.version).toBe(1);
     await expectStillRunning(descriptor.operationId);
+  });
+
+  it('recovers a sealed v1 profile write through a plan the human-authorized caller derives, without rewriting the reservation', async () => {
+    const { plan: discardedPlan, ...v1Request } = reservation({ updateDesired: async (client) => {
+      await profiles.replaceInTransaction(client, { ...profile, role_summary: 'Legacy profile write' }, 1, actor);
+    } });
+    expect(discardedPlan).toBeDefined();
+    const descriptor = await repository.authorizeContextWriteDispatch(await repository.reserveContextWrite(v1Request));
+    if (descriptor.version !== 1) throw new Error('legacy reservation expected');
+    expect(legacyContextWriteIsProfile(descriptor)).toBe(true);
+    expect(await pendingAgentContextWrites(pool, tenant, alias)).toEqual([expect.objectContaining({
+      operationId: descriptor.operationId, dispatch: 'authorized', descriptorVersion: 1, operation: 'profile' })]);
+    const derived = plan();
+    let persistedPlan: ContextWritePlan | undefined;
+    await expect(repository.recoverContextWrite(recoveryInput(descriptor, {
+      legacyPlan: (sealed) => { expect(sealed.operationId).toBe(descriptor.operationId); return derived; },
+      persistTarget: async (client, selectedPlan, proof) => {
+        persistedPlan = selectedPlan;
+        await client.query(`UPDATE agent_profile_runtime_expectations SET documents=$3::jsonb WHERE tenant_id=$1 AND alias=$2`,
+          [tenant, alias, JSON.stringify(proof.documents.map(({ name, path: documentPath, sha }) => ({ name, path: documentPath, sha })))]);
+      },
+    }))).resolves.toEqual({ operationId: descriptor.operationId, resolution: 'target' });
+    expect(persistedPlan).toEqual(derived);
+    const saved = await repository.readContextWrite(tenant, alias, descriptor.operationId);
+    expect(saved).toMatchObject({ version: 1, completion: { resolution: 'target' } });
+    expect(saved && 'plan' in saved).toBe(false);
+    expect(await pendingAgentContextWrites(pool, tenant, alias)).toEqual([]);
+  });
+
+  it('lets a v1 write without a derivable plan resolve as old but never as target, and rejects a plan that differs', async () => {
+    const { plan: discardedPlan, ...v1Request } = reservation();
+    expect(discardedPlan).toBeDefined();
+    const descriptor = await repository.authorizeContextWriteDispatch(await repository.reserveContextWrite(v1Request));
+    if (descriptor.version !== 1) throw new Error('legacy reservation expected');
+    expect(legacyContextWriteIsProfile(descriptor)).toBe(false);
+    expect((await pendingAgentContextWrites(pool, tenant, alias))[0]?.operation).toBe('unknown');
+    let writes = 0;
+    await expect(repository.recoverContextWrite(recoveryInput(descriptor, {
+      legacyPlan: () => null, persistTarget: async () => { writes += 1; },
+    }))).rejects.toThrow('recovery plan is unavailable');
+    await expectStillRunning(descriptor.operationId);
+    await expect(repository.recoverContextWrite(recoveryInput(descriptor, {
+      legacyPlan: () => ({ ...plan(), expectationDocuments: [{ name: 'CLAUDE.md', path: '/home/dev/other.md' }] }),
+      persistTarget: async () => { writes += 1; },
+    }))).rejects.toThrow('plan differs');
+    await expectStillRunning(descriptor.operationId);
+    await expect(repository.recoverContextWrite(recoveryInput(descriptor, {
+      legacyPlan: () => null, persistTarget: async () => { writes += 1; },
+      authenticatedReadback: async () => recoveryProof(descriptor, [{ name: 'CLAUDE.md', path, sha: oldSha, bytes: 9 }]),
+    }))).resolves.toEqual({ operationId: descriptor.operationId, resolution: 'old' });
+    expect(writes).toBe(0);
+    expect((await pool.query<{ documents: unknown }>('SELECT documents FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rows[0]?.documents)
+      .toEqual([{ name: 'CLAUDE.md', path, sha: oldSha }]);
   });
 
   it('recovers a v2 target once using the same client for authority, target control, proof and persistence', async () => {

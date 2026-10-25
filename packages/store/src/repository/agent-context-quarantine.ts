@@ -77,10 +77,25 @@ export interface ContextWriteRecoveryInput {
   readonly operationId: string;
   readonly signal: AbortSignal;
   readonly lockHumanAuthority: (client: DatabaseClient) => Promise<void>;
-  readonly assertTargetControl: (client: DatabaseClient, descriptor: ContextWriteDescriptorV2) => Promise<void>;
-  readonly authenticatedReadback: (client: DatabaseClient, descriptor: ContextWriteDescriptorV2) => Promise<ContextWriterRecoveryProof>;
+  readonly assertTargetControl: (client: DatabaseClient, descriptor: ContextWriteDescriptor) => Promise<void>;
+  readonly authenticatedReadback: (client: DatabaseClient, descriptor: ContextWriteDescriptor) => Promise<ContextWriterRecoveryProof>;
   readonly persistTarget: (client: DatabaseClient, plan: ContextWritePlan, proof: ContextWriterRecoveryProof,
-    descriptor: ContextWriteDescriptorV2) => Promise<void>;
+    descriptor: ContextWriteDescriptor) => Promise<void>;
+  /**
+   * Only for reservations sealed before plans existed (v1). The human-authorized caller derives the plan from the sealed
+   * descriptor; the reservation itself is never rewritten. `null` still lets the same proof resolve the write as `old`,
+   * where nothing is persisted, and refuses a `target` that would need a plan.
+   */
+  readonly legacyPlan?: (descriptor: ContextWriteDescriptorV1) => ContextWritePlan | null;
+}
+/** A reservation that still fences its alias: what the console shows and offers to recover. */
+export interface PendingContextWrite {
+  readonly operationId: string;
+  readonly createdAt: string;
+  readonly dispatch: 'reserved' | 'authorized';
+  readonly descriptorVersion: 1 | 2;
+  /** The plan's operation; a v1 reservation names the one its sealed snapshots prove, or `unknown`. */
+  readonly operation: ContextWritePlan['operation'] | 'unknown';
 }
 export interface ContextWriteHistory {
   readonly operationId: string;
@@ -206,6 +221,24 @@ export async function assertNoContextDeliveriesInFlight(client: DatabaseClient, 
   if (result.rows[0]?.exists !== false) conflict('context write target has work in flight');
 }
 
+/** A v1 reservation proves a profile write when its sealed desired profile changed between both snapshots. */
+export function legacyContextWriteIsProfile(descriptor: ContextWriteDescriptorV1): boolean {
+  return descriptor.after.revision !== null && descriptor.after.profileSha256 !== descriptor.before.profileSha256;
+}
+export async function pendingAgentContextWrites(client: DatabaseClient | DatabasePool, tenantId: Tenant, alias: string): Promise<PendingContextWrite[]> {
+  const rows = await client.query<{ id: string; payload: unknown; created_at: Date }>(
+    `SELECT id::text,payload,created_at FROM jobs WHERE tenant_id=$1 AND kind=$2 AND status='running' AND payload->>'alias'=$3
+      ORDER BY created_at,id LIMIT 8`, [tenantId, CONTEXT_WRITE_QUARANTINE_KIND, alias]);
+  const pending: PendingContextWrite[] = [];
+  for (const row of rows.rows) {
+    const descriptor = parseDescriptor(row.payload);
+    if (descriptor?.operationId !== row.id || descriptor.alias !== alias || descriptor.completion !== null) continue;
+    pending.push({ operationId: descriptor.operationId, createdAt: row.created_at.toISOString(), dispatch: descriptor.dispatch,
+      descriptorVersion: descriptor.version,
+      operation: descriptor.version === 2 ? descriptor.plan.operation : legacyContextWriteIsProfile(descriptor) ? 'profile' : 'unknown' });
+  }
+  return pending;
+}
 export async function readAgentContextWrite(pool: DatabasePool, tenantId: Tenant, alias: string, operationId: string): Promise<ContextWriteDescriptor | undefined> {
   const result = await pool.query<{ payload: unknown }>(`SELECT payload FROM jobs WHERE id=$1 AND tenant_id=$2 AND kind=$3`, [operationId, tenantId, CONTEXT_WRITE_QUARANTINE_KIND]);
   const row = result.rows[0];
@@ -312,6 +345,16 @@ async function persistResolution(
   return resolution;
 }
 
+function legacyRecoveryPlan(descriptor: ContextWriteDescriptorV1,
+  derive: ContextWriteRecoveryInput['legacyPlan']): ContextWritePlan | null {
+  const derived = derive?.(structuredClone(descriptor)) ?? null;
+  if (derived === null) return null;
+  const plan = parseContextWritePlan(structuredClone(derived));
+  if (plan === undefined || !contextWritePlanMatches(plan, descriptor.documents, descriptor.after)) {
+    conflict('context write recovery plan differs from the sealed reservation');
+  }
+  return plan;
+}
 export async function recoverAgentContextWrite(pool: DatabasePool, input: ContextWriteRecoveryInput): Promise<ContextWriteHistory> {
   if (!TenantSchema.safeParse(input.tenantId).success || !AliasSchema.safeParse(input.alias).success
     || !UUID.test(input.operationId) || !(input.signal instanceof AbortSignal)
@@ -333,7 +376,7 @@ export async function recoverAgentContextWrite(pool: DatabasePool, input: Contex
     if (descriptor?.tenantId !== input.tenantId || descriptor.alias !== input.alias || descriptor.operationId !== input.operationId) {
       throw new StoreError('not_found', 'context write reservation not found');
     }
-    if (descriptor.version !== 2) conflict('context write recovery plan is unavailable');
+    if (descriptor.version !== 2 && input.legacyPlan === undefined) conflict('context write recovery plan is unavailable');
     if (row.lease_until !== null || row.claim_token !== descriptor.token || descriptor.dispatch !== 'authorized') {
       conflict('context write recovery control fields are invalid');
     }
@@ -346,13 +389,15 @@ export async function recoverAgentContextWrite(pool: DatabasePool, input: Contex
     if (!same(await lockAgentContextSnapshot(client, input.tenantId, input.alias), descriptor.after)) {
       conflict('context write snapshot changed before recovery');
     }
+    const plan = descriptor.version === 2 ? descriptor.plan : legacyRecoveryPlan(descriptor, input.legacyPlan);
     await input.assertTargetControl(client, structuredClone(descriptor));
     input.signal.throwIfAborted();
     const proof = parseProof(await input.authenticatedReadback(client, structuredClone(descriptor)), true);
     if (proof === undefined) conflict('context writer recovery proof is invalid');
     input.signal.throwIfAborted();
     const resolution = await persistResolution(client, descriptor, proof, async () => {
-      await input.persistTarget(client, structuredClone(descriptor.plan), structuredClone(proof), structuredClone(descriptor));
+      if (plan === null) conflict('context write recovery plan is unavailable');
+      await input.persistTarget(client, structuredClone(plan), structuredClone(proof), structuredClone(descriptor));
       input.signal.throwIfAborted();
     });
     return { operationId: descriptor.operationId, resolution };

@@ -52,7 +52,28 @@ const REQUEST_CODES: Partial<Record<string, string>> = {
   profile_is_governed: 'El perfil del agente está gobernado: edítalo desde la consola. La ingesta de notas y documentos nativos no permite cambiar el perfil.',
   context_version_failed: 'No se pudo registrar la versión del contexto. Reintenta.',
   context_runtime_unavailable: 'El servicio que aplica el contexto al agente no está disponible. La versión quedó pendiente.',
+  context_write_recovery_unproven: 'El agente todavía no confirma el resultado de esa escritura. Comprueba que esté conectado y vuelve a intentarlo.',
+  context_write_writer_changed: 'El proceso que escribía en el agente cambió desde entonces y ya no puede acreditar esa escritura. Revisa sus ficheros antes de decidir.',
+  context_write_snapshot_changed: 'El perfil o el agente cambiaron desde esa escritura; no se resolvió para no pisar ese cambio.',
+  context_write_files_mixed: 'Los ficheros del agente no coinciden ni con el antes ni con el después de esa escritura; no se resolvió. Revisa sus ficheros.',
+  context_write_recovery_unsupported: 'Los ficheros cambiaron, pero esa escritura no es del perfil y la consola no puede registrarla sola. Revisa sus ficheros.',
+  context_write_not_recoverable: 'Esa escritura no llegó a enviarse al agente y la consola no puede cerrarla sola. Avisa a quien administra la plataforma.',
+  context_write_expectation_changed: 'Lo que se esperaba del agente cambió mientras se resolvía; vuelve a intentarlo.',
+  context_write_not_found: 'Esa escritura ya no está pendiente. Relee el estado.',
+  context_write_recovery_unavailable: 'No se pudo comprobar esa escritura ahora. Vuelve a intentarlo en unos minutos.',
 };
+
+/** Why a pending write blocks the agent, in the words the panel shows. */
+export function pendingWriteMessage(operation: string): string {
+  const what = operation === 'profile' ? 'Hay una escritura del perfil sin confirmar' : 'Hay una escritura de ficheros del agente sin confirmar';
+  return `${what}: no se supo si llegó a sus ficheros. Mientras siga así, el agente no recibe mensajes y no puede usar versiones nuevas. Al comprobarla, Cauce relee sus ficheros y la registra o la descarta; no escribe nada.`;
+}
+
+export function recoveredWriteMessage(resolution: string): string {
+  return resolution === 'target'
+    ? 'Comprobado: el agente tiene la escritura y quedó registrada. Ya recibe mensajes y usará la versión guardada en su próximo turno.'
+    : 'Comprobado: la escritura no llegó a los ficheros del agente y se descartó. Ya recibe mensajes; guarda el perfil otra vez si quieres repetir el cambio.';
+}
 
 const BY_STATUS: Partial<Record<number, string>> = {
   400: 'La solicitud de contexto no es válida.',

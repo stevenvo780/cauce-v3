@@ -103,3 +103,33 @@ it('una petición con versión ilegible indica restaurar y conserva la acción d
   expect(screen.getByRole('button', { name: 'Confirmar restauración' })).toBeEnabled();
   expect(screen.queryByText(/stored version is unreadable/u)).not.toBeInTheDocument();
 });
+it('una escritura sin confirmar explica el bloqueo y se comprueba desde la ficha', async () => {
+  const write = { operation_id: '22222222-2222-4222-8222-222222222222', created_at: '2026-10-25T10:00:00Z', dispatch: 'authorized' as const,
+    operation: 'profile' as const, sealed_plan: false };
+  let current: VersionedContextSnapshot = { ...snapshot(), pending_writes: [write] }; const recoveries: string[] = []; let attempts = 0;
+  handlers(() => current);
+  server.use(http.post(base + '/writes/:operation/recover', ({ params }) => {
+    recoveries.push(String(params.operation)); attempts += 1;
+    if (attempts === 1) return HttpResponse.json({ error: 'context_write_recovery_unproven', operation_id: write.operation_id }, { status: 409 });
+    current = { ...snapshot(), pending_writes: [] };
+    return HttpResponse.json({ operation_id: write.operation_id, resolution: 'target' });
+  }));
+  const user = userEvent.setup(); renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
+  const banner = await screen.findByRole('alert');
+  expect(banner).toHaveTextContent('Hay una escritura del perfil sin confirmar');
+  expect(banner).toHaveTextContent('el agente no recibe mensajes');
+  await user.click(within(banner).getByRole('button', { name: 'Comprobar y resolver' }));
+  expect(await screen.findByText(/todavía no confirma el resultado de esa escritura/u)).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Comprobar y resolver' }));
+  expect(await screen.findByText(/el agente tiene la escritura y quedó registrada/u)).toBeVisible();
+  expect(recoveries).toEqual([write.operation_id, write.operation_id]);
+  expect(screen.queryByRole('button', { name: 'Comprobar y resolver' })).not.toBeInTheDocument();
+});
+it('quien solo lee ve la escritura pendiente pero no puede resolverla', async () => {
+  handlers(() => ({ ...snapshot(), pending_writes: [{ operation_id: '33333333-3333-4333-8333-333333333333', created_at: '2026-10-25T10:00:00Z',
+    dispatch: 'authorized', operation: 'unknown', sealed_plan: false }] }));
+  renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite={false} />);
+  const banner = await screen.findByRole('alert');
+  expect(banner).toHaveTextContent('Hay una escritura de ficheros del agente sin confirmar');
+  expect(within(banner).getByRole('button', { name: 'Comprobar y resolver' })).toBeDisabled();
+});

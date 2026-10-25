@@ -50,6 +50,7 @@ const FICHEROS_DE_DATOS = [
   'services/gateway/src/fleet/host-authority-postgres.test.ts',
   'services/gateway/src/fleet/authority/signed-main-postgres.test.ts',
   'services/gateway/src/context-version-runtime-postgres.test.ts',
+  'services/gateway/src/console/agent-context-write-recovery-postgres.test.ts',
   'services/gateway/src/context-version.routes-postgres.test.ts',
   'services/gateway/src/security/route-isolation.postgres.test.ts',
   'services/gateway/src/security/route-isolation-external.postgres.test.ts',

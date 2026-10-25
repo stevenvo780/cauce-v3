@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
-  reserveAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite,
+  reserveAgentContextWrite, authorizeAgentContextDispatch, resolveAgentContextWrite, recoverAgentContextWrite,
   type DatabasePool, type DatabaseClient, type ContextWriteDocument, type ContextWriterQuiescence,
-  type ContextWriteDescriptor, type ContextWriterIdentity, canonicalProfileRuntimeContract, contextHumanId, StoreError,
+  type ContextWriteDescriptor, type ContextWriterIdentity, type ContextWritePlan, type ContextWriteRecoveryInput,
+  type ContextWriteHistory, type ContextWriterRecoveryProof,
+  canonicalProfileRuntimeContract, contextHumanId, StoreError,
 } from '@cauce/store';
 import type { Tenant } from '@cauce/protocol';
 import type { AgentFactsProbe, AgentDocumentsDeps, GovernanceWritePrecondition } from './agent-documents.routes.js';
@@ -18,6 +20,8 @@ export interface ContextWriteCoordinateInput<T> {
   readonly documents: readonly ContextWriteDocument[];
   readonly signal?: AbortSignal;
   readonly updateDesired?: (client: DatabaseClient) => Promise<void>;
+  /** Sealed with the reservation so a write left `effect_unknown` can be recovered without the request's memory. */
+  readonly plan?: ContextWritePlan;
   readonly dispatch: (operation: GovernanceWriteOperation) => Promise<T>;
   readonly persistTarget: (client: DatabaseClient, proof: ContextWriterQuiescence, value: NoInfer<T>) => Promise<void>;
 }
@@ -165,6 +169,7 @@ export class AgentContextWriteCoordinator {
       documents: input.documents,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
       ...(input.updateDesired === undefined ? {} : { updateDesired: input.updateDesired }),
+      ...(input.plan === undefined ? {} : { plan: input.plan }),
       });
     } catch (error) {
       if (error instanceof StoreError && error.recoveryReason !== 'context_write_commit_unverified') throw error;
@@ -192,7 +197,29 @@ export class AgentContextWriteCoordinator {
     }
   }
 
-  private async readProof(expected: ContextWriteDescriptor, signal?: AbortSignal): Promise<ContextWriterQuiescence> {
+  /**
+   * Human-authorized recovery of a write left `effect_unknown`: the same measured writer, receipt and read-back as the
+   * request's own resolution, in the store's recovery transaction. Nothing is retried and no file is written.
+   */
+  async recover(input: Omit<ContextWriteRecoveryInput, 'authenticatedReadback' | 'assertTargetControl'>): Promise<ContextWriteHistory> {
+    return recoverAgentContextWrite(this.pool, {
+      ...input,
+      assertTargetControl: async (_client, descriptor) => {
+        const measured = await this.probe.factsFor(descriptor.tenantId, descriptor.alias);
+        if (measured?.source !== 'measured' || measured.facts.generation !== descriptor.writer.runtimeGeneration
+          || measured.facts.containerId !== descriptor.writer.containerId
+          || measured.facts.writerInstanceId !== descriptor.writer.writerInstanceId
+          || !measured.facts.features?.includes('write_quiescence_v1')) {
+          throw new StoreError('conflict', 'context writer changed since the reservation');
+        }
+      },
+      authenticatedReadback: async (_client, descriptor) => this.readProof(descriptor, input.signal, true),
+    });
+  }
+
+  private async readProof(expected: ContextWriteDescriptor, signal: AbortSignal | undefined, withBytes: true): Promise<ContextWriterRecoveryProof>;
+  private async readProof(expected: ContextWriteDescriptor, signal?: AbortSignal, withBytes?: boolean): Promise<ContextWriterQuiescence | ContextWriterRecoveryProof>;
+  private async readProof(expected: ContextWriteDescriptor, signal?: AbortSignal, withBytes = expected.version === 2): Promise<ContextWriterQuiescence | ContextWriterRecoveryProof> {
     signal?.throwIfAborted();
     const statusValue = await this.probe.writeStatus?.(expected.tenantId, expected.alias,
       expected.operationId, expected.token, expected.generation, expected.operationId,
@@ -219,14 +246,14 @@ export class AgentContextWriteCoordinator {
         if (read.error !== 'not_found' || receipt.sha !== null || receipt.bytes !== 0) {
           throw new Error('context write readback unavailable');
         }
-        documents.push({ name: document.name, path: document.path, sha: null });
+        documents.push({ name: document.name, path: document.path, sha: null, ...(withBytes ? { bytes: 0 } : {}) });
       } else {
         if (read.truncated || read.sha !== receipt.sha || read.bytes !== receipt.bytes
           || Buffer.byteLength(read.text, 'utf8') !== read.bytes
           || createHash('sha256').update(read.text, 'utf8').digest('hex') !== read.sha) {
           throw new Error('context write readback differs');
         }
-        documents.push({ name: document.name, path: document.path, sha: read.sha });
+        documents.push({ name: document.name, path: document.path, sha: read.sha, ...(withBytes ? { bytes: read.bytes } : {}) });
       }
     }
     const after = await this.probe.factsFor(expected.tenantId, expected.alias);

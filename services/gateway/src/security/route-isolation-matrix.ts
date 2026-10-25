@@ -278,6 +278,8 @@ export const ROUTE_ISOLATION_MATRIX: readonly RouteIsolationEntry[] = [
     { expected_version: 1, version: '{contextVersion}' }),
   scoped('POST', '/v3/console/context/agents/:tenant/:alias/sync/retry', '/v3/console/context/agents/{tenant}/{alias}/sync/retry', {}),
   scoped('POST', '/v3/console/context/agents/:tenant/:alias/apply', '/v3/console/context/agents/{tenant}/{alias}/apply', {}),
+  scoped('POST', '/v3/console/context/agents/:tenant/:alias/writes/:operation/recover',
+    '/v3/console/context/agents/{tenant}/{alias}/writes/{requestId}/recover', {}),
   scoped('GET', '/v3/console/context/agents/:tenant/:alias/status', '/v3/console/context/agents/{tenant}/{alias}/status'),
   scoped('GET', '/v3/console/context-repository/retirements/:operation_id',
     '/v3/console/context-repository/retirements/{operation}?company_id={company}'),

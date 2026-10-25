@@ -7,7 +7,7 @@ import { Button, Notice } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { diffConflictFields, isCasConflict, type ConflictFieldDiff } from '../../components/conflict';
 import { ConflictNotice } from '../../components/ConflictNotice';
-import { applicationNotice, contextRequestMessage, synchronizationMessage } from './context-version-messages';
+import { applicationNotice, contextRequestMessage, pendingWriteMessage, recoveredWriteMessage, synchronizationMessage } from './context-version-messages';
 
 const ORIGEN: Record<string, string> = { ui: 'Consola', cli: 'CLI', native: 'Nativo (en el espacio)', restore: 'Restauración', profile: 'Perfil', directive: 'Directiva' };
 
@@ -47,7 +47,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
   const appliedNotice = snapshot?.application.last_error ? applicationNotice(snapshot.application.last_error) : undefined;
   const applicationState = snapshot?.application.state === 'error' && appliedNotice?.pending ? 'pending' : snapshot?.application.state;
   const writable = canWrite && !!snapshot && !context.error && !context.loading && !busy;
-  async function operation(action: () => Promise<unknown>, message: string, discard = false) {
+  async function operation(action: () => Promise<unknown>, message: string | (() => string), discard = false) {
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
@@ -57,7 +57,7 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       const versions = await history.reload();
       if (!versions.error) setOlder(undefined);
       if (reread.error || versions.error) setError('La operación respondió, pero su estado no se pudo releer. Reintenta la consulta.');
-      else setNotice(message);
+      else setNotice(typeof message === 'function' ? message() : message);
     } catch (cause) { setError(contextRequestMessage(cause, 'No se confirmó la operación del contexto.')); }
     finally { setBusy(false); }
   }
@@ -111,6 +111,14 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
         <div><dt>Aplicación</dt><dd>{applicationState === 'applied' ? 'Aplicada' : applicationState === 'error' ? 'Error de aplicación' : 'Aplicación pendiente'}</dd></div>
         <div><dt>Versión deseada</dt><dd>{snapshot.desired_version}</dd></div><div><dt>GitHub</dt><dd>{snapshot.sync.state === 'synced' ? 'Sincronizado' : snapshot.sync.state === 'error' ? 'Error de sincronización' : 'Pendiente'}</dd></div></dl>
       {snapshot.desired_version !== snapshot.applied_version ? <Notice tone="warn">El agente aún no acredita la versión {snapshot.desired_version}. Guardar una versión no demuestra que ya la esté usando.</Notice> : null}
+      {snapshot.pending_writes?.map(write => <Notice key={write.operation_id} tone="danger" role="alert">
+        {pendingWriteMessage(write.operation)} Iniciada <Time value={write.created_at} />.
+        <div className="mt-2"><Button size="sm" disabled={!writable || !!draft} onClick={() => {
+          let resolution = '';
+          void operation(async () => { resolution = (await api.recoverContextWrite(tenantId, alias, write.operation_id)).resolution; },
+            () => recoveredWriteMessage(resolution));
+        }}>Comprobar y resolver</Button></div>
+      </Notice>)}
       {snapshot.sync.last_error ? <Notice tone="warn">{synchronizationMessage(snapshot.sync.last_error)}</Notice> : null}
       {snapshot.application.last_error === 'native_context_conflict' ? <Notice tone="danger" role="alert">
         Conflicto de ingesta nativa: el agente editó su contexto dentro del espacio sobre una versión anterior y esta ya había avanzado. No se perdió nada: su edición quedó apartada en el espacio como copia en conflicto y sigue trabajando con la versión del servidor.

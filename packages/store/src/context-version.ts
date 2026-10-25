@@ -5,11 +5,17 @@ import type { CompanyAuthority } from './company-authority.js';
 import { CONTEXT_PROFILE_PATH, canonicalProfileContext, synchronizeContextProfile } from './context-version-profile.js';
 import type { CompanyAuthoritySource } from './repository/fleet-hosts.js';
 import { StoreError } from './repository/errors.js';
+import { pendingAgentContextWrites, type PendingContextWrite } from './repository/agent-context-quarantine.js';
 import { ContextNativeIngestSchema, ContextRejectedError, ContextRestoreSchema, ContextUpdateSchema, NATIVE_CONTEXT_WRITABLE_PREFIX,
   contextDigest, contextVersionDiff, harnessContextMaxBytes, nativeDocumentContextPath, storedContextFiles, versionableContextFiles,
   type ContextFile, type ContextRejectionReason, type ContextSnapshot, type ContextTarget, type ContextVersion } from './context-version-model.js';
 
 type ContextVersionEntry = Omit<ContextVersion, 'files'>;
+/** A profile or document write the runtime never confirmed; it fences the agent until a person resolves it. */
+export interface PendingContextWriteView {
+  readonly operation_id: string; readonly created_at: string; readonly dispatch: PendingContextWrite['dispatch'];
+  readonly operation: PendingContextWrite['operation']; readonly sealed_plan: boolean;
+}
 interface VersionEntryRow extends Omit<ContextVersionEntry, 'version' | 'created_at' | 'restored_from'> {
   version: string; restored_from: string | null; created_at: Date; actor_name: string | null;
 }
@@ -66,6 +72,11 @@ async function targetAuthority(client: DatabaseClient, source: CompanyAuthorityS
   [tenant, alias, authority.actingCompany])).rows[0];
   if (!row) throw new StoreError('not_found', 'context target unavailable');
   return { target: { company_id: row.company_id, tenant_id: tenant, alias }, authority };
+}
+/** The context write authority of a console person over one agent, for routes that write outside this store. */
+export function contextWriteAuthority(client: DatabaseClient, source: CompanyAuthoritySource, tenant: string,
+  alias: string): Promise<{ target: ContextTarget; authority: CompanyAuthority }> {
+  return targetAuthority(client, source, tenant, alias, true);
 }
 export async function contextSnapshot(client: DatabaseClient, target: ContextTarget): Promise<ContextSnapshot> {
   const row = (await client.query<{ desired_version: string; applied_version: string; state: 'pending' | 'synced' | 'error' | null;
@@ -243,10 +254,15 @@ export class ContextVersionStore {
       return work(client, target, authority);
     });
   }
-  read(source: CompanyAuthoritySource, tenant: string, alias: string): Promise<ContextSnapshot & { versioning: ContextVersioning }> {
+  read(source: CompanyAuthoritySource, tenant: string, alias: string): Promise<ContextSnapshot & { versioning: ContextVersioning;
+    pending_writes: PendingContextWriteView[] }> {
     return this.scoped(source, tenant, alias, false, async (client, target) => {
       const snapshot = await contextSnapshot(client, target);
-      return { ...snapshot, versioning: await contextVersioning(client, target, snapshot.files) };
+      // A reservation left without confirmation fences the agent's claims, so its natural turn never adopts a version.
+      const pending = (await pendingAgentContextWrites(client, tenant, alias)).map(write => ({
+        operation_id: write.operationId, created_at: write.createdAt, dispatch: write.dispatch,
+        operation: write.operation, sealed_plan: write.descriptorVersion === 2 }));
+      return { ...snapshot, versioning: await contextVersioning(client, target, snapshot.files), pending_writes: pending };
     });
   }
   write(source: CompanyAuthoritySource, tenant: string, alias: string, value: unknown): Promise<ContextSnapshot> {

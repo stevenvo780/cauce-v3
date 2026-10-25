@@ -6,7 +6,14 @@ export interface VersionedContextSnapshot {
   version: number; files: VersionedContextFile[]; desired_version: number; applied_version: number | null;
   sync: { state: 'pending' | 'synced' | 'error'; git_commit: string | null; pushed_at: string | null; last_error: string | null };
   application: { state: 'pending' | 'applied' | 'error'; last_error: string | null };
+  /** Writes the runtime never confirmed; each one fences the agent until a person resolves it. */
+  pending_writes?: PendingContextWrite[];
 }
+export interface PendingContextWrite {
+  operation_id: string; created_at: string; dispatch: 'reserved' | 'authorized';
+  operation: 'profile' | 'document' | 'reload' | 'reconcile' | 'unknown'; sealed_plan: boolean;
+}
+export interface ContextWriteRecovery { operation_id: string; resolution: 'target' | 'old' }
 export interface ContextVersionEntry { version: number; source: string; restored_from: number | null; created_at: string; actor_human_id: string | null; actor_alias: string; actor_name?: string | null; digest: string }
 export interface ContextVersions { entries: ContextVersionEntry[]; next_cursor: number | null }
 export interface ContextVersionDiff { from: number; to: number; files: { path: string; before: string | null; after: string | null; change: 'added' | 'modified' | 'deleted' }[] }
@@ -18,6 +25,7 @@ export interface ContextVersionsClient {
   restoreContextVersion(tenant: string, alias: string, input: { expected_version: number; version: number }): Promise<VersionedContextSnapshot>;
   retryContextSync(tenant: string, alias: string): Promise<unknown>;
   applyVersionedContext(tenant: string, alias: string): Promise<unknown>;
+  recoverContextWrite(tenant: string, alias: string, operationId: string): Promise<ContextWriteRecovery>;
 }
 export function contextVersionsClient(request: RequestFn): ContextVersionsClient {
   const path = (tenant: string, alias: string) => `/v3/console/context/agents/${encodeURIComponent(tenant)}/${encodeURIComponent(alias)}`;
@@ -30,5 +38,7 @@ export function contextVersionsClient(request: RequestFn): ContextVersionsClient
     restoreContextVersion: async (tenant, alias, input) => versionedContext(await post(path(tenant, alias) + '/restore', input)),
     retryContextSync: (tenant, alias) => post(path(tenant, alias) + '/sync/retry'),
     applyVersionedContext: (tenant, alias) => post(path(tenant, alias) + '/apply'),
+    recoverContextWrite: (tenant, alias, operationId) =>
+      post(`${path(tenant, alias)}/writes/${encodeURIComponent(operationId)}/recover`, {}),
   };
 }

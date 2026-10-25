@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction, type DatabaseClient } from '@cauce/store';
 import { coordinateContextRequest } from './agent-context-write-coordinator.js';
+import { profileWritePlan } from './agent-context-write-recovery.js';
 import type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from '@cauce/store';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
@@ -724,12 +725,16 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
       return reply.code(runtimeErrorStatus(error)).send({ error: runtimeErrorCode(error) ?? 'runtime_revision_materialization_failed', revision: current.revision });
     }
     let fenced;
+    const documents = prepared.verification.documents.map((doc) => ({
+      name: doc.name, path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha,
+    }));
+    // Sealed with the reservation: a write left unconfirmed can be recovered later by a person, without this request.
+    const plan = profileWritePlan({ actor, operatorId: escritura.operador.operator_id,
+      attributed: escritura.operador.attributed, reason: escritura.reason, documents });
     try {
       fenced = await coordinateContextRequest(deps.coordinateWrite.bind(deps), request, reply, {
         tenantId: profile.tenant_id, alias, expectedRevision, expectedExpectation: priorExpectation ?? null,
-        documents: prepared.verification.documents.map((doc) => ({
-          name: doc.name, path: doc.path, beforeSha: doc.observed_sha, targetSha: doc.expected_sha,
-        })),
+        documents, ...(plan === undefined ? {} : { plan }),
         updateDesired: async (client) => {
           const desired = await replaceInTransaction(client, profile, expectedRevision, profileActor(actor));
           if (desired.revision !== newRevision || desired.source_receipt !== undefined) throw new Error('profile_revision_mismatch');
