@@ -17,7 +17,6 @@ import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   login, openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 import { standardRecoveryBundle } from './v4-reiniciar-agente-standard.fixtures.js';
-import { cancelDeployTuiRuntime } from './v4-fleet-cancel-deploy.tui.js';
 import { connectXOuterDocker, startXDockerIsolation, type XDockerIsolation } from './v4-agentes-x-docker-isolation.js';
 import { attachX2Transport, diagnoseX2Policy, diagnoseX2ProfileTransport, diagnoseX2Restart, observeX2Package, observeX2RestartGuard, observeX2Stopped,
   prepareX2Package, preloadX2Image, startX2SshTarget, X2_ADMISSION_DIAGNOSTICS, X2_BROWSER_IMAGE, X2_PACKAGE,
@@ -363,12 +362,13 @@ beforeAll(async () => {
   computer = await startComputerHarness({ prefix, consoleOrigins: [origin],
     ...(isolation ? { workRoot: isolation.workRoot, dockerSocket: isolation.dockerSocket } : { workRoot: '/datos' }),
     agentNetwork: { name: network }, resourceOwner: owner,
-    runtimeBundle: { ...standardRecoveryBundle, providerCli: cancelDeployTuiRuntime.providerCli },
+    runtimeBundle: standardRecoveryBundle,
     extraSourceFiles: ['services/gateway/src/fleet/space-backup.failure.ts', 'packages/protocol/src/context-retirement.ts',
       'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
       'services/gateway/src/console/context-repository/retirement-routes.ts', 'services/gateway/src/fleet/space-backup.finish.ts',
       'ops/cli/space_archive_stream.py', 'packages/store/src/context-version-reevaluation.ts',
-      'ops/container-runtime/cauce_container_restart.py'] });
+      'ops/container-runtime/cauce_container_restart.py', 'ops/container-runtime/cauce_container_lease.py',
+      'ops/cli/fleet_executor_start.py'] });
   if (isolation) {
     const namespace = JSON.parse(await outerDocker(['inspect', '--format', '{"network":{{json .HostConfig.NetworkMode}},"pid":{{json .HostConfig.PidMode}},"ipc":{{json .HostConfig.IpcMode}},"cgroup":{{json .HostConfig.CgroupnsMode}}}', computer.container])) as Record<string, string>;
     expect(namespace).toMatchObject({ network, cgroup: 'private' }); expect(namespace.pid).not.toBe('host'); expect(namespace.ipc).not.toBe('host'); evidence.computerNamespace = namespace;
