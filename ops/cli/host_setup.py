@@ -490,7 +490,11 @@ def render_unit(host_id: str, install_root: pathlib.Path, release: pathlib.Path,
 def write_if_changed(filename: pathlib.Path, content: str, mode: int) -> bool:
     if filename.is_file() and not filename.is_symlink() and filename.read_text() == content:
         return False
-    filename.parent.mkdir(parents=True, exist_ok=True)
+    previous_umask = os.umask(0o077)
+    try:
+        filename.parent.mkdir(parents=True, exist_ok=True)
+    finally:
+        os.umask(previous_umask)
     descriptor, temporary = tempfile.mkstemp(prefix='.tmp-', dir=filename.parent)
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(content)
