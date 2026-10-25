@@ -406,6 +406,7 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
           <input
             ref={searchRef}
             type="search"
+            aria-label="Buscar un agente para chatear"
             value={query}
             enterKeyHint="go"
             autoComplete="off"

@@ -77,11 +77,11 @@ export function HostExtensionsPanel({ snapshot, hosts, onReloaded }: {
       </Notice> : null}
       <fieldset className="grid gap-2 border-0 p-0">
         <legend className="text-[13px] font-medium">Tipos admitidos</legend>
-        <div className="grid gap-1.5 sm:grid-cols-2">
+        <div className="grid gap-1.5 lg:grid-cols-2">
           {EXTENSION_CATALOG.map((entry) => <label key={entry.type} className={CHECK_LABEL}>
             <input type="checkbox" checked={allowed.types.includes(entry.type)} disabled={disabled}
               onChange={(event) => { toggle(entry.type, event.target.checked); }} />
-            <span className="inline-flex flex-wrap items-center gap-1.5">{entry.label} <Pill tone={entry.tone}>{entry.riskLabel}</Pill></span>
+            <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">{entry.label} <Pill tone={entry.tone} className="h-auto max-w-full whitespace-normal py-0.5">{entry.riskLabel}</Pill></span>
           </label>)}
         </div>
       </fieldset>

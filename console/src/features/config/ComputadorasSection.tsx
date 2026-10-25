@@ -20,7 +20,7 @@ import { HostExtensionsPanel } from './HostExtensionsPanel';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import { canManageCompany } from '../auth/company-authority';
 
-const GRID_TARJETAS = 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3 p-0';
+const GRID_TARJETAS = 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-3 p-0';
 
 function hostPermission(snapshot: ConfigurationSnapshot | undefined, action: 'create' | 'update' | 'delete'): boolean {
   const capabilities = snapshot?.capabilities;

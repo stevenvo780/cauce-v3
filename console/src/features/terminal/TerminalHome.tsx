@@ -27,6 +27,13 @@ export function TerminalHome({ agentCount, loading, error, onRefresh }: {
           ? 'La flota no tiene agentes todavía. Registra el primero en Ajustes, sección Agentes, y después elegilo aquí.'
           : 'Su TUI y su shell se abren desde acá.'}
       </p>
+      {onRefresh ? (
+        <div className="mt-4 flex justify-center">
+          <Button size="sm" onClick={onRefresh}>
+            <RefreshCw size={13} aria-hidden="true" />Actualizar estado
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
