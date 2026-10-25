@@ -17,10 +17,11 @@ function observeMaintenanceScans(fixture: CancelDeployFixture, release: string) 
     if (request.method !== 'POST' || request.url !== '/v3/fleet/hosts/' + fixture.hostId + '/channel') return;
     const activePhase = phase;
     let chunks: Buffer[] = [], size = 0, matched = false;
-    const capture = (chunk: Buffer) => {
-      size += chunk.length;
+    const capture = (chunk: Buffer | string) => {
+      const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+      size += bytes.length;
       if (size > 4096) { chunks = []; return; }
-      chunks.push(chunk);
+      chunks.push(bytes);
     };
     const listener = (event: string | symbol) => {
       if (event !== 'data') return;
