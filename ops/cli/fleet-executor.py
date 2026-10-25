@@ -14,6 +14,28 @@ from fleet_executor_steps import executor_lock, perform
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
 from update_alias_lib import SafeArgumentParser
 
+FAILURE_REASONS = {
+    'running runtime has another SDK identity or transport': 'runtime_identity_mismatch',
+    'running runtime has another credential namespace': 'runtime_identity_mismatch',
+    'container process identity differs': 'runtime_identity_mismatch',
+    'runtime lifecycle identity differs': 'runtime_identity_mismatch',
+    'container isolation differs from the approved shape': 'runtime_security_mismatch',
+    'container GPU or device access differs from the approved shape': 'runtime_security_mismatch',
+    'container image or ownership labels differ': 'runtime_security_mismatch',
+    'approved runtime bundle or executable changed': 'runtime_bundle_changed',
+    'approved harness descriptor changed': 'runtime_bundle_changed',
+    'container runtime executable hash differs': 'runtime_bundle_changed',
+    'native systemd unit has not remained stopped': 'runtime_stop_unverified',
+    'stopped state is not observed': 'runtime_stop_unverified',
+    'functional hook has not demonstrated its effect': 'provider_functional_proof_failed',
+    'functional proof identity or nonce differs': 'provider_functional_proof_failed',
+}
+
+
+def fleet_failure_reason(error: SafeFailure) -> str | None:
+    from fleet_executor_recovery import failure_reason
+    return failure_reason(error) or FAILURE_REASONS.get(str(error))
+
 
 def cancelled(_signal, _frame):
     raise SafeFailure('fleet effect cancelled')
@@ -45,6 +67,7 @@ def main() -> int:
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--binding', action='store_true')
     action.add_argument('--recovery-preview', action='store_true')
+    action.add_argument('--recovery-preflight', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
     action.add_argument('--quota', action='store_true')
@@ -74,6 +97,12 @@ def main() -> int:
         receipt = (verify_authentication if args.quota_auth_verify else quota_perform)(policy, json.loads(encoded))
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
+    if args.recovery_preflight:
+        from fleet_executor_recovery import preflight as recovery_preflight
+        with executor_lock(policy):
+            receipt = recovery_preflight(policy, json.loads(encoded))
+        print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
+        return 0
     context = validate_payload(json.loads(encoded))
     if args.recovery_preview:
         from fleet_executor_recovery import preview as recovery_preview
@@ -101,7 +130,15 @@ if __name__ == '__main__':
     try:
         raise SystemExit(main())
     except SafeFailure as error:
-        print('fleet effect failed: ' + str(error), file=sys.stderr)
+        from fleet_executor_recovery import failure_reason
+        reason = fleet_failure_reason(error)
+        if reason is not None:
+            print('CAUCE_FLEET_FAILURE=' + reason, file=sys.stderr)
+        recovery_reason = failure_reason(error)
+        if recovery_reason is not None:
+            print('CAUCE_RECOVERY_FAILURE=' + recovery_reason, file=sys.stderr)
+        diagnostic = str(error).replace('\r', '\\r').replace('\n', '\\n')
+        print('fleet effect failed: ' + diagnostic, file=sys.stderr)
         raise SystemExit(2) from None
     except Exception:
         print('fleet effect failed: unverified operational effect', file=sys.stderr)

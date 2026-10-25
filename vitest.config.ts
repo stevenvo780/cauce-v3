@@ -45,6 +45,7 @@ const FICHEROS_DE_DATOS = [
   'services/gateway/src/fleet/quota-auth-postgres.test.ts',
   'services/gateway/src/fleet/gateway-config-postgres.test.ts',
   'services/gateway/src/fleet/agent-provider-auth-postgres.test.ts',
+  'services/gateway/src/fleet/agent-recovery-preflight-postgres.test.ts',
   'services/gateway/src/fleet/auth-router-platform-postgres.test.ts',
   'services/gateway/src/fleet/host-authority-postgres.test.ts',
   'services/gateway/src/fleet/authority/signed-main-postgres.test.ts',

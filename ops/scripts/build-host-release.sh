@@ -30,7 +30,7 @@ mkdir -p "$stage/services/gateway/dist/fleet"
 NODE_PATH="$repo_root/services/gateway/node_modules:$repo_root/packages/store/node_modules:$repo_root/packages/protocol/node_modules:$repo_root/node_modules" \
   node_modules/.bin/esbuild services/gateway/src/fleet/main.ts --bundle --platform=node --format=esm --target=node22 \
   --external:pg-native --log-level=error --outfile="$stage/services/gateway/dist/fleet/main.js" \
-  "--alias:@cauce/store=$repo_root/packages/store/src/index.ts" "--alias:@cauce/protocol=$repo_root/packages/protocol/src/index.ts" \
+  "--alias:@cauce/store=$repo_root/packages/store/src/index.ts" "--alias:@cauce/protocol=$repo_root/packages/protocol/src" \
   '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'
 ops/scripts/build-adapter-release.sh "$stage/adapter" ${approvals:+"$approvals"}
 # pnpm records the build directory and time in these; the adapter never reads them, and they would change every build.

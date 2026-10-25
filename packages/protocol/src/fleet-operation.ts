@@ -119,10 +119,16 @@ export const FleetStepSchema = z.object({
   name: FleetStepNameSchema, status: z.enum(['pending', 'running', 'waiting', 'succeeded', 'failed', 'compensated']),
   evidence: FleetEvidenceSchema.optional(),
 }).strict();
+export const FleetRecoveryReasonSchema = z.enum(['runtime_mounts_differ', 'shared_tui_disabled',
+  'harness_unsupported', 'runtime_without_shared_tui']);
+export const FleetExecutionReasonSchema = z.enum([...FleetRecoveryReasonSchema.options,
+  'runtime_identity_mismatch', 'runtime_security_mismatch', 'runtime_bundle_changed',
+  'runtime_stop_unverified', 'provider_functional_proof_failed']);
+export type FleetExecutionReason = z.infer<typeof FleetExecutionReasonSchema>;
 export const FleetErrorSchema = z.object({
   code: z.enum(['AUTHORITY_REVOKED', 'REVISION_CONFLICT', 'HOST_UNAVAILABLE', 'DEPENDENCIES_PRESENT',
     'STEP_FAILED', 'PROVIDER_AUTH_REQUIRED', 'RUNTIME_DRIFT', 'UNSUPPORTED_RUNTIME', 'VERIFICATION_FAILED', 'CANCELLED']),
-  step: FleetStepNameSchema.optional(), retryable: z.boolean(),
+  step: FleetStepNameSchema.optional(), retryable: z.boolean(), reason: FleetExecutionReasonSchema.optional(),
 }).strict();
 /**
  * The physical resources a purge plans to touch, computed by the server with the executor's rules. It is the plan,

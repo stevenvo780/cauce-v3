@@ -23,6 +23,49 @@ ENVIRONMENT = frozenset({'PATH', 'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'CO
     'CAUCE_TENANT_ID', 'CAUCE_TENANT', 'CAUCE_STATE_DIR', 'CAUCE_CONTAINER_ID', 'CAUCE_CONTAINER_GENERATION',
     'CAUCE_INSTANCE_ID', 'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE', 'CAUCE_MODEL_ID',
     'CAUCE_REASONING_EFFORT', 'CAUCE_HARNESS_COMMAND', 'CAUCE_HARNESS_COMMAND_SHA256', 'CAUCE_HARNESS_COMMAND_FILES'})
+REASONS = {
+    'runtime_mounts_differ': 'Esta ejecución usa los montajes de una versión anterior. Actualiza la ejecución antes de reiniciar su TUI; la consulta no modificó el contenedor.',
+    'shared_tui_disabled': 'La política de esta computadora no habilita una TUI compartida para este agente. Puedes usar Detener y Arrancar.',
+    'harness_unsupported': 'Este tipo de agente no ofrece una TUI compartida compatible con el reinicio. Puedes usar Detener y Arrancar.',
+    'runtime_without_shared_tui': 'La ejecución actual no inició la TUI compartida que habilita la política actual. Actualiza la ejecución antes de reiniciar su TUI.',
+}
+
+
+class RecoveryFailure(SafeFailure):
+    def __init__(self, reason_code: str):
+        if reason_code not in REASONS:
+            raise ValueError('unknown recovery failure reason')
+        self.reason_code = reason_code
+        super().__init__(REASONS[reason_code])
+
+
+def failure_reason(error: Exception) -> str | None:
+    return error.reason_code if isinstance(error, RecoveryFailure) else None
+
+
+def unsupported_reason(agent: dict, bundle: dict, values: dict | None = None) -> str | None:
+    if agent['harness_id'] not in HARNESSES:
+        return 'harness_unsupported'
+    if bundle.get('shared_tui') is not True:
+        return 'shared_tui_disabled'
+    if values is not None and values.get('CAUCE_SHARED_SESSION') != '1':
+        return 'runtime_without_shared_tui'
+    return None
+
+
+def validate_recovery_container(policy: dict, agent: dict, observed: dict) -> None:
+    from fleet_executor_container import RELEASE_ROOT, runtime_mounts, validate_container
+    try:
+        validate_container(policy, agent, observed)
+    except SafeFailure as error:
+        if str(error) != 'container runtime mounts differ':
+            raise
+        from fleet_executor_rebind import bound_release
+        previous = bound_release(observed, RELEASE_ROOT)
+        if previous is None:
+            raise
+        validate_container(policy, agent, observed, runtime_mounts(policy, agent, previous, RELEASE_ROOT))
+        raise RecoveryFailure('runtime_mounts_differ') from None
 
 
 def fingerprint(value) -> str:
@@ -62,11 +105,11 @@ def process_environment(raw: bytes) -> dict:
 def observe(policy: dict, agent: dict) -> tuple[dict, dict, dict]:
     bundle = approved_bundle(policy, agent)
     if agent['runtime_mode'] == 'container':
-        from fleet_executor_container import docker, identity_for, inspect_container, process_proof, validate_container
+        from fleet_executor_container import docker, identity_for, inspect_container, process_proof
         observed = inspect_container(agent['container_name'])
         if observed is None or observed.get('State', {}).get('Running') is not True:
             raise SafeFailure('recovery requires the approved container to remain running')
-        validate_container(policy, agent, observed)
+        validate_recovery_container(policy, agent, observed)
         runtime = identity_for(agent, observed)
         process_proof(policy, agent, runtime, bundle)
         metadata = json.loads(docker('exec', '--user', '0', runtime['container_id'], '/bin/cat',
@@ -165,16 +208,68 @@ def run_helper(agent: dict, identity: dict, values: dict, bundle: dict, action: 
         child.stdout.close()
 
 
-def preview(policy: dict, context: dict) -> dict:
-    agent = approve_agent(policy, target_agent(context))
-    identity, values, bundle = observe(policy, agent)
-    if agent['harness_id'] not in HARNESSES or values.get('CAUCE_SHARED_SESSION') != '1':
+def observed_preview(agent: dict, identity: dict, values: dict, bundle: dict) -> dict:
+    unsupported = unsupported_reason(agent, bundle, values)
+    if unsupported is not None:
         session = {'type': 'session', 'state': 'unsupported', 'resumable': False, 'fingerprint': None,
-            'reason': 'Este adaptador necesita activar su TUI compartida antes de recuperarla; no se detuvo ni modificó el runtime.'}
+            'reason': REASONS[unsupported]}
     else:
         session = run_helper(agent, identity, values, bundle, 'recovery-preview')
     return {'identity': identity, 'session': session, 'strategy': 'shared_tui',
         'preserves_conversation': True, 'recreates_container': False}
+
+
+def preview_agent(policy: dict, agent: dict) -> dict:
+    return observed_preview(agent, *observe(policy, agent))
+
+
+def preview(policy: dict, context: dict) -> dict:
+    return preview_agent(policy, approve_agent(policy, target_agent(context)))
+
+
+def preflight(policy: dict, document: dict) -> dict:
+    fields = {'tenant_id', 'alias', 'runtime_key', 'agent'}
+    if not isinstance(document, dict) or set(document) - {'trusted_accounts'} != fields:
+        raise SafeFailure('invalid recovery preflight request')
+    for key, pattern in (('tenant_id', r'[A-Za-z][A-Za-z0-9_-]{0,63}'), ('alias', r'[a-z][a-z0-9_-]{0,63}'),
+                         ('runtime_key', r'[a-z][a-z0-9-]{0,63}')):
+        if not isinstance(document[key], str) or re.fullmatch(pattern, document[key]) is None:
+            raise SafeFailure('invalid recovery preflight identity')
+    raw_agent = document['agent']
+    if not isinstance(raw_agent, dict) or len(raw_agent) > 100 \
+            or any(not isinstance(key, str) or key.startswith('_') for key in raw_agent) \
+            or any(raw_agent.get(key) != document[key] for key in ('tenant_id', 'alias', 'runtime_key')):
+        raise SafeFailure('recovery preflight target differs from its authorized placement')
+    for key in ('harness_id', 'host_id', 'runtime_mode', 'runtime_user', 'home_directory', 'state_directory'):
+        if not isinstance(raw_agent.get(key), str) or not raw_agent[key]:
+            raise SafeFailure('recovery preflight placement is incomplete')
+    if raw_agent['runtime_mode'] == 'container' and (not isinstance(raw_agent.get('container_name'), str)
+            or not raw_agent['container_name']):
+        raise SafeFailure('recovery preflight container placement is incomplete')
+    from fleet_executor_templates import validate_accounts
+    validate_accounts(document.get('trusted_accounts', []))
+    agent = approve_agent(policy, {**raw_agent, '_trusted_accounts': document.get('trusted_accounts', []),
+                                  '_trusted_accounts_present': 'trusted_accounts' in document})
+    bundle = approved_bundle(policy, agent)
+    unsupported = unsupported_reason(agent, bundle)
+    if unsupported is None:
+        try:
+            identity, values, bundle = observe(policy, agent)
+        except RecoveryFailure as error:
+            if error.reason_code != 'runtime_mounts_differ':
+                raise
+            return {'status': 'update_required', 'reason_code': error.reason_code,
+                    'reason': REASONS[error.reason_code], 'next_action': 'update'}
+        if unsupported_reason(agent, bundle, values) == 'runtime_without_shared_tui':
+            return {'status': 'update_required', 'reason_code': 'runtime_without_shared_tui',
+                    'reason': REASONS['runtime_without_shared_tui'], 'next_action': 'update'}
+        recovery = observed_preview(agent, identity, values, bundle)
+        if recovery['session']['state'] != 'unsupported':
+            return {'status': 'ready', 'recovery': recovery}
+        unsupported = 'runtime_without_shared_tui'
+    reason = 'La sesión de esta ejecución no ofrece una TUI compartida que se pueda reanudar. Puedes usar Detener y Arrancar.' \
+        if unsupported == 'runtime_without_shared_tui' else REASONS[unsupported]
+    return {'status': 'unsupported', 'reason_code': unsupported, 'reason': reason, 'next_action': 'stop_start'}
 
 
 def perform(policy: dict, context: dict, step: str) -> dict:
@@ -219,6 +314,8 @@ def perform(policy: dict, context: dict, step: str) -> dict:
     current = preview(policy, context)
     if current['identity'] != parameters['identity']:
         raise SafeFailure('recovery runtime identity changed after confirmation')
+    if current['session']['state'] == 'unsupported':
+        raise RecoveryFailure(unsupported_reason(agent, policy['bundles'][agent['harness_id']]) or 'runtime_without_shared_tui')
     if 'receipt' in journal:
         if current['session']['state'] != 'present' or not current['session']['resumable'] \
                 or current['session']['fingerprint'] != journal['post_fingerprint']:

@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js"
     },
+    "./fleet-recovery": {
+      "types": "./src/fleet-recovery.ts",
+      "import": "./dist/fleet-recovery.js"
+    },
     "./fleet-operation": {
       "types": "./src/fleet-operation.ts",
       "import": "./dist/fleet-operation.js"
