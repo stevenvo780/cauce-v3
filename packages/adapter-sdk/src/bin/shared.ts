@@ -22,7 +22,8 @@ import type {
 } from "../sdk/types.js";
 import { TenantSchema } from "@cauce/protocol";
 import { loadCliRuntimeConfig } from "./config.js";
-import { CliTmux } from "../shared-session/tmux.js";
+import { CliTmux, type TmuxController } from "../shared-session/tmux.js";
+import { ensureSharedSession, type SharedSessionSpec } from '../shared-session/session.js';
 import { PasteSessionRunner } from "../shared-session/paste-runner.js";
 import { correlationTimeoutFromEnvironment } from "../shared-session/paste-runner/runtime.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
@@ -96,7 +97,13 @@ export function deliveryHarnesses(options: HarnessAdapterOptions, headlessRunner
   // a human then gets its own session namespace, exactly as with codex/claude.
   const headlessNative = (options.definition.id === "muse" || options.definition.id === "grok") && options.sharedSession === undefined;
   if (options.definition.id !== "claude" && options.definition.id !== "codex" && !openClaw && !headlessNative) return { harness };
-  if (openClaw && options.commandOverride !== undefined) return { harness };
+  // An OpenClaw override that keeps the packaged bridge (no baseArgs, or exactly that bridge)
+  // is the verified transport the fleet pins by digest; only an override pointing elsewhere
+  // is an arbitrary command that must not receive isolated human sessions.
+  const openClawVerifiedTransport = !openClaw || options.commandOverride?.baseArgs === undefined
+    || (options.commandOverride.baseArgs.length === 1
+      && options.commandOverride.baseArgs[0] === options.definition.baseArgs[0]);
+  if (openClaw && !openClawVerifiedTransport) return { harness };
   const { sharedSession, fallbackSessionKey, ...headless } = options;
   void sharedSession;
   return { harness, humanHarness: new HarnessAdapter({ ...headless, runner: headlessRunner,
@@ -157,13 +164,10 @@ function operationalLogger(alias: string): AdapterLogger {
   };
 }
 
-/**
- * Creates the canonical terminal runner without an alternative executor.
- */
-export async function sharedSessionRunner(
+async function checkedSharedSessionConfig(
   configured: SharedSessionConfig,
   logger: AdapterLogger,
-): Promise<CommandRunner> {
+): Promise<SharedSessionConfig> {
   let shared = configured;
   if (configured.harness !== "codex") {
     try {
@@ -179,6 +183,53 @@ export async function sharedSessionRunner(
         false);
     }
   }
+  return shared;
+}
+
+function sharedSessionSpec(shared: SharedSessionConfig): SharedSessionSpec {
+  return {
+    alias: shared.alias, harness: shared.harness, workspace: shared.workspace, environment: shared.paneEnvironment,
+    ...(shared.unsetEnvironment === undefined ? {} : { unsetEnvironment: shared.unsetEnvironment }),
+    harnessArguments: shared.harnessArguments,
+    ...(shared.command === undefined ? {} : { command: shared.command }),
+    ...(shared.commandPins === undefined ? {} : { commandPins: shared.commandPins }),
+    ...(shared.requiredArguments === undefined ? {} : { requiredArguments: shared.requiredArguments }),
+    resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace, {
+      alias: shared.alias, stateDirectory: shared.stateDirectory,
+    }),
+  };
+}
+
+export async function ensureSharedSessionStartup(
+  configured: SharedSessionConfig, logger: AdapterLogger, tmux: TmuxController = new CliTmux(), parentSignal?: AbortSignal,
+): Promise<void> {
+  const timeout = AbortSignal.timeout(15_000);
+  const signal = parentSignal === undefined ? timeout : AbortSignal.any([timeout, parentSignal]);
+  signal.throwIfAborted();
+  const shared = await checkedSharedSessionConfig(configured, logger);
+  signal.throwIfAborted();
+  const boundedTmux: TmuxController = { run: (args, stdin, control) => tmux.run(args, stdin, {
+    ...control, timeoutMs: Math.min(control?.timeoutMs ?? 1000, 1000),
+    signal: control?.signal === undefined ? signal : AbortSignal.any([signal, control.signal]),
+  }) };
+  const result = await ensureSharedSession(boundedTmux, sharedSessionSpec(shared), {
+    signal, readyTimeoutMs: 10_000, sleep: ms => new Promise(resolveSleep => { setTimeout(resolveSleep, ms); }),
+  });
+  if (!result.ready || signal.aborted) {
+    logger({ event: 'shared_session_degraded', alias: shared.alias,
+      reason: parentSignal?.aborted === true ? 'startup_cancelled'
+        : signal.aborted ? 'startup_deadline_exceeded' : result.failure ?? 'session_absent',
+      error_message: 'La TUI canónica no quedó acreditada al adquirir el lease.' });
+    throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE', 'La terminal canónica no está disponible para iniciar el consumidor', false);
+  }
+}
+
+/** Creates the canonical terminal runner without an alternative executor. */
+export async function sharedSessionRunner(
+  configured: SharedSessionConfig,
+  logger: AdapterLogger,
+): Promise<CommandRunner> {
+  const shared = await checkedSharedSessionConfig(configured, logger);
   if (shared.nativeId !== undefined && shared.harness !== "codex") {
     await seedCanonicalConversation(shared, shared.harness, shared.nativeId, logger);
   }
@@ -197,18 +248,7 @@ export async function sharedSessionRunner(
     });
   };
   const comun = {
-    alias: shared.alias,
-    harness: shared.harness,
-    workspace: shared.workspace,
-    environment: shared.paneEnvironment,
-    ...(shared.unsetEnvironment === undefined ? {} : { unsetEnvironment: shared.unsetEnvironment }),
-    harnessArguments: shared.harnessArguments,
-    ...(shared.command === undefined ? {} : { command: shared.command }),
-    ...(shared.commandPins === undefined ? {} : { commandPins: shared.commandPins }),
-    ...(shared.requiredArguments === undefined ? {} : { requiredArguments: shared.requiredArguments }),
-    resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace, {
-      alias: shared.alias, stateDirectory: shared.stateDirectory,
-    }),
+    ...sharedSessionSpec(shared),
     tmux,
     sleep,
     quarantineFile: join(shared.stateDirectory, ".shared-session-quarantine"),
@@ -430,6 +470,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
             error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
       }
+      if (shared !== undefined) await ensureSharedSessionStartup(shared, logger, undefined, shutdown.signal);
     },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,

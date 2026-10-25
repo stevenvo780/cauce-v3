@@ -554,19 +554,12 @@ export function sembrarPerfilDelArnes(
       })),
     };
   }
-  const managedCodexProfileDiffers = harness === "codex" && generados.some((fichero) => (
-    fichero.escribir && bloqueDePerfil(existentes.get(fichero.nombre) ?? "") !== undefined
-  ));
-  if ((revisionNativa !== undefined || managedCodexProfileDiffers)
-    && generados.some((fichero) => fichero.escribir)) {
-    return {
-      estado: "hecho",
-      ficheros: generados.map((fichero) => ({
-        nombre: fichero.nombre,
-        estado: "delegado-al-publicador" as const,
-      })),
-    };
-  }
+  // A revisioned block already on disk must not freeze the desired profile at connect time.
+  // The hello carries the newer desired facets; discarding them here left agents answering
+  // with the old profile until someone restarted them under a publisher. The generator only
+  // rewrites the managed projection and preserves human content outside it, so the seed now
+  // converges the files to the desired context like a first seed does. The incomplete-batch
+  // guard above still refuses to complete a partial revisioned batch.
 
   const porNombre = new Map<string, ResultadoDeFichero>();
   const escrituras: EscrituraDelArnes[] = [];

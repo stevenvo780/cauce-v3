@@ -175,13 +175,14 @@ test("codex siembra una vez y delega cualquier cambio posterior del bloque gesti
   const diferente = sembrarPerfilDelArnes(
     "codex", contexto({ purpose: "perfil nuevo" }, "atlas"), opciones,
   );
-  assert.deepEqual(d.escrituras, []);
-  assert.equal(d.ficheros.get(path), sembrado);
+  assert.equal(d.escrituras.length, 1);
+  assert.notEqual(d.ficheros.get(path), sembrado);
+  assert.match(d.ficheros.get(path) ?? "", /perfil nuevo/u);
   assert.equal(diferente.estado, "hecho");
-  assert.equal(diferente.ficheros[0]?.estado, "delegado-al-publicador");
+  assert.equal(diferente.ficheros[0]?.estado, "escrito");
 });
 
-test("la siembra no modifica una proyección revisionada con drift y la delega al publicador durable", () => {
+test("la siembra converge una proyección revisionada con drift en vez de descartar la deseada", () => {
   const oldContext = contexto({ purpose: "perfil viejo" });
   const projected = ficherosDelArnes("claude", oldContext, new Map(), { revision: 4 })[0];
   assert.ok(projected);
@@ -192,11 +193,12 @@ test("la siembra no modifica una proyección revisionada con drift y la delega a
     habilitado: true, disco: d.puerto, entorno: ENTORNO,
   });
 
-  assert.deepEqual(d.escrituras, []);
-  assert.equal(d.ficheros.get(path), projected.texto);
+  assert.equal(d.escrituras.length, 1);
+  assert.notEqual(d.ficheros.get(path), projected.texto);
+  assert.match(d.ficheros.get(path) ?? "", /perfil nuevo/u);
   assert.equal(resultado.estado, "hecho");
-  assert.equal(resultado.ficheros[0]?.estado, "delegado-al-publicador");
-  assert.match(resumenDeLaSiembra(resultado), /delegado-al-publicador=1 — CLAUDE\.md: la proyección gestionada difiere/u);
+  assert.equal(resultado.ficheros[0]?.estado, "escrito");
+  assert.match(resumenDeLaSiembra(resultado), /escrito=1/u);
 });
 
 test("un owner esperado oculto dentro de un bloque ajeno no suplanta la primera línea", () => {
