@@ -241,7 +241,7 @@ export function AccountsInventory({ config, access, registry }: {
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
         </div>
         <Notice>
-          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta (<code>alias_routing_ceiling_borrow_requires_pool</code>). Quitá antes ese acceso, que también borra su orden de consulta.
+          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta. Quitá antes ese acceso, que también borra su orden de consulta.
         </Notice>
         <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
       </> : null}

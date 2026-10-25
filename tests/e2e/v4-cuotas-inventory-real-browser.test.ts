@@ -214,13 +214,49 @@ describe('inventario y lecturas reales de cuentas sin respuestas simuladas', () 
         expect(await row.getByText('SIN DATO', { exact: true }).count()).toBe(2);
         await screenshot('inventory-null-fault-1440');
         await page.setViewportSize({ width: 390, height: 844 });
+        await row.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
+        const badgeGeometry = [];
+        for (const column of ['Pool', 'Estado']) {
+          const geometry = await row.locator(`td[data-label="${column}"]`).getByText('SIN DATO', { exact: true }).evaluate(element => {
+            const rect = element.getBoundingClientRect();
+            const painted = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+              visible: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight
+                && element.contains(painted) };
+          });
+          badgeGeometry.push({ column, ...geometry });
+        }
+        await writeFile(join(directory, 'null-badge-visibility.json'), JSON.stringify(badgeGeometry, null, 2));
+        expect(badgeGeometry.every(badge => badge.visible)).toBe(true);
         await screenshot('inventory-null-fault-390');
+        const modalGeometry = [];
         for (const name of [`Editar «${secondAccountId}»`, `Publicar «${secondAccountId}» al pool`, `Habilitar «${secondAccountId}»`]) {
           await row.getByRole('button', { name, exact: true }).click();
           const dialog = page.getByRole('dialog');
           await dialog.getByRole('note').filter({ hasText: 'El snapshot no trae shared_with_pool y/o enabled' }).waitFor();
           expect(await dialog.getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
           expect(await dialog.getByRole('button', { name: 'Aplicar', exact: true }).isDisabled()).toBe(true);
+          const geometry = await dialog.evaluate(element => {
+            const bounds = element.getBoundingClientRect();
+            const panels = [element, ...Array.from(element.querySelectorAll('*'))].flatMap(node => {
+              if (!(node instanceof HTMLElement) || node.clientWidth === 0
+                || !['auto', 'scroll', 'hidden'].includes(getComputedStyle(node).overflowX)) return [];
+              return [{ client_width: node.clientWidth, scroll_width: node.scrollWidth }];
+            });
+            const buttons = Array.from(element.querySelectorAll('button')).map(button => {
+              const rect = button.getBoundingClientRect();
+              return { name: button.getAttribute('aria-label') ?? button.textContent.trim(),
+                visible: rect.left >= bounds.left && rect.right <= bounds.right && rect.top >= bounds.top
+                  && rect.bottom <= bounds.bottom && rect.left >= 0 && rect.right <= window.innerWidth
+                  && rect.top >= 0 && rect.bottom <= window.innerHeight };
+            });
+            return { width: bounds.width, panels, buttons };
+          });
+          modalGeometry.push({ action: name, ...geometry });
+          await writeFile(join(directory, 'null-dialog-geometry.json'), JSON.stringify(modalGeometry, null, 2));
+          expect(geometry.panels.length).toBeGreaterThan(0);
+          expect(geometry.panels.every(panel => panel.scroll_width <= panel.client_width)).toBe(true);
+          expect(geometry.buttons.every(button => button.visible)).toBe(true);
           if (name === `Editar «${secondAccountId}»`) await screenshot('inventory-null-edit-blocked-390');
           await dialog.getByRole('button', { name: 'Cerrar', exact: true }).click();
         }
