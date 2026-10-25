@@ -74,7 +74,7 @@ runtime_flags=(
   --network "$network"
   --user 1000:1000
   --read-only
-  --tmpfs /tmp:rw,noexec,nosuid,size=32m
+  --tmpfs /tmp:rw,noexec,nosuid,size=128m
   --workdir /app
 )
 docker run "${runtime_flags[@]}" "$runtime_image" node deploy/runtime-package-smoke.mjs
