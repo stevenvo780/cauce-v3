@@ -181,8 +181,51 @@ class RestartGuardTests(unittest.TestCase):
         for comm in (b"tmux: server\n", b"tmux: client\n", b"tmux\n"):
             with self.subTest(comm=comm), tempfile.TemporaryDirectory() as temporary:
                 self.fake_proc(pathlib.Path(temporary), {"1": b"python3\n", "70": comm})
-                with patch("cauce_container_restart.PROC", temporary):
+                with patch("cauce_container_restart.PROC", temporary), \
+                        patch("cauce_container_restart.proc_stat", return_value={"state": "S"}):
                     self.assertFalse(tmux_absent())
+
+    def test_zombie_tmux_has_no_composer_and_allows_the_pinned_stop(self):
+        document, environment = self.shared_identity()
+        signal = Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            self.fake_proc(pathlib.Path(temporary), {"1": b"python3\n", "787": b"tmux: server\n"})
+            with patch("cauce_container_restart.PROC", temporary), \
+                    patch("cauce_container_restart.proc_stat", return_value={"state": "Z"}), \
+                    patch("cauce_container_restart.os.geteuid", return_value=0), \
+                    patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                    patch("cauce_container_restart.process_environment", return_value=environment), \
+                    patch("cauce_container_restart.subprocess.run") as run:
+                self.assertIsNone(shared_pane(document))
+                with restart_fence(document):
+                    signal()
+            run.assert_not_called()
+        signal.assert_called_once_with()
+
+    def test_zombie_does_not_hide_another_live_tmux_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.fake_proc(pathlib.Path(temporary), {"787": b"tmux: server\n", "788": b"tmux: client\n"})
+            for state in ("S", "R", "D", "T", "I", "X", "?"):
+                with self.subTest(state=state), patch("cauce_container_restart.PROC", temporary), \
+                        patch("cauce_container_restart.proc_stat", side_effect=lambda pid, observed_state=state: {
+                            "state": "Z" if pid == 787 else observed_state}):
+                    self.assertFalse(tmux_absent())
+
+    def test_disappeared_tmux_does_not_keep_a_pane_alive(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.fake_proc(pathlib.Path(temporary), {"787": b"tmux: server\n"})
+            with patch("cauce_container_restart.PROC", temporary), \
+                    patch("cauce_container_restart.proc_stat", side_effect=ProcessLookupError(787)):
+                self.assertTrue(tmux_absent())
+
+    def test_unreadable_tmux_state_holds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.fake_proc(pathlib.Path(temporary), {"787": b"tmux: server\n"})
+            for error in (PermissionError("denied"), PermanentError("malformed stat"), ValueError("invalid stat")):
+                with self.subTest(error=type(error).__name__), patch("cauce_container_restart.PROC", temporary), \
+                        patch("cauce_container_restart.proc_stat", side_effect=error), \
+                        self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_PROCESS_UNKNOWN$"):
+                    tmux_absent()
 
     def test_absence_still_requires_the_pinned_identity(self):
         document, environment = self.shared_identity()
