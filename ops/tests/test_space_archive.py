@@ -1,10 +1,13 @@
+import base64
 import errno
 import hashlib
 import io
 import json
 import os
 import pathlib
+import select
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -17,6 +20,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
 import space_archive
 from space_archive import MAX_FILE, SpaceArchiveFailure, backup_space, restore_space, zip_entry
+from space_backup_validate import CHUNK_BYTES, MAX_BYTES
 
 
 class SpaceArchiveTests(unittest.TestCase):
@@ -43,6 +47,81 @@ class SpaceArchiveTests(unittest.TestCase):
 
     def backup(self):
         return backup_space(str(self.space), str(self.archive), self.identity)
+
+    def backup_stream(self, offset=0, oversized=False):
+        cache = self.root / 'space-backup-00000000-0000-4000-8000-000000000001-1.zip'
+        cache.unlink(missing_ok=True)
+        with cache.open('wb') as stream:
+            stream.write(b'z' * (CHUNK_BYTES + 19))
+            if oversized:
+                stream.truncate(MAX_BYTES + 1)
+        cache.chmod(0o600)
+        process = subprocess.Popen([sys.executable, '-I', '-B', '-c',
+                                    'import runpy,sys;sys.path.insert(0,sys.argv.pop(1));runpy.run_module("space_backup_local",run_name="__main__")',
+                                    str(pathlib.Path(__file__).resolve().parents[1] / 'cli'), '--stream-local'],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for stream in (process.stdin, process.stdout, process.stderr):
+            self.addCleanup(stream.close)
+        self.addCleanup(process.wait, timeout=5)
+        self.addCleanup(process.kill)
+        request = {'action': 'read', 'id': '00000000-0000-4000-8000-000000000001', 'claim_epoch': 1,
+                   'state_directory': str(self.root), 'identity': self.identity, 'offset': offset}
+        process.stdin.write(json.dumps(request).encode() + b'\n')
+        process.stdin.flush()
+        return process, cache
+
+    def test_backup_stream_ack_backpressure_offsets_and_completion(self):
+        for start in (0, CHUNK_BYTES, CHUNK_BYTES + 19):
+            with self.subTest(start=start):
+                process, _ = self.backup_stream(start)
+                offset = start
+                while offset < CHUNK_BYTES + 19:
+                    self.assertTrue(select.select([process.stdout], [], [], 5)[0])
+                    frame = json.loads(process.stdout.readline(8 * 1024 * 1024 + 1))
+                    self.assertEqual(set(frame), {'offset', 'data'})
+                    data = base64.b64decode(frame['data'], validate=True)
+                    self.assertEqual((frame['offset'], data), (offset, b'z' * min(CHUNK_BYTES, CHUNK_BYTES + 19 - offset)))
+                    self.assertFalse(select.select([process.stdout], [], [], 0.05)[0])
+                    offset += len(data)
+                    process.stdin.write(json.dumps({'offset': offset}).encode() + b'\n')
+                    process.stdin.flush()
+                stdout, stderr = process.communicate(timeout=5)
+                self.assertEqual((process.returncode, json.loads(stdout), stderr), (0, {'done': True, 'offset': offset}, b''))
+
+    def test_backup_stream_cancel_invalid_ack_and_changed_private_copy_never_complete(self):
+        for variant in ('cancel', 'eof', 'term', 'replay', 'extra', 'mutation', 'replacement', 'symlink', 'mode', 'limit'):
+            with self.subTest(variant=variant):
+                process, cache = self.backup_stream()
+                self.assertTrue(select.select([process.stdout], [], [], 5)[0])
+                self.assertEqual(json.loads(process.stdout.readline())['offset'], 0)
+                control = {'offset': CHUNK_BYTES}
+                if variant in ('replacement', 'symlink'):
+                    previous = cache.with_suffix('.old')
+                    cache.replace(previous)
+                    cache.symlink_to(previous) if variant == 'symlink' else cache.write_bytes(b'z' * (CHUNK_BYTES + 19))
+                    if variant == 'replacement':
+                        cache.chmod(0o600)
+                elif variant in ('mutation', 'limit'):
+                    with cache.open('r+b') as stream:
+                        stream.write(b'x') if variant == 'mutation' else stream.truncate(MAX_BYTES + 1)
+                elif variant == 'mode':
+                    cache.chmod(0o644)
+                elif variant in ('cancel', 'replay', 'extra'):
+                    control = {'cancel': True} if variant == 'cancel' else {'offset': 0 if variant == 'replay' else CHUNK_BYTES}
+                    if variant == 'extra':
+                        control['extra'] = 1
+                if variant == 'term':
+                    process.send_signal(signal.SIGTERM)
+                stdout, stderr = process.communicate(None if variant in ('eof', 'term') else json.dumps(control).encode() + b'\n', timeout=5)
+                self.assertEqual(stdout, b'')
+                self.assertEqual(process.returncode, 0 if variant in ('cancel', 'eof') else 1)
+                if process.returncode:
+                    self.assertEqual(json.loads(stderr)['event'], 'space_backup_failure')
+        for offset, oversized in ((-1, False), (True, False), (CHUNK_BYTES + 20, False), (0, True)):
+            process, _ = self.backup_stream(offset, oversized)
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual((stdout, process.returncode), (b'', 1))
+            self.assertEqual(json.loads(stderr)['event'], 'space_backup_failure')
 
     def test_root_entries_share_the_export_limit_and_every_accepted_boundary_restores(self):
         source = self.root / 'entry-space'
