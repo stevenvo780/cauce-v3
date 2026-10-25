@@ -208,7 +208,19 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
 }
 
 export async function buildInstalledCli(directory: string) {
-  const revision = (await execute('git', ['rev-parse', 'HEAD'], { cwd: root })).stdout.trim();
+  const requested = process.env.CAUCE_FLEET_CLI_REVISION;
+  if (requested !== undefined && !/^[a-f0-9]{40}$/u.test(requested)) throw new Error('the CLI candidate must be an exact commit');
+  const revision = (await execute('git', ['rev-parse', '--verify', `${requested ?? 'HEAD'}^{commit}`], { cwd: root })).stdout.trim();
+  if (requested !== undefined) {
+    await Promise.all(['ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_container_tui.py', 'ops/cli/fleet_executor_tui.py']
+      .map(async filename => {
+        const [current, archived] = await Promise.all([
+          execute('git', ['hash-object', '--', filename], { cwd: root }),
+          execute('git', ['rev-parse', `${revision}:${filename}`], { cwd: root }),
+        ]);
+        if (current.stdout.trim() !== archived.stdout.trim()) throw new Error('the pinned candidate differs from the current fleet TUI fix');
+      }));
+  }
   const source = join(directory, 'cli-candidate-source');
   const sourceArchive = join(directory, 'cli-candidate-source.tar');
   const opsArchive = join(directory, 'cli-candidate-ops.tar');
