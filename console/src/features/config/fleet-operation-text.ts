@@ -51,6 +51,7 @@ export function isRuntimeDrift(operation: FleetOperation | undefined): boolean {
 
 export function operationStatusMeta(operation: FleetOperation): OperationStatusMeta {
   const meta = OPERATION_STATUS_META[operation.status];
+  if (operation.status === 'cancelling' && operation.kind === 'update') return { ...meta, label: 'Restaurando el estado anterior' };
   return isRuntimeDrift(operation) ? { ...meta, label: 'Requiere preparación', tone: 'danger' } : meta;
 }
 
@@ -170,7 +171,13 @@ export function operationHeadline(operation: FleetOperation, hostId?: string): s
       ? `${title} está en curso. Hecho: ${String(progress.done)} de ${String(progress.total)}${progress.label ? ` · Ahora: ${progress.label}` : ' pasos'}.`
       : `${title} está en curso.`;
   }
-  if (operation.status === 'cancelling') return `Cancelando: ${title.charAt(0).toLowerCase()}${title.slice(1)}.`;
+  if (operation.status === 'cancelling') {
+    const pending = operation.kind === 'update' ? 'Restaurando el estado anterior del agente.'
+      : `Cancelando: ${title.charAt(0).toLowerCase()}${title.slice(1)}.`;
+    const human = operation.error ? operationErrorHuman(operation.error) : undefined;
+    const next = operation.kind === 'update' ? 'La restauración se reintenta automáticamente mientras siga pendiente.' : human?.next;
+    return human ? `${pending} ${human.message} ${next ?? ''}`.trim() : pending;
+  }
   if (operation.status === 'cancelled') return `${title} se canceló. No se siguieron aplicando pasos.`;
   if (operation.status === 'succeeded') {
     const physical = physicalResult(operation);
@@ -179,6 +186,9 @@ export function operationHeadline(operation: FleetOperation, hostId?: string): s
   const error = operation.error;
   if (error) {
     const human = operationErrorHuman(error);
+    if (operation.kind === 'update' && operation.steps.some(step => step.status === 'compensated')) {
+      return `La actualización falló y se restauró el estado anterior. ${human.message} Cierra esta operación y prepara una actualización nueva.`;
+    }
     return `Falló${error.step ? ` en ${STEPS[error.step]}` : ''}: ${human.message} ${human.next}`.trim();
   }
   return `${title}: ${OPERATION_STATUS_META[operation.status].label}.`;

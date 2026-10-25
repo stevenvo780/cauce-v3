@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetOperation } from '@cauce/protocol/fleet-operation';
 import { FleetExecutionReasonSchema } from '@cauce/protocol/fleet-operation';
-import { operationErrorHuman, operationHeadline, stepProgress, STEPS } from './fleet-operation-text';
+import { cancellable, operationErrorHuman, operationHeadline, operationStatusMeta, resumable, stepProgress, STEPS } from './fleet-operation-text';
 
 const base = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -47,5 +47,23 @@ describe('fleet operation step labels', () => {
     ]);
     expect(stepProgress(running)).toEqual({ current: 2, total: 3, done: 1, label: 'Archivos' });
     expect(operationHeadline(running)).toBe('Preparar a w está en curso. Hecho: 1 de 3 · Ahora: Archivos.');
+  });
+
+  it('describes pending update restoration without claiming an operator cancellation', () => {
+    const current = { ...operation([{ name: 'credentials', status: 'failed' }], 'cancelling'), kind: 'update' as const,
+      error: { code: 'STEP_FAILED' as const, step: 'credentials' as const, retryable: true } };
+    expect(operationStatusMeta(current).label).toBe('Restaurando el estado anterior');
+    expect(operationHeadline(current)).toContain('Restaurando el estado anterior del agente.');
+    expect(operationHeadline(current)).toContain('El ejecutor no pudo completar este paso.');
+    expect(operationHeadline(current)).not.toContain('Cancelando');
+    expect(resumable(current)).toBe(false);
+  });
+
+  it('keeps a restored failure visible and requires closing it before another update', () => {
+    const current = { ...operation([{ name: 'credentials', status: 'compensated' }], 'failed'), kind: 'update' as const,
+      error: { code: 'STEP_FAILED' as const, step: 'credentials' as const, retryable: false } };
+    expect(operationHeadline(current)).toContain('La actualización falló y se restauró el estado anterior.');
+    expect(operationHeadline(current)).toContain('Cierra esta operación y prepara una actualización nueva.');
+    expect(resumable(current)).toBe(false); expect(cancellable(current)).toBe(true);
   });
 });

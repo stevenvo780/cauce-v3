@@ -1,6 +1,12 @@
 import type { FleetError } from '@cauce/protocol/fleet-operation';
 
 export const FLEET_FAILURE_TEXT: Record<NonNullable<FleetError['reason']>, { message: string; next: string }> = {
+  replacement_snapshot_missing: { message: 'No se pudo verificar la instantánea anterior a la actualización.',
+    next: 'La restauración seguirá pendiente hasta verificar la configuración original y sus membresías.' },
+  replacement_original_unverified: { message: 'No se pudo verificar el contenedor original de la actualización.',
+    next: 'La restauración seguirá pendiente hasta comprobar el contenedor original y su ejecución.' },
+  replacement_authority_unverified: { message: 'No se pudo verificar la autoridad del agente original.',
+    next: 'La restauración seguirá pendiente hasta comprobar su autoridad y retirar solo la emitida por esta operación.' },
   runtime_mounts_differ: { message: 'Los montajes de la ejecución no coinciden con la versión aprobada.',
     next: 'Actualiza la ejecución y vuelve a comprobar su estado antes de reiniciar.' },
   shared_tui_disabled: { message: 'La política de este equipo no permite una TUI compartida.',
