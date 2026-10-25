@@ -18,11 +18,26 @@ function grantErrorText(cause: unknown): string {
   if (cause.status === 401) return 'La sesión venció. Vuelve a iniciar sesión.';
   if (cause.status === 403) return 'Solo el dueño o un administrador de la empresa del agente puede conceder acceso a su terminal.';
   if (cause.status === 404) return 'La persona, el agente o la concesión ya no están disponibles. Relee las concesiones y vuelve a intentarlo.';
-  if (cause.status === 409) return 'La concesión cambió mientras guardabas. Relee las concesiones y vuelve a intentarlo.';
+  if (cause.status === 409 && cause.message.includes('already covers')) {
+    return 'Ya existe una concesión activa para esa persona sobre ese agente (campos: persona y agente). Edita o revoca la concesión existente.';
+  }
+  if (cause.status === 409) return 'La concesión cambió mientras guardabas (campo: versión). Relee las concesiones y vuelve a intentarlo.';
+  if (cause.status === 400 && cause.message.includes('modes')) {
+    return 'Campo «Modos»: elige al menos un modo válido (Shell, Visor de TUI o TUI escribible), sin repetir.';
+  }
+  if (cause.status === 400 && cause.message.includes('person is not active')) {
+    return 'Campo «Persona»: la persona elegida no está activa y no puede recibir una concesión.';
+  }
+  if (cause.status === 400 && cause.message.includes('expiry')) {
+    return 'Campo «Caducidad»: la fecha indicada no es válida.';
+  }
+  if (cause.status === 400) return 'Datos no válidos: revisa persona, agente, modos y caducidad, y vuelve a intentarlo.';
   if (cause.status === 429) return 'Demasiadas solicitudes. Espera unos segundos y vuelve a intentarlo.';
   if (cause.status === 504) return 'El servidor no contestó a tiempo. Relee las concesiones antes de reintentar.';
   return 'No se confirmó la concesión. Relee las concesiones y vuelve a intentarlo.';
 }
+
+const NO_MODE_TEXT = 'Campo «Modos»: elige al menos un modo (Shell, Visor de TUI o TUI escribible).';
 
 function toExpiryInput(value: string | null): string {
   if (value === null) return '';
@@ -64,7 +79,8 @@ export function TerminalGrantsPanel() {
 
   async function create() {
     const [tenantId, alias] = targetKey.split('\0');
-    if (!canWrite || !personId || !tenantId || !alias || modes.length === 0) return;
+    if (!canWrite || !personId || !tenantId || !alias) return;
+    if (modes.length === 0) { setError(NO_MODE_TEXT); return; }
     setBusy(true); setError(''); setNotice('');
     try {
       await api.createTerminalGrant({
@@ -78,7 +94,8 @@ export function TerminalGrantsPanel() {
   }
 
   async function saveEdit() {
-    if (!editing || !ready || editModes.length === 0) return;
+    if (!editing || !ready) return;
+    if (editModes.length === 0) { setError(NO_MODE_TEXT); return; }
     setBusy(true); setError(''); setNotice('');
     try {
       await api.updateTerminalGrant(editing.id, {
@@ -150,7 +167,7 @@ export function TerminalGrantsPanel() {
           <label className="text-sm">Caducidad<input type="datetime-local" value={editExpires} disabled={!ready}
             onChange={(event) => { setEditExpires(event.target.value); }} /></label>
           <span className="flex flex-wrap items-end gap-2">
-            <Button type="submit" disabled={!ready || editModes.length === 0}>Guardar concesión</Button>
+            <Button type="submit" disabled={!ready}>Guardar concesión</Button>
             <Button disabled={busy} onClick={() => { setEditing(undefined); }}>Cancelar</Button>
           </span>
         </form> : null}
@@ -177,6 +194,9 @@ export function TerminalGrantsPanel() {
         <option value="">Elige agente</option>
         {targets.data?.map((target) => <option key={`${target.tenant_id}\0${target.alias}`} value={`${target.tenant_id}\0${target.alias}`}>
           {target.tenant_id}:{target.alias}</option>)}
+        {[...new Set(targets.data?.map((target) => target.tenant_id) ?? [])].map((tenantId) => <option
+          key={`${tenantId}\0*`} value={`${tenantId}\0*`}>
+          {tenantId}:* · Todos los agentes</option>)}
       </select></label>
       <fieldset className="grid gap-1">
         <legend className="text-sm">Modos</legend>
@@ -187,7 +207,7 @@ export function TerminalGrantsPanel() {
       </fieldset>
       <label className="text-sm">Caducidad (opcional)<input type="datetime-local" value={expires} disabled={!canWrite}
         onChange={(event) => { setExpires(event.target.value); }} /></label>
-      <Button type="submit" disabled={!canWrite || !personId || !targetKey || modes.length === 0}>Crear concesión</Button>
+      <Button type="submit" disabled={!canWrite || !personId || !targetKey}>Crear concesión</Button>
     </form>
     {people.error || targets.error ? <Notice tone="danger" role="alert">
       {people.error?.message ?? targets.error?.message}</Notice> : null}
