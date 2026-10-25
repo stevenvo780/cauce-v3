@@ -17,10 +17,10 @@ El único camino desde la web es **Mis cuotas → tarjeta de la cuenta → «Ini
 | Proveedor | Comando de login (descriptor) | Estado |
 |---|---|---|
 | Claude | `claude auth login` (enlace OAuth y «Paste code here») | soportado |
-| Codex | `codex login --device-auth` (enlace y código de dispositivo) | soportado |
+| GPT / Codex (`codex`) | `codex login --device-auth` (enlace y código de dispositivo) | soportado |
 | Grok | `grok login --device-auth` (enlace y código de dispositivo) | soportado |
 | Muse | `muse login` (código de dispositivo de Meta) | soportado sin lector de cuotas: la imagen instala el lanzador y el binario fijados de `muse` 1.4.10-R6427.1; «Verificar conexión» valida el `id_token` contra el JWKS de Meta (`verificar-muse.py`) y guarda solo el hash de la identidad. Sin ventanas de cuota. |
-| Antigravity (`agy`) | sin subcomando de login: `agy` abre el asistente de primer uso (tema, términos, inicio de sesión de Google) | soportado sin lector de cuotas: la terminal lanza `agy` y el dueño completa el asistente; «Verificar conexión» solo comprueba que `agy models` responde, así que acredita que el CLI vive, no qué cuenta de Google entró. La identidad guardada es local (`agy-local:`) y nunca fusiona dos cuentas de Cauce. Sin ventanas de cuota. |
+| Antigravity (agy) | sin subcomando de login: `agy` abre el asistente de primer uso (tema, términos, inicio de sesión de Google) | soportado sin lector de cuotas: la terminal lanza `agy` y el dueño completa el asistente; «Verificar conexión» solo comprueba que `agy models` responde, así que acredita que el CLI vive, no qué cuenta de Google entró. La identidad guardada es local (`agy-local:`) y nunca fusiona dos cuentas de Cauce. Sin ventanas de cuota. El rótulo visible del formulario es **Antigravity (agy)**. |
 
 La autenticación de un agente (Muse incluido) sigue en la ficha del agente, como paso de su operación de flota.
 
@@ -37,7 +37,7 @@ Actualizar una versión requiere reconstruir la imagen y cambiar `policy.quota_e
 
 Cuando **Actualizar CLI** falla, el ejecutor no incrusta la salida cruda del instalador en el motivo. Toda la actualización deja un código cerrado: `cli_update_failed` si el comando termina con error o no se puede lanzar, y `cli_update_timed_out` si supera su tiempo límite, además de los motivos ya conocidos de entorno o imagen desfasados. La consola nombra la operación y su causa, por ejemplo «Actualizar CLI» falló seguido del texto de ese código; si el ejecutor no dejó un motivo mostrable, lo dice así y remite al diario del ejecutor en ese ordenador en lugar de mostrar un genérico sin operación.
 
-Muse se descarga del manifiesto público del canal `muse-stable` con la versión y el SHA-256 del binario fijados en el `Dockerfile`; se instala directamente como `/usr/local/bin/muse`, sin el lanzador bash, porque este rompe la comprobación de identidad del proceso de login. Antigravity no publica un paquete fijable (solo su auto-actualizador), así que su binario —el `~/.local/bin/agy` de kratos, instalado por ese auto-actualizador— se pasa al build como contexto externo fuera del repositorio y el `Dockerfile` verifica su SHA-256 fijado al construir:
+Muse se descarga del manifiesto público del canal `muse-stable` con la versión y el SHA-256 del binario fijados en el `Dockerfile` (`MUSE_VERSION=1.4.10-R6427.1`); se instala directamente como `/usr/local/bin/muse`, sin el lanzador bash, porque este rompe la comprobación de identidad del proceso de login. Antigravity no publica un paquete fijable (solo su auto-actualizador), así que su binario se pasa al build como contexto externo, fuera del repositorio. El `Dockerfile` fija `AGY_VERSION=1.4.2` y verifica el SHA-256 al construir:
 
 ```bash
 mkdir -p ~/.local/share/cauce/agy-bin
@@ -45,7 +45,7 @@ cp ~/.local/bin/agy ~/.local/share/cauce/agy-bin/agy-1.4.2-linux-x86-64
 docker build --build-context agybin=$HOME/.local/share/cauce/agy-bin -t cauce-cuotas-local ops/cuotas
 ```
 
-Sin ese contexto la imagen se construye igual, pero `/usr/local/bin/agy` queda como un stub que falla con ese mismo aviso y ningún entorno `agy` puede crearse. El binario nunca se commitea.
+Sin ese contexto la imagen se construye igual, pero `/usr/local/bin/agy` queda como un stub que pide reconstruir con `--build-context agybin` y ningún entorno `agy` puede crearse. El binario nunca se commitea.
 
 ## Binding de la credencial del agente
 

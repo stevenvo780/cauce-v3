@@ -272,9 +272,9 @@ escribe su bundle (0400) en `<dir>/cauce-pty-<alias>` (sticky, `1733`) y el agen
 `TMPDIR` para los PEM de TLS. La guarda exige que `CONTAINER_RUNTIME_DIR` sea un directorio `root:root` `0755`
 y no un enlace; si no, el launcher se niega a escribir. Sin la clave no cambia nada.
 
-Alta de un alias así (los pasos usados para `hades`, `zz-prueba-codex` y `gaia`):
+Alta de un alias de contenedor de solo lectura:
 
-1. Declarar el alias en `ops/flota.json` con su contenedor V4 (placement `server2`) y regenerar los derivados con los scripts de `ops/scripts/`.
+1. Declarar el alias en `ops/flota.json` con su contenedor V4 y el ordenador donde corre, y regenerar los derivados con los scripts de `ops/scripts/`.
 2. Identidad del alias (§1.4): la clave privada se genera en el host del agente y no sale de allí; el
    certificado `CN=pty-<alias>` lo firma la CA del relay; la clave de alias se deriva con la clave maestra de
    tickets. Su fila entra en `pty_agent_identities.json` por rename atómico. Si el alias ya tenía identidad

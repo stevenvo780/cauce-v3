@@ -290,7 +290,7 @@ OAuth al emisor local, en producción no hace falta.
 
 ### Enclave de autoridad firmada de la flota
 
-`cauce-fleet-signed-authority.service` atiende, por un socket Unix, el `POST /v3/fleet/hosts/:host_id/authority` que el gateway recibe de los ordenadores enrolados. Comprueba la firma del ordenador, su empresa, nonce, operación, claim y epoch, y emite con el emisor central del controlador: mismo `fleet-authority-issuer.py`, misma política `authority.v1.json` y misma CA. El lock del emisor en su `state_root` permite que ambos emitan sin pisarse. Corre como root en `server`, desde la release del controlador (`/usr/local/lib/cauce-v35/<sha>/app/services/gateway/dist/fleet/authority/signed-main.js`), con su mismo `node`, su `/etc/hosts` privado y su conexión `database-url` (login `cauce_fleet`; el pool de 4 cabe en su límite de 20). Sin el enclave, el gateway responde `AUTHORITY_UNAVAILABLE` y los ordenadores enrolados no anuncian `create`.
+`cauce-fleet-signed-authority.service` atiende, por un socket Unix, el `POST /v3/fleet/hosts/:host_id/authority` que el gateway recibe de los ordenadores enrolados. Comprueba la firma del ordenador, su empresa, nonce, operación, claim y epoch, y emite con el emisor central del controlador: mismo `fleet-authority-issuer.py`, misma política `authority.v1.json` y misma CA. El lock del emisor en su `state_root` permite que ambos emitan sin pisarse. Corre como root en el host del controlador, desde la release del controlador (`/usr/local/lib/cauce-v35/<sha>/app/services/gateway/dist/fleet/authority/signed-main.js`), con su mismo `node`, su `/etc/hosts` privado y su conexión `database-url` (login `cauce_fleet`; el pool de 4 cabe en su límite de 20). Sin el enclave, el gateway responde `AUTHORITY_UNAVAILABLE` y los ordenadores enrolados no anuncian `create`.
 
 | Recurso | Dueño y modo |
 |---|---|
@@ -303,7 +303,7 @@ OAuth al emisor local, en producción no hace falta.
 
 **Prerrequisitos.** El controlador debe estar en una release que contenga `signed-main.js`, con `authority_command` en `controller.v1.json` y sus pins correctos. El preflight lo comprueba y, si falta, pide actualizar primero el controlador. `deploy.sh` exige que exista el directorio del socket antes del primer despliegue con este overlay, porque comprueba todas las fuentes de bind mounts.
 
-**Orden con un despliegue** (root en `server`; el instalador es `ops/scripts/fleet-authority-install.py`, preflight sin `--apply`):
+**Orden con un despliegue** (como root en el host del controlador; el instalador es `ops/scripts/fleet-authority-install.py`, preflight sin `--apply`):
 ```bash
 # 0. Antes de deploy.sh, desde el clon del despliegue: solo el directorio del socket y su tmpfiles
 python3 ops/scripts/fleet-authority-install.py --socket-directory-only
@@ -325,7 +325,7 @@ El preflight no escribe nada. Deriva release, `node`, `/etc/hosts`, entorno TLS 
 
 Repetirlo sin cambios solo verifica y vuelve a habilitar la unidad. La habilitación se realiza después de verificar el enclave; si falla, la reversión retira la habilitación añadida en esa ejecución y conserva la que ya existía. Tras cada actualización del controlador, repetir el paso 3 con el export de la release nueva: hasta entonces el enclave sigue en la anterior, que el kit conserva, y el preflight muestra la diferencia. La unidad queda habilitada en el arranque (`WantedBy=multi-user.target`) y arranca después del controlador (`After`), pero sigue activa de forma independiente cuando este se detiene o reinicia. Si falla al arrancar, `journalctl -u cauce-fleet-signed-authority` nombra la etapa sin secretos: `configuration`, `database configuration`, `issuer command` o `socket`.
 
-**Aceptación de punta a punta** (la acción `ready` firmada): en server2, como `server`, `python3 <release>/ops/cli/fleet-executor.py --policy <política> --capabilities` devuelve `available: true` solo si `authority_ready` obtuvo `{"ready":true,"host_id":"<host>"}` del gateway y del enclave. El ensayo local con PostgreSQL real está en `services/gateway/src/fleet/authority/signed-main-postgres.test.ts`.
+**Aceptación de punta a punta** (la acción `ready` firmada): en el ordenador enrolado, con su usuario de ejecución, `python3 <release>/ops/cli/fleet-executor.py --policy <política> --capabilities` devuelve `available: true` solo si `authority_ready` obtuvo `{"ready":true,"host_id":"<host>"}` del gateway y del enclave. El ensayo local con PostgreSQL real está en `services/gateway/src/fleet/authority/signed-main-postgres.test.ts`.
 
 **Reversión.** Si falla la escritura de la configuración del enclave, su `daemon-reload`, el `restart`, la verificación o la habilitación de `--apply`, el instalador detiene el enclave solo si intentó reiniciarlo y ejecuta `disable` solo si esa ejecución intentó añadir la habilitación; conserva la que ya existía. Aunque falle `disable`, intenta restaurar los ficheros desde sus respaldos tras verificar su sha256, borrar lo creado en esa ejecución, hacer `daemon-reload` y arrancar el enclave anterior si estaba activo. Conserva el directorio del socket y su tmpfiles, porque el gateway los monta. El resultado final dice `ROLLBACK INCOMPLETE` y detalla el estado observado si falla `disable` (la nueva habilitación puede permanecer), si no se restaura un respaldo (conserva los ficheros actuales y de recuperación sin arrancar una configuración parcialmente restaurada), o si no se pueden borrar los ficheros creados, falla el `daemon-reload` de la reversión o el enclave anterior no vuelve a estar activo. Si no intentó reiniciar el enclave, la reversión no lo detiene. Para volver a mano a una configuración anterior: copiar el `*.pre-authority-<stamp>` sobre su fichero, `systemctl daemon-reload && systemctl restart cauce-fleet-signed-authority` y repetir el preflight. `systemctl stop cauce-fleet-signed-authority` corta la emisión firmada (fail-closed) sin tocar el controlador ni su emisor.
 
@@ -338,10 +338,10 @@ Proyecto compose propio (`deploy/decisiones/`, script `desplegar.sh`): `deploy.s
 El flujo de V4 empieza en **Ajustes → Agentes → Añadir agente**: registrar, asignar computadora y
 grupo inicial, previsualizar y crear; después **Preparar en la computadora** y completar el login
 del proveedor. El registro y la operación física son pasos distintos. Para un agente existente,
-abre su ficha y usa **Registro** u **Operación**. No des por completada una operación en cola.
+abre su ficha y usa **Ajustes** o **Ejecución**. No des por completada una operación en cola.
 
-Para agentes con ejecución, **Eliminar** guía primero el retiro reversible y después la eliminación
-definitiva. Los que no tienen entorno se borran desde **Registro → Eliminar registro**. Descarga
+Para agentes con ejecución, **Retirar o eliminar…** guía primero el retiro reversible y después la
+eliminación definitiva. Los que no tienen entorno se borran desde **Ajustes → Eliminar registro**. Descarga
 antes la copia si existe un espacio y revisa la previsualización de lo que se conserva y se borra.
 Pasos de interfaz: [crear y preparar](v4-guia.md#crear-y-preparar-un-agente) y
 [eliminar](v4-guia.md#editar-detener-o-eliminar-un-agente). Por CLI: [espacios](v4-cli.md).
@@ -364,7 +364,7 @@ SSH. Ejemplo ficticio:
 CAUCE_GATEWAY=https://gateway.example.invalid:8443 ops/cli/cauce-reponer <delivery_id>
 ```
 
-El helper usa el acceso SSH `agora-storage` y el certificado cliente de consola
+El helper usa el acceso SSH `agora-storage` (el nombre está fijado en `ops/cli/cauce-reponer`) y el certificado cliente de consola
 disponible allí. La entrega debe tener una fila en `dead_letters`; antes de reponerla,
 comprueba que no haya una conversación más reciente ni trabajo en vuelo. Tras una
 respuesta HTTP `200`, verifica que la entrega nueva termine y su respuesta salga por

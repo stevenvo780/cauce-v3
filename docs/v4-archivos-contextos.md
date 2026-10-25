@@ -141,14 +141,14 @@ Compose prepara `CAUCE_CONTEXT_REPOSITORY_ROOT=/var/lib/cauce-v3/contexts`, `CAU
 
 `ops/scripts/context-broker-preflight.py` es de solo lectura y usa el mismo entorno Git que el broker. Dentro del gateway: `docker exec -i <gateway> python3 - --repository /var/lib/cauce-v3/contexts --key /run/cauce-context-git/id_ed25519 < ops/scripts/context-broker-preflight.py`. Comprueba raíz canónica `0700` del uid esperado (`--uid`, 1000 por defecto), `.git` sin escritura de grupo u otros, `core.sshCommand` con `-i` hacia la deploy key privada del mismo uid, `rev-parse main` igual a `ls-remote origin main` y `push --dry-run` con salida 0. Imprime un JSON por comprobación y sale con 0 sólo si todas pasan; no imprime la clave ni la URL del remoto. Probado contra un remoto bare local en `ops/tests/test_context_broker_preflight.py`.
 
-### Siembra real (Humanizar y Praxis)
+### Siembra de una empresa
 
 1. Preflight en verde.
-2. `cauce platform contexto sembrar --empresa humanizar --simular` (con `--nativos DIR` si se recogieron `context/` y `directives/` de los espacios en `DIR/<tenant>/<alias>/`): revisar el plan, una línea por agente activo; las personas no son agentes.
+2. `cauce platform contexto sembrar --empresa COMPANY_ID --simular` (con `--nativos DIR` si se recogieron `context/` y `directives/` de los espacios en `DIR/<tenant>/<alias>/`): revisar el plan, una línea por agente activo; las personas no son agentes.
 3. La misma orden sin `--simular` registra la versión 1 de cada agente sin historial y la encola para el broker; el worker del gateway la publica.
-4. `git ls-tree -r --name-only origin/main` dentro del repositorio del broker debe listar `companies/humanizar/tenants/<tenant>/agents/<alias>/.cauce-version.json` por agente; el preflight vuelve a salir 0.
+4. `git ls-tree -r --name-only origin/main` dentro del repositorio del broker debe listar `companies/<empresa>/tenants/<tenant>/agents/<alias>/.cauce-version.json` por agente; el preflight vuelve a salir 0.
 5. Repetir la siembra devuelve `existing` y no crea versiones. Escanear el remoto con gitleaks (0 hallazgos) y retirar la carpeta sintética `v4_verificacion`.
-6. Praxis, igual con `--empresa` de Praxis, después de importarla.
+6. Cada empresa adicional usa el mismo comando con su `--empresa`, después de importarla si aún no existe.
 
 La siembra idempotente con empuje a un bare está probada en `packages/store/test/context-seed-postgres.test.ts`; la corrida contra GitHub y la VPS es del orquestador.
 
@@ -201,9 +201,9 @@ El catálogo reconoce `claude`, `codex`, `hermes`, `opencode`, `openclaw`, `grok
 
 El alta de `fake2` añadió el descriptor y las ediciones de paridad en 14 archivos (`1ff5c418`). Su prueba local verifica el registro durable `qa-reviewer-b=fake2`, la capability WebSocket `harness.fake2`, el descriptor empaquetado idéntico al fuente y una entrega `done` dentro del fan-out con respuesta final correlacionada. El recibo cuenta un adaptador `opencode`, tres `fake` y uno `fake2`; conserva el digest del descriptor, el epoch de lease, la correlación final y la limpieza de procesos y temporales. `fake` y `fake2` son harnesses de prueba: no se ofrecen en la UI ni en las plantillas de producción.
 
-El paquete npm local incluye el descriptor, el bin y la definición de `fake2`. La construcción del bundle de release sigue exigiendo un árbol limpio y la aprobación del digest por el host. La autenticación con cuentas reales de Grok/Muse/OpenClaw y las ejecuciones físicas de `quota` y `update_cli` por descriptor en server2 requieren sus propios recibos; el roundtrip de CLI controlado no acredita esas operaciones.
+El paquete npm local incluye el descriptor, el bin y la definición de `fake2`. La construcción del bundle de release sigue exigiendo un árbol limpio y la aprobación del digest por el host. La autenticación con cuentas reales de Grok/Muse/OpenClaw y las ejecuciones físicas de `quota` y `update_cli` por descriptor en el ordenador enrolado requieren sus propios recibos; el roundtrip de CLI controlado no acredita esas operaciones.
 
-Las operaciones físicas de server2 las ejecuta el orquestador con este mismo mecanismo, sin código nuevo: el host enrolado recibe la política firmada con `descriptor_sha256` por harness, el gateway monta el archivo de aprobaciones y, desde «Mis cuotas», un entorno de cuota del harness recorre crear, autenticar, consultar (`quota`), actualizar el CLI (`update_cli`) y borrar. El recibo debe conservar argv sin secretos, código de salida, versiones antes y después, ventanas leídas, la relectura final y la limpieza del contenedor.
+Las operaciones físicas en ese ordenador las ejecuta el orquestador con este mismo mecanismo, sin código nuevo: el host enrolado recibe la política firmada con `descriptor_sha256` por harness, el gateway monta el archivo de aprobaciones y, desde «Mis cuotas», un entorno de cuota del harness recorre crear, autenticar, consultar (`quota`), actualizar el CLI (`update_cli`) y borrar. El recibo debe conservar argv sin secretos, código de salida, versiones antes y después, ventanas leídas, la relectura final y la limpieza del contenedor.
 
 ### Aprobación y adopción por el dueño
 

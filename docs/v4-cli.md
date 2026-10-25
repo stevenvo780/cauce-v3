@@ -47,13 +47,41 @@ cauce login --help
 cauce spaces --help
 cauce hosts setup --help
 cauce hosts status --help
+cauce platform admin otorgar --empresa "$COMPANY_ID" --id "$UUID" --email "$CORREO" --rol owner
+cauce platform admin revocar --empresa "$COMPANY_ID" --id "$UUID"
+cauce platform empresa estado --empresa "$COMPANY_ID" --estado retired --si
+cauce platform empresa purgar-canarios --simular --empresa zz-canary-ejemplo
+cauce platform enlace crear --empresa "$COMPANY_ID" --otra-empresa "$OTRA_EMPRESA"
+cauce platform enlace borrar --empresa "$COMPANY_ID" --otra-empresa "$OTRA_EMPRESA"
+cauce platform contexto sembrar --empresa "$COMPANY_ID" --simular
 ```
+
+`admin`, `empresa` y `enlace` los resuelve `ops/cli/platform_admin.mjs` tanto en local como tras `cauce platform contenedor`. `contexto sembrar` lo resuelve `ops/cli/context_seed.mjs` también sin `contenedor`; `--simular` muestra el plan y no escribe. `otorgar` puede repetir `--id` y `--email`. `empresa estado` admite `enabled`, `disabled` o `retired`; deshabilitar o retirar pide confirmación y `--si` la da por escrito. `purgar-canarios` solo admite identificadores `zz-canary-…` y solo purga empresas ya retiradas. El resto del CLI de plataforma (`show`, `change`, `rollback`, `export`, `plan-import`, `import`) sigue en el gateway.
+
+`cauce spaces inventory` exige `--dry-run`. `cauce spaces migrate` exige `--workspace`. El procedimiento de inventario y migración está en [archivos y contextos](v4-archivos-contextos.md).
 
 `empresa importar` da de alta una empresa con su dueño, le importa la topología de un inventario (tenants, salas, agentes en borrador, membresías y aristas con su hub) y verifica su aislamiento en la misma transacción. Con `--perfiles`, además prepara los perfiles. `--dry-run` lo ejecuta todo y lo deshace; `--apply` lo confirma, y crear al dueño exige `--clave-archivo` con su contraseña inicial. En `contenedor`, el inventario, los perfiles y la clave se montan en solo lectura; los dos últimos deben ser `0600` del uid 1000. Procedimiento de Praxis: [plan de migración, §4](v4-migracion-plan.md#alta-e-importación-de-praxis-en-la-v4-central).
 
 La siembra de administración es idempotente. En producción, los subcomandos `contenedor` usan la imagen de runtime y sus secretos montados; los datos privados de cuenta se suministran desde configuración del operador. `hosts setup` requiere que el ordenador ya esté enrolado; `hosts status` informa si el executor local quedó listo.
 
-En flota dinámica, `CAUCE_FLEET_RUNTIME_STATE` limita el despacho legado a las consultas y paneles admitidos. Las mutaciones físicas pasan por la consola y el coordinador durable. La incorporación de los nuevos comandos no demuestra por sí sola que todas las terminales remotas sigan funcionando en el despliegue: ese recorrido permanece como criterio de aceptación.
+En flota dinámica, `CAUCE_FLEET_RUNTIME_STATE` limita el despacho legado. Con esa variable definida, `on`, `off`, `retirar` y el resto de mutaciones locales salen con el aviso de usar la consola y el coordinador durable; siguen admitidos entrar, `ver`, `estado` y `sesiones`. `pila-test` también se rechaza en ese modo. La incorporación de los nuevos comandos no demuestra por sí sola que todas las terminales remotas sigan funcionando en el despliegue: ese recorrido permanece como criterio de aceptación.
+
+## Despacho legado
+
+Si el primer argumento no es `diagnose`, `platform`, `hosts`, `login`, `context`, `context-native` ni `spaces`, `ops/cli/cauce` conserva el inventario local:
+
+| Comando | Efecto |
+|---|---|
+| `cauce` o `cauce flota` | Lista la flota de ese inventario |
+| `cauce estado` y `cauce <alias> estado` | Estado |
+| `cauce ver` y `cauce <alias> ver` | Vista |
+| `cauce <alias>` | Entra en la sesión local, salvo que haya sesión nominal de consola: entonces conecta por gateway |
+| `cauce <alias> sesiones` | Sesiones del alias |
+| `cauce <alias> on`, `off`, `login`, `aprovisionar`, `retirar` | Mutaciones locales del runtime. Con `CAUCE_FLEET_RUNTIME_STATE` quedan bloqueadas |
+| `cauce cuotas` o `cauce coutas` | Abre por SSH el CLI de cuotas del host indicado en `CUOTAS_HOST` |
+| `cauce pila-test` | Solo existe en el repositorio (`ops/tests/cauce-pila-test.cli.mjs`) |
+
+`cuotas` y `coutas` no llevan un nombre de host en la documentación: el destino es el valor de `CUOTAS_HOST`. Sin esa variable el despacho usa el valor por defecto del script, que es un ordenador concreto de la instalación y no forma parte del contrato público.
 
 ## Sesión nominal y terminal de la flota dinámica
 

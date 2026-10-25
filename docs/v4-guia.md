@@ -2,9 +2,11 @@
 
 Abre la consola de tu instalación e inicia sesión. Cada acción se limita a la empresa activa y a los permisos de tu cuenta. La versión publicada se consulta en [HISTORIAL](../deploy/HISTORIAL.md); los procedimientos del operador están en [Operación](operacion.md).
 
+El menú es **Chat**, **Oficina**, **Cuentas**, **Mis cuotas**, **Colas y DLQ**, **Señales y auditoría**, **Ajustes**, **Terminal** y **Ayuda** (`console/src/nav.ts`). Esta guía recorre el alta y el día a día. El mapa de cada vista, sus pestañas y sus botones está en [Consola](consola.md#vistas).
+
 ## Registrarte y entrar en tu empresa
 
-1. En la pantalla de acceso, pulsa **Crear cuenta y empresa**. Completa tu nombre, correo, contraseña (12 caracteres o más), el nombre de la empresa y un identificador libre: empieza por una letra y usa minúsculas, números o guiones.
+1. En la pantalla de acceso, pulsa **Crear cuenta y empresa**. Completa tu nombre, correo, contraseña (12 caracteres o más), el nombre de la empresa y el identificador: de 2 a 63 caracteres, empieza por una letra y usa minúsculas, números o guiones.
 2. Al terminar se crean la empresa y tu acceso como dueño, y entras en el **Chat**.
 3. El chat ya lista dos agentes en borrador, sin ordenador: `owner` (con tu nombre, en la sala `office`) y `context-director`. El aviso «Sin preparar» no es una caída. El espacio de la empresa tiene un identificador que empieza por `hub-`. Para conectar un ordenador y añadir agentes, abre **Ajustes**.
 
@@ -13,7 +15,7 @@ Si administras la plataforma, el selector de empresa permite cambiar la empresa 
 ## Invitar a una persona a tu empresa
 
 1. Abre **Ajustes → Acceso y roles → Personas → Administrar personas**. Si la tarjeta muestra **Invitar persona**, ese botón abre el mismo formulario.
-2. Pulsa **Crear persona** o **Invitar persona**, el que veas. Completa correo de acceso, nombre y permiso web: **Lector** u **Operador**.
+2. Pulsa **Invitar persona**. El formulario se titula igual. Completa correo de acceso, nombre y permiso web: **Lector** u **Operador**.
 3. Elige el **Espacio de la persona**. En **Identidad de la persona**, puedes dejar **Crear identidad para este correo**: funciona aunque la empresa nueva aún no tenga agentes habilitados.
 4. Define una contraseña inicial, revisa **Habilitar acceso al crear** y pulsa **Crear cuenta de persona**. Entrega el acceso por un canal privado; este flujo crea la cuenta y no envía una invitación por correo.
 
@@ -35,7 +37,7 @@ El latido confirma conexión; el ejecutor listo confirma que puede operar agente
 3. Completa el login del proveedor en la terminal web privada. Si exige autorización en su página, sigue las instrucciones que muestra el propio CLI. Cuando termine, pulsa **Verificar conexión** y espera la confirmación de identidad.
 4. En **Entornos de consulta**, cuando ya exista un entorno, usa **Consultar cuotas**. Sin ordenador compatible, **Crear entorno** no se puede completar y **Consultar cuotas** todavía no aparece. **Actualizar cuotas y entornos** relee el estado de la página. **Fijar cuenta** mantiene a mano las tarjetas que sigues.
 
-Las ventanas, porcentajes disponibles y reinicios vienen del CLI del proveedor; cada proveedor puede informar ventanas distintas. Revisa la hora de lectura. **Sin datos**, **datos antiguos** y **error** son estados distintos de cuota agotada. Si la sesión vence, vuelve a **Iniciar sesión** y repite la consulta.
+Las ventanas, porcentajes disponibles y reinicios vienen del CLI del proveedor; cada proveedor puede informar ventanas distintas. En el formulario el proveedor Codex se llama **GPT / Codex**. Revisa la hora de lectura. **Sin datos**, **Datos antiguos** y **Error de consulta** son estados distintos de cuota agotada. **Sin lector de cuota** significa que ese proveedor no informa ventanas. Si la sesión vence, vuelve a **Iniciar sesión** y repite la consulta.
 
 El saldo se consulta en **Mis cuotas**. **Cuentas** mantiene **Inventario** y **Asignaciones**, para administrar pagadores y ruteo; la antigua pestaña **Consumo** está retirada. Para mantener el CLI o retirar su contenedor, usa **Actualizar CLI** o **Eliminar entorno**. Si **Actualizar CLI** falla, el aviso nombra la operación y su causa; vuelve a intentarlo y, si se repite, el diario del ejecutor en ese ordenador trae el motivo. Eliminar una cuenta exige retirar antes sus entornos y asignaciones. Capacidades y límites: [cuotas](v4-cuotas.md).
 
@@ -55,14 +57,14 @@ OpenClaw no tiene sesión humana aislada: un mensaje de la consola solo llega a 
 
 ## Compartir una cuenta entre agentes
 
-En la ficha del agente, abre **Registro → Cuentas de cuota**, elige la cuenta, pulsa **Previsualizar cuenta** y después **Guardar cuenta de cuota**. Puedes vincular la misma cuenta a varios agentes: comparten la suscripción y el saldo. La ficha y la oficina muestran sus datos; **Mis cuotas** permite seguirla incluso sin agentes. Una cuenta sin sesión verificada requiere primero **Iniciar sesión** en su tarjeta. Para cambiar la cuenta de ejecución, usa **Operar agente** y comprueba su autenticación.
+En la ficha del agente, abre la pestaña **Ajustes** y, en **Cuentas de cuota**, elige la cuenta, pulsa **Previsualizar cuenta** y después **Guardar cuenta de cuota**. Puedes vincular la misma cuenta a varios agentes: comparten la suscripción y el saldo. La ficha y la oficina muestran sus datos; **Mis cuotas** permite seguirla incluso sin agentes. Una cuenta sin sesión verificada requiere primero **Iniciar sesión** en su tarjeta. Para cambiarla, repite esa previsualización y el guardado.
 
 ## Crear y preparar un agente
 
 1. Abre **Ajustes → Agentes → Añadir agente** y elige **Registrar el agente**.
 2. Completa espacio de trabajo, alias y nombre visible; avanza por computadora y grupo inicial. Puedes registrarlo sin computadora y asignarla después desde la pestaña **Ajustes** de su ficha.
 3. En la revisión, pulsa **Previsualizar alta** y después **Crear registro**. El registro se crea deshabilitado; aún falta preparar su ejecución.
-4. Con una computadora asignada, pulsa **Preparar en la computadora**, revisa el plan y encola la operación. También puedes abrir la ficha, ir a **Operación** y elegir **Preparar agente**. Completa la autenticación del proveedor cuando se solicite.
+4. Con una computadora asignada, pulsa **Preparar en la computadora**, revisa el plan y encola la operación. También puedes abrir la ficha, ir a **Ejecución** y elegir **Preparar agente**. Completa la autenticación del proveedor cuando se solicite.
 
 El asistente también ofrece **Solo preparar, sin desplegar**. Una operación en cola o en ejecución todavía no está completada: revisa sus pasos y el estado final antes de iniciar el trabajo. Operación y CLI: [gestión de espacios](v4-cli.md).
 
@@ -73,26 +75,26 @@ Si tras un despliegue la operación muestra **Requiere preparación**, el conten
 ## Crear una sala
 
 1. Abre **Ajustes → Espacios y salas** y, en la tabla **Salas**, pulsa **Crear sala/grupo**.
-2. El espacio es el identificador `hub-…` de tu empresa. El de la sala lo eliges tú: minúsculas, números o guiones.
+2. El espacio es el identificador `hub-…` de tu empresa. El de la sala tiene entre 1 y 128 caracteres.
 3. Pulsa **Previsualizar cambio** y después **Confirmar creación**.
-4. Arriba, **Un solo recurso** crea lo mismo con otros nombres: en **Recurso** elige **Room**, en **Tenant** escribe el `hub-…` y en **Room** el identificador de la sala. **Membership** solo añade una pertenencia y no crea el agente.
+4. Arriba, **Alta de espacios** ofrece **Un solo recurso** y **Espacio completo, paso a paso**. En **Un solo recurso**, **Recurso** elige **Sala**, **Espacio** lleva el `hub-…` y **Sala** el identificador. **Previsualizar el alta** y después **Crear**. La opción **Membresía: una persona o un agente en una sala** solo añade una pertenencia y no crea el agente. **Espacio completo, paso a paso** recorre **Espacio**, **Sala**, **Membresía** y **Revisar y aplicar**, con **Previsualizar paso** y **Aplicar paso** en cada uno.
 5. Para quitarla, en la misma tabla pulsa **Eliminar**, luego **Previsualizar cambio** y **Confirmar eliminación**. El aviso nombra la sala borrada. **Retirar** es una operación distinta.
 
 ## Editar, detener o eliminar un agente
 
-Abre su ficha desde **Ajustes → Agentes**. **Registro** edita sus datos; **Operación** prepara, actualiza, inicia o detiene su ejecución y muestra el resultado remoto.
+Abre su ficha desde **Ajustes → Agentes**. Las pestañas son **Estado**, **Ajustes**, **Ejecución**, **Ampliaciones** y **Grupos**. **Ajustes** edita el registro: **Previsualizar cambio** y después **Aplicar cambio**. **Ejecución** prepara, actualiza, inicia o detiene su ejecución y muestra el resultado remoto. En **Estado**, **Arrancar** y **Detener** abren **Ejecución** con la acción elegida; ahí se previsualiza y se confirma.
 
-Para darlo de baja, pulsa **Eliminar**. Si tiene o tuvo un entorno de ejecución, sigue los dos pasos del diálogo:
+Para darlo de baja, en **Estado** pulsa **Retirar o eliminar…** si tiene o tuvo un entorno de ejecución, o **Ir a eliminar…** si no lo tiene. Si ya está retirado, el botón es **Eliminar definitivamente…**. Si tiene o tuvo un entorno de ejecución, sigue los dos pasos del diálogo:
 
 1. **Retirar** detiene la ejecución y conserva registro, mensajes e historial. Puede revertirse con **Restaurar**.
 2. Cuando el retiro termine, pulsa **Releer inventario** y continúa con **Eliminar definitivamente**. Lee la previsualización y confirma lo que se borrará; esta operación es irreversible.
 
-Si no tiene entorno de ejecución, la acción abre **Registro**: usa **Eliminar registro**, revisa sus dependencias en la previsualización y confirma. Los mensajes enviados se conservan. Un alias con historial o identidad de ejecución puede seguir reservado tras eliminar el agente. Antes de una eliminación definitiva de un espacio, descarga su copia.
+Si no tiene entorno de ejecución, **Ir a eliminar…** abre **Ajustes**: usa **Eliminar registro**, revisa sus dependencias en la previsualización y confirma. Los mensajes enviados se conservan. Un alias con historial o identidad de ejecución puede seguir reservado tras eliminar el agente. Antes de una eliminación definitiva de un espacio, descarga su copia.
 
 ## Cambiar el contexto para el siguiente turno
 
 1. Desde la ficha, abre **Perfil y contexto**.
-2. Usa **Perfil** para sus campos de perfil, **Ficheros** para documentos nativos o **Versiones y aplicación** para archivos versionados de `context/` y `directives/`.
+2. Usa **Perfil** para sus campos de perfil y **Ficheros** para el manual y los demás documentos nativos. **Directiva** muestra en solo lectura el rol, el manual y la memoria; el manual se edita con **Editar el manual en Ficheros**. **Git** es el repositorio y **Versiones y aplicación** los archivos versionados de `context/` y `directives/`.
 3. En **Versiones y aplicación**, elige o añade un archivo, edita su contenido y pulsa **Guardar nueva versión**.
 4. El contexto guardado se adopta en el siguiente turno natural. Revisa **Guardado**, **Versión deseada**, **Aplicación** y **Usado por el agente**: guardar no acredita que una conversación ya lo esté usando.
 
@@ -109,7 +111,7 @@ Los contextos se publican en un repositorio privado compartido, separados por em
 
 ## Trabajar desde la oficina, el chat o la terminal
 
-En **Oficina**, abre un agente para consultar su estado, cuenta y cuota, o entrar en **Chat**, **Terminal** y **Perfil y contexto**. Las salas de la empresa salen de sus recursos. El campus añade lugares fijos del plano (cafetería, parque, residencia, recepción y taller): no son salas tuyas. Para editar el plano, pulsa **Plano editable**, guarda con **Guardar plano** y comprueba el resultado al volver a abrirlo. El cansancio representa disponibilidad de cuota; la falta de datos o un error se muestran por separado. **Sin datos** en un agente sin cuenta no es cuota agotada.
+En **Oficina**, abre un agente para consultar su estado, cuenta y cuota, o entrar en **Chat**, **Terminal** y **Perfil y contexto**. Las salas de la empresa salen de sus recursos. El campus añade lugares fijos del plano (**Cafetería**, **Parque**, **Residencia**, **Recepción** y **Taller**): no son salas tuyas. Para editar el plano, pulsa **Plano editable**, guarda con **Guardar plano** y comprueba el resultado al volver a abrirlo. El cansancio representa disponibilidad de cuota; la falta de datos o un error se muestran por separado. **Sin datos** en un agente sin cuenta no es cuota agotada.
 
 En **Chat**, abre la tarjeta del agente aunque diga **Sin preparar**. Escribe en **Mensaje para …** y pulsa Enter. Sin ordenador el envío queda en cola: verás **Lease sin dato · envío en cola** y **recibiendo…**. No es un fallo de la caja.
 

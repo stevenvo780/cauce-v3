@@ -12,19 +12,19 @@ No utiliza `react-router`. El enrutamiento (`matchRoute`, `ROUTE_TABLE`, `ROUTE_
 
 | Directorio | Función |
 |---|---|
-| `features/live/` | Estado de flota en tiempo real y drawer de agente con pestañas Perfil, Ficheros, Directiva, Historial, Git y Versiones y aplicación; el manual se edita en Ficheros |
-| `features/messages/` | Conversaciones y única superficie de publicación durable |
+| `features/live/` | Oficina en `/live` (`data-objeto-principal="oficina"`): campus, veredicto y plano. El cajón de contexto tiene Perfil, Ficheros, Directiva, Historial, Git y Versiones y aplicación; el manual se edita en Ficheros y Directiva lo muestra en solo lectura |
+| `features/messages/` | Chat: conversaciones y única superficie de publicación durable |
 | `features/deliveries/` | Política canónica de estados y ejecución segura de comandos sobre entregas |
-| `features/queues/` | Colas de salida, DLQ y única superficie de replay/cancelación/resolución |
-| `features/observability/` | Métricas, gráficos, salud de colas |
-| `features/config/` | Configuración versionada con OCC |
-| `features/accounts/` | Cuentas: Inventario y Asignaciones; Mis cuotas: saldo por cuenta y acceso al login de proveedor |
-| `features/auth/` | Login OIDC / contraseña / selección de sesión |
-| `features/audit/` | Visor de eventos de auditoría y telemetría |
-| `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo) |
-| `features/help/` | Ayuda integrada en `/ayuda`: qué contesta cada vista, qué significa cada estado de la flota y los atajos; el índice se deriva de `NAV_ENTRIES`, así que no puede describir una vista que no existe |
+| `features/queues/` | Colas y DLQ: pestañas **Entregas** (**Replay**, **Cancelar**) y **DLQ operativo** (**Cerrar sin replay**); enlace `/queues?delivery=<uuid>` |
+| `features/observability/` | **Señales y auditoría**, con pestañas **Señales y relays** y **Auditoría** |
+| `features/config/` | Ajustes: General, Espacios y salas, Agentes, Computadoras, Arneses, Acceso y roles y Avanzado. La ficha del agente usa Estado, Ajustes, Ejecución, Ampliaciones y Grupos |
+| `features/accounts/` | Cuentas: Inventario y Asignaciones. Mis cuotas (`/my-quotas`): saldo por cuenta y acceso al login de proveedor |
+| `features/auth/` | Acceso: modo contraseña con `POST /v3/auth/login`, o navegación a `/v3/auth/login` en OIDC/redirección. No hay ruta de consola `/login` |
+| `features/audit/` | Visor de eventos de auditoría, montado en Señales y auditoría |
+| `features/terminal/` | Terminal interactiva vía xterm.js (ver abajo). El objeto principal es `data-objeto-principal="escenario"` |
+| `features/help/` | **Ayuda y documentación** en `/ayuda`: qué contesta cada vista, qué significa cada estado de la flota y los atajos; el índice se deriva de `NAV_ENTRIES` |
 
-La ruta raíz (`/`) redirige a `messages` (Chat); no hay una vista Dashboard.
+Rutas del menú (`NAV_ENTRIES` en `console/src/nav.ts`, páginas en `PAGES` de `console/src/App.tsx`): `/messages` Chat, `/live` Oficina, `/accounts` Cuentas, `/my-quotas` Mis cuotas, `/queues` Colas y DLQ, `/observability` Señales y auditoría, `/config` Ajustes, `/terminal` Terminal y `/ayuda` Ayuda. La raíz (`/`) redirige a Chat; no hay una vista Dashboard. Alias útiles: `/office` → `/live`, `/quotas` → `/my-quotas`, `/audit` → `/observability`. El detalle histórico `/fleet/<tenant>/<alias>` redirige a la terminal.
 
 ## Armazón de página
 
@@ -39,8 +39,8 @@ primitiva `PageShell` ni una propiedad `kind` que clasifique el cuerpo de cada p
 
 ## Tema de la consola
 
-`components/ThemeControl.tsx` vive en la barra superior y ofrece tres estados: **sistema**,
-**claro** y **oscuro**. `claro` y `oscuro` estampan `data-theme="light"` o `data-theme="dark"` en
+`components/ThemeControl.tsx` vive en la barra superior y ofrece tres rótulos: **Sistema**,
+**Claro** y **Oscuro** (identificadores `sistema`, `claro` y `oscuro`). `claro` y `oscuro` estampan `data-theme="light"` o `data-theme="dark"` en
 `<html>`; `sistema` **retira** el atributo y devuelve la decisión a `prefers-color-scheme`.
 
 La paleta se declara por tres caminos en `styles/theme.css`: la clara en el `:root` desnudo —ningún
@@ -69,14 +69,14 @@ pasa por el bundle; `src/tema-bootstrap.test.ts` importa `CLAVE_TEMA` y `TEMAS` 
 
 ## Pliegue: qué se ve sin hacer scroll
 
-Cada vista declara su **objeto principal** con `data-objeto-principal` —la tabla de flota en
-`/live`, el hilo en `/messages`, la caja de terminal en `/terminal`— y el criterio de v3.1 es que
-ese objeto empiece por encima del pliegue. El gate de maquetado lo mide (más abajo); en `/live` la
-maquetación que lo persigue es una sola tira de mando —refresco, triaje y veredicto— pegada arriba a
-partir de 1101px, más la leyenda y el mapa de la flota dentro de `<details>` que arrancan plegados,
-porque el mapa abierto deja la tabla fuera del primer pliegue. Por debajo de 1101px nada de `/live`
-se pega y la cabecera global vuelve a ser lo que mantiene el título alcanzable, como en el resto de
-las vistas.
+Cada vista declara su **objeto principal** con `data-objeto-principal`. En `/live` es la oficina
+(`oficina`): el campus, el HUD «Veredicto de la flota» y el refresco **2 s**, **5 s**, **15 s** o
+**En pausa**. En un ancho estrecho el panel lateral se pliega con **Ocultar panel** y **Mostrar panel**,
+y el filtro de estados con **Estados**. El hilo de `/messages` es `hilo` y la terminal es `escenario`.
+El detalle de un mensaje sigue el corte `max-[1100px]` / `min-[1101px]` (`MessageDetail.tsx`).
+El gate histórico de maquetado (`qa/layout-gate.mjs`, más abajo) mide que ese objeto quede sobre el
+pliegue; la tira de tabla de flota a 1101 px ya no es la maquetación de `/live`. Ese recorrido es
+referencia histórica y no el gate de publicación de V4.
 
 ## Autoridades únicas de escritura
 
@@ -199,18 +199,18 @@ la capacidad del relay para la navegación y la Terminal. Los `Boundary` de ambo
 ## Computadoras y agentes
 
 `/config?seccion=computadoras` es el registro de las computadoras donde viven los agentes
-(`fleet_hosts`, migración 050). Reúne en una lista las filas registradas, los hosts aprobados por la
-capability de flota y los `host_id` que ya usan los agentes. El hub puede registrar, renombrar,
-habilitar o deshabilitar una computadora y eliminarla mientras no tenga agentes
-(`/v3/console/fleet/hosts`, con CAS por `expected_version`). Instalar el ejecutor, las claves SSH y la
-aprobación de plantillas sigue siendo un paso del operador, fuera de la consola.
+(`fleet_hosts`). La sección ofrece **Registrar computadora**, editar, habilitar o deshabilitar, y
+**Eliminar** (`/v3/console/fleet/hosts`, con CAS por `expected_version`). Conectar e instalar el
+ejecutor es **Conectar un ordenador** y **Añadir ordenador** en la misma sección; el procedimiento
+está en [ordenadores](v4-ordenadores.md). Registrar una computadora aquí no instala el ejecutor.
 
 `GET /v3/console/fleet/operations/recent?limit=N` (por defecto 50, máximo 200) lista las operaciones de
 flota más recientes sin nombrar un destino, para alcanzar una operación fallida cuyo destino ya fue
 purgado. Exige el mismo permiso `control` y la misma autoridad humana de lectura que el listado por
-destino, y devuelve la misma forma pública, de más nueva a más antigua (`created_at`, luego `id`). Un
-actor que no es hub ve solo las operaciones cuyo `target.tenant_id` es su propio tenant; un hub, solo las
-de tenants de su propia compañía. Nunca devuelve operaciones de otra compañía.
+destino, y devuelve la misma forma pública, de más nueva a más antigua (`created_at`, luego `id`).
+Una autoridad de empresa o de plataforma ve las operaciones de la empresa activa. Un alcance de un
+solo espacio ve solo las de su `tenant_id`. La consulta filtra por `company_id` y no devuelve
+operaciones de otra empresa (`packages/store/src/repository/fleet-operations.ts`, `listRecent`).
 
 El estado de cada computadora es el del controlador de flota cuando reportó hace menos de 90 s. El
 controlador lo reescribe cada 30 s. Sin ese reporte, el estado se deriva de los arriendos de sus agentes.
@@ -221,9 +221,11 @@ arranque, porque un agente detenido tampoco tiene arriendo. Una computadora caí
 resto: el controlador aísla cada canal SSH y reintenta solo el suyo, el bus aparca las entregas de
 sus agentes y el smoke la informa como AVISO.
 
-`Añadir agente` crea el registro con su computadora y, opcionalmente, su sala inicial. La computadora
-se elige al crear: trasladar un agente con runtime no está soportado. Un agente operativo se borra en
-dos pasos: «Retirar agente» y después «Eliminar definitivamente» en «Agentes retirados».
+**Añadir agente** crea el registro con su computadora y, opcionalmente, su sala inicial. La baja de
+un agente con ejecución está en su ficha, en **Estado**: **Retirar o eliminar…**, y en el diálogo
+**1. Retirar** y **2. Eliminar definitivamente**. Sin entorno, **Ir a eliminar…** abre **Ajustes** y
+**Eliminar registro**. Si ya está retirado, el botón es **Eliminar definitivamente…**. Pasos:
+[guía](v4-guia.md#editar-detener-o-eliminar-un-agente).
 
 ## Favoritos y apariencia de agentes
 
