@@ -169,7 +169,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
         {EXTENSION_CATALOG.map((entry) => <li key={entry.type} className="grid gap-1.5 rounded-lg border border-line bg-surface p-3">
           <span className="flex flex-wrap items-center gap-2">
             <strong className="text-[13px]">{entry.label}</strong>
-            <Pill tone={entry.tone}>{entry.riskLabel}</Pill>
+            <Pill tone={entry.tone} className="h-auto min-h-5 max-w-full whitespace-normal">{entry.riskLabel}</Pill>
           </span>
           <span className="text-xs leading-relaxed text-fg-2">{entry.allows}.</span>
           <span><Button size="sm" disabled={disabled || adding === entry.type} aria-label={`Añadir ampliación ${entry.label}`}

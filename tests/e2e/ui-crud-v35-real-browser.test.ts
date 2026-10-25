@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hashPassword } from '../../services/gateway/src/password.js';
@@ -182,7 +181,7 @@ beforeAll(async () => {
   if (process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1' || process.env.CAUCE_TEST_DATABASE_URL !== undefined || process.env.DATABASE_URL !== undefined
       || process.env.CAUCE_TEST_DOCKER_NETWORK !== undefined || process.env.CAUCE_TEST_DOCKER_NETWORK_OWNER !== undefined || process.env.VITE_USE_MOCKS === 'true'
       || process.env.CAUCE_UI_FUNCTIONAL_BROWSER_IMAGE !== undefined) throw new Error('CRUD E2E requires owned PostgreSQL/network/Chromium resources without external overrides or mocks');
-  evidence = process.env.CAUCE_UI_CRUD_EVIDENCE_DIR ?? await mkdtemp(join(tmpdir(), 'cauce-ui-crud-'));
+  evidence = process.env.CAUCE_UI_CRUD_EVIDENCE_DIR ?? join(process.cwd(), '.delegados/v4/recibos/e2e-a2-agentes-1025/crud');
   if (!evidence.trim()) throw new Error('CRUD evidence directory is empty'); await mkdir(evidence, { recursive: true, mode: 0o700 }); await chmod(evidence, 0o700);
   fixture = await startConsoleFunctionalFixture(); resources = await owned();
   await active().database.pool.query('INSERT INTO rooms(id,tenant_id) VALUES($1,$2)', [`crudop.${suffix}`, 'Steven']);
@@ -252,7 +251,7 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     const deletionPreview = await observer.click(page.getByRole('button', { name: 'Previsualizar eliminación', exact: true }));
     expect(deletionPreview.status).toBe(200); expect(deletionPreview.request).toMatchObject({ dry_run: true, mutation: { resource: 'agent', action: 'delete', tenant_id: tenant, alias } });
     expect(deletionPreview.receipt).toMatchObject({ revision: deleteBefore, applied: false, dry_run: true });
-    await page.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 }); expect(await revision()).toBe(deleteBefore);
+    await page.getByRole('status').filter({ hasText: 'Vista previa lista.' }).waitFor({ timeout: 20_000 }); expect(await revision()).toBe(deleteBefore);
     expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === 'Confirmar eliminación del registro')?.disabled)).toBe(false);
     await assertRecord(page, 'agents', { display_name: 'CRUD agente editado', ...emptyRuntime }); await assertRecord(page, 'memberships', { role: 'agent', enabled: false });
     await writeFile(join(evidence, 'agent-delete-membership-dry-run.json'), JSON.stringify({ ...deletionPreview, revisionBefore: deleteBefore, revisionAfter: await revision(), writes: 0 }, null, 2) + '\n', { mode: 0o600 });

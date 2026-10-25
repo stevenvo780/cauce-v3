@@ -41,7 +41,7 @@ export async function assertAgentRegistryGeometry(page: BrowserPage, evidenceDir
       count: regions.length, tiles: tiles.length, grid: rect(grid ?? null), gap: grid ? parseFloat(getComputedStyle(grid).columnGap) : 0,
       columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat) : [], dialog: rect(dialog),
       card: rect(card ?? null), cards: cards.map((item) => rect(item)), region: rect(region ?? null),
-      open: editor?.getAttribute('data-open') === 'true', editor: rect(editor), controls, checkboxes };
+      open: dialog !== null && dialog.getClientRects().length > 0, editor: rect(editor), controls, checkboxes };
   }, targetIdentity);
   await writeFile(`${evidenceDirectory}/geometry-${viewportName}.json`, JSON.stringify(geometry, null, 2) + '\n', { mode: 0o600 });
   expect(geometry.document).toBeLessThanOrEqual(geometry.viewport);

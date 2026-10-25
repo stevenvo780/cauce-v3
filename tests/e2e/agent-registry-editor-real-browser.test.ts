@@ -1,7 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -208,7 +207,7 @@ beforeAll(async () => {
     throw new Error('agent registry E2E requires its own Testcontainers fixture and rejects external DB/network/mock mode');
   }
   const configured = process.env[evidenceSetting];
-  evidenceDirectory = configured ?? await mkdtemp(join(tmpdir(), 'cauce-agent-reg-'));
+  evidenceDirectory = configured ?? join(process.cwd(), '.delegados/v4/recibos/e2e-a2-agentes-1025/registry');
   if (evidenceDirectory.trim().length === 0) throw new Error(`${evidenceSetting} must not be empty`);
   await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
   await chmod(evidenceDirectory, 0o700);
@@ -303,6 +302,7 @@ describe('V1 tipada de edición del registro de agentes', () => {
     const previewRequest = requestForChange(hubPage);
     await hubPage.getByRole('button', { name: 'Previsualizar cambio' }).click();
     const preview = hubPage.getByLabel('Preview del registro de agente');
+    await registryEditor.locator('details').filter({ hasText: 'Detalles técnicos' }).locator('summary').click();
     await preview.waitFor({ state: 'visible', timeout: 20_000 });
     expect(object(JSON.parse(await preview.innerText())).mutation).toEqual(mutation);
     const previewNetwork = await previewResponse;
