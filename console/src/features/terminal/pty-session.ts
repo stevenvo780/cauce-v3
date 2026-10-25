@@ -111,6 +111,11 @@ function sendResize(entry: PtyEntry): void {
   entry.socket.send(JSON.stringify({ type: 'resize', cols, rows }));
 }
 
+function cancelResize(entry: PtyEntry): void {
+  if (entry.resizeFrame !== undefined) window.cancelAnimationFrame(entry.resizeFrame);
+  entry.resizeFrame = undefined;
+}
+
 const EVENTOS_DE_ENTRADA = ['beforeinput', 'input', 'paste', 'drop', 'compositionstart', 'compositionupdate', 'compositionend'] as const;
 
 /** `harness_rw` starts without the keyboard and gains it on the take: the guard is re-armable. */
@@ -253,8 +258,16 @@ export function attachPtySession(sessionId: string, wrapper: HTMLElement): void 
   if (!entry) return;
   wrapper.appendChild(entry.container);
   entry.resizeObserver?.disconnect();
+  cancelResize(entry);
   if (typeof ResizeObserver === 'function') {
-    entry.resizeObserver ??= new ResizeObserver(() => { sendResize(entry); });
+    entry.resizeObserver ??= new ResizeObserver(() => {
+      if (entry.closed || entry.resizeFrame !== undefined) return;
+      // Fitting changes layout and must run outside the observer's delivery cycle.
+      entry.resizeFrame = window.requestAnimationFrame(() => {
+        entry.resizeFrame = undefined;
+        if (!entry.closed) sendResize(entry);
+      });
+    });
     entry.resizeObserver.observe(wrapper);
   }
   sendResize(entry);
@@ -266,6 +279,7 @@ export function detachPtySession(sessionId: string): void {
   if (!entry) return;
   cancelPendingInput(entry);
   entry.resizeObserver?.disconnect();
+  cancelResize(entry);
   holder().appendChild(entry.container);
 }
 
@@ -280,6 +294,7 @@ export function closePtySession(sessionId: string, reason = 'console terminal cl
   finishOutput(entry);
   entries.delete(sessionId);
   entry.resizeObserver?.disconnect();
+  cancelResize(entry);
   for (const dispose of entry.disposers) dispose();
   entry.worker?.terminate();
   if (entry.socket && entry.socket.readyState <= WebSocket.OPEN) entry.socket.close(1000, reason);

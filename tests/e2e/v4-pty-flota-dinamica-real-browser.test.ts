@@ -73,11 +73,13 @@ async function failureDiagnostics(active: PtyFleetFixture): Promise<void> {
     journalDiagnostics(active, true),
   ]);
   const values = observed.map(result => result.status === 'fulfilled' ? result.value : { observation_unavailable: true });
+  const browserEvents = await active.page.evaluate(() =>
+    (window as Window & { h12BrowserErrors?: Record<string, unknown>[] }).h12BrowserErrors ?? []).catch(() => null);
   let pathname = '';
   try { pathname = new URL(active.page.url()).pathname; } catch { /* A closed browser has no safe current pathname. */ }
   await ptyFleetReceipt('failure-diagnostics', { operations: values[0], agents: values[1], physical: values[2], unit: values[3],
     journal: values[4], executor_journal: values[5], retry: active.retryDiagnostic,
-    pathname, browser_error_count: active.errors.unexpected.length });
+    pathname, browser_error_count: active.errors.unexpected.length, browser_events: browserEvents });
   if (pathname === '/config' || pathname.startsWith('/terminal')) {
     await capturePtyFleet(active.page, 'failure').catch(async () => ptyFleetReceipt('failure-capture-unavailable', { unavailable: true }));
   }
@@ -134,6 +136,12 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
     const agent = (await fixture.computer.pool.query<{ enabled: boolean; lifecycle_state: string }>(
       'SELECT enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [fixture.tenantId, ptyFleetAlias])).rows[0];
     expect(agent).toEqual({ enabled: false, lifecycle_state: 'failed' });
+    await openPtyFleetPanel(fixture);
+    const failedCard = fixture.page.getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: failed.id });
+    await failedCard.getByText('Falló', { exact: true }).waitFor({ timeout: 30_000 });
+    await failedCard.getByText('Detalles técnicos', { exact: true }).click();
+    await failedCard.getByText('terminal_provision_failed', { exact: true }).waitFor({ timeout: 30_000 });
+    await failedCard.evaluate(element => { element.scrollIntoView({ block: 'start' }); });
     await capturePtyFleet(fixture.page, 'create-failed-relay-offline');
     await ptyFleetReceipt('failed-admission', { operation: failed, relay: paused, staged, agent, registered });
     console.info('H12_FLOW failed admission, SDK stopped, grant staged');
