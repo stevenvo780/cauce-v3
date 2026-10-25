@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AliasSchema, TenantSchema, type AgentQuotaClaim, type AgentQuotaReceipt } from '@cauce/protocol';
+import { AgentQuotaReceiptSchema, AliasSchema, QuotaEnvironmentProviderSchema, TenantSchema, type AgentQuotaClaim, type AgentQuotaReceipt } from '@cauce/protocol';
 import { lockCompanyAuthority, type CompanyAuthority } from './company-authority.js';
 import type { DatabaseClient } from './db.js';
 import { assertAgentQuotaAuthority, assertAgentQuotaSnapshot, type AgentQuotaSnapshot } from './agent-quota-bindings.js';
@@ -43,7 +43,13 @@ export async function approvedAgentQuotaHarnesses(source: string = import.meta.u
     const readDescriptors = sdk.approvedHarnessDescriptors as ApprovedDescriptorReader;
     const descriptors = await readDescriptors(directory === undefined ? new URL('../../descriptors/', sdkUrl)
       : pathToFileURL(`${directory}/`), approvals as Readonly<Record<string, string>>);
-    return descriptors.filter(descriptor => descriptor.operations.quota === 'quota-collector').map(descriptor => descriptor.harness).sort();
+    // An environment provider absent from the agent receipt stays off the agent sheet.
+    // Any other approved quota descriptor still counts, including one that is not in SQL.
+    const stored = new Set<string>(AgentQuotaReceiptSchema.options[0].shape.provider.options);
+    const environmentProviders = new Set<string>(QuotaEnvironmentProviderSchema.options);
+    return descriptors.filter(descriptor => descriptor.operations.quota === 'quota-collector'
+      && (stored.has(descriptor.harness) || !environmentProviders.has(descriptor.harness)))
+      .map(descriptor => descriptor.harness).sort();
   } catch { return []; }
 }
 export async function readAgentQuotaPlacement(client: DatabaseClient, authority: CompanyAuthority,

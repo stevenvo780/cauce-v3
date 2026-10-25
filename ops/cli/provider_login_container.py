@@ -29,6 +29,17 @@ from provider_login_state import (
 
 DOCKER = '/usr/bin/docker'
 REMOTE_STATE = '/run/cauce-provider-login'
+_DOCKER_CLI_KEYS = ('HOME', 'USER', 'DOCKER_CONTEXT', 'DOCKER_HOST', 'DOCKER_CONFIG', 'SSH_AUTH_SOCK')
+
+
+def docker_cli_environment() -> dict[str, str]:
+    environment = {'PATH': '/usr/bin:/bin'}
+    if os.environ.get('DOCKER_CONTEXT') or os.environ.get('DOCKER_HOST'):
+        for name in _DOCKER_CLI_KEYS:
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+    return environment
 
 
 @contextlib.contextmanager
@@ -153,10 +164,10 @@ def trusted_release_directory(directory: pathlib.Path, *, recursive: bool = Fals
 def observe(binding: dict, *, absent: bool = False) -> bool:
     binding = validate_binding(binding)
     result = subprocess.run([DOCKER, 'inspect', binding['container_id']], capture_output=True, timeout=8,
-        env={'PATH': '/usr/bin:/bin'})
+        env=docker_cli_environment())
     if result.returncode:
         listed = subprocess.run([DOCKER, 'ps', '-a', '--no-trunc', '--format', '{{.ID}}'],
-            capture_output=True, timeout=8, env={'PATH': '/usr/bin:/bin'})
+            capture_output=True, timeout=8, env=docker_cli_environment())
         if absent and listed.returncode == 0 and binding['container_id'] not in listed.stdout.decode().splitlines():
             return False
         raise LoginFailure('exact login container is unavailable')
@@ -190,7 +201,7 @@ def remote_cleanup(binding: dict, identity: str) -> dict:
     if not observe(binding, absent=True):
         return {'stopped_verified': True}
     result = subprocess.run(command(binding, '--cleanup', identity, REMOTE_STATE),
-        capture_output=True, timeout=12, env={'PATH': '/usr/bin:/bin'})
+        capture_output=True, timeout=12, env=docker_cli_environment())
     if result.returncode:
         probe = ('import json,os\n'
             'if os.path.lexists(' + repr(REMOTE_STATE) + '):\n    raise SystemExit(2)\n'
@@ -201,7 +212,7 @@ def remote_cleanup(binding: dict, identity: str) -> dict:
             'if os.path.lexists(' + repr(REMOTE_STATE) + '):\n    raise SystemExit(2)\n'
             'print(json.dumps({"stopped_verified":True}))\n')
         result = subprocess.run(command(binding, probe=probe), capture_output=True,
-            timeout=8, env={'PATH': '/usr/bin:/bin'})
+            timeout=8, env=docker_cli_environment())
     if result.returncode or len(result.stdout) > 1024:
         raise LoginFailure('remote login stop was not observed')
     receipt = json.loads(result.stdout)
@@ -271,7 +282,7 @@ def run_locked_container(plan: dict, binding: dict, root: int) -> int:
         raise LoginFailure('container login operation requires cleanup before reuse')
     frames = Frames()
     child = subprocess.Popen(command(binding, '--container-child'), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, env={'PATH': '/usr/bin:/bin'})
+        stderr=subprocess.DEVNULL, env=docker_cli_environment())
     descriptor = open_pidfd(child.pid)
     closing = False
     def close_signal(_signal, _frame):

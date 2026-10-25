@@ -5,6 +5,7 @@
     "install": "runtime-package",
     "execute": "native-execution",
     "authenticate": "provider-login",
+    "update": "provider-update",
     "quota": "quota-collector"
   },
   "context": {
@@ -21,6 +22,7 @@
       "/usr/local/bin/node",
       "/usr/local/bin/leer-cuota-grok.mjs"
     ],
+    "update_package": "@xai-official/grok",
     "fleet_module": "fleet_provider_grok"
   }
 }

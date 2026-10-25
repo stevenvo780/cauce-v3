@@ -1,5 +1,7 @@
 import base64
+import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -277,6 +279,168 @@ class QuotaReadersTest(unittest.TestCase):
             request.assert_not_called()
             refresh.assert_not_called()
             self.assertEqual(denied['error_code'], 'token_expired')
+
+class MuseQuotaReaderTest(unittest.TestCase):
+    def load(self, name, filename):
+        loader = importlib.machinery.SourceFileLoader(name, str(ROOT / 'cuotas' / filename))
+        spec = importlib.util.spec_from_loader(name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def setUp(self):
+        self.module = self.load('leer_cuota_muse', 'leer-cuota-muse')
+        self.update = self.load('actualizar_muse', 'actualizar-muse')
+
+    def auth(self, directory, **meta):
+        home = pathlib.Path(directory)
+        config = home / '.config' / 'muse'
+        config.mkdir(parents=True)
+        document = {'schema_version': 1, 'providers': {'meta': {
+            'api_key': 'fixture-api-key', 'access_token': 'fixture-access-token',
+            'api_base_url': 'https://api.meta.ai/v1', 'user_email': 'Person@Example.invalid',
+            'mechanism': 'device', **meta}}}
+        filename = config / 'auth.json'
+        filename.write_text(json.dumps(document))
+        filename.chmod(0o600)
+        (config / 'settings.json').write_text(json.dumps({'model': 'muse-spark-1.3-contributor'}))
+        return filename
+
+    def opener(self, payload, status=200, error=None):
+        class Response:
+            def read(self, amount):
+                return payload[:amount]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        class Opener:
+            def __init__(self):
+                self.calls = []
+
+            def open(self, request, timeout=None):
+                self.calls.append((request, timeout))
+                if error is not None:
+                    raise error
+                if status != 200:
+                    raise urllib.error.HTTPError(request.full_url, status, 'fixture', hdrs=None, fp=io.BytesIO(b''))
+                return Response()
+
+        return Opener()
+
+    def event(self):
+        subscription = {'tier': 'contributor',
+                        'window': {'used_percent': 28, 'resets_at': 1_800_000_000, 'window_duration_mins': 300},
+                        'weekly': {'used_percent': 9, 'resets_at': 1_806_048_000}}
+        return ('data: ' + json.dumps({'type': 'response.subscription_usage', 'subscription': subscription}) + '\n\n').encode()
+
+    def test_sse_reports_five_hour_and_weekly_without_the_credential(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = self.auth(directory)
+            before = filename.read_bytes()
+            opener = self.opener(self.event())
+            report = self.module.read_report(filename, opener)
+            self.assertEqual(filename.read_bytes(), before)
+        self.assertEqual(opener.calls[0][0].full_url, 'https://api.meta.ai/v1/chat/completions')
+        self.assertEqual(opener.calls[0][0].get_header('Authorization'), 'Bearer fixture-api-key')
+        self.assertEqual(report['account_id'], 'muse:' + __import__('hashlib').sha256(b'person@example.invalid').hexdigest())
+        self.assertEqual(report['plan'], 'contributor')
+        self.assertEqual(report['windows'][0]['key'], '5h')
+        self.assertEqual(report['windows'][0]['windowMinutes'], 300)
+        self.assertEqual(report['windows'][0]['usedPercent'], 28)
+        self.assertEqual(report['windows'][0]['remainingPercent'], 72)
+        self.assertEqual(report['windows'][0]['resetAt'], time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(1_800_000_000)))
+        self.assertEqual(report['windows'][0]['status'], 'ok')
+        self.assertEqual(report['windows'][1]['key'], '7d')
+        self.assertEqual(report['windows'][1]['windowMinutes'], 10080)
+        self.assertEqual(report['windows'][1]['remainingPercent'], 91)
+        rendered = json.dumps(report)
+        self.assertNotIn('fixture-api-key', rendered)
+        self.assertNotIn('fixture-access-token', rendered)
+        self.assertNotIn('Person@Example.invalid', rendered)
+
+    def test_missing_auth_bad_host_and_http_errors_do_not_leak_or_rewrite(self):
+        self.assertEqual(self.module.read_report(pathlib.Path('/tmp/cauce-muse-auth-missing.json'))['error_code'], 'not_authenticated')
+        with tempfile.TemporaryDirectory() as directory:
+            filename = self.auth(directory, api_base_url='https://evil.example/v1')
+            before = filename.read_bytes()
+            opener = self.opener(self.event())
+            report = self.module.read_report(filename, opener)
+            self.assertEqual(report['error_code'], 'provider_error')
+            self.assertEqual(opener.calls, [])
+            self.assertEqual(filename.read_bytes(), before)
+            for base in ('http://api.meta.ai/v1', 'https://user:fixture-api-key@api.meta.ai/v1', 'https://api.meta.ai/other'):
+                document = json.loads(before)
+                document['providers']['meta']['api_base_url'] = base
+                filename.write_text(json.dumps(document))
+                opener = self.opener(self.event())
+                self.assertEqual(self.module.read_report(filename, opener)['error_code'], 'provider_error')
+                self.assertEqual(opener.calls, [])
+            filename.write_text(json.dumps({'schema_version': 1, 'providers': {'meta': {
+                'api_key': 'fixture-api-key', 'api_base_url': 'https://api.meta.ai/v1', 'user_email': 'Person@Example.invalid'}}}))
+            before = filename.read_bytes()
+            for status, code in ((401, 'token_expired'), (429, 'rate_limited'), (500, 'provider_error')):
+                report = self.module.read_report(filename, self.opener(b'', status=status))
+                self.assertEqual(report['error_code'], code)
+                self.assertNotIn('fixture-api-key', json.dumps(report))
+            report = self.module.read_report(filename, self.opener(b'', error=urllib.error.URLError('fixture-down')))
+            self.assertEqual(report['error_code'], 'network')
+            self.assertNotIn('fixture-down', json.dumps(report))
+            report = self.module.read_report(filename, self.opener(b'A' * 65537))
+            self.assertEqual(report['error_code'], 'provider_error')
+            self.assertNotIn('AAAA', json.dumps(report))
+            self.assertEqual(filename.read_bytes(), before)
+
+    def test_refresh_flag_exits_zero_and_leaves_auth_bytes_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = self.auth(directory, api_base_url='https://evil.example/v1')
+            before = filename.read_bytes()
+            result = subprocess.run([str(ROOT / 'cuotas' / 'leer-cuota-muse'), '--refresh-own-session'],
+                                    env={**os.environ, 'MUSE_AUTH_PATH': str(filename)},
+                                    capture_output=True, text=True, timeout=15, check=False)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(filename.read_bytes(), before)
+            report = json.loads(result.stdout)
+            self.assertEqual(report['error_code'], 'provider_error')
+            self.assertNotIn('fixture-api-key', result.stdout)
+            self.assertNotIn('fixture-access-token', result.stdout)
+
+    def test_pinned_cli_copy_refuses_a_symlink_outside_the_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            allowed = root / 'usr' / 'local' / 'bin'
+            allowed.mkdir(parents=True)
+            source = allowed / 'muse'
+            source.write_bytes(b'muse-pin-1')
+            source.chmod(0o755)
+            secret = allowed / 'auth.json'
+            secret.write_text('fixture-api-key')
+            destination = root / 'home' / '.local' / 'bin' / 'muse'
+            self.update.install_pinned_cli(source, destination, allowed)
+            self.assertEqual(destination.read_bytes(), b'muse-pin-1')
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o755)
+            self.assertEqual(secret.read_text(), 'fixture-api-key')
+            source.write_bytes(b'muse-pin-2')
+            self.update.install_pinned_cli(source, destination, allowed)
+            self.assertEqual(destination.read_bytes(), b'muse-pin-2')
+            outside = root / 'outside-muse'
+            outside.write_bytes(b'not-the-pin')
+            link = allowed / 'linked-muse'
+            link.symlink_to(outside)
+            with self.assertRaises(ValueError):
+                self.update.install_pinned_cli(link, destination, allowed)
+            self.assertEqual(destination.read_bytes(), b'muse-pin-2')
+            self.assertEqual(outside.read_bytes(), b'not-the-pin')
+            inside = allowed / 'real-muse'
+            inside.write_bytes(b'muse-pin-3')
+            pinned = allowed / 'muse-link'
+            pinned.symlink_to(inside)
+            self.update.install_pinned_cli(pinned, destination, allowed)
+            self.assertEqual(destination.read_bytes(), b'muse-pin-3')
+
 
 if __name__ == '__main__':
     unittest.main()

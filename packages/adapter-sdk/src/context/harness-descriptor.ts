@@ -10,6 +10,7 @@ export interface HarnessProviderDescriptor {
   readonly quota_argv?: readonly string[];
   readonly verify_argv?: readonly string[];
   readonly update_package?: string;
+  readonly update_argv?: readonly string[];
   readonly fleet_module?: string | null;
 }
 export interface HarnessDescriptor {
@@ -26,7 +27,7 @@ const HARNESS_ID = /^[a-z][a-z0-9_-]{0,63}$/u;
 const ARGV0 = /^\/usr\/local\/bin\/[A-Za-z0-9][A-Za-z0-9._+@-]{0,127}$/u;
 const ARGUMENT = /^(?:[A-Za-z0-9][A-Za-z0-9_@%+=:,./-]{0,255}|--[A-Za-z0-9][A-Za-z0-9_-]{0,253}|-[A-Za-z0-9_-]{1,254}|\/[A-Za-z0-9_@%+=:,./-]{0,255})$/u;
 const NPM_PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]{0,63}\/)?[a-z0-9][a-z0-9._-]{0,127}$/u;
-const PROVIDER_FIELDS = ['authenticate_argv', 'quota_argv', 'verify_argv', 'update_package', 'fleet_module'];
+const PROVIDER_FIELDS = ['authenticate_argv', 'quota_argv', 'verify_argv', 'update_package', 'update_argv', 'fleet_module'];
 function fail(field: string, reason: string): never { throw new Error(`${field}: ${reason}`); }
 function object(value: unknown, field: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) fail(field, 'must be an object');
@@ -62,6 +63,7 @@ function validateProvider(operations: Record<string, unknown>, value: unknown, h
     }
     validated.update_package = provider.update_package;
   }
+  if ('update_argv' in provider) validated.update_argv = validateArgv('provider.update_argv', provider.update_argv);
   if ('fleet_module' in provider) {
     const module = provider.fleet_module;
     if (module !== null && module !== `fleet_provider_${harness}`) {
@@ -73,11 +75,15 @@ function validateProvider(operations: Record<string, unknown>, value: unknown, h
     fail('provider.authenticate_argv', 'required when operations.authenticate is declared without a fleet module');
   }
   if ('quota' in operations && validated.quota_argv === undefined) fail('provider.quota_argv', 'required when operations.quota is declared');
-  if ('update' in operations && validated.update_package === undefined) fail('provider.update_package', 'required when operations.update is declared');
+  if (validated.update_package !== undefined && validated.update_argv !== undefined) fail('provider.update_argv', 'declared together with update_package');
+  if ('update' in operations && validated.update_package === undefined && validated.update_argv === undefined) {
+    fail('provider.update_package', 'required when operations.update is declared');
+  }
   if (validated.authenticate_argv !== undefined && !('authenticate' in operations)) fail('provider.authenticate_argv', 'declared without operations.authenticate');
   if (validated.quota_argv !== undefined && !('quota' in operations)) fail('provider.quota_argv', 'declared without operations.quota');
   if (validated.verify_argv !== undefined && !('authenticate' in operations)) fail('provider.verify_argv', 'declared without operations.authenticate');
   if (validated.update_package !== undefined && !('update' in operations)) fail('provider.update_package', 'declared without operations.update');
+  if (validated.update_argv !== undefined && !('update' in operations)) fail('provider.update_argv', 'declared without operations.update');
   return Object.freeze(validated);
 }
 export function parseHarnessDescriptor(value: unknown): HarnessDescriptor {

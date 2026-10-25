@@ -76,8 +76,11 @@ describe('runtime catalogs match published descriptors', () => {
   it('keeps executable quota contracts and console choices equal to descriptor readers', async () => {
     const published = await descriptors();
     const readers = quotaReaders(published);
+    const measured = sorted(AgentQuotaReceiptSchema.options[0].shape.provider.options);
+    // Muse query is an environment action. The agent receipt still cannot store provider muse.
+    expect(measured).toEqual(['claude', 'codex', 'grok']);
+    expect(readers).toEqual(sorted([...measured, 'muse']));
     const executable = sorted(new Set([...readers, ...quotaLoginProviders(published), 'agy']));
-    expect(sorted(AgentQuotaReceiptSchema.options[0].shape.provider.options)).toEqual(readers);
     expect(sorted(QuotaExecutionSchema.shape.environment.shape.provider.options)).toEqual(executable);
     expect(sorted(EXECUTABLE_QUOTA_PROVIDERS)).toEqual(executable);
   });

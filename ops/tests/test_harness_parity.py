@@ -267,14 +267,14 @@ class HarnessParityTest(unittest.TestCase):
         docs['muse']['provider']['quota_argv'] = ['/usr/bin/read-quota']
         self.assertEqual(quota_readers(docs), expected | {'muse'})
         del docs['muse']['operations']['quota']
-        self.assertEqual(quota_readers(docs), expected)
+        self.assertEqual(quota_readers(docs), expected - {'muse'})
         del docs['grok']['operations']['quota']
-        self.assertEqual(quota_readers(docs), expected - {'grok'})
+        self.assertEqual(quota_readers(docs), expected - {'muse', 'grok'})
         docs['grok']['operations']['quota'] = 'quota-collector'
         for argv in ([], 'read-quota', [''], [None]):
             with self.subTest(argv=argv):
                 docs['grok']['provider']['quota_argv'] = argv
-                self.assertEqual(quota_readers(docs), expected - {'grok'})
+                self.assertEqual(quota_readers(docs), expected - {'muse', 'grok'})
 
     def test_harness_definitions_seed_matches_descriptors(self):
         docs = descriptors()
@@ -304,7 +304,7 @@ class HarnessParityTest(unittest.TestCase):
         python = text('ops/cli/harness_operations.py')
         typescript = text('packages/adapter-sdk/src/context/harness-descriptor.ts')
         checks = []
-        for field in ('authenticate_argv', 'quota_argv', 'update_package', 'fleet_module'):
+        for field in ('authenticate_argv', 'quota_argv', 'update_package', 'update_argv', 'fleet_module'):
             if field not in python:
                 checks.append(('ops/cli/harness_operations.py', f'validate provider.{field}'))
             if field not in typescript:

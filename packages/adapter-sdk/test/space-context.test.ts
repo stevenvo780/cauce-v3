@@ -30,8 +30,14 @@ test('descriptor provider data is validated with field paths and ids derive from
   assert.deepEqual(codex.provider?.authenticate_argv, ['/usr/local/bin/codex', 'login', '--device-auth']);
   assert.equal(codex.provider.update_package, '@openai/codex');
   const grok = await packagedHarnessDescriptor('grok');
-  assert.equal(grok.operations.update, undefined);
-  assert.equal(grok.provider?.fleet_module, 'fleet_provider_grok');
+  assert.equal(grok.operations.update, 'provider-update');
+  assert.equal(grok.provider?.update_package, '@xai-official/grok');
+  assert.equal(grok.provider.fleet_module, 'fleet_provider_grok');
+  const muse = await packagedHarnessDescriptor('muse');
+  assert.equal(muse.operations.quota, 'quota-collector');
+  assert.equal(muse.operations.update, 'provider-update');
+  assert.deepEqual(muse.provider?.quota_argv, ['/usr/local/bin/leer-cuota-muse']);
+  assert.deepEqual(muse.provider.update_argv, ['/usr/local/bin/actualizar-muse']);
   assert.throws(() => parseHarnessDescriptor({ ...codex, provider: { ...codex.provider, quota_argv: ['node', 'x'] } }),
     /provider\.quota_argv\[0\]: must be an absolute executable path under \/usr\/local\/bin/u);
   assert.throws(() => parseHarnessDescriptor({ ...codex,
@@ -39,6 +45,8 @@ test('descriptor provider data is validated with field paths and ids derive from
   /provider\.authenticate_argv\[1\]: contains shell metacharacters/u);
   assert.throws(() => parseHarnessDescriptor({ ...codex, provider: { ...codex.provider, update_package: '@openai/codex;id' } }),
     /provider\.update_package: must be an npm package name/u);
+  assert.throws(() => parseHarnessDescriptor({ ...codex, provider: { ...codex.provider, update_argv: ['/usr/local/bin/actualizar-muse'] } }),
+    /provider\.update_argv: declared together with update_package/u);
   assert.throws(() => parseHarnessDescriptor({ ...codex, provider: {} }),
     /provider\.authenticate_argv: required when operations\.authenticate is declared/u);
 });

@@ -163,9 +163,16 @@ async function validatePacketPins(packet: ProviderLoginPacket): Promise<void> {
   }
 }
 function spawnPrivate(python: string, argv: string[]): ChildProcessWithoutNullStreams {
-  const child = spawn(python, argv, { detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp', PYTHONDONTWRITEBYTECODE: '1' } });
-  child.stderr.resume(); return child;
+  const env: NodeJS.ProcessEnv = { PATH: '/usr/bin:/bin', HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp', PYTHONDONTWRITEBYTECODE: '1' };
+  if (process.env.DOCKER_CONTEXT || process.env.DOCKER_HOST) {
+    for (const key of ['DOCKER_CONTEXT', 'DOCKER_HOST', 'DOCKER_CONFIG', 'SSH_AUTH_SOCK', 'USER'] as const) {
+      const value = process.env[key];
+      if (value) env[key] = value;
+    }
+  }
+  const child = spawn(python, argv, { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env });
+  child.stderr.resume();
+  return child;
 }
 function kill(child: ChildProcessWithoutNullStreams): void {
   if (child.pid === undefined) return;

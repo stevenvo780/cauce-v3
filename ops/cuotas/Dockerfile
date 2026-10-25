@@ -72,5 +72,9 @@ COPY --chown=node:node codex-http-probe.py /usr/local/bin/codex-http-probe.py
 RUN chmod 0555 /usr/local/bin/codex-http-probe.py
 COPY --chown=node:node verificar-muse.py /usr/local/bin/verificar-muse.py
 RUN chmod 0555 /usr/local/bin/verificar-muse.py
+COPY --chown=node:node leer-cuota-muse /usr/local/bin/leer-cuota-muse
+RUN chmod 0555 /usr/local/bin/leer-cuota-muse
+COPY --chown=node:node actualizar-muse /usr/local/bin/actualizar-muse
+RUN chmod 0555 /usr/local/bin/actualizar-muse
 
 CMD ["sleep", "infinity"]

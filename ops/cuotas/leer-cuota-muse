@@ -1,0 +1,229 @@
+#!/usr/bin/python3
+"""Reads Muse quota from the subscription_usage SSE event.
+
+Muse has no usage endpoint. One 1-token streaming completion returns the 5h
+and weekly windows. The reader never rewrites auth.json and never prints the
+credential. Only https://api.meta.ai is contacted: a crafted base URL must not
+carry the token anywhere else. --refresh-own-session is accepted and ignored.
+"""
+import hashlib
+import json
+import os
+import pathlib
+import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+USAGE_HOST = 'api.meta.ai'
+DEFAULT_MODEL = 'muse-spark-1.3-contributor'
+PLAN = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
+MODEL = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+MAX_BODY = 65536
+
+
+def fail(code, note):
+    return {'ok': False, 'provider': 'muse', 'error_code': code, 'nota': note, 'windows': []}
+
+
+def auth_path():
+    configured = os.environ.get('MUSE_AUTH_PATH')
+    if configured:
+        return pathlib.Path(configured)
+    config = os.environ.get('XDG_CONFIG_HOME')
+    if config:
+        return pathlib.Path(config) / 'muse' / 'auth.json'
+    return pathlib.Path.home() / '.config' / 'muse' / 'auth.json'
+
+
+def load_meta(path):
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) > 262144:
+        return None
+    try:
+        document = json.loads(raw)
+    except ValueError:
+        return None
+    providers = document.get('providers') if isinstance(document, dict) else None
+    meta = providers.get('meta') if isinstance(providers, dict) else None
+    return meta if isinstance(meta, dict) else None
+
+
+def credential(meta):
+    for key in ('api_key', 'access_token'):
+        value = meta.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def account_id(meta):
+    email = meta.get('user_email')
+    if isinstance(email, str) and email.strip():
+        digest = hashlib.sha256(email.strip().lower().encode()).hexdigest()
+        return 'muse:' + digest
+    mechanism = meta.get('mechanism')
+    seed = mechanism if isinstance(mechanism, str) and mechanism and mechanism not in {
+        meta.get('api_key'), meta.get('access_token')} else 'local'
+    return 'muse-local:' + hashlib.sha256(seed.encode()).hexdigest()
+
+
+def usage_url(base):
+    if not isinstance(base, str) or not base.strip():
+        base = 'https://api.meta.ai/v1'
+    parts = urllib.parse.urlsplit(base.strip())
+    if parts.scheme != 'https' or parts.hostname != USAGE_HOST or parts.port not in (None, 443) \
+            or parts.username or parts.password or parts.query or parts.fragment \
+            or parts.path.rstrip('/') != '/v1':
+        return None
+    return 'https://api.meta.ai/v1/chat/completions'
+
+
+def model_name(settings_path):
+    try:
+        document = json.loads(settings_path.read_text())
+    except (OSError, ValueError):
+        return DEFAULT_MODEL
+    model = document.get('model') if isinstance(document, dict) else None
+    if isinstance(model, str) and MODEL.fullmatch(model):
+        return model
+    return DEFAULT_MODEL
+
+
+def number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value in (float('inf'), float('-inf')):
+        return None
+    return value
+
+
+def iso(value):
+    stamp = number(value)
+    if stamp is None or not 0 <= stamp <= 4_000_000_000:
+        return None
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(stamp))
+
+
+def window(key, raw, minutes):
+    if not isinstance(raw, dict):
+        return None
+    used = number(raw.get('used_percent'))
+    if used is None:
+        return None
+    return {'key': key, 'usedPercent': used, 'remainingPercent': max(0, 100 - used),
+            'resetAt': iso(raw.get('resets_at')), 'windowMinutes': minutes, 'status': 'ok'}
+
+
+def five_hour_minutes(raw):
+    minutes = raw.get('window_duration_mins', 300) if isinstance(raw, dict) else 300
+    if isinstance(minutes, bool) or not isinstance(minutes, int) or not 1 <= minutes <= 10080:
+        return 300
+    return minutes
+
+
+def subscription_windows(payload):
+    windows = []
+    current = window('5h', payload.get('window'), five_hour_minutes(payload.get('window')))
+    weekly = window('7d', payload.get('weekly'), 10080)
+    if current is not None:
+        windows.append(current)
+    if weekly is not None:
+        windows.append(weekly)
+    return windows
+
+
+def parse_subscription(raw):
+    for line in raw.decode('utf-8', 'replace').splitlines():
+        text = line.strip()
+        if not text.startswith('data:') or 'subscription_usage' not in text:
+            continue
+        try:
+            event = json.loads(text[5:].strip())
+        except ValueError:
+            return None
+        subscription = event.get('subscription') if isinstance(event, dict) else None
+        return subscription if isinstance(subscription, dict) else None
+    return None
+
+
+def no_redirect_opener():
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    return urllib.request.build_opener(NoRedirect)
+
+
+def fetch(url, body, token, opener):
+    request = urllib.request.Request(url, data=body, method='POST', headers={
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'User-Agent': 'muse-cuota/1.1',
+    })
+    active = opener if opener is not None else no_redirect_opener()
+    with active.open(request, timeout=40) as response:
+        raw = response.read(MAX_BODY + 1)
+    if len(raw) > MAX_BODY:
+        raise ValueError('response exceeds the reader cap')
+    return raw
+
+
+def read_report(path=None, opener=None):
+    filename = auth_path() if path is None else path
+    before = filename.read_bytes() if filename.is_file() else None
+    meta = load_meta(filename)
+    if meta is None:
+        return fail('not_authenticated', 'sin autenticar')
+    token = credential(meta)
+    if token is None:
+        return fail('not_authenticated', 'sin autenticar')
+    url = usage_url(meta.get('api_base_url'))
+    if url is None:
+        return fail('provider_error', 'quota endpoint rejected')
+    body = json.dumps({'model': model_name(filename.parent / 'settings.json'),
+                       'messages': [{'role': 'user', 'content': 'ok'}],
+                       'max_tokens': 1, 'stream': True}).encode()
+    try:
+        raw = fetch(url, body, token, opener)
+    except urllib.error.HTTPError as error:
+        error.close()
+        if error.code == 401:
+            return fail('token_expired', 'HTTP 401')
+        if error.code == 429:
+            return fail('rate_limited', 'HTTP 429')
+        return fail('provider_error', 'HTTP error')
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return fail('network', 'network')
+    except ValueError:
+        return fail('provider_error', 'provider_error')
+    if before is not None and filename.read_bytes() != before:
+        return fail('provider_error', 'provider_error')
+    subscription = parse_subscription(raw)
+    if not isinstance(subscription, dict):
+        return fail('provider_error', 'subscription_usage ausente')
+    windows = subscription_windows(subscription)
+    if not windows:
+        return fail('provider_error', 'subscription_usage ausente')
+    report = {'ok': True, 'provider': 'muse', 'available': True, 'account_id': account_id(meta), 'windows': windows}
+    tier = subscription.get('tier')
+    if isinstance(tier, str) and PLAN.fullmatch(tier):
+        report['plan'] = tier
+    return report
+
+
+def main():
+    try:
+        report = read_report()
+    except (OSError, ValueError, TypeError):
+        report = fail('provider_error', 'provider_error')
+    print(json.dumps(report, separators=(',', ':')))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

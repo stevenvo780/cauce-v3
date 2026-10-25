@@ -4,7 +4,9 @@
   "operations": {
     "install": "runtime-package",
     "execute": "native-execution",
-    "authenticate": "provider-login"
+    "authenticate": "provider-login",
+    "update": "provider-update",
+    "quota": "quota-collector"
   },
   "context": {
     "native_document": "AGENTS.md",
@@ -17,6 +19,12 @@
     ],
     "verify_argv": [
       "/usr/local/bin/verificar-muse.py"
+    ],
+    "quota_argv": [
+      "/usr/local/bin/leer-cuota-muse"
+    ],
+    "update_argv": [
+      "/usr/local/bin/actualizar-muse"
     ],
     "fleet_module": "fleet_provider_muse"
   }

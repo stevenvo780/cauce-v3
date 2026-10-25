@@ -100,6 +100,14 @@ class IsolatedHelperTest(unittest.TestCase):
                         str(current / 'ops/cli/provider_login_container.py')):
                     self.assertFalse(login.helper_mount(observed, cleanup=True))
 
+    def test_docker_cli_environment_stays_closed_unless_a_context_is_named(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(login.docker_cli_environment(), {'PATH': '/usr/bin:/bin'})
+        with mock.patch.dict(os.environ, {'DOCKER_CONTEXT': 'lab', 'HOME': '/home/fixture', 'SSH_AUTH_SOCK': '/tmp/agent.sock',
+                                           'SECRET_TOKEN': 'hidden'}, clear=True):
+            self.assertEqual(login.docker_cli_environment(), {
+                'PATH': '/usr/bin:/bin', 'DOCKER_CONTEXT': 'lab', 'HOME': '/home/fixture', 'SSH_AUTH_SOCK': '/tmp/agent.sock'})
+
 
 class PreviousReleaseCleanupTest(unittest.TestCase):
     @classmethod

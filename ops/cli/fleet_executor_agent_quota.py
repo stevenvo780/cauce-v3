@@ -171,12 +171,10 @@ def perform(policy: dict, document: dict) -> dict:
     envelope = {'operation_id': document['operation_id'], 'tenant': agent['tenant_id'], 'alias': agent['alias'],
         'host_id': agent['host_id'], 'container_name': agent['container_name'], 'harness': agent['harness_id'],
         'captured_at': captured_at}
-    if 'quota' not in descriptor['operations']:
+    provider = agent['harness_id']
+    if 'quota' not in descriptor['operations'] or provider not in PROVIDERS:
         approved_bundle(policy, agent)
         return {**envelope, 'status': 'unsupported', 'reason': 'quota_reader_unavailable'}
-    provider = agent['harness_id']
-    if provider not in PROVIDERS:
-        raise SafeFailure('quota_provider_unsupported')
     command = provider_operation(policy, provider, 'quota', command=True)
     if any(argument.lstrip('-').split('=', 1)[0] == 'refresh-own-session' for argument in command):
         raise SafeFailure('quota_refresh_forbidden')
