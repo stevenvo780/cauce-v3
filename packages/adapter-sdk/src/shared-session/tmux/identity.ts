@@ -61,7 +61,7 @@ export class CliTmux implements TmuxController {
       return Promise.resolve({ exitCode: null, stdout: "", stderr: "tmux client aborted" });
     }
     return new Promise<TmuxResult>((resolveRun) => {
-      const child = spawn(this.executable, ["-L", this.socket, ...args], {
+      const child = spawn(this.executable, ["-u", "-L", this.socket, ...args], {
         shell: false,
         env: withoutLifecycleIdentity(this.environment),
         stdio: ["pipe", "pipe", "pipe"],
