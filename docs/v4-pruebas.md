@@ -4,6 +4,18 @@
 
 Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos corresponden a los patrones indicados (la metaprueba histórica `tests/unit/docs-v4-pruebas.test.ts` que los recalculaba se retiró en el commit `1899fde1` por doctrina de no vigilar documentos); no cuentan casos ejecutados ni equivalen a un resultado PASS. Las categorías se pueden solapar.
 
+## Laboratorio para exploración manual
+
+`scripts/qa-lab.sh up <nombre>` reserva un cupo en `lab`, `lab2` o `lab3` y mantiene PostgreSQL migrado, gateway, consola HTTPS, terminal-relay y un ordenador con ejecutor sobre un Docker dedicado. Imprime la URL accesible desde la torre y el correo `zz-canary-qa-<nombre>@example.test`. La contraseña sintética queda únicamente en `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/password`, con permisos 0600. El nombre admite letras minúsculas, números y guiones, empieza por letra y tiene hasta 20 caracteres. `CAUCE_QA_CONTEXT=lab2` permite elegir un contexto explícito.
+
+Usa `scripts/qa-lab.sh status <nombre>` para comprobar la disponibilidad y `scripts/qa-lab.sh down <nombre>` para cerrar y verificar la retirada de sus recursos. Los recursos creados llevan el prefijo `zz-canary-qa-` y etiquetas de tarea e instancia; cada laboratorio usa un daemon independiente. En `lab2` y `lab3` se prepara un espejo temporal del código y las dependencias, sin archivos privados ni variables de entorno del operador. La consola usa una autoridad TLS efímera del laboratorio; el navegador debe confiar en esa autoridad para el recorrido.
+
+El lanzador exige 8 GB libres en los sistemas de archivos de `/tmp` y `/var/lib/docker` de la VM. Reserva un cupo de E2E hasta cerrar el laboratorio; reintenta la reserva dieciocho veces, con pausas de diez segundos. En `lab2` y `lab3` mantiene un túnel SSH y anuncia una URL local. La sonda de `status` comprueba PostgreSQL, el ordenador y la presencia del relay, verificando la CA guardada en `ca.crt` junto al recibo.
+
+El arranque reutiliza los fixtures de las pruebas reales y el SDK con un proveedor sintético: no necesita cuentas de proveedores. No ejecuta un recorrido de aceptación. El agente que lo explore debe guardar sus capturas y contrastar cada acción con PostgreSQL y el Docker dedicado. `ready.json` identifica el contenedor y la base sin publicar credenciales. El adaptador de contexto permite cargar los fixtures fuera de Vitest y rechaza registrar hooks de pruebas.
+
+## Inventario por categoría
+
 | ID | Categoría | Archivos | Ejecución | Cubre | No cubre todavía |
 |---|---|---:|---|---|---|
 | unitarias | Pruebas unitarias | 662 | `pnpm test:unit` | Código y contratos aislados; incluye las suites unitarias de paquetes y consola declaradas en el script. | No demuestra por sí sola efectos persistentes de extremo a extremo, runtime remoto ni comportamiento desplegado. |
