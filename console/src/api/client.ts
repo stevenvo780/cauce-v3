@@ -28,6 +28,7 @@ import { myQuotasClient, type MyQuotasClient } from './client/my-quotas-client';
 import { registrationReceipt } from './client/v4-responses';
 import { hostEnrollmentClient, type HostEnrollmentClient } from './client/host-enrollment-client';
 import { spaceBackupsClient, type SpaceBackupsClient } from './client/space-backups-client';
+import { terminalGrantsClient, type TerminalGrantsClient } from './client/terminal-grants-client';
 import { readBoundedBlob } from './client/bounded-blob';
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
@@ -55,7 +56,7 @@ function isTransientFailure(cause: unknown): boolean {
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient, CompanyClient, ContextVersionsClient, MyQuotasClient, HostEnrollmentClient, SpaceBackupsClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient, CompanyClient, ContextVersionsClient, MyQuotasClient, HostEnrollmentClient, SpaceBackupsClient, TerminalGrantsClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -97,7 +98,7 @@ export class CauceApi {
     Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
     Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request, () => this.authGeneration), fleetHostsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
     Object.assign(this, companyClient(request), contextVersionsClient(request), myQuotasClient(request));
-    Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, this.baseUrl));
+    Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, this.baseUrl), terminalGrantsClient(request));
   }
 
   get connectionNotice(): ConnectionNotice | undefined {

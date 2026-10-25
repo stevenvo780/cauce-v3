@@ -386,6 +386,12 @@ export const handlers = [
     observed_at: new Date().toISOString(),
     items: [],
   })),
+  http.get('*/v3/console/terminal/grants', () => HttpResponse.json({
+    company_id: 'humanizar', items: [], capabilities: { create: true, update: true, revoke: true },
+  })),
+  http.post('*/v3/console/terminal/grants', () => HttpResponse.json({ error: 'not_found' }, { status: 404 })),
+  http.patch('*/v3/console/terminal/grants/:id', () => HttpResponse.json({ error: 'not_found' }, { status: 404 })),
+  http.delete('*/v3/console/terminal/grants/:id', () => HttpResponse.json({ error: 'not_found' }, { status: 404 })),
   /* The operator's terminal sessions: the console reads them to close stale ones. */
   http.get('*/v3/console/terminal/sessions', () => HttpResponse.json({ items: [] })),
   http.delete('*/v3/console/terminal/sessions/:sid', () => new HttpResponse(null, { status: 204 })),
