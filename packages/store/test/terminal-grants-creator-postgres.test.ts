@@ -100,18 +100,49 @@ describe('creator terminal grant on PostgreSQL', () => {
       value: { display_name: 'Purged Draft', harness_id: 'codex' },
     }, false, undefined, authority);
     expect(created.applied).toBe(true);
+
+    await withTransaction(pool, client => grantCreatorTerminalAccess(client, {
+      tenant_id: 'Steven', alias: 'zeus', creator_human_id: actors.steven,
+      creator_home_tenant: 'Steven', creator_alias: 'kant', can_grant: true,
+    }));
+
+    const miguel = { ...manager, humanId: actors.miguel, homeTenant: 'Miguel', alias: 'janus' };
+    const miguelCreated = await repository.apply('Miguel', 'janus', {
+      resource: 'agent', action: 'create', tenant_id: 'Miguel', alias,
+      value: { display_name: 'Miguel Purged Draft', harness_id: 'codex' },
+    }, false, undefined, () => Promise.resolve(miguel));
+    expect(miguelCreated.applied).toBe(true);
+
     expect((await admin.query<{ count: number }>(
       "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
       .toEqual([{ count: 1 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias='zeus'")).rows)
+      .toEqual([{ count: 1 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Miguel' AND alias=$1", [alias])).rows)
+      .toEqual([{ count: 1 }]);
+
     const deleted = await repository.apply('Steven', 'kant', {
       resource: 'agent', action: 'delete', tenant_id: 'Steven', alias,
-    }, false, created.revision, authority);
+    }, false, miguelCreated.revision, authority);
     expect(deleted.applied).toBe(true);
+
     expect((await admin.query<{ count: number }>(
       "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
       .toEqual([{ count: 0 }]);
     expect((await admin.query<{ count: number }>(
       "SELECT count(*)::integer AS count FROM agents WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
       .toEqual([{ count: 0 }]);
+
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias='zeus'")).rows)
+      .toEqual([{ count: 1 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Miguel' AND alias=$1", [alias])).rows)
+      .toEqual([{ count: 1 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM agents WHERE tenant_id='Miguel' AND alias=$1", [alias])).rows)
+      .toEqual([{ count: 1 }]);
   });
 });
