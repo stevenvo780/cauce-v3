@@ -14,10 +14,12 @@ import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services
 import { docker, startComputerHarness, type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { createSelfSignedCert } from '../terminal-pty/certs.mjs';
 import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, saludDePostgresDePrueba } from '../helpers/contenedor-de-prueba.js';
+import { addRehearsalRuntimes, configureRehearsal, HARNESS_SOURCE_FILES, prepareRehearsalAuth, runRehearsal, type Rehearsal } from './s2-espacio-estandar.rehearsal.js';
 
 const execute = promisify(execFile);
 const ROOT = process.cwd();
-const OWNER = 's2-espacio-estandar-1025';
+const REHEARSAL = process.env.CAUCE_S2_DEPLOYMENT_REHEARSAL === '1';
+const OWNER = REHEARSAL ? 's2b-espacio-estandar-prod-1025' : 's2-espacio-estandar-1025';
 const RUN = randomUUID().replaceAll('-', '').slice(0, 12);
 const PREFIX = 'zz-canary-' + OWNER + '-' + RUN;
 const EVIDENCE = join(ROOT, '.delegados/v4/recibos', OWNER, RUN);
@@ -27,18 +29,19 @@ const SUPERVISOR = join(ROOT, 'ops/scripts/container-adapter-supervisor.sh');
 const LAUNCHER = join(ROOT, 'ops/scripts/adapter-space-launcher.sh');
 const BANNER = 'import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);';
 type Harness = 'claude' | 'codex' | 'openclaw';
-interface Runtime {
+export interface Runtime {
   alias: string; harness: Harness; container: string; user: string; uid: number; home: string; state: string;
   cwd: string; providerCwd: string; native: boolean; unit?: string; child?: ChildProcess; log: string; leaseFingerprint?: string;
   startAttempted?: boolean;
+  rehearsal?: boolean;
 }
-interface Probe {
+export interface Probe {
   pid: number; ticks: string; uid: { real: number; effective: number }; cwd: string; adapter: boolean;
-  environment: { CAUCE_SPACE_ROOT: string; TMPDIR: string };
+  environment: { CAUCE_SPACE_ROOT: string | null; TMPDIR: string | null };
   layout: Record<string, { mode: string; uid: number; inode: number; directory: boolean; symlink: boolean }>;
   legacy: Legacy;
 }
-type Legacy = Record<string, { inode: number; directory: boolean; symlink: boolean;
+export type Legacy = Record<string, { inode: number; directory: boolean; symlink: boolean;
   marker: { inode: number; uid: number; mode: string; regular: boolean; content: string };
   link: { inode: number; target: string; resolved: string; target_inode: number; content: string } }>;
 let directory = '';
@@ -50,6 +53,7 @@ let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
 let environment: NodeJS.ProcessEnv = {};
 let origin = '';
 let publisherTls: ReturnType<typeof createSelfSignedCert> | undefined;
+let rehearsal: Rehearsal | undefined;
 const runtimes: Runtime[] = [];
 const containers: StartedTestContainer[] = [];
 const active = () => { if (!computer) throw new Error('owned native computer missing'); return computer; };
@@ -57,7 +61,9 @@ const pool = () => { if (!databasePool) throw new Error('owned legacy PostgreSQL
 
 async function save(name: string, value: unknown) {
   await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
-  await writeFile(join(EVIDENCE, name + '.json'), JSON.stringify({ owner: OWNER, run: RUN, value }, null, 2) + '\n', { mode: 0o600 });
+  await writeFile(join(EVIDENCE, name + '.json'), JSON.stringify({ owner: OWNER, run: RUN, value },
+    (key, entry: unknown) => REHEARSAL && key === 'environment' && entry !== null && typeof entry === 'object'
+      ? Object.keys(entry) : entry, 2) + '\n', { mode: 0o600 });
 }
 async function shell(file: string, args: string[], env = process.env) {
   return execute(file, args, { env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
@@ -92,7 +98,7 @@ const TEMP_PROOF = [
   "import { mkdtemp, writeFile } from 'node:fs/promises';",
   "import { tmpdir } from 'node:os'; import { join } from 'node:path';",
   'export async function proveTemporary(prompt) {',
-  " const marker=/S2_TEMP_[a-z0-9-]+/.exec(prompt)?.[0]; if(!marker) throw new Error('turn marker missing');",
+  " const marker=/(?:S2_TEMP_[a-z0-9-]+|CAUCE_LIVE_[a-f0-9]{32})/.exec(prompt)?.[0]; if(!marker) throw new Error('turn marker missing');",
   " const temporary=await mkdtemp(join(tmpdir(),marker+'-'));",
   " await writeFile(join(temporary,'proof.json'),JSON.stringify({marker,pid:process.pid,cwd:process.cwd(),tmpdir:tmpdir()}),{mode:0o600});",
   '}',
@@ -102,6 +108,12 @@ async function stageProvider(home: string) {
   await mkdir(kernel, { recursive: true, mode: 0o700 });
   await writeFile(join(kernel, 'package.json'), '{"type":"module"}\n');
   await copyFile(join(SOURCE, 'test/fixtures/fake-cli-common.mjs'), join(kernel, 'fake-cli-common.mjs'));
+  if (REHEARSAL) {
+    const fixture = await readFile(join(kernel, 'fake-cli-common.mjs'), 'utf8');
+    assert.ok(fixture.includes('reply: isFailure ?'));
+    await writeFile(join(kernel, 'fake-cli-common.mjs'), fixture.replace('reply: isFailure ?',
+      'reply: /CAUCE_LIVE_[a-f0-9]{32}/.exec(prompt)?.[0] ?? (isFailure ?').replace('`${dialect} success`,', '`${dialect} success`),'));
+  }
   await writeFile(join(kernel, 'proof.mjs'), TEMP_PROOF);
   await writeFile(join(kernel, 'turn.mjs'), [
     "import { runFakeCli } from './fake-cli-common.mjs'; import { proveTemporary } from './proof.mjs';",
@@ -128,7 +140,8 @@ async function stageProvider(home: string) {
 }
 async function stageOps() {
   const ops = join(directory, 'ops');
-  const files = ['scripts/container-alias-query.py', 'scripts/container_alias_lib.py', 'scripts/fleet_derive.py',
+  const files = ['scripts/container-adapter-supervisor.sh', 'scripts/container-adapter-supervisor-lib.sh', 'scripts/adapter-space-launcher.sh',
+    'scripts/container-alias-query.py', 'scripts/container_alias_lib.py', 'scripts/fleet_derive.py',
     'scripts/fleet_runtime_inventory.py', 'scripts/fleet_runtime_materialization.py', 'scripts/atomic_file.py',
     'scripts/secure_path.py', 'scripts/pin-container-release.py', 'scripts/validate-container-mount.py',
     'scripts/alias-lock-exec.py', 'scripts/verify-hermes-runtime.py', 'container-runtime/cauce-container-runtime.py',
@@ -140,7 +153,7 @@ async function stageOps() {
   await writeFile(join(ops, 'container-aliases.json'), JSON.stringify({ schemaVersion: 2, systemPrincipals: {}, historicalAliases: {},
     aliases: Object.fromEntries(runtimes.filter(row => !row.native).map(row => [row.alias, {
       tenant: 'Steven', room: 'grp.steven', container: row.container, user: row.user, home: row.home,
-      harness: row.harness, stateDirectory: row.state, membershipRole: 'agent', systemdUser: 'stev',
+      harness: row.harness, stateDirectory: row.state, membershipRole: 'agent', systemdUser: row.rehearsal ? 'cauce' : 'stev',
       ...(row.harness === 'openclaw' ? { workspace: row.providerCwd } : {}),
     }])) }), { mode: 0o600 });
   environment = { ...process.env, CAUCE_CONTAINER_TEST_MODE: '1', CAUCE_CONTAINER_OPS_ROOT: ops,
@@ -218,9 +231,12 @@ beforeAll(async () => {
   directory = await mkdtemp('/datos/' + PREFIX + '-');
   for (const folder of ['config', 'pki', 'locks']) await mkdir(join(directory, folder), { mode: 0o700 });
   await buildBundle();
-  computer = await startComputerHarness({ prefix: PREFIX + '-native-host', consoleOrigins: [], resourceOwner: OWNER, workRoot: '/datos' });
+  computer = await startComputerHarness({ prefix: PREFIX + '-native-host', consoleOrigins: [], resourceOwner: OWNER, workRoot: '/datos',
+    extraSourceFiles: HARNESS_SOURCE_FILES });
   const image = 'cauce-e2e-lab-runner:' + createHash('sha256').update(await readFile(join(ROOT, 'tests/e2e/lab-runner/Dockerfile'))).digest('hex').slice(0, 12);
-  await provisionContainers(image); await provisionNative(); await stageOps();
+  await provisionContainers(image); await provisionNative();
+  if (REHEARSAL) await addRehearsalRuntimes({ directory, run: RUN, computer: active(), runtimes });
+  await stageOps();
   const seededLegacy = new Set<string>();
   for (const runtime of runtimes) {
     const paths = [...new Set([runtime.state, runtime.cwd, runtime.providerCwd])].filter(path => {
@@ -268,10 +284,12 @@ beforeAll(async () => {
     expires_at: new Date(Date.now() + 3_600_000).toISOString(),
     principal: { tenant_id: 'Steven', alias, session_id: 'canary:' + RUN, channel: 'adapter', roles: ['adapter'], permissions: ['route', 'read'] },
   })) }), { mode: 0o600 });
+  const machineAuth = new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identities));
+  const consoleAuth = REHEARSAL ? await prepareRehearsalAuth(pool(), machineAuth, publisher, RUN) : undefined;
   app = await buildGateway({ pool: pool(), logger: false, outboxPollMs: 10, leaseTtlMs: 30_000,
-    authProvider: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identities)),
+    authProvider: consoleAuth?.provider ?? machineAuth, ...(consoleAuth ? { consoleOrigins: [consoleAuth.origin] } : {}),
     https: { cert: publisherTls.cert, key: publisherTls.key, ca: [publisherTls.cert, ...workers.map(row => row.cert)],
-      requestCert: true, rejectUnauthorized: true } });
+      requestCert: true, rejectUnauthorized: !REHEARSAL } });
   await app.listen({ host: '0.0.0.0', port: 0 });
   const address = app.server.address(); assert.ok(address && typeof address !== 'string');
   origin = 'https://127.0.0.1:' + String(address.port);
@@ -283,8 +301,9 @@ beforeAll(async () => {
     }
     if (runtime.native) {
       assert.ok(runtime.unit);
-      await docker(['cp', pki, runtime.container + ':' + runtime.home + '/s2-pki']);
-      await docker(['exec', runtime.container, 'chown', '-R', '1500:1500', runtime.home + '/s2-pki']);
+      const nativePki = runtime.home + (runtime.rehearsal ? '/s2b-pki-' + runtime.alias : '/s2-pki');
+      await docker(['cp', pki, runtime.container + ':' + nativePki]);
+      await docker(['exec', runtime.container, 'chown', '-R', '1500:1500', nativePki]);
       const sdk = runtime.home + '/s2-release/packages/adapter-sdk/dist';
       const unit = ['[Unit]', 'Description=Owned standard-space native adapter', '[Service]', 'Type=simple',
         'WorkingDirectory=' + runtime.cwd,
@@ -293,13 +312,16 @@ beforeAll(async () => {
         'Environment=CAUCE_TENANT=Steven', 'Environment=CAUCE_ROOM=grp.steven', 'Environment=CAUCE_ALIAS=' + runtime.alias,
         'Environment=CAUCE_INSTANCE_ID=systemd-' + runtime.alias, 'Environment=CAUCE_STATE_DIR=' + runtime.state,
         'Environment=CODEX_HOME=' + runtime.home + '/.codex', 'Environment=CAUCE_RELAY_URL=' + origin.replace('https:', 'wss:') + '/v3/ws',
-        'Environment=CAUCE_TLS_CERT_FILE=' + runtime.home + '/s2-pki/client.crt',
-        'Environment=CAUCE_TLS_KEY_FILE=' + runtime.home + '/s2-pki/client.key',
-        'Environment=CAUCE_TLS_CA_FILE=' + runtime.home + '/s2-pki/ca.crt',
-        'ExecStart=' + runtime.home + '/adapter-space-launcher.sh /usr/local/bin/node ' + sdk + '/src/context/space-layout.js -- /usr/local/bin/node ' + sdk + '/src/bin/codex.js',
+        'Environment=CAUCE_TLS_CERT_FILE=' + nativePki + '/client.crt',
+        'Environment=CAUCE_TLS_KEY_FILE=' + nativePki + '/client.key',
+        'Environment=CAUCE_TLS_CA_FILE=' + nativePki + '/ca.crt',
+        'ExecStart=' + (runtime.rehearsal ? '/usr/local/bin/node "--conditions=owned extra argument" ' + sdk + '/src/bin/codex.js --alias ' + runtime.alias
+          : runtime.home + '/adapter-space-launcher.sh /usr/local/bin/node ' + sdk + '/src/context/space-layout.js -- /usr/local/bin/node ' + sdk + '/src/bin/codex.js'),
         'KillMode=control-group', 'TimeoutStopSec=20', ''].join('\n');
-      const stagedUnit = join(directory, runtime.unit ?? 'missing'); await writeFile(stagedUnit, unit);
-      await docker(['cp', stagedUnit, runtime.container + ':' + runtime.home + '/.config/systemd/user/' + runtime.unit]);
+      const stagedUnit = join(directory, runtime.unit ?? 'missing'); await writeFile(stagedUnit, unit, { mode: 0o600 });
+      const unitPath = runtime.home + '/.config/systemd/user/' + runtime.unit;
+      await docker(['cp', stagedUnit, runtime.container + ':' + unitPath]);
+      await docker(['exec', runtime.container, 'chown', '1500:1500', unitPath]);
       const result = await active().onComputer(['systemctl', '--user', 'daemon-reload']); expect(result.code, result.stderr).toBe(0);
     } else {
       const source = runtime.harness === 'openclaw' ? join(directory, 'claw-home') : join(directory, 'ws-home');
@@ -316,13 +338,15 @@ beforeAll(async () => {
         Object.entries(config).map(([key, value]) => key + '=' + value).join('\n') + '\n', { mode: 0o600 });
     }
   }
+  if (consoleAuth) rehearsal = await configureRehearsal({ root: ROOT, directory, owner: OWNER, run: RUN, release,
+    bundleDigest, computer: active(), pool: pool(), runtimes, consoleAuth, gateway: origin, certificate: publisherTls.cert_path, save });
 }, 900_000);
 
 async function start(runtime: Runtime) {
   runtime.startAttempted = true;
   const previousFingerprint = runtime.leaseFingerprint;
   let lease: { epoch: number; connected_at: string; token_rotated: boolean } | undefined;
-  if (runtime.native) {
+  if (runtime.unit) {
     const result = await active().onComputer(['systemctl', '--user', 'start', runtime.unit ?? 'missing']);
     expect(result.code, result.stderr).toBe(0);
   } else {
@@ -347,7 +371,7 @@ async function start(runtime: Runtime) {
   assert.ok(lease); return lease;
 }
 async function stop(runtime: Runtime) {
-  if (runtime.native) {
+  if (runtime.unit) {
     const result = await active().onComputer(['systemctl', '--user', 'stop', runtime.unit ?? 'missing']);
     expect(result.code, result.stderr).toBe(0);
   } else {
@@ -387,13 +411,13 @@ const PROBE = [
   LEGACY_PROBE,
   'pid=sys.argv[1];state=pathlib.Path(sys.argv[2]);proc=pathlib.Path("/proc")/pid',
   'env=dict(entry.decode().split("=",1) for entry in (proc/"environ").read_bytes().split(bytes([0])) if b"=" in entry)',
-  'root=pathlib.Path(env["CAUCE_SPACE_ROOT"]);layout={}',
-  'for name in [".","context","directives","projects","config","data","logs","tmp"]:',
+  'root=pathlib.Path(env.get("CAUCE_SPACE_ROOT",str(state/"space")));layout={}',
+  'for name in ([".","context","directives","projects","config","data","logs","tmp"] if "CAUCE_SPACE_ROOT" in env else []):',
   ' path=root/name;s=path.lstat();layout[name]={"mode":oct(stat.S_IMODE(s.st_mode)),"uid":s.st_uid,"inode":s.st_ino,"directory":stat.S_ISDIR(s.st_mode),"symlink":path.is_symlink()}',
   'cmd=(proc/"cmdline").read_bytes().split(bytes([0]));cwd=os.readlink(proc/"cwd")',
   'uid=next(line.split()[1:] for line in (proc/"status").read_text().splitlines() if line.startswith("Uid:"))',
   'print(json.dumps({"pid":int(pid),"ticks":(proc/"stat").read_text().split(") ",1)[1].split()[19],"uid":{"real":int(uid[0]),"effective":int(uid[1])},"cwd":cwd,',
-  ' "adapter":any(b"/dist/src/bin/" in value for value in cmd),"environment":{key:env[key] for key in ["CAUCE_SPACE_ROOT","TMPDIR"]},',
+  ' "adapter":any(b"/dist/src/bin/" in value for value in cmd),"environment":{key:env.get(key) for key in ["CAUCE_SPACE_ROOT","TMPDIR"]},',
   ' "layout":layout,"legacy":legacy_probe(sys.argv[2:])}))',
 ].join('\n');
 async function inspect(runtime: Runtime): Promise<Probe> {
@@ -477,7 +501,7 @@ describe.sequential('standard space through the real legacy startup interfaces',
     }, 240_000);
   }
   it('keeps temporaries isolated between aliases sharing the same workspace and uid', async () => {
-    for (const runtime of runtimes) {
+    for (const runtime of runtimes.filter(row => !row.rehearsal)) {
       const names = JSON.parse(await docker(['exec', '--user', runtime.user, runtime.container, 'python3', '-I', '-B', '-c',
         'import json,pathlib,sys;print(json.dumps(sorted(p.name for p in pathlib.Path(sys.argv[1]).iterdir() if p.name.startswith("S2_TEMP_"))))',
         runtime.state + '/space/tmp'])) as string[];
@@ -515,6 +539,13 @@ describe.sequential('standard space through the real legacy startup interfaces',
     expect(untouched.code).toBe(0);
     await save('native-invalid-layouts', { outcomes, original_command_started: false });
   });
+  if (REHEARSAL) for (const native of [false, true]) {
+    it('deployment tool: simulates, applies, verifies and reverts a real ' + (native ? 'native' : 'container') + ' unit', async () => {
+      assert.ok(rehearsal);
+      const runtime = runtimes.find(row => row.rehearsal && row.native === native); assert.ok(runtime);
+      await runRehearsal(rehearsal, runtime, { start, stop, inspect, inspectLegacy, verifyStopped, save });
+    }, 600_000);
+  }
 });
 
 afterAll(async () => {
