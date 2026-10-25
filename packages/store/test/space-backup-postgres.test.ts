@@ -14,7 +14,7 @@ import { registerSpaceBackupConsoleRoutes } from '../../../services/gateway/src/
 import { openSpaceBackupDownload,verifySpaceBackup,type SpaceBackupStorage } from '../../../services/gateway/src/fleet/space-backup.files.js';
 import { SpaceBackupHost } from '../../../services/gateway/src/fleet/space-backup.host.js';
 import { SignedHostChannel } from '../../../services/gateway/src/fleet/signed-source.js';
-import { invokeSpaceBackupHelper } from '../../../services/gateway/src/fleet/space-backup.process.js';
+import { invokeSpaceBackupHelper,streamSpaceBackupHelper } from '../../../services/gateway/src/fleet/space-backup.process.js';
 import { PasswordAuthProvider,registerPasswordAuth } from '../../../services/gateway/src/password-auth.js';
 import { PostgresConsoleUserStore } from '../../../services/gateway/src/console-users.js';
 import { hashPassword } from '../../../services/gateway/src/password.js';
@@ -107,6 +107,16 @@ async function finishAtPublishBarrier(claim:SpaceBackupClaim,mutation:string,cha
   } finally {clearTimeout(timer);release();await finishing.catch(()=>undefined);await isolated.close();}
 }
 describe('durable space backup with real PostgreSQL runtime role and signed HTTP',()=>{
+  it('creates, claims and downloads a verified copy while the enrolled host advertises only space backups',async()=>{
+    const capabilities={...channelCapabilities(),execution_scope:'backups',space_backup:true,fleet_executor:false,quota_executor:false,
+      quota_providers:[],quota_provider_actions:{},templates:[],policy_sha256:digest(await readFile(policyFile))};
+    expect((await channelPost(app,host,capabilities)).statusCode).toBe(200);
+    const {claim}=await createClaim();const receipt=await upload(claim);
+    expect((await command({action:'finish',claim:fence(claim)})).json()).toEqual({ready:true});
+    const downloaded=await app.inject({method:'GET',url:`${base()}/${claim.id}/download`,headers:{cookie}});
+    expect(downloaded.statusCode).toBe(200);expect(digest(downloaded.rawPayload)).toBe(receipt.sha256);
+    expect((await channelPost(app,host,{resource:'fleet_operation',action:'claim'})).statusCode).toBe(403);
+  });
   it('acepta un agente V3 con contenedor como legacy-container y oculta el de otra empresa',async()=>{
     await admin.query(`UPDATE agents SET runtime_mode=NULL,container_name='zz-legacy-container',systemd_user=NULL
       WHERE tenant_id=$1 AND alias='worker'`,[north.hub.id]);
@@ -458,10 +468,11 @@ describe('durable space backup with real PostgreSQL runtime role and signed HTTP
     const response=await post({idempotency_key:'disk-failure-backup'});const id=response.json<{id:string}>().id;
     const worker=new SpaceBackupHost({identity:host,request:async(_method,_path,payload)=>{
       const result=await command(payload);if(result.statusCode!==200) throw new Error('signed host request failed');return result.json<unknown>();
-    }},{python:'/usr/bin/python3',projectRoot,policyFile},async(config,input,signal)=>{
-      if(input.action==='read'&&Number(input.offset)>0) throw Object.assign(new Error('No space left on device'),{code:'ENOSPC'});
-      return invokeSpaceBackupHelper(config,input,signal);
-    });
+    }},{python:'/usr/bin/python3',projectRoot,policyFile},invokeSpaceBackupHelper,async(config,input,bytes,signal,onChunk)=>
+      streamSpaceBackupHelper(config,input,bytes,signal,async chunk=>{
+        if(chunk!==null&&typeof chunk==='object'&&'offset' in chunk&&Number(chunk.offset)>0) throw Object.assign(new Error('No space left on device'),{code:'ENOSPC'});
+        return onChunk(chunk);
+      }));
     expect(await worker.runOnce(new AbortController().signal)).toBe(true);
     expect((await app.inject({method:'GET',url:`${base()}/${id}`,headers:{cookie}})).json())
       .toMatchObject({status:'failed',error:'EXPORT_FAILED',download_url:null});

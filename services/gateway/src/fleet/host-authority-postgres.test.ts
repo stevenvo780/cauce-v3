@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes, sign, X509Certificate } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
@@ -96,6 +96,20 @@ afterEach(async () => { await app.close(); await bridge.close(); await pool.end(
   if (directory) await rm(directory, { recursive: true, force: true }); });
 afterAll(async () => { await database?.pool.end(); await database?.container.stop(); });
 describe('signed authority for self-service enrolled computers', () => {
+  it('rejects readiness and an existing issue claim after restricting the host to backups', async () => {
+    await pool.query(`UPDATE fleet_host_identities SET capabilities='{"execution_scope":"backups","space_backup":true,"fleet_executor":false}'::jsonb
+      WHERE host_id=$1 AND company_id=$2`, [host.host_id, company.company.id]);
+    expect((await post({ action: 'ready' })).statusCode).toBe(403);
+    expect((await post(issue)).statusCode).toBe(403);
+    expect((await raw({ host_id: host.host_id, packet: packet({ action: 'ready' }) })).status).toBe(403);
+    expect(await readdir(join(directory, 'state'))).toEqual([]);
+  });
+  it('rejects a configured backup-only host before forwarding even without its capability report', async () => {
+    const isolated = Fastify(); registerHostAuthorityRoutes(isolated, client, identity => identity.company_id === company.company.id && identity.host_id === host.host_id);
+    try {
+      expect((await isolated.inject({ method: 'POST', url: `/v3/fleet/hosts/${host.host_id}/authority`, payload: packet({ action: 'ready' }) })).statusCode).toBe(403);
+    } finally { await isolated.close(); }
+  });
   it('reports authority readiness through the enrolled proof without a static host catalog', async () => {
     const path = `/v3/fleet/hosts/${host.host_id}/authority`;
     const response = await app.inject({ method: 'POST', url: path, payload: packet({ action: 'ready' }) });

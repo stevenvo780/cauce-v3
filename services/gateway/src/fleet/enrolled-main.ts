@@ -18,6 +18,7 @@ import { hostProviderAuthPolicyFault } from './host-provider-auth.js';
 import { AgentQuotaExecutor, HostChannelAgentQuotaRepository } from './agent-quota-executor.js';
 import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
+import { runBackupOnlyHost } from './enrolled-backups.js';
 
 const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok','muse','agy'])),
   actions: z.record(z.string(), z.array(z.enum(['create','authenticate','query','update_cli','delete']))),
@@ -33,7 +34,9 @@ async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
   } finally { await file.close(); }
   const raw = z.record(z.string(), z.unknown()).parse(await boundedProviderReceipt(config.command.python,
     [config.command.executable, '--policy', config.command.policyFile, '--capabilities'], '{}', signal, config.command.timeoutMs));
-  const { quota_environments: quota, ...fleet } = raw;
+  const { quota_environments: quota, space_backup: backup, execution_scope: scope, ...fleet } = raw;
+  const spaceBackup = z.boolean().optional().parse(backup);
+  const executionScope = z.literal('backups').optional().parse(scope);
   const capabilities = FleetCapabilitySchema.parse(fleet);
   if (capabilities.placements.some(placement => placement.host_id !== config.host)) throw new Error('Host policy identity differs from its enrolled computer');
   const quotaCapabilities = quota === undefined ? undefined : QuotaCapabilities.parse(quota);
@@ -41,7 +44,8 @@ async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
     template_id: `tpl-${createHash('sha256').update(JSON.stringify(runtime)).digest('hex').slice(0, 24)}` })));
   return HostCapabilitiesSchema.parse({ resource: 'host', action: 'capabilities', schemaVersion: 1,
     executor_version: '4.0.0', policy_sha256: digest, fleet_executor: capabilities.available,
-    templates, agent_recovery: capabilities.actions.includes('recover'), agent_recovery_preflight: true,
+    templates, agent_recovery: capabilities.actions.includes('recover'), agent_recovery_preflight: executionScope !== 'backups',
+    space_backup: spaceBackup ?? capabilities.available, ...(executionScope === undefined ? {} : { execution_scope: executionScope }),
     quota_executor: quotaCapabilities !== undefined,
     quota_providers: quotaCapabilities?.providers ?? [],quota_provider_actions:quotaCapabilities?.actions ?? {},
     ...(quotaCapabilities?.unavailable === undefined ? {} : { quota_provider_unavailable: quotaCapabilities.unavailable }) });
@@ -52,6 +56,10 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const channel = await SignedHostChannel.load(config.identityDirectory);
   if (channel.identity.host_id !== config.host) throw new Error('Enrolled computer differs from its worker identity');
   const abort = new AbortController();
+  const report = await capabilityReport(config, abort.signal);
+  if (report.execution_scope === 'backups') {
+    await runBackupOnlyHost(config, channel, signal => capabilityReport(config, signal)); return;
+  }
   const source = new HostChannelFleetSource(channel);
   const quotaSource = new HostChannelQuotaRepository(channel, config.host);
   const agentQuota = new AgentQuotaExecutor(new HostChannelAgentQuotaRepository(channel, config.host), {
@@ -71,7 +79,6 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     projectRoot: config.projectRoot,
     verify: (execution, signal) => verifyQuotaAuthenticationHostCommand(config.command, execution, signal) });
   let quota: QuotaExecutor | undefined;
-  const report = await capabilityReport(config, abort.signal);
   if (report.quota_executor) quota = new QuotaExecutor(quotaSource, {
     worker: `host-${config.host}`, host: config.host, signal: abort.signal, leaseMs: config.leaseMs,
     perform: (execution, signal) => performQuotaHostCommand(config.command, execution, signal),

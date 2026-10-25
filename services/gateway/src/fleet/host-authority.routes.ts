@@ -2,9 +2,10 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { HostId, SignedHostRequestSchema } from '@cauce/store';
 import { SignedFleetAuthorityClient, SignedFleetAuthorityError } from './authority/signed-client.js';
+import type { BackupOnlyHost } from './host-channel.capabilities.js';
 
 const Params = z.object({ host_id: HostId }).strict();
-export function registerHostAuthorityRoutes(app: FastifyInstance, client: SignedFleetAuthorityClient): void {
+export function registerHostAuthorityRoutes(app: FastifyInstance, client: SignedFleetAuthorityClient, backupOnlyHost?: BackupOnlyHost): void {
   app.post('/v3/fleet/hosts/:host_id/authority', { bodyLimit: 262_144 }, async (request, reply) => {
     reply.header('cache-control', 'no-store');
     if (request.headers.cookie !== undefined) return reply.code(403).send({ error: 'AUTHORITY_REVOKED' });
@@ -13,6 +14,7 @@ export function registerHostAuthorityRoutes(app: FastifyInstance, client: Signed
     try {
       const { host_id } = Params.parse(request.params); const packet = SignedHostRequestSchema.parse(request.body);
       if (packet.host_id !== host_id) return await reply.code(403).send({ error: 'AUTHORITY_REVOKED' });
+      if (backupOnlyHost?.(packet) === true) return await reply.code(403).send({ error: 'AUTHORITY_REVOKED' });
       return await client.invoke(host_id, packet, abort.signal);
     } catch (error) {
       return await reply.code(error instanceof z.ZodError ? 400 : error instanceof SignedFleetAuthorityError ? error.statusCode : 503)

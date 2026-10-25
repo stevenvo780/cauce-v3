@@ -8,6 +8,7 @@ import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
 import { QUOTA_AUTH_CLEANUP_GRACE_MS, QuotaAuthPacketSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
+import { assertHostManagementAllowed, type BackupOnlyHost } from './host-channel.capabilities.js';
 
 interface AuthScope {
   operation_id: string; environment_id: string; company_id: string; requested_by: string; host_id: string; account_id: string;
@@ -206,7 +207,8 @@ export class QuotaAuthBroker {
   }
 }
 
-export function registerQuotaAuthHostRoute(app: FastifyInstance, pool: DatabasePool, broker: QuotaAuthBroker): void {
+export function registerQuotaAuthHostRoute(app: FastifyInstance, pool: DatabasePool, broker: QuotaAuthBroker,
+  backupOnlyHost?: BackupOnlyHost): void {
   const identity = new HostEnrollmentRepository(pool);
   const quota = new QuotaOperationsRepository(pool);
   app.post<{ Params: { host_id: string } }>('/v3/fleet/hosts/:host_id/quota-auth', { bodyLimit: 262_144 }, async (request, reply) => {
@@ -216,6 +218,7 @@ export function registerQuotaAuthHostRoute(app: FastifyInstance, pool: DatabaseP
       const hostId = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u).parse(request.params.host_id);
       const verified = await identity.request(hostId, 'POST', `/v3/fleet/hosts/${hostId}/quota-auth`, request.body,
         async (client, host) => {
+          await assertHostManagementAllowed(client, host, backupOnlyHost);
           const packet = QuotaAuthPacketSchema.parse((request.body as { payload: unknown }).payload);
           const scope = await readScope(client, packet.claim.id, host);
           if (scope.host_id !== host.host_id || scope.company_id !== host.company_id) throw denied();

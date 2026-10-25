@@ -10,6 +10,7 @@ import { SignedAuthorityEnvelopeSchema, assertSignedAuthoritySocket, type Signed
 import { AuthorityRequestSchema, FleetAuthorityError, RuntimeAuthorityRequestSchema, RuntimeAuthoritySchema } from './schemas.js';
 import { createFleetAuthorityService } from './service.js';
 import { runAuthorityCommand, runAuthorityReadiness, type AuthorityCommand } from './command.js';
+import { assertHostManagementAllowed, type BackupOnlyHost } from '../host-channel.capabilities.js';
 
 const Ready = z.object({ action: z.literal('ready') }).strict();
 let bundledSchema: Promise<string | undefined> | undefined;
@@ -20,7 +21,7 @@ function bundledSchemaVersion(): Promise<string | undefined> {
   );
   return bundledSchema;
 }
-export interface SignedFleetAuthorityBridgeOptions extends SignedFleetAuthoritySocketPolicy { command: AuthorityCommand }
+export interface SignedFleetAuthorityBridgeOptions extends SignedFleetAuthoritySocketPolicy { command: AuthorityCommand; backupOnlyHost?: BackupOnlyHost }
 function unavailable(): FleetAuthorityError { return new FleetAuthorityError('AUTHORITY_UNAVAILABLE'); }
 async function peerUid(socket: Socket): Promise<number> {
   const descriptor = (socket as Socket & { _handle?: { fd?: number } })._handle?.fd;
@@ -64,6 +65,7 @@ export async function startSignedFleetAuthorityBridge(filename: string, pool: Da
     try {
       const { host_id, packet } = SignedAuthorityEnvelopeSchema.parse(request.body);
       return await enrollment.request(host_id, 'POST', `/v3/fleet/hosts/${host_id}/authority`, packet, async (client, identity) => {
+        await assertHostManagementAllowed(client, identity, options.backupOnlyHost);
         const applied = (await client.query<{ version: string | null }>('SELECT max(version) AS version FROM schema_migrations')).rows[0]?.version;
         const bundled = await bundledSchemaVersion();
         if (bundled !== undefined && applied !== bundled) throw unavailable();

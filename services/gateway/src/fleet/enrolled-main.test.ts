@@ -8,10 +8,11 @@ import { readFleetHostConfig } from './main.js';
 import { boundedProviderReceipt } from './provider-login.js';
 import { SignedHostChannel } from './signed-source.js';
 import { invokeSpaceBackupProcess, streamSpaceBackupHelper } from './space-backup.process.js';
+import { SpaceBackupHost } from './space-backup.host.js';
 
-const auxiliary = vi.hoisted(() => ({ enabled: false }));
+const auxiliary = vi.hoisted(() => ({ enabled: false, constructed: 0 }));
 vi.mock('./worker.js', () => ({ FleetHostWorker: class {
-  constructor(_source: unknown, private readonly options: { runQuotaOnce(signal: AbortSignal): Promise<boolean> }) {}
+  constructor(_source: unknown, private readonly options: { runQuotaOnce(signal: AbortSignal): Promise<boolean> }) { auxiliary.constructed++; }
   async start() { if (auxiliary.enabled) await this.options.runQuotaOnce(new AbortController().signal); }
   async shutdown() { await Promise.resolve(); }
 } }));
@@ -20,12 +21,36 @@ vi.mock('./provider-login.js', async importOriginal => ({
 }));
 
 let directory: string | undefined;
-afterEach(async () => { auxiliary.enabled = false; vi.restoreAllMocks(); if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
+afterEach(async () => { auxiliary.enabled = false; auxiliary.constructed = 0; vi.restoreAllMocks(); if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
 const report = { resource: 'host', action: 'capabilities', schemaVersion: 1, executor_version: 'test',
   policy_sha256: 'a'.repeat(64), fleet_executor: false, quota_executor: true, templates: [],
   quota_providers: ['codex'], quota_provider_actions: { codex: ['query'] } };
 const unavailable = { codex: { authenticate: 'operations.authenticate: command is unavailable' },
   grok: { query: 'operations.quota: command is unavailable' } };
+
+it('runs an enrolled backup-only host without constructing a fleet worker or claiming any management work', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'zz-canary-backup-only-'));
+  const policy = join(directory, 'policy.json'); await writeFile(policy, '{}', { mode: 0o600 });
+  const request = vi.fn().mockResolvedValue({});
+  vi.spyOn(SignedHostChannel, 'load').mockResolvedValue({ identity: { host_id: 'test-host', company_id: 'test-company' }, request } as unknown as SignedHostChannel);
+  vi.mocked(boundedProviderReceipt).mockResolvedValue({ available: false, actions: [], placements: [], reason: 'executor_unconfigured',
+    execution_scope: 'backups', space_backup: true });
+  const runCopy = vi.spyOn(SpaceBackupHost.prototype, 'runOnce').mockImplementation(() => {
+    process.emit('SIGTERM'); return Promise.resolve(false);
+  });
+  await runEnrolledFleetHost(readFleetHostConfig({ CAUCE_FLEET_PROJECT_ROOT: directory, CAUCE_FLEET_HOST: 'test-host',
+    CAUCE_FLEET_WORKER_ID: 'test-worker', CAUCE_FLEET_PYTHON: '/usr/bin/python3', CAUCE_FLEET_EXECUTABLE: join(directory, 'executor.py'),
+    CAUCE_FLEET_POLICY_FILE: policy, CAUCE_FLEET_IDENTITY_DIRECTORY: join(directory, 'identity') }));
+  expect(auxiliary.constructed).toBe(0); expect(runCopy).toHaveBeenCalledOnce(); expect(request).toHaveBeenCalledTimes(2);
+  expect(request).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel', expect.objectContaining({
+    execution_scope: 'backups', space_backup: true, fleet_executor: false, quota_executor: false, templates: [], agent_recovery_preflight: false }));
+});
+
+it.each([{ fleet_executor: true }, { quota_executor: true }, { space_backup: false }, { agent_recovery: true },
+  { agent_recovery_preflight: true }, { quota_providers: ['codex'] }])('rejects management capabilities in a backup-only report: %j', mutation => {
+  expect(HostCapabilitiesSchema.safeParse({ ...report, quota_executor: false, quota_providers: [], quota_provider_actions: {},
+    execution_scope: 'backups', space_backup: true, ...mutation }).success).toBe(false);
+});
 
 it('lets the real backup helper outlive the fleet command budget with its own bounded deadline', async () => {
   directory = await mkdtemp(join(tmpdir(), 'zz-canary-c171b-backup-budget-'));
