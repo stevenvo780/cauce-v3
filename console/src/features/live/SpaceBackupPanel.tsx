@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { SpaceBackup, SpaceBackupTarget } from '../../api/client/space-backups-client';
 import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
@@ -37,7 +37,8 @@ const FAILURES: Record<number, string> = {
 };
 export function SpaceBackupPanel({ tenantId, alias }: { tenantId: string; alias: string }) {
   const state = useContext(CompanySession); const authority = sessionAuthority(state);
-  const target = { company_id: authority?.acting_company ?? '', tenant_id: tenantId, alias };
+  const companyId = authority?.acting_company ?? '';
+  const target = useMemo(() => ({ company_id: companyId, tenant_id: tenantId, alias }), [companyId, tenantId, alias]);
   const allowed = canBackupSpace(state, tenantId);
   return <BackupPanel key={JSON.stringify([target, authority?.role, allowed])} target={target} allowed={allowed} />;
 }
@@ -48,7 +49,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
   const [deleting, setDeleting] = useState<SpaceBackup>();
   const [busy, setBusy] = useState<BackupAction | 'downloading'>();
   const [progress, setProgress] = useState<number>(); const [verified, setVerified] = useState<{ sha256: string; file: string }>();
-  const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [unplaced, setUnplaced] = useState(false);
   const [invalidated, setInvalidated] = useState(false);
   const permitted = useRef(allowed && !invalidated); permitted.current = allowed && !invalidated;
   const active = useRef(true); const generation = useRef(0); const requests = useRef(new Set<AbortController>());
@@ -80,8 +81,9 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     // Not AbortSignal.any: Safari before 17.4 lacks it. The timeout shares the controller, so both end the request.
     const timedOut = { current: false };
     const timeout = window.setTimeout(() => { timedOut.current = true; request.abort(); }, REQUEST_MS);
-    if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); }
+    if (!background) { locked.current = true; setBusy(kind); setError(''); setNotice(''); setUnplaced(false); }
     try {
+      if (initial) { await Promise.resolve(); if (!requestIsCurrent(request, started)) return; }
       const value = await action(request.signal);
       if (!requestIsCurrent(request, started)) return;
       if (Array.isArray(value)) {
@@ -104,6 +106,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     } catch (cause) {
       if (!active.current || started !== generation.current || request.signal.aborted && !timedOut.current) return;
       if (cause instanceof ApiError && [401, 403].includes(cause.status)) { permitted.current = false; setBackup(undefined); setBackups([]); setDeleting(undefined); setInvalidated(true); }
+      if (kind === 'creating' && cause instanceof ApiError && cause.status === 404) { setUnplaced(true); return; }
       setError(kind === 'deleting' ? 'No se pudo eliminar la copia. Actualiza las copias y comprueba tus permisos antes de reintentar.'
         : (cause instanceof ApiError ? FAILURES[cause.status] : undefined) ?? 'No se pudo leer o preparar el backup. Actualiza su estado y comprueba tus permisos.');
     } finally {
@@ -182,6 +185,7 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
     {!enabled ? <Notice tone="warn">Hace falta autoridad vigente para controlar este espacio y descargar su backup.</Notice> : null}
     {!backups.length && !busy && enabled && !error ? <p className="m-0 text-sm text-muted" role="status">{loaded ? 'No hay copias guardadas de este espacio.' : 'Cargando copias del espacio…'}</p> : null}
     {error && !deleting ? <Notice tone="danger" role="alert">{error}</Notice> : null}
+    {unplaced && !error ? <p className="m-0 text-sm text-muted" role="status">Este agente todavía no tiene habilitada la copia de su espacio: su ordenador o su contenedor no están vinculados para copias. Cuando lo estén, podrás crearla aquí.</p> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
     {backups.length ? <ul aria-label="Copias guardadas" className="m-0 grid list-none gap-2 p-0">{backups.map(row => <li key={row.id} className="grid gap-2 rounded-lg border border-line p-3">
       <p className="m-0 text-sm">{backupDate(row.created_at)} · {LIST_STATUS[row.status]} · {row.bytes === null ? 'Tamaño pendiente' : backupSize(row.bytes)}</p>
