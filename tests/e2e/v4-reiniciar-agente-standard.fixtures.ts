@@ -3,6 +3,7 @@ import { cp, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { FIXTURE_PROVIDER_IDENTITY, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { IDLE_PLACEHOLDER } from './s2d-provider.js';
 
 const execute = promisify(execFile);
 const ROOT = process.cwd();
@@ -39,11 +40,16 @@ with (home/'recovery-invocations.jsonl').open('a') as stream:
 signal.signal(signal.SIGINT,lambda *_:sys.exit(130))
 print('STANDARD_READY:'+native,flush=True)
 original=termios.tcgetattr(sys.stdin.fileno());tty.setraw(sys.stdin.fileno())
-sys.stdout.write(chr(27)+'[?2004h'+'\\r\\n› ');sys.stdout.flush()
+sys.stdout.write(chr(27)+'[?2004h');sys.stdout.flush()
+# An idle Codex composer shows a dim placeholder with the cursor right after the prompt.
+def render_idle():
+ sys.stdout.write('\\r\\n› '+chr(27)+'[2m'+${JSON.stringify(IDLE_PLACEHOLDER)}+chr(27)+'[22m\\r'+chr(27)+'[2C');sys.stdout.flush()
+render_idle()
 pending='';pasting=False
 while True:
  chunk=os.read(sys.stdin.fileno(),4096).decode(errors='replace')
  if not chunk: break
+ if not pending: sys.stdout.write('\\r'+chr(27)+'[2K› ');sys.stdout.flush()
  pending+=chunk
  if chr(27)+'[200~' in pending: pasting=True
  if chr(27)+'[201~' in pending: pasting=False
@@ -64,7 +70,7 @@ while True:
  correlation=re.search(r'"cauce_correlation_id":"([a-f0-9]{64})"',text)
  if correlation: answer=json.dumps({'reply':answer,'messages':[],'status':'done','retryable':False,'artifacts':[],'cauce_correlation_id':correlation.group(1)})
  append({'type':'event_msg','payload':{'type':'task_complete','turn_id':turn,'last_agent_message':answer}})
- sys.stdout.write('\\r\\n'+answer+'\\r\\n\\r\\n› ');sys.stdout.flush()
+ sys.stdout.write('\\r\\n'+answer+'\\r\\n');sys.stdout.flush();render_idle()
 `;
 
 export const standardRecoveryBundle: ComputerRuntimeBundle = {
