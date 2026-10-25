@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from cauce_container_base import IDENTITY_ENV_KEYS, PermanentError
+from cauce_container_base import IDENTITY_ENV_KEYS, PermanentError, framed_hash
 from cauce_container_proc import (
     expected_environment,
     matched_fs_credentials,
@@ -19,11 +19,12 @@ from cauce_container_proc import (
     proc_stat,
 )
 
-SGR = re.compile(r"\x1b\[([0-9;]*)m")
+SGR = re.compile(r"\x1b\[([0-9;:]*)m")
 # The composer prompt sits at column 0 or right inside a box edge; drafts indent their continuation lines.
 PROMPT = re.compile(r"^(?:\s*│\s?)?([❯›»>])(?:\s|$)")
 # A drawn rule or box edge, which may carry a status label after its run of strokes.
 RULE = re.compile(r"^\s*[─━═╭╰┌└][─━═]{2,}")
+ATTACHMENT = re.compile(r"^ {2}\[Image #[1-9][0-9]*\]\s*$")
 FOOTER = re.compile(r"context left|context \d+% left|\d+% context left|\? for shortcuts|bypass permissions|shift\+tab"
                     r"|permissions on|accept edits", re.I)
 HOOK_NAME = re.compile(r"[a-z][a-z0-9-]*")
@@ -39,6 +40,31 @@ def strip_style(line: str) -> str:
     return SGR.sub("", line)
 
 
+def dim_after_sgr(dim: bool, sequence: str) -> bool | None:
+    codes = (sequence or "0").split(";")
+    index = 0
+    while index < len(codes):
+        code = codes[index]
+        if ":" in code:
+            parts = code.split(":")
+            if parts[0] not in {"38", "48", "58"} or parts[1:2] not in (["2"], ["5"]):
+                return None
+        elif code in {"38", "48", "58"}:
+            mode = codes[index + 1:index + 2]
+            count = 3 if mode == ["2"] else 1 if mode == ["5"] else 0
+            values = codes[index + 2:index + 2 + count]
+            if not count or len(values) != count or any(not value.isdigit() or int(value) > 255 for value in values):
+                return None
+            index += 2 + count
+            continue
+        elif code in {"0", "22", ""}:
+            dim = False
+        elif code == "2":
+            dim = True
+        index += 1
+    return dim
+
+
 def dim_text(raw: str, start: int = 0) -> bool:
     dim = False
     visible = False
@@ -49,11 +75,10 @@ def dim_text(raw: str, start: int = 0) -> bool:
             visible = True
             if not dim:
                 return False
-        for code in (match.group(1) or "0").split(";"):
-            if code in {"0", "22", ""}:
-                dim = False
-            elif code == "2":
-                dim = True
+        changed = dim_after_sgr(dim, match.group(1))
+        if changed is None:
+            return False
+        dim = changed
         offset = match.end()
     text = raw[offset:]
     if offset + len(text) > start and text[max(0, start - offset):].strip(" │"):
@@ -63,7 +88,7 @@ def dim_text(raw: str, start: int = 0) -> bool:
     return visible
 
 
-def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int) -> None:
+def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int, harness: str = "codex") -> None:
     lines = pane.splitlines()
     if not 0 <= cursor_y < len(lines):
         hold("PANE_UNREADABLE")
@@ -74,24 +99,65 @@ def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int) -> None:
     prompt = PROMPT.match(plain[cursor_y])
     if prompt is None or any(PROMPT.match(line) for line in plain[cursor_y + 1:]):
         hold("PROMPT_UNKNOWN")
-    # The prompt line opens the composer, so history may sit above it only past a blank line or a drawn rule.
-    if cursor_y and plain[cursor_y - 1].strip() and not RULE.match(plain[cursor_y - 1]):
+    border = plain[cursor_y].find("│", 0, prompt.start(1))
+    if harness not in {"codex", "claude", "grok", "muse", "gemini"} \
+            or (harness == "grok") != (border >= 0):
+        hold("COMPOSER_FAMILY_UNKNOWN")
+    frame_left = border if border >= 0 else 0
+
+    def frame_rule(line: str) -> bool:
+        return bool(RULE.match(line)) and len(line) - len(line.lstrip()) == frame_left
+
+    previous = plain[cursor_y - 1] if cursor_y else ""
+    bounded = frame_rule(previous)
+    if previous.strip() and not bounded:
         hold("COMPOSER_CONTINUATION_UNKNOWN")
+    if cursor_y >= 2 and not previous.strip() and ATTACHMENT.fullmatch(plain[cursor_y - 2]):
+        hold("COMPOSER_ATTACHMENT_PENDING")
     prefix = plain[cursor_y][:prompt.end()]
     if cursor_x != len(prefix.rstrip()) + 1:
         hold("COMPOSER_CURSOR_AMBIGUOUS")
     content = plain[cursor_y][prompt.end():].strip(" │")
+    if re.search(r"\[(?:Image #\d+|Pasted text[^\]]*)\]", content, re.I):
+        hold("COMPOSER_ATTACHMENT_PENDING")
     raw = lines[cursor_y]
     mark_at = raw.find(prompt.group(1))
-    if content and not dim_text(raw, mark_at + 1):
+    placeholder = bool(content) and dim_text(raw, mark_at + 1)
+    if content and not placeholder:
         hold("COMPOSER_NOT_EMPTY")
-    # A draft continues right below the prompt. A drawn rule closes the composer; past a blank line, which a draft
-    # may also hold, only recognised status footers may follow.
+    if harness == "codex" and not placeholder:
+        hold("COMPOSER_EMPTY_STATE_UNKNOWN")
+    if harness == "grok" and not bounded:
+        hold("COMPOSER_EMPTY_STATE_UNKNOWN")
+    # Editor continuation columns cannot close a frame or impersonate its status area.
     for index, line in enumerate(plain[cursor_y + 1:]):
-        if RULE.match(line):
+        if frame_rule(line):
             return
-        if line.strip() and (index == 0 or not FOOTER.search(line)):
+        if line.strip() and (bounded or not placeholder or index == 0 or not FOOTER.search(line)):
             hold("COMPOSER_CONTINUATION_UNKNOWN")
+    # A scrolled nonempty buffer can expose only blank rows without an authentic placeholder.
+    if bounded or not placeholder:
+        hold("COMPOSER_EMPTY_STATE_UNKNOWN")
+
+
+def adapter_harness(document: dict[str, Any]) -> str:
+    try:
+        with matched_fs_credentials(document["runtimeUid"], document["runtimeGid"]):
+            raw = (pathlib.Path("/proc") / str(document["pid"]) / "cmdline").read_bytes()
+        if framed_hash([raw]) != document["executable"]["cmdlineSha256"]:
+            hold("PROCESS_COMMAND_CHANGED")
+        arguments = raw.rstrip(b"\0").decode().split("\0")
+    except (OSError, UnicodeError, KeyError):
+        hold("ADAPTER_ENTRY_UNKNOWN")
+    entries = []
+    for argument in arguments[1:]:
+        match = re.fullmatch(r"/(?:[A-Za-z0-9_.-]+/)+packages/adapter-sdk/dist/src/bin/"
+                            r"(codex|claude|grok|muse|gemini)\.js", argument)
+        if match and os.path.normpath(argument) == argument:
+            entries.append(match.group(1))
+    if len(entries) != 1:
+        hold("ADAPTER_ENTRY_UNKNOWN")
+    return entries[0]
 
 
 def process_identity(pid: int) -> tuple[int, int]:
@@ -139,6 +205,7 @@ class RestartPane:
         if temporary is not None and temporary != document["stateDirectory"]:
             hold("TMUX_DIRECTORY_UNKNOWN")
         self.target = "=cauce-" + document["alias"] + ":agente"
+        self.document = document
         self.uid, self.gid = document["runtimeUid"], document["runtimeGid"]
         self.environment = {"HOME": home, "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
         if temporary is not None:
@@ -194,7 +261,7 @@ class RestartPane:
         fields = self.fields(token)
         snapshot = self.run("capture-pane", "-p", "-e", "-t", fields[0])
         try:
-            assert_empty_composer(snapshot, int(fields[4]), int(fields[5]))
+            assert_empty_composer(snapshot, int(fields[4]), int(fields[5]), adapter_harness(self.document))
         except ValueError:
             hold("PANE_UNREADABLE")
         identity = (*fields[:6], *fields[8:], str(process_identity(int(fields[1]))[0]),
