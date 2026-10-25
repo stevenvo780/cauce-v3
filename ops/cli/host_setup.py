@@ -401,6 +401,8 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
 def verify_bundles(policy: dict, release: pathlib.Path) -> None:
     if not policy['bundles']:
         return
+    previous_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     sys.path[:0] = [str(release / 'ops/container-runtime'), str(release / 'ops/cli')]
     try:
         from cauce_container_base import bundle_digest
@@ -422,6 +424,7 @@ def verify_bundles(policy: dict, release: pathlib.Path) -> None:
         raise HostFailure('approved bundle cannot be verified in the release') from None
     finally:
         del sys.path[:2]
+        sys.dont_write_bytecode = previous_bytecode
 
 
 # Provider login of an enrolled computer. The console login of an agent runs on this computer through its host process,
