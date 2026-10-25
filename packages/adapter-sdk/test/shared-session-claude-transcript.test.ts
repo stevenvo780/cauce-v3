@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { DEGRADED_MARK, RESET_MARK } from "../src/shared-session/notice.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
-import { transcriptDirectory } from "../src/shared-session/session.js";
+import { transcriptDirectory, transcriptDirectoryIn } from "../src/shared-session/session.js";
 import { claudeTranscript, type TranscriptEntry } from "../src/shared-session/transcript.js";
 import {
   FakeTmux,
@@ -19,6 +19,11 @@ import {
   freshState,
   userEntry,
 } from "./shared-session-fixtures.js";
+
+test("Claude transcript directory matches the native CLI for a standard space", () => {
+  assert.equal(transcriptDirectoryIn("/home/node/.claude", "/home/node/.cauce/kant/space/projects"),
+    "/home/node/.claude/projects/-home-node--cauce-kant-space-projects");
+});
 
 test("Claude terminal API errors fail without waiting for a silence timeout or leaking provider text", async () => {
   const { state, home, workspace } = await freshState("terminal-api-error");

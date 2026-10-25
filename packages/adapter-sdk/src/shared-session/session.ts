@@ -79,9 +79,7 @@ function tuiTarget(sessionId: string): string {
 
 /**
  * The directory where `claude` stores transcripts for a workspace.
- * The rule is fixed by claude: it replaces each `/` in the cwd with `-`, so `/workspace` becomes
- * `-workspace`. Replicated here because the adapter has to read THAT directory and there is no
- * flag that reveals it.
+ * Claude replaces path separators and dots with `-`; the adapter must read that same directory.
  */
 export function transcriptDirectory(home: string, workspace: string): string {
   return transcriptDirectoryIn(`${home}/.claude`, workspace);
@@ -96,7 +94,7 @@ export function transcriptDirectory(home: string, workspace: string): string {
  * value makes it impossible to drift them apart.
  */
 export function transcriptDirectoryIn(configDirectory: string, workspace: string): string {
-  const slug = workspace.replace(/\/+$/u, "").replace(/\//gu, "-");
+  const slug = workspace.replace(/\/+$/u, "").replace(/[/.]/gu, "-");
   const root = configDirectory.replace(/\/+$/u, "");
   return `${root}/projects/${slug === "" ? "-" : slug}`;
 }
