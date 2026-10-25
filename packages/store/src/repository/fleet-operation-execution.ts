@@ -94,6 +94,13 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       const row = await lockFleetClaim(client, claim);
       if (row.desired_revision !== null) {
         await lockPreparedFleetRevision(client, row);
+        if (row.target.resource === 'agent' && ['create', 'update', 'start', 'restore'].includes(row.kind)
+            && row.steps.some(step => step.name === 'admission' && step.status !== 'succeeded')) {
+          await client.query(`UPDATE agents SET lifecycle_state='provisioning',updated_at=clock_timestamp()
+            WHERE tenant_id=$1 AND alias=$2 AND lifecycle_state='failed' AND enabled=false
+              AND retired_at IS NULL AND purged_at IS NULL`, [row.target.tenant_id, row.target.alias]);
+          await lockFleetClaim(client, claim);
+        }
         return { operation: publicFleetOperation(row), ...await preparedState(client, row.id) };
       }
       await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
