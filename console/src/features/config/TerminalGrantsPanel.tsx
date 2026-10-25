@@ -6,6 +6,8 @@ import { useResource } from '../../api/use-resource';
 import { ActionButton } from '../../components/action-button';
 import { Button, Notice } from '../../components/kit';
 import { listTerminalTargets } from '../terminal/api';
+import { TerminalRelayBoundary, useTerminalRelayStatus } from '../terminal/relay-status';
+import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { UNREACHABLE_SERVER } from '../auth/RegistrationForm';
 
 const MODE_LABEL: Record<TerminalGrantMode, string> = {
@@ -55,6 +57,17 @@ function fromExpiryInput(value: string): string | null {
 
 /** CRUD of permanent terminal grants (database source; the grants file keeps working alongside). */
 export function TerminalGrantsPanel() {
+  const authority = useCompanyAuthority();
+  if (!canManageCompany(authority?.role)) return null;
+  return <TerminalRelayBoundary><AvailableTerminalGrants /></TerminalRelayBoundary>;
+}
+
+function AvailableTerminalGrants() {
+  const relay = useTerminalRelayStatus();
+  return relay.status === 'available' ? <TerminalGrantsEditor /> : null;
+}
+
+function TerminalGrantsEditor() {
   const api = useApi();
   const grants = useResource('terminal-grants', () => api.listTerminalGrants());
   const people = useResource('terminal-grant-people', () => api.listPeople());

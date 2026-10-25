@@ -1,12 +1,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { terminalGrantAllows } from '@cauce/store';
+import { buildGateway } from '../../services/gateway/src/app.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
+import type { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { registerTerminalControlPlane } from '../../services/gateway/src/terminal/plugin.js';
-import type { TerminalConfig } from '../../services/gateway/src/terminal/config.js';
+import { terminalCapabilityAnnouncement, type TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES,
@@ -14,7 +16,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-f1b-concesiones-1025/grants');
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/grants');
 
 function registration(label: string): V4Person {
   const person = syntheticPerson(`grants-${label}`, run);
@@ -56,6 +58,8 @@ const errors = new BrowserErrorLog([
 ]);
 
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
+let terminalGateway: Awaited<ReturnType<typeof buildGateway>> | undefined;
+let grantsDirectory: string | undefined;
 let ownerPage: V4Page | undefined;
 let hubA = '';
 let hubB = '';
@@ -170,7 +174,7 @@ async function apiCall(
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
-  const grantsDirectory = await mkdtemp(join(tmpdir(), 'v4-grants-browser-'));
+  grantsDirectory = await mkdtemp(join(tmpdir(), 'zz-canary-terminal-grants-'));
   const grantsFile = join(grantsDirectory, 'grants.json');
   await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }), { mode: 0o600 });
   const config: TerminalConfig = {
@@ -181,15 +185,22 @@ beforeAll(async () => {
     claimLeaseSeconds: 150, maxSessionsPerOperator: 10,
     operatorHeader: 'x-cauce-operator', operators: new Set(),
   };
-  fixture = await startConsoleFunctionalFixture({
-    configureGateway(app, database, auth) {
-      void app.register(registerTerminalControlPlane, {
-        pool: database.pool, authProvider: auth, config,
-        measuredFacts: { factsFor: async () => undefined },
-        governanceRelay: { readFile: async () => ({ error: 'unavailable', reason: 'QA has no manuals' }) },
-      });
-    },
+  let authProvider: PasswordAuthProvider | undefined;
+  fixture = await startConsoleFunctionalFixture({ configureGateway(_app, _database, auth) { authProvider = auth; } });
+  await fixture.app.close();
+  if (!authProvider) throw new Error('terminal fixture password provider is missing');
+  terminalGateway = await buildGateway({
+    pool: pool(), authProvider, consoleOrigins: [base()],
+    terminalCapability: terminalCapabilityAnnouncement(config),
+    https: { key: await readFile(fixture.pki.server.key), cert: await readFile(fixture.pki.server.cert),
+      ca: await readFile(fixture.pki.ca.cert), requestCert: true, rejectUnauthorized: true },
   });
+  await terminalGateway.register(registerTerminalControlPlane, {
+    pool: pool(), authProvider, config,
+    measuredFacts: { factsFor: async () => undefined },
+    governanceRelay: { readFile: async () => ({ error: 'unavailable', reason: 'QA has no manuals' }) },
+  });
+  await terminalGateway.listen({ host: '127.0.0.1', port: Number(new URL(fixture.gatewayUrl).port) });
   ownerPage = await freshPage('owner-a');
   await register(ownerView(), ownerA);
   const registeredA = await pool().query<{ id: string; tenant_id: string; company_id: string }>(
@@ -228,7 +239,15 @@ beforeAll(async () => {
   await pageB.context().close();
 }, 600_000);
 
-afterAll(async () => { await fixture?.close(); }, 180_000);
+afterAll(async () => {
+  const errors: unknown[] = [];
+  try { await terminalGateway?.close(); } catch (cause) { errors.push(cause); }
+  try { await fixture?.close(); } catch (cause) { errors.push(cause); }
+  if (grantsDirectory) {
+    try { await rm(grantsDirectory, { recursive: true, force: true }); } catch (cause) { errors.push(cause); }
+  }
+  if (errors.length > 0) throw new AggregateError(errors, 'Terminal grants fixture cleanup failed');
+}, 180_000);
 
 function ownerView() {
   if (!ownerPage) throw new Error('owner A has no browser page');
