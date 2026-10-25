@@ -127,5 +127,8 @@ export class HostChannelFleetSource implements FleetExecutionRepository {
   async compensate(claim: FleetOperationClaim, evidence: FleetEvidence = {}) {
     return FleetOperationSchema.parse(await this.invoke('compensate', { claim: fence(claim), evidence }));
   }
-  async settle(claim: FleetOperationClaim) { return FleetOperationSchema.parse(await this.invoke('settle', { claim: fence(claim) })); }
+  async settle(claim: FleetOperationClaim, evidence?: FleetEvidence) {
+    return FleetOperationSchema.parse(await this.invoke('settle', { claim: fence(claim),
+      ...(evidence === undefined ? {} : { evidence: FleetEvidenceSchema.parse(evidence) }) }));
+  }
 }
