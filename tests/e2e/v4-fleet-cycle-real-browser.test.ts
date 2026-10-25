@@ -160,7 +160,7 @@ async function startConsole(frontendPort: number, proxy: Record<string, unknown>
 
 async function prepareLocal(frontendPort: number, pki: { key: string; cert: string }): Promise<CycleTarget> {
   const origin = `https://localhost:${String(frontendPort)}`;
-  const computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin] });
+  const computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos' });
   harness = computer;
   const baseUrl = await startConsole(frontendPort, { target: computer.gatewayUrl, changeOrigin: false, ws: true }, pki);
   trusted = await startTrustedBrowser(join(directory, 'ca.crt'), directory, [frontendPort, Number(new URL(computer.gatewayUrl).port)]);
