@@ -130,7 +130,7 @@ function placeTags(ctx: CanvasRenderingContext2D, input: ScreenInput, unit: numb
   if (input.avatar && input.avatarHere) {
     const item = tag();
     item.id = null;
-    item.text = 'Vos';
+    item.text = 'Tú';
     item.x = origin.x + input.avatar.x * cam.zoom;
     item.y = origin.y + (Math.round(input.avatar.y) - CHAR_H + 2) * cam.zoom - 2 * input.dpr;
     item.above = true;

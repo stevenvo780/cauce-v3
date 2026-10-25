@@ -82,7 +82,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
         className="mb-4 inline-flex items-center gap-1 text-[13px] text-brand-ink no-underline hover:underline">
         Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" />
       </a>
-      <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Sólo se ven los relays en los que este actor participa.">
+      <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Solo se ven los relays en los que este actor participa.">
         {relays.error && relays.data ? (
           <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
             <span className="min-w-0 flex-1">No se pudieron actualizar los relays: {relays.error.message} Se muestra la última lista buena.</span>

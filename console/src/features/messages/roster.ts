@@ -123,7 +123,7 @@ export function motivoDeAgenteSuelto(agente: AgenteDeMensajeria): string | undef
   if (agente.origenes.includes('registro')) {
     return 'Está en el registro de agentes y en NINGUNA sala. Los mensajes se leen igual; para escribirle hace falta una membresía habilitada.';
   }
-  return 'Ni sala, ni lease, ni registro: este alias existe acá sólo porque el servidor publicó mensajes suyos. El hilo no se esconde por eso.';
+  return 'Ni sala, ni lease, ni registro: este alias existe acá solo porque el servidor publicó mensajes suyos. El hilo no se esconde por eso.';
 }
 
 function esIntermediarioDeContexto(alias: string): boolean {

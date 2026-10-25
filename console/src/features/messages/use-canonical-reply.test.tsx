@@ -319,7 +319,7 @@ it('conserva el límite de tres errores automáticos durante la espera de la fin
   unmount();
 });
 
-it('renueva la ventana sólo al seleccionar otra identidad/raíz y no muestra el dato previo durante esa lectura', async () => {
+it('renueva la ventana solo al seleccionar otra identidad/raíz y no muestra el dato previo durante esa lectura', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-05T00:00:00Z'));
   const startedAt = Date.now();

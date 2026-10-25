@@ -116,7 +116,7 @@ it('una lectura parcial posterior no oculta la respuesta consolidada guardada de
   expect(rows.filter((row) => row.kind === 'reply').map((row) => row.reply.reply)).toEqual(['hecho']);
 });
 
-it('deduplica una salida equivalente sólo con la misma traza, destinatario, texto y archivos', () => {
+it('deduplica una salida equivalente solo con la misma traza, destinatario, texto y archivos', () => {
   const root = input('a', 'done');
   root.message.trace_id = 'trace-a';
   const answer = output('hecho');

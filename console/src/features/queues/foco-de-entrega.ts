@@ -59,6 +59,6 @@ export function enfocarEntrega(
  * find its delivery.
  */
 export const TEXTO_AUSENTE =
-  'Esa entrega no está en esta página. Este snapshot trae sólo las entregas más recientes que tu '
+  'Esa entrega no está en esta página. Este snapshot trae solo las entregas más recientes que tu '
   + 'cuenta puede ver, y el endpoint no acepta buscar una por id: puede que ya no exista, o puede '
   + 'que sea más antigua que las que caben acá. La consola no puede distinguir cuál de las dos es.';

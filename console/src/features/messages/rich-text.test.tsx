@@ -23,8 +23,8 @@ describe('parseRichText', () => {
   });
 
   it('una vista previa recortada dentro de un bloque de código lo conserva como código', () => {
-    expect(parseRichText('Mirá:\n```\nconst a = 1;\nconst b')).toEqual([
-      { kind: 'paragraph', text: 'Mirá:' },
+    expect(parseRichText('Mira:\n```\nconst a = 1;\nconst b')).toEqual([
+      { kind: 'paragraph', text: 'Mira:' },
       { kind: 'code', text: 'const a = 1;\nconst b' },
     ]);
   });
@@ -36,11 +36,11 @@ describe('parseRichText', () => {
 
 describe('RichText', () => {
   it('nunca interpreta HTML y pinta código en línea y negritas como texto', () => {
-    const { container } = render(<RichText text={'<img src=x onerror=alert(1)> usá `npm ci` y **listo**'} />);
+    const { container } = render(<RichText text={'<img src=x onerror=alert(1)> usa `npm ci` y **listo**'} />);
     expect(container.querySelector('img')).toBeNull();
     expect(screen.getByText('npm ci').tagName).toBe('CODE');
     expect(screen.getByText('listo').tagName).toBe('STRONG');
-    expect(container).toHaveTextContent('<img src=x onerror=alert(1)> usá npm ci y listo');
+    expect(container).toHaveTextContent('<img src=x onerror=alert(1)> usa npm ci y listo');
   });
 
   it('el código en bloque se desplaza en horizontal en vez de romper la columna', () => {

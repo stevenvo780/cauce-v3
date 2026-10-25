@@ -217,7 +217,7 @@ describe('office chat and real dialog with unit HTTP fixtures', () => {
     }] })));
     fireEvent.click(screen.getByRole('button', { name: 'Refresh feed' }));
     await waitFor(() => { expect(screen.getByLabelText('Speech')).toHaveTextContent('[]'); });
-    expect(screen.getByRole('list', { name: 'Últimos mensajes' })).toHaveTextContent('Vos:');
+    expect(screen.getByRole('list', { name: 'Últimos mensajes' })).toHaveTextContent('Tú:');
     unmount();
     server.use(http.get('*/v3/console/messages', () => HttpResponse.json({ items: [] })));
     const silent = mountChat();

@@ -115,8 +115,8 @@ export function DirectionPad({ onHold, padRef }: { onHold: (dir: Dir, held: bool
 
 export function OfficeHint({ touch, onClose }: { touch: boolean; onClose: () => void }) {
   const tips = touch
-    ? ['Tocá un edificio para entrar', 'arrastrá para mirar', 'pellizcá para acercar']
-    : ['Clic en un edificio para entrar', '1–9 cambian de edificio', 'arrastrá o WASD para mirar', 'P: paseo'];
+    ? ['Toca un edificio para entrar', 'arrastra para mirar', 'pellizca para acercar']
+    : ['Clic en un edificio para entrar', '1–9 cambian de edificio', 'arrastra o WASD para mirar', 'P: paseo'];
   return (
     <p role="status" className={cn(HUD_PANEL, HUD_TEXT, 'pointer-events-auto m-0 flex max-w-full items-center gap-2 self-start py-1 pr-1 pl-2.5 text-[10px] text-[#c5d3dc]')}>
       <span className="min-w-0">{tips.join(' · ')}</span>

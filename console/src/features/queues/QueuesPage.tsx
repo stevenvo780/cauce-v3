@@ -130,7 +130,7 @@ function QueuesPageContent() {
             exactly `LIMIT` deliveries that guess would announce a truncation that isn't. */}
         {muestraRecortada(snapshot) ? (
           <p className="m-0 mb-3 text-xs text-warn-ink">
-            Página recortada: el servidor devolvió sólo las entregas más recientes; los totales de arriba sí cuentan todo.
+            Página recortada: el servidor devolvió solo las entregas más recientes; los totales de arriba sí cuentan todo.
           </p>
         ) : null}
 
@@ -199,7 +199,7 @@ function QueuesPageContent() {
   );
 }
 
-const TITULO_FOCO = 'Hay un enlace profundo abierto: quitá el foco para filtrar';
+const TITULO_FOCO = 'Hay un enlace profundo abierto: quita el foco para filtrar';
 
 /** One of the filter tiles: a toggle that also says when the page holds fewer rows than the total. */
 function TarjetaFiltro({ etiqueta, valor, tono = 'neutral', detalle, grupo, activo, enPagina, bloqueado, onElegir }: {

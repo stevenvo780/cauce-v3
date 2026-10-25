@@ -39,7 +39,7 @@ it('limita las salas del plano a las que el servidor puede guardar', () => {
   expect(officeRooms(topology, [{ tenant_id: 'One', room_id: 'on' }]).map(room => room.id)).toEqual(['on']);
   expect(officeRooms(topology).map(room => room.id)).toEqual(['on', 'off', 'hub']);
 });
-it('reaplica un borrador sobre la versión nueva parte a parte y señala sólo lo que pisa', () => {
+it('reaplica un borrador sobre la versión nueva parte a parte y señala solo lo que pisa', () => {
   const part = (id: string, label: string, x = 10) => ({ id, label, x, y: 10, width: 40, height: 40 });
   const room = (parts: ReturnType<typeof part>[], x = 0, y = 0) => ({ tenant_id: 'One', room_id: 'general', x, y, width: 300, height: 200, parts });
   const other = { tenant_id: 'Two', room_id: 'general', x: 330, y: 0, width: 300, height: 200, parts: [] };

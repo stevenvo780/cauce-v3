@@ -16,7 +16,7 @@ function workspace(onAgent = vi.fn(), role: 'company_owner' | 'reader' = 'compan
   return <CompanySessionProvider state={{ authenticated: true, authority: { role, scope: role === 'reader' ? 'tenant' : 'company', home_company: 'one', acting_company: 'one', platform_override: false } }}>
     <OfficeWorkspace campus={<p>Campus actual</p>} topology={map} agents={[]} now={Date.now()} onAgent={onAgent} /></CompanySessionProvider>;
 }
-it('edita sólo la sala compuesta elegida, persiste partes y relee al volver a abrir', async () => {
+it('edita solo la sala compuesta elegida, persiste partes y relee al volver a abrir', async () => {
   let version = 0; let rooms: OfficeRoom[] = []; const writes: { expected_version: number; rooms: OfficeRoom[] }[] = [];
   server.use(http.get('*/v3/console/office/layout', () => HttpResponse.json({ company_id: 'one', version, rooms })),
     http.put('*/v3/console/office/layout', async ({ request }) => {
@@ -62,7 +62,7 @@ it('un conflicto conserva el borrador y un lector no puede editar ni guardar', a
 it.each([
   ['company_switch_in_flight', 'Hay un cambio de empresa en curso. Espera su confirmación antes de otra operación.'],
   ['company_scope_unverified', 'No se pudo verificar la empresa de la sesión. Relee la sesión antes de escribir.'],
-  ['session_changed', 'La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.'],
+  ['session_changed', 'La sesión cambió antes de enviar la operación. Reintenta desde la cuenta actual.'],
 ])('un 409 de sesión %s no se presenta como conflicto de versión y deja reintentar el guardado', async (code, message) => {
   server.use(http.put('*/v3/console/office/layout', () => HttpResponse.json({ error: code, message }, { status: 409 })));
   const user = userEvent.setup(); renderWithApi(workspace());
@@ -115,7 +115,7 @@ async function conflictedDraft(user: ReturnType<typeof userEvent.setup>) {
   expect(screen.getByRole('button', { name: 'Guardar plano' })).toBeDisabled();
   return within(choice);
 }
-it('tras un conflicto reaplica sólo lo que cambió el borrador y conserva lo que guardó la otra persona', async () => {
+it('tras un conflicto reaplica solo lo que cambió el borrador y conserva lo que guardó la otra persona', async () => {
   const writes = conflictingServer([{ tenant_id: 'One', room_id: 'general', x: 600, y: 300, width: 300, height: 200, parts: [] }]);
   const user = userEvent.setup(); renderWithApi(workspace());
   const choice = await conflictedDraft(user);

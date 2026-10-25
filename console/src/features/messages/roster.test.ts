@@ -23,7 +23,7 @@ function mensajeParaGaia(): MessagePage {
   return {
     items: [{
       message_id: 'msg-gaia', trace_id: 'trace-gaia-0001', tenant_id: 'Steven', room_id: 'grp.steven',
-      actor_alias: 'kant', body_preview: 'gaia, tomá este encargo', lane: 'batch', created_at: enElFuturo,
+      actor_alias: 'kant', body_preview: 'gaia, toma este encargo', lane: 'batch', created_at: enElFuturo,
       deliveries: [{ delivery_id: 'del-gaia', recipient_tenant: 'Steven', recipient_alias: 'gaia', status: 'pending', attempt: 1 }],
     }],
   };
@@ -62,7 +62,7 @@ describe('el universo del roster de mensajería', () => {
     if (!gaia) throw new Error('Missing gaia');
     expect(gaia.origenes).toEqual(['mensajes']);
     expect(gaia.mensajesVisibles).toBe(1);
-    expect(motivoDeAgenteSuelto(gaia)).toMatch(/sólo porque el servidor publicó mensajes suyos/i);
+    expect(motivoDeAgenteSuelto(gaia)).toMatch(/solo porque el servidor publicó mensajes suyos/i);
   });
 
   it('un agente retirado o purgado no vuelve a la lista por sus mensajes viejos', () => {
@@ -75,7 +75,7 @@ describe('el universo del roster de mensajería', () => {
     expect(roster.find((agente) => agente.alias === 'kant')).toBeDefined();
   });
 
-  it('también trae al EMISOR del mensaje, no sólo al destinatario', () => {
+  it('también trae al EMISOR del mensaje, no solo al destinatario', () => {
     const roster = construirRosterDeMensajeria({
       topology: topologiaConSoloArgos(), messages: mensajeParaGaia(),
     });

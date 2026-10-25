@@ -25,7 +25,7 @@ export function LoginCommandBanner({ action, harnessId, tenantId, alias, sent }:
     <p className="m-0 min-w-0 wrap-anywhere" role="status">
       {sent
         ? <>Se ejecutó <code className="font-mono">{command}</code> en esta shell. {action === 'autenticar'
-          ? 'Completá el enlace o el código aquí.'
+          ? 'Completa el enlace o el código aquí.'
           : 'La salida dice si la cuenta quedó con sesión.'}</>
         : <>Cuando la shell quede lista se ejecuta <code className="font-mono">{command}</code>.</>}
       {action === 'autenticar' && recipe.verify ? <>

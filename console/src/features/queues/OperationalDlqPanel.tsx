@@ -298,7 +298,7 @@ export function OperationalDlqPanel() {
       description="Incidentes causales separados de las entregas. Cerrar acá registra una decisión sin replay; nunca reenvía Telegram ni vuelve a ejecutar un agente."
     >
       <Toolbar className="mb-0">
-        <label className="flex items-center gap-2 font-normal text-fg-2"><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Sólo abiertos</label>
+        <label className="flex items-center gap-2 font-normal text-fg-2"><input type="checkbox" checked={onlyOpen} onChange={(event) => { setOnlyOpen(event.target.checked); }} /> Solo abiertos</label>
         <label className="flex items-center gap-2 font-normal text-fg-2">
           Disposición
           <select className="w-auto" value={selectedDisposition} onChange={(event) => { setSelectedDisposition(event.target.value as 'all' | DlqDisposition); }}>

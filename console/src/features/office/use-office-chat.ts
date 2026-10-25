@@ -59,7 +59,7 @@ export function dialogLines(page: MessagePage | undefined, agent: FleetAgent, me
   return transcriptForSession(page, { agent }).slice(-count).map((item, index) => {
     const author = item.message.author;
     const mine = Boolean(me && author?.kind === 'human' && author.subject_id === me);
-    const who = item.direction === 'output' ? agent.alias : mine ? 'Vos' : author?.display_name ?? item.message.actor_alias ?? 'Alguien';
+    const who = item.direction === 'output' ? agent.alias : mine ? 'Tú' : author?.display_name ?? item.message.actor_alias ?? 'Alguien';
     return { id: item.message.message_id ?? `linea-${String(index)}`, who, mine, text: preview(item.message.body_preview, '(sin texto)') };
   });
 }
@@ -173,17 +173,17 @@ export function useOfficeChat(talkId: string | null, visitors: readonly McpVisit
     if (!talkId) return null;
     const { tenantId, alias } = splitId(talkId);
     const canPublish = permissionState(verified, 'message.publish') === 'allowed';
-    const blocked = !agent ? 'El chat todavía no conoce a este agente; probá desde Mensajes.'
+    const blocked = !agent ? 'El chat todavía no conoce a este agente; prueba desde Mensajes.'
       : !canPublish ? 'Requiere el permiso message.publish.'
         : route && !route.allowed ? route.reason
-          : route && route.sourceRoomIds.length !== 1 && !visitor ? 'Compartís varias salas con este agente: elegí desde cuál escribir en el chat.'
+          : route && route.sourceRoomIds.length !== 1 && !visitor ? 'Compartes varias salas con este agente: elige desde cuál escribir en el chat.'
             : undefined;
     return {
       id: talkId,
       tenantId,
       alias,
       name: visitor?.label ?? alias,
-      ...(visitor ? { hint: `Le dejás una nota en su buzón${route?.sourceRoomIds[0] ? ` desde ${route.sourceRoomIds[0]}` : ''}: ${visitor.label} la lee cuando consulta Cauce, y Cauce no sabe si está conectado ahora.` } : {}),
+      ...(visitor ? { hint: `Le dejas una nota en su buzón${route?.sourceRoomIds[0] ? ` desde ${route.sourceRoomIds[0]}` : ''}: ${visitor.label} la lee cuando consulta Cauce, y Cauce no sabe si está conectado ahora.` } : {}),
       lines: agent ? dialogLines(page, agent, verified?.human_subject ?? verified?.subject) : [],
       blocked,
       chatHref: `/messages/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}`,

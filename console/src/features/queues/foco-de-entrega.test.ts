@@ -21,7 +21,7 @@ describe('leerEntregaPedida', () => {
     ['', 'sin query'],
     ['?agente=Steven%2Fzeus&pestana=entregas', 'la query del cajón de la flota, que no pide entrega'],
     ['?delivery=', 'el parámetro vacío que produce `item.delivery_id ?? \'\'` cuando la entrega no tiene id'],
-    ['?delivery=%20%20', 'sólo espacios'],
+    ['?delivery=%20%20', 'solo espacios'],
   ])('no pide ninguna entrega con %s (%s)', (search) => {
     expect(leerEntregaPedida(search)).toBeUndefined();
   });

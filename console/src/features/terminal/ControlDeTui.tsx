@@ -41,7 +41,7 @@ const NO_SE_ABRIO: DenegacionExplicada = {
   porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el gateway lo rechazó '
     + '—la explicación del gateway se conserva—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
     + 'control: el bus le sigue entregando a este alias.',
-  quienLoLevanta: 'Vos: esperá a que termine la reserva en curso y volvé a pedir la toma.',
+  quienLoLevanta: 'Tú: espera a que termine la reserva en curso y vuelve a pedir la toma.',
   linea: 'La consola no llegó a abrir la sesión con teclado y no se tomó ningún control.',
 };
 
@@ -50,12 +50,12 @@ function sinEnganche(motivo: ResultadoDeEspera): DenegacionExplicada {
     ? 'La sesión con teclado quedó pedida, pero su canal se cortó antes de que el relay redimiera el '
       + 'ticket, así que el gateway todavía no la da por enganchada y rechazaría la toma.'
     : `La sesión con teclado quedó pedida, pero el relay no la enganchó en ${String(Math.round(ESPERA_DE_ENGANCHE_MS / 1000))} s. `
-      + 'El gateway sólo acepta la toma sobre una sesión que el relay ya consumió.';
+      + 'El gateway solo acepta la toma sobre una sesión que el relay ya consumió.';
   return {
-    titulo: 'La sesión con teclado no llegó a engancharse: seguís sin el teclado',
+    titulo: 'La sesión con teclado no llegó a engancharse: sigues sin el teclado',
     porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el bus le sigue entregando a este alias.`,
-    quienLoLevanta: 'Vos: reintentá la toma de esta misma sesión. Si vuelve a fallar, cerrá la terminal y '
-      + 'revisá que el agente PTY del contenedor siga conectado.',
+    quienLoLevanta: 'Tú: reintenta la toma de esta misma sesión. Si vuelve a fallar, cierra la terminal y '
+      + 'revisa que el agente PTY del contenedor siga conectado.',
     linea: 'La sesión con teclado no llegó a engancharse; no se tomó el control y el alias sigue recibiendo.',
   };
 }
@@ -91,7 +91,7 @@ function canRetryTake(error: DenegacionExplicada): boolean {
 
 function vencimiento(arriendo: ControlDeTuiTomado): string {
   return arriendo.expires_at === undefined
-    ? 'El gateway no dijo hasta cuándo vale el arriendo, así que devolvelo vos en cuanto termines'
+    ? 'El gateway no dijo hasta cuándo vale el arriendo, así que devuélvelo tú en cuanto termines'
     : `El arriendo vence a las ${new Date(arriendo.expires_at).toLocaleTimeString()} y devolverlo destraba la cola`;
 }
 
@@ -350,9 +350,9 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
           <p
             className="m-0 inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2 py-1 text-xs font-medium text-ok-ink"
             role="status"
-            title={`Tenés el teclado de esta TUI. ${vencimiento(arriendo)}`}
+            title={`Tienes el teclado de esta TUI. ${vencimiento(arriendo)}`}
           >
-            <KeyRound size={13} aria-hidden="true" />Tenés el teclado de esta TUI.
+            <KeyRound size={13} aria-hidden="true" />Tienes el teclado de esta TUI.
           </p>
           {arriendo.dudoso.length > 0 ? (
             <p className={AVISO} role="status">

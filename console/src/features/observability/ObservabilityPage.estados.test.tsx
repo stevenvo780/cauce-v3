@@ -180,7 +180,7 @@ it('una relectura fallida avisa en señales y relays y conserva la última lectu
   expect(await relayRow('relay-0001')).toBeInTheDocument();
 });
 
-it('el botón de actualizar vuelve a pedir las dos lecturas, no sólo la que se está mirando', async () => {
+it('el botón de actualizar vuelve a pedir las dos lecturas, no solo la que se está mirando', async () => {
   let senales = 0;
   let listados = 0;
   server.use(

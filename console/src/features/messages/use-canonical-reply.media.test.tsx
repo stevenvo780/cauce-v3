@@ -16,7 +16,7 @@ function wrapper({ children }: { children: ReactNode }) {
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-it('consolida una respuesta con sólo archivo y deja de esperar una respuesta de texto', async () => {
+it('consolida una respuesta con solo archivo y deja de esperar una respuesta de texto', async () => {
   vi.useFakeTimers();
   const getMessage = vi.spyOn(testApi, 'getMessage').mockResolvedValue({
     message_id: 'media-root', chain_open: false,
