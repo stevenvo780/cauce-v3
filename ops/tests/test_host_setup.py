@@ -160,7 +160,7 @@ class HostSetupTests(unittest.TestCase):
         self.assertEqual(rejected.returncode, 2)
         self.assertIn(b'backup-only executor policy grants another execution scope', rejected.stderr)
 
-    def test_signed_release_with_a_terminal_launcher_requires_automatic_provisioning(self):
+    def test_a_terminal_launcher_does_not_implicitly_require_unapproved_provisioning(self):
         release = self.home / 'release'
         launcher = release / 'ops/pty-agent/cauce-pty-launcher.sh'
         launcher.parent.mkdir(parents=True)
@@ -168,7 +168,7 @@ class HostSetupTests(unittest.TestCase):
         self.assertNotIn('terminal', host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity))
         launcher.write_text('#!/bin/sh\n')
         policy = host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity)
-        self.assertEqual(policy['terminal'], {'required': True})
+        self.assertNotIn('terminal', policy)
         self.assertNotIn('terminal', package['policy'])
 
     def test_terminal_approval_is_preserved_and_a_release_without_authority_cannot_add_it(self):
@@ -257,13 +257,22 @@ class HostSetupTests(unittest.TestCase):
         self.assertTrue((self.identity / 'setup-signer.json').is_file())
 
     def test_second_run_is_idempotent_and_does_not_redownload_or_restart(self):
+        self.archive = release_tar({'ops/pty-agent/cauce-pty-launcher.sh': b'#!/bin/sh\n'})
+        self.package_overrides = {'policy': {'hooks': {}, 'bundles': {}, 'authority': {'identity_directory': '@identity@'}}}
         host_setup.setup(self.identity, self.install_base(), False)
+        policy_file = self.install_base() / 'company-a/local-a/executor-policy.json'
+        self.assertNotIn('terminal', json.loads(policy_file.read_bytes()))
         downloads, self.commands = len(self.requests), []
         receipt = host_setup.setup(self.identity, self.install_base(), False)
         self.assertEqual(len(self.requests), downloads)
         self.assertFalse(receipt['policy_changed'])
         self.assertNotIn(['systemctl', '--user', 'restart', self.unit_name], self.commands)
         self.assertNotIn(['systemctl', '--user', 'daemon-reload'], self.commands)
+        self.archive = release_tar({'ops/pty-agent/cauce-pty-launcher.sh': b'#!/bin/sh\nexit 0\n'})
+        previous = receipt['release']
+        upgraded = host_setup.setup(self.identity, self.install_base(), False)
+        self.assertNotEqual(upgraded['release'], previous)
+        self.assertNotIn('terminal', json.loads(policy_file.read_bytes()))
 
     def test_bad_signature_digest_and_foreign_host_are_rejected_before_install(self):
         self.tamper_signature = True

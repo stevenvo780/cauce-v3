@@ -427,14 +427,30 @@ class TerminalProvisionTest(unittest.TestCase):
         self.assertFalse(pathlib.Path(entry['work']).exists())
 
     def test_legacy_optional_hosts_and_native_runtimes_are_not_falsely_provisioned(self):
-        self.policy['terminal']['required'] = False
-        self.assertEqual(self.ensure(), {})
-        self.issue_mock.assert_not_called()
-        self.policy['terminal']['required'] = True
+        for configuration in (None, {'required': False}):
+            with self.subTest(configuration=configuration):
+                self.policy.pop('terminal', None)
+                if configuration is not None:
+                    self.policy['terminal'] = configuration
+                self.assertEqual(self.ensure(), {})
+                self.assertEqual(self.journal, {})
+                self.save.assert_not_called()
+                self.issue_mock.assert_not_called()
+                self.systemctl.assert_not_called()
+                self.mocks[8].assert_not_called()
+        self.policy['terminal'] = {'required': True}
         self.agent['runtime_mode'] = 'native'
         with self.assertRaisesRegex(SafeFailure, '^terminal provisioning failed$'):
             self.ensure()
         self.issue_mock.assert_not_called()
+
+    def test_required_terminal_does_not_fall_back_when_its_issuer_is_unavailable(self):
+        self.issue_mock.side_effect = SafeFailure('terminal authority is unavailable')
+        with self.assertRaisesRegex(SafeFailure, '^terminal provisioning failed$'):
+            self.ensure()
+        self.issue_mock.assert_called_once()
+        self.systemctl.assert_not_called()
+        self.assertNotEqual(self.journal['terminal_provision']['physical-one']['stage'], 'verified')
 
     def test_purge_does_not_select_the_same_legacy_alias_of_another_company(self):
         config = directory(self.home, '.config/cauce-v3/pty')
