@@ -3,7 +3,7 @@ import { discoverNativeAdmin } from './discovery.js';
 import { NativeAdminError } from './error.js';
 import { randomUUID } from 'node:crypto';
 import {
-  AliasSchema, TenantSchema, NativeAdminOutcomeSchema, NativeOperationIdSchema, NATIVE_ADMIN_FEATURE,
+  AliasSchema, TenantSchema, NativeAdminOutcomeSchema, NativeOperationIdSchema, NATIVE_ADMIN_FEATURE, nativeAdminKinds,
   type NativeAdminCommand, type NativePieceKind, type NativePieceMutation, type NativeRuntimeIdentity,
 } from '@cauce/protocol';
 import {
@@ -24,9 +24,6 @@ export interface NativeAdminServiceDeps {
   readRuntimeExpectation: NonNullable<AgentProfileDeps['readWriteExpectation']>;
 }
 export { NativeAdminError } from './error.js';
-export function nativeKinds(harness: string): NativePieceKind[] {
-  return harness === 'claude' ? ['skill', 'subagent', 'mcp'] : harness === 'codex' ? ['skill', 'mcp'] : [];
-}
 export function createNativeAdminService(deps: NativeAdminServiceDeps) {
   async function authority(client: DatabaseClient, actor: NativeAdminActor, tenantId: string, alias: string, write: boolean) {
     const verified = await actor.humanAuthority(client);
@@ -43,7 +40,7 @@ export function createNativeAdminService(deps: NativeAdminServiceDeps) {
     if (measured?.source !== 'measured' || !facts?.generation || !facts.containerId || !facts.writerInstanceId
       || !facts.features?.includes(NATIVE_ADMIN_FEATURE) || !deps.probe.nativeAdmin) throw new NativeAdminError('unsupported');
     const root = facts.harness === 'claude' ? facts.claudeConfigDir : facts.harness === 'codex' ? facts.codexHome : undefined;
-    if (!root?.startsWith(`${facts.home}/`) || root.includes('/../') || !nativeKinds(facts.harness).length) throw new NativeAdminError('unsupported');
+    if (!root?.startsWith(`${facts.home}/`) || root.includes('/../') || !nativeAdminKinds(facts.harness).length) throw new NativeAdminError('unsupported');
     const identity: NativeRuntimeIdentity = { generation: facts.generation, container_id: facts.containerId, writer_instance_id: facts.writerInstanceId };
     return { facts, identity, root };
   }
@@ -65,7 +62,7 @@ export function createNativeAdminService(deps: NativeAdminServiceDeps) {
     try { await withTransaction(deps.pool, client => authority(client, actor, tenantId, alias, true)); canWrite = true; }
     catch (error) { if (!(error instanceof NativeAdminError && error.code === 'forbidden') && !(error instanceof StoreError && error.code === 'forbidden')) throw error; }
     return { tenant_id: tenantId, alias, identity: current.identity, harness: current.facts.harness,
-      kinds: nativeKinds(current.facts.harness), can_write: canWrite, outcome };
+      kinds: nativeAdminKinds(current.facts.harness), can_write: canWrite, outcome };
   }
   async function write(actor: NativeAdminActor, tenantId: string, alias: string, mutation: NativePieceMutation, reason: string,
     expectedIdentity: NativeRuntimeIdentity, requestedOperationId?: string) {

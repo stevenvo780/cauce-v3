@@ -352,7 +352,9 @@ export function PerfilTab({
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5 [&_input]:scroll-mb-56 [&_textarea]:scroll-mb-56">
       <ProfileStatus profile={perfil.data} />
       <NativeAdminPanel tenantId={tenantId} alias={alias} permission={configWritePermission}
-        blocked={busy || blockedByManualDraft} {...(onNativeReload ? { onReload: onNativeReload } : {})} />
+        blocked={busy || blockedByManualDraft}
+        {...(typeof perfil.data?.harness === 'string' && perfil.data.harness ? { harness: perfil.data.harness } : {})}
+        {...(onNativeReload ? { onReload: onNativeReload } : {})} />
 
       {estados.length > 0 || sinDestino !== undefined ? (
         <div className="grid gap-2">

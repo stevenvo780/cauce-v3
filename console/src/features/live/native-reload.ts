@@ -5,7 +5,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { fleetRequestHash, type FleetOperationsClient } from '../../api/client/fleet-operations-client';
 import type { NativeAdminClient } from './native-admin/client';
-import { NativeRuntimeIdentitySchema } from '@cauce/protocol/native-admin';
+import { NativeRuntimeIdentitySchema, nativeAdminKinds } from '@cauce/protocol/native-admin';
 
 export interface NativeReloadTarget { resource: 'agent'; tenant_id: string; alias: string }
 type ReloadClient = FleetOperationsClient & Pick<NativeAdminClient, 'readNativePieces'>;
@@ -109,7 +109,7 @@ async function execute(api: ReloadClient, request: FleetOperationRequest, signal
 export async function measureNativeReload(api: ReloadClient, snapshot: ConfigurationSnapshot, target: NativeReloadTarget) {
   const capability = await api.getFleetCapability();
   const binding = nativeReloadBinding(snapshot, capability, target, true);
-  if (!binding) throw unavailable();
+  if (!binding || !nativeAdminKinds(binding.harness_id).includes('skill')) throw unavailable();
   const read = await api.readNativePieces(target.tenant_id, target.alias, 'skill');
   if (read.tenant_id !== target.tenant_id || read.alias !== target.alias || !read.can_write || read.harness !== binding.harness_id
     || !NativeRuntimeIdentitySchema.safeParse(read.identity).success

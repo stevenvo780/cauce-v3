@@ -5,6 +5,9 @@ export const AGENT_RECOVERY_FEATURE = 'agent_recovery_v1';
 export const NATIVE_ADMIN_MAX_BYTES = 16_384;
 export const NativePieceKindSchema = z.enum(['skill', 'prompt', 'subagent', 'mcp']);
 export type NativePieceKind = z.infer<typeof NativePieceKindSchema>;
+export function nativeAdminKinds(harness: string): NativePieceKind[] {
+  return harness === 'claude' ? ['skill', 'subagent', 'mcp'] : harness === 'codex' ? ['skill', 'mcp'] : [];
+}
 export const NativePieceIdSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
 export const NativeOperationIdSchema = z.uuidv4().refine(value => value === value.toLowerCase());
 const sha = z.string().regex(/^[a-f0-9]{64}$/u);

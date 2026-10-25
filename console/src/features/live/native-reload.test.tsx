@@ -88,6 +88,16 @@ describe('native restart authority and physical identity', () => {
       const { api } = fixture(); api.readNativePieces.mockResolvedValue(value);
       await expect(measureNativeReload(api, snapshot(), target)).rejects.toThrow(/identidad física/);
     });
+  it('does not read native pieces when the harness publishes none', async () => {
+    const { api } = fixture();
+    const openclaw: FleetCapability = { ...capability, placements: [{ ...capability.placements[0], runtimes: [{
+      mode: 'container', harness_id: 'openclaw', provider: 'openclaw', runtime_user: 'runner',
+      home_directory: '/home/runner', state_root: '/state', container_prefix: 'test-',
+    }] }] };
+    api.getFleetCapability.mockResolvedValue(openclaw);
+    await expect(measureNativeReload(api, { ...snapshot(), agents: [{ ...row, harness_id: 'openclaw' }] }, target)).rejects.toThrow(/identidad física/);
+    expect(api.readNativePieces).not.toHaveBeenCalled();
+  });
 });
 
 describe('durable stop then fresh CAS start', () => {

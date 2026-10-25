@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { NativePieceMutationSchema, type NativePieceKind } from '@cauce/protocol/native-admin';
+import { NativePieceMutationSchema, nativeAdminKinds, type NativePieceKind } from '@cauce/protocol/native-admin';
 import { useApi } from '../../../api/context';
 import type { PermissionState } from '../../../lib';
 import { ApiError } from '../../../api/client/core';
@@ -7,11 +7,18 @@ import type { NativeRead, NativeSaved } from './client';
 import { clearNativeDrafts, readNativeDraft, storeNativeDraft, type NativeDraft } from './drafts';
 import '../../config/admin-ui.css';
 
-interface Props { tenantId: string; alias: string; permission: PermissionState; blocked?: boolean; onReload?: () => Promise<void> }
+interface Props { tenantId: string; alias: string; permission: PermissionState; blocked?: boolean; onReload?: () => Promise<void>; harness?: string }
 const labels: Record<NativePieceKind, string> = { skill: 'Skills', mcp: 'Servidores MCP', subagent: 'Subagentes', prompt: 'Prompts' };
 const blank = (kind: NativePieceKind): NativeDraft => ({ kind, id: '', content: '', url: '', env: '', reason: '' });
 export function NativeAdminPanel(props: Props) {
   const [open, setOpen] = useState(false);
+  const admitted = props.harness === undefined ? undefined : nativeAdminKinds(props.harness);
+  if (admitted?.length === 0) {
+    return <details className="native-context-repository" open>
+      <summary>Piezas nativas · MCP, skills y subagentes</summary>
+      <p role="status">Este arnés no publica edición nativa de skills, MCP ni subagentes.</p>
+    </details>;
+  }
   return <details className="native-context-repository" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
     <summary>Piezas nativas · MCP, skills y subagentes</summary>
     {open ? <NativeEditor key={`${props.tenantId}/${props.alias}`} {...props} /> : null}

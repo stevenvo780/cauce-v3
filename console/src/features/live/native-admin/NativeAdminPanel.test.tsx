@@ -25,6 +25,11 @@ function routes(canWrite = true) {
   server.use(http.get(path, () => HttpResponse.json(read({ type: 'inventory', kind: 'skill', items: [{ id: 'native-proof', editable: true }], truncated: false }, canWrite))),
     http.get(path + '/native-proof', () => HttpResponse.json(read({ type: 'piece', piece: { kind: 'skill', id: 'native-proof', sha: 'a'.repeat(64), editable: true, value: { content } } }, canWrite))));
 }
+it('muestra estado neutro y no ofrece lectura cuando el arnés no publica edición nativa', () => {
+  renderWithApi(<NativeAdminPanel tenantId="Steven" alias="zeus" permission="allowed" harness="openclaw" />);
+  expect(screen.getByRole('status')).toHaveTextContent('Este arnés no publica edición nativa de skills, MCP ni subagentes.');
+  expect(screen.queryByRole('button', { name: 'Leer inventario nativo' })).toBeNull();
+});
 it('mantiene edición bloqueada cuando la autoridad medida de la API no permite escribir', async () => {
   routes(false); const { user } = await open(); await user.click(await screen.findByRole('button', { name: 'native-proof' }));
   expect(await screen.findByLabelText('Contenido Markdown')).toBeDisabled(); expect(screen.getByRole('button', { name: 'Guardar pieza nativa' })).toBeDisabled();
