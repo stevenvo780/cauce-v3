@@ -12,6 +12,7 @@ import { buildGateway } from '../app.js';
 import { PostgresConsoleUserStore } from '../console-users.js';
 import { PasswordAuthProvider } from '../password-auth.js';
 import { MtlsAuthProvider } from '../auth.js';
+import { AgentProviderAuthBroker } from './agent-provider-auth-broker.js';
 import { FleetMtlsIdentityProvider, FleetTokenProbeAuthProvider } from './mtls-identities.js';
 import { startSignedFleetAuthorityBridge } from './authority/signed-bridge.js';
 import { SignedFleetAuthorityClient } from './authority/signed-client.js';
@@ -149,6 +150,8 @@ export interface DockerInventory { containers: string; volumes: string; images: 
 export interface ComputerRuntimeBundle {
   readonly providerCli: string;
   readonly sharedTui: boolean;
+  /** Extra files baked into the agent image (path inside the image, UTF-8 content), executable. */
+  readonly agentImageFiles?: Readonly<Record<string, string>>;
   stage(directory: string): Promise<readonly string[]>;
 }
 /** The runtime the computer's single container template approves; the executor derives each agent from it. */
@@ -184,6 +187,8 @@ export interface ComputerHarness {
   readonly agentImage: string;
   readonly configImage: string;
   readonly app: Awaited<ReturnType<typeof buildGateway>>; readonly gatewayUrl: string; readonly packager: HostSetupPackager;
+  /** Broker the executor talks to; a second gateway on the same database must reuse it (its queues live in memory). */
+  readonly agentProviderAuthBroker: AgentProviderAuthBroker;
   /** Name of the computer container; agent containers are `${prefix}-${runtime_key}`. */
   readonly container: string;
   readonly onComputer: (args: string[], input?: string) => Promise<CommandResult>;
@@ -410,7 +415,9 @@ export async function startComputerHarness(options: {
       loginCli = await buildComputerImage(work, owned.image, options.providerLogin === true, options.runtimeBundle?.sharedTui === true);
       // Its own layer makes `docker load` import data, not only a configuration over layers the computer already has.
       const agent = await command('docker', ['build', '-q', '-t', `${prefix}:agent`, '-'],
-        `FROM ${owned.image}\nRUN printf '%s\\n' '${prefix}' > /etc/cauce-agent-image\n`);
+        `FROM ${owned.image}\nRUN printf '%s\\n' '${prefix}' > /etc/cauce-agent-image\n`
+        + Object.entries(options.runtimeBundle?.agentImageFiles ?? {}).map(([path, content]) =>
+          `RUN printf '%s' '${Buffer.from(content).toString('base64')}' | base64 -d > ${path} && chmod 0755 ${path}\n`).join(''));
       if (agent.code !== 0) throw new Error(`agent image build failed: ${agent.stderr}`);
       owned.agentImage = agent.stdout.trim();
       return { computer: owned.image, agent: `${prefix}:agent` };
@@ -459,7 +466,8 @@ export async function startComputerHarness(options: {
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
         ...(options.terminal === undefined ? {} : { terminal: { required: true } }),
       } }), generateKeyPairSync('ed25519').privateKey);
-    const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false,
+    const agentProviderAuthBroker = new AgentProviderAuthBroker(pool);
+    const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false, agentProviderAuthBroker,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 61) }),
       hostSetup: packager, signedFleetAuthorityClient: authority.client, fleetOperationsRepository: new FleetOperationsRepository(pool) });
     owned.app = app;
@@ -493,7 +501,7 @@ export async function startComputerHarness(options: {
     if (!owned.agentImage) throw new Error('agent image absent');
     return { prefix, installRoot: join(work, 'install'), agentImage: owned.agentImage, configImage: release.manifest.image.id,
       pool, databaseUrl: owned.current.url, app,
-      gatewayUrl, packager, container,
+      gatewayUrl, packager, container, agentProviderAuthBroker,
       onComputer, cli: (args, input) => onComputer(['python3', '/opt/cauce-cli/host_enrollment.py', ...args], input),
       close: () => closeOwned(owned, prefix) };
   } catch (error) {
