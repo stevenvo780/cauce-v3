@@ -45,6 +45,12 @@ describe('full intent proof before configuration transport', () => {
     expect(described.message).toContain('operator must be hub');
     const generic = describeConfigError(new ApiError('Forbidden', 403, 'forbidden'), 'fallback');
     expect(generic.message).not.toContain('Forbidden');
+    const outside = describeConfigError(new ApiError('configuration resource is outside the actor company', 403, 'forbidden'), 'fallback');
+    expect(outside).toMatchObject({ conflict: false });
+    expect(outside.message).toContain('pertenece a otra empresa');
+    expect(outside.message).toContain('selecciona un recurso de tu empresa');
+    expect(outside.message).toContain('No se aplicó ningún cambio');
+    expect(outside.message).not.toContain('configuration resource');
   });
   it('maps an expired session to re-entering instead of echoing the server sentence', () => {
     const described = describeConfigError(new ApiError('Unauthorized', 401, 'unauthorized'), 'fallback');

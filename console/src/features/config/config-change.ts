@@ -130,6 +130,9 @@ export function describeConfigError(
     ) };
   }
   if (error instanceof ApiError && error.status === 403) {
+    if (error.message.trim().toLowerCase() === 'configuration resource is outside the actor company') {
+      return { conflict: false, message: 'El recurso seleccionado pertenece a otra empresa. Relee el inventario y selecciona un recurso de tu empresa antes de volver a enviar el cambio. No se aplicó ningún cambio.' };
+    }
     return { conflict: false, message: spanishWithReason(
       'Tu sesión no cumple las condiciones para este cambio. Revisa el permiso de control con un operador y vuelve a consultar antes de enviarlo.',
       error.message,
