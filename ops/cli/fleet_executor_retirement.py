@@ -215,7 +215,8 @@ def purge_runtime(policy: dict, agent: dict, *, decommissioned: dict | None = No
         verify_native_stopped(policy, agent, decommissioned, absent=True)
     else:
         stop(policy, agent)
-    removed: list[dict] = []
+    from fleet_executor_terminal import purge_terminal
+    removed: list[dict] = purge_terminal(policy, agent, journal, save)['removed']
     if agent['runtime_mode'] == 'container':
         from fleet_executor_container import purge_container
         removed.extend(purge_container(policy, agent)['removed'])

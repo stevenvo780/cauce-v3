@@ -259,20 +259,28 @@ def call(configuration: dict, scope: dict, action: str, **fields) -> dict:
 
 def inventory(result: dict, agent: dict | None = None, *, absent: bool = False) -> dict:
     if not isinstance(result, dict) or set(result) != {'authorities'} or not isinstance(result['authorities'], list) \
-            or len(result['authorities']) != 4:
+            or len(result['authorities']) not in (4, 5):
         raise SafeFailure('central authority inventory is not complete')
     ids = set()
     for row in result['authorities']:
         if not isinstance(row, dict) or set(row) not in ({'id', 'sha256', 'matching_records'}, {'id', 'sha256', 'matching_records', 'preserved'}) \
-                or row['id'] not in AUTHORITIES \
+                or row['id'] not in (*AUTHORITIES, 'pty') \
                 or row['id'] in ids or not isinstance(row['sha256'], str) or HEX.fullmatch(row['sha256']) is None \
                 or not isinstance(row['matching_records'], list) or len(row['matching_records']) > 64:
             raise SafeFailure('central authority inventory pins differ')
-        if 'preserved' in row and (row['preserved'] is not True or not row['id'].startswith('base_')):
+        if 'preserved' in row and (row['preserved'] is not True or not (row['id'].startswith('base_') or row['id'] == 'pty')):
             raise SafeFailure('central authority preservation scope differs')
         ids.add(row['id'])
         field = 'certificate_sha256' if row['id'].endswith('mtls') else 'token_sha256'
         for record in row['matching_records']:
+            if row['id'] == 'pty':
+                if not isinstance(record, dict) or set(record) != {'tenant_id', 'alias', 'fingerprint_sha256', 'expires_at'} \
+                        or not isinstance(record['fingerprint_sha256'], str) \
+                        or re.fullmatch(r'[A-Fa-f0-9]{64}', record['fingerprint_sha256']) is None \
+                        or not isinstance(record['expires_at'], str) \
+                        or agent is not None and any(record.get(name) != agent[name] for name in ('tenant_id', 'alias')):
+                    raise SafeFailure('terminal authority inventory contains a foreign or invalid identity')
+                continue
             if not isinstance(record, dict) or set(record) != {field, 'principal', 'expires_at'} \
                     or not isinstance(record[field], str) or HEX.fullmatch(record[field]) is None \
                     or not isinstance(record['expires_at'], str) or not isinstance(record['principal'], dict) \
@@ -287,6 +295,8 @@ def inventory(result: dict, agent: dict | None = None, *, absent: bool = False) 
                 raise SafeFailure('central authority inventory expiry is invalid') from None
         if absent and row['matching_records'] and not row.get('preserved'):
             raise SafeFailure('Cauce credentials reappeared in the central authority')
+    if not set(AUTHORITIES) <= ids:
+        raise SafeFailure('central authority inventory is not complete')
     return result
 
 
@@ -295,7 +305,7 @@ def revocation_scope(policy: dict, context: dict, agent: dict) -> tuple[dict, di
         return policy, agent
     configuration = validate_authority(policy['authority'], policy['host_id'])
     observed = inventory(call(configuration, scope_for(policy, context, agent), 'inventory'), agent)
-    preserved = {row['id'] for row in observed['authorities'] if row.get('preserved')}
+    preserved = {row['id'] for row in observed['authorities'] if row.get('preserved') and row['id'] != 'pty'}
     if not preserved:
         return policy, agent
     if preserved != {'base_mtls', 'base_token'}:
@@ -508,11 +518,16 @@ def revoke(policy: dict, context: dict, agent: dict, journal: dict, save) -> dic
     scope = scope_for(policy, context, agent)
     configuration = policy['authority']
     observed = inventory(call(configuration, scope, 'inventory'), agent)
+    if context.get('request', {}).get('kind') == 'purge' \
+            and not any(row['id'] == 'pty' and not row.get('preserved') for row in observed['authorities']):
+        raise SafeFailure('agent purge requires the configured terminal relay authority')
     entries = journal.setdefault('central_revocations', {})
     previous = entries.get(agent['runtime_key'])
     if previous is None:
         previous = {'scope': stable_scope(scope), 'expected_inventory': [
-            {'id': row['id'], 'sha256': row['sha256']} for row in observed['authorities']]}
+            {'id': row['id'], 'sha256': row['sha256']} for row in observed['authorities']],
+            'terminal_fingerprints': [record['fingerprint_sha256'].lower()
+                for row in observed['authorities'] if row['id'] == 'pty' for record in row['matching_records']]}
         entries[agent['runtime_key']] = previous
         save()
     if previous['scope'] != stable_scope(scope):

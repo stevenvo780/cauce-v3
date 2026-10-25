@@ -14,15 +14,19 @@ export const AuthorityScopeSchema = z.object({
   worker_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u), claim_token: z.uuidv4(),
   prepared_revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 }).strict();
-export const AuthorityIdSchema = z.enum(['base_mtls', 'base_token', 'fleet_mtls', 'fleet_token']);
+export const AuthorityIdSchema = z.enum(['base_mtls', 'base_token', 'fleet_mtls', 'fleet_token', 'pty']);
+function completeAuthorities(rows: { id: string }[]): boolean {
+  const ids = new Set(rows.map(row => row.id));
+  return ids.size === rows.length && ['base_mtls', 'base_token', 'fleet_mtls', 'fleet_token'].every(id => ids.has(id));
+}
 export const AuthorityInventoryPinsSchema = z.array(z.object({ id: AuthorityIdSchema, sha256: AuthorityDigestSchema }).strict())
-  .length(4).refine(rows => new Set(rows.map(row => row.id)).size === 4);
+  .min(4).max(5).refine(completeAuthorities);
 export const AuthorityInventorySchema = z.object({ authorities: z.array(z.object({
   id: AuthorityIdSchema, sha256: AuthorityDigestSchema,
   matching_records: z.array(z.record(z.string(), z.unknown())).max(64),
   preserved: z.literal(true).optional(),
-}).strict().refine(row => row.preserved === undefined || row.id.startsWith('base_'))).length(4)
-  .refine(rows => new Set(rows.map(row => row.id)).size === 4) }).strict();
+}).strict().refine(row => row.preserved === undefined || row.id.startsWith('base_') || row.id === 'pty')).min(4).max(5)
+  .refine(completeAuthorities) }).strict();
 export const AuthorityIssueSchema = z.object({
   phase: z.enum(['bootstrap', 'normal']), csr_pem: z.string().min(1).max(16_384), csr_sha256: AuthorityDigestSchema,
   idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),

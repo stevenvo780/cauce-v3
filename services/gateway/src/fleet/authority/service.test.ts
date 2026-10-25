@@ -14,7 +14,7 @@ import { FleetAuthorityClient } from './client.js';
 import { createFleetAuthorityService } from './service.js';
 import { startFleetAuthoritySocket } from './socket.js';
 import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
-import type { AuthorityScope } from './schemas.js';
+import { AuthorityInventorySchema, type AuthorityScope } from './schemas.js';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -94,6 +94,66 @@ afterEach(async () => {
 });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 describe('central fleet authority through a private host socket and PostgreSQL', () => {
+  it('keeps the terminal registry during non-purge operations and rejects caller preservation flags', async () => {
+    const policy = join(directory, 'policy.json');
+    const document = JSON.parse(await readFile(policy, 'utf8')) as { registries: Record<string, string> };
+    const terminal = join(directory, 'pty_agent_identities.json');
+    const record = { tenant_id: 'Steven', alias: 'authority_agent', fingerprint_sha256: 'A'.repeat(64), expires_at: '2099-01-01T00:00:00Z' };
+    await writeFile(terminal, JSON.stringify({ version: 1, agents: [record] }), { mode: 0o600 });
+    document.registries.pty = terminal;
+    await writeFile(policy, JSON.stringify(document), { mode: 0o600 });
+    command.policy_sha256 = hash(await readFile(policy));
+    const observed = await client.inventory(scope);
+    expect(observed.authorities.find(row => row.id === 'pty')).toMatchObject({ preserved: true, matching_records: [record] });
+    const service = createFleetAuthorityService(pool, { host_id: 'host-a', command });
+    await expect(service.execute({ action: 'inventory', scope, preserve_terminal: false })).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(JSON.parse(await readFile(terminal, 'utf8'))).toEqual({ version: 1, agents: [record] });
+  });
+  it('revokes only the purged terminal identity and revalidates it during the purge step', async () => {
+    const initial = await repo.get('Steven', 'authority_operator', scope.operation_id, `console:${humanId}`);
+    await repo.cancel('Steven', 'authority_operator', initial.id, initial.version, `console:${humanId}`);
+    expect((await client.verifyAbsent(scope)).authorities.every(row => row.matching_records.length === 0)).toBe(true);
+    await repo.compensate(claim, { revocation_verified: true });
+    await pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id)
+      SELECT 'host-purge','Terminal purge',company_id FROM tenants WHERE id='Steven'`);
+    await pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,lifecycle_state,retired_at,runtime_key,
+      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user)
+      VALUES('Steven','terminal_purge','codex',false,'retired',now(),'terminal-purge',
+        'host-purge','native','host:host-purge','dev','/home/dev','/var/tmp/authority-runtime/terminal-purge','stev')`);
+    const purge = new FleetOperationsRepository(pool, { controllerHost: 'host-purge' });
+    const company = (await pool.query<{ company_id: string }>("SELECT company_id FROM tenants WHERE id='Steven'")).rows[0]?.company_id;
+    if (!company) throw new Error('Terminal purge company absent');
+    const revision = await withTransaction(pool, value => companyRevision(value, company));
+    await purge.enqueue('Steven', 'authority_operator', { kind: 'purge',
+      target: { resource: 'agent', tenant_id: 'Steven', alias: 'terminal_purge' }, expected_revision: revision,
+      idempotency_key: 'terminal-purge', parameters: { confirm_alias: 'terminal_purge' } }, `console:${humanId}`);
+    const acquired = await purge.claim('terminal-worker', 'host-purge');
+    if (!acquired) throw new Error('Terminal purge claim absent');
+    const prepared = await purge.prepare(acquired); const slice = (await purge.hostSlices(acquired))[0];
+    if (!slice || prepared.operation.desired_revision === null) throw new Error('Terminal purge slice absent');
+    const purgeScope: AuthorityScope = { operation_id: acquired.operation.id, host_id: 'host-purge',
+      scope_sha256: slice.target_sha256, runtime_key: 'terminal-purge', prepared_revision: prepared.operation.desired_revision,
+      worker_id: acquired.worker_id, claim_token: acquired.claim_token, claim_epoch: acquired.epoch };
+    const policy = join(directory, 'policy.json');
+    const document = JSON.parse(await readFile(policy, 'utf8')) as { registries: Record<string, string> };
+    const terminal = join(directory, 'pty_agent_identities.json');
+    const own = { tenant_id: 'Steven', alias: 'terminal_purge', fingerprint_sha256: 'A'.repeat(64), expires_at: '2099-01-01T00:00:00Z' };
+    const foreign = { ...own, tenant_id: 'Other', fingerprint_sha256: 'B'.repeat(64) };
+    await writeFile(terminal, JSON.stringify({ version: 1, agents: [own, foreign] }), { mode: 0o600 });
+    document.registries.pty = terminal; await writeFile(policy, JSON.stringify(document), { mode: 0o600 });
+    command.policy_sha256 = hash(await readFile(policy));
+    const service = createFleetAuthorityService(pool, { host_id: 'host-purge', command });
+    const observed = AuthorityInventorySchema.parse(await service.execute({ action: 'inventory', scope: purgeScope }));
+    const pins = observed.authorities.map(({ id, sha256 }) => ({ id, sha256 }));
+    await expect(service.execute({ action: 'revoke', scope: purgeScope, expected_inventory: pins })).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await purge.startStep(acquired, 'stop'); await purge.completeStep(acquired, 'stop', { stopped_verified: true });
+    await purge.startStep(acquired, 'revoke');
+    const revoked = await service.execute({ action: 'revoke', scope: purgeScope, expected_inventory: pins });
+    await purge.completeStep(acquired, 'revoke', { revocation_verified: true });
+    await purge.startStep(acquired, 'purge');
+    expect(await service.execute({ action: 'revoke', scope: purgeScope, expected_inventory: pins })).toEqual(revoked);
+    expect(JSON.parse(await readFile(terminal, 'utf8'))).toEqual({ version: 1, agents: [foreign] });
+  });
   it('reports legacy authority readiness only while the private issuer remains usable', async () => {
     expect(await readiness()).toEqual({ status: 200, body: { ready: true, host_id: 'host-a' } });
     await chmod(join(directory, 'ca.key'), 0o644);

@@ -127,27 +127,30 @@ def openssl(*arguments, input_data=None):
 
 
 def target(agent, record):
-    principal = record.get('principal')
+    principal = record if 'fingerprint_sha256' in record else record.get('principal')
     return isinstance(principal, dict) and all(principal.get(field) == agent[field] for field in ('tenant_id', 'alias'))
 
 
 def policy_paths(policy):
     if not {'version', 'state_root', 'registries', 'signer'} <= set(policy) <= {'version', 'state_root', 'registries', 'signer', 'base_registry_owner_uid'} \
             or policy['version'] != 1 \
-            or set(policy['registries']) != set(AUTHORITIES) \
+            or set(policy['registries']) not in (set(AUTHORITIES), {*AUTHORITIES, 'pty'}) \
             or set(policy['signer']) != {'certificate', 'key', 'certificate_sha256', 'key_sha256'}:
         raise AuthorityError('authority policy is invalid')
     registries = {name: path(location) for name, location in policy['registries'].items()}
-    if len(set(registries.values())) != 4:
+    if len(set(registries.values())) != len(registries):
         raise AuthorityError('authority paths overlap')
     for name, location in registries.items():
-        if location.name != ('mtls_identities.json' if name.endswith('mtls') else 'token_hashes.json'):
+        expected = 'pty_agent_identities.json' if name == 'pty' else \
+            'mtls_identities.json' if name.endswith('mtls') else 'token_hashes.json'
+        if location.name != expected:
             raise AuthorityError('authority filename is invalid')
     owner = policy.get('base_registry_owner_uid', os.geteuid())
     if type(owner) is not int or not 0 <= owner < 2 ** 32:
         raise AuthorityError('authority policy is invalid')
     base = frozenset({os.geteuid(), owner})
-    owners = {location: base if name.startswith('base_') else frozenset({os.geteuid()}) for name, location in registries.items()}
+    owners = {location: base if name.startswith('base_') or name == 'pty' else frozenset({os.geteuid()})
+              for name, location in registries.items()}
     return path(policy['state_root']), registries, owners
 
 
@@ -169,6 +172,10 @@ def validate_packet(packet):
         if packet['preserve_legacy'] is not True:
             raise AuthorityError('invalid legacy preservation authority')
         required.add('preserve_legacy')
+    if 'preserve_terminal' in packet:
+        if packet['preserve_terminal'] is not True:
+            raise AuthorityError('invalid terminal preservation authority')
+        required.add('preserve_terminal')
     fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
               'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'}}
     if packet['action'] not in fields or set(packet) != required | fields[packet['action']]:
@@ -178,22 +185,34 @@ def validate_packet(packet):
 def registry(location, owners):
     raw, original = read(location, owners=owners)
     document = json.loads(raw)
-    if not isinstance(document, dict) or set(document) != {'version', 'identities'} or document['version'] != 1 \
-            or not isinstance(document['identities'], list) or len(document['identities']) > 20000 \
-            or not all(isinstance(row, dict) for row in document['identities']):
+    field = 'agents' if location.name == 'pty_agent_identities.json' else 'identities'
+    if not isinstance(document, dict) or set(document) != {'version', field} or document['version'] != 1 \
+            or not isinstance(document[field], list) or len(document[field]) > 20000 \
+            or not all(isinstance(row, dict) for row in document[field]):
         raise AuthorityError('authority registry is invalid')
+    if field == 'agents':
+        fingerprints = set()
+        for row in document[field]:
+            fingerprint = row.get('fingerprint_sha256')
+            if set(row) != {'tenant_id', 'alias', 'fingerprint_sha256', 'expires_at'} \
+                    or not isinstance(fingerprint, str) or re.fullmatch(r'[A-Fa-f0-9]{64}', fingerprint) is None \
+                    or not all(isinstance(row.get(key), str) and row[key] for key in ('tenant_id', 'alias', 'expires_at')) \
+                    or fingerprint.lower() in fingerprints:
+                raise AuthorityError('terminal authority identity is ambiguous')
+            fingerprints.add(fingerprint.lower())
     return raw, document, original
 
 
-def inventory(registries, owners, agent, preserve_legacy=False):
+def inventory(registries, owners, agent, preserve_legacy=False, preserve_terminal=False):
     rows = []
-    for name in AUTHORITIES:
+    for name in (*AUTHORITIES, *(['pty'] if 'pty' in registries else [])):
         raw, document, original = registry(registries[name], owners[registries[name]])
-        matching = [row for row in document['identities'] if target(agent, row)]
+        matching = [row for row in document['agents' if name == 'pty' else 'identities'] if target(agent, row)]
         if len(matching) > 64:
             raise AuthorityError('authority target inventory exceeds limit')
         rows.append((name, document, original, {'id': name, 'sha256': digest(raw), 'matching_records': matching,
-            **({'preserved': True} if preserve_legacy and name.startswith('base_') else {})}))
+            **({'preserved': True} if preserve_legacy and name.startswith('base_')
+               or preserve_terminal and name == 'pty' else {})}))
     return rows
 
 
@@ -412,14 +431,16 @@ def perform(policy, packet):
         for location in sorted(registries.values()):
             registry_parent = directory(location.parent, owners=owners[location])
             stack.callback(os.close, registry_parent)
-            descriptor = os.open('.' + location.name + '.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=registry_parent)
+            lock_name = ('' if location.name == 'pty_agent_identities.json' else '.') + location.name + '.lock'
+            descriptor = os.open(lock_name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=registry_parent)
             stack.callback(os.close, descriptor)
             details = os.fstat(descriptor)
             if details.st_uid != os.geteuid() or not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_mode & 0o077:
                 raise AuthorityError('authority registry lock is unsafe')
             fcntl.flock(descriptor, fcntl.LOCK_EX)
         binding = {'scope': packet['scope'], 'agent': packet['agent'],
-                   **({'preserve_legacy': True} if packet.get('preserve_legacy') else {})}
+                   **({'preserve_legacy': True} if packet.get('preserve_legacy') else {}),
+                   **({'preserve_terminal': True} if packet.get('preserve_terminal') else {})}
         journal_path = state / (digest(json.dumps(packet['scope'], sort_keys=True).encode()) + '.json')
         try:
             raw, journal_stat = read(journal_path, private=True)
@@ -428,7 +449,8 @@ def perform(policy, packet):
             journal, journal_stat = {'binding': binding}, None
         if journal.get('binding') != binding:
             raise AuthorityError('authority journal scope changed')
-        rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False))
+        rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
+                         packet.get('preserve_terminal', False))
         action = packet['action']
         if action == 'inventory':
             return observation(rows)
@@ -455,10 +477,14 @@ def perform(policy, packet):
             for name, document, original, _ in rows:
                 if packet.get('preserve_legacy') and name.startswith('base_'):
                     continue
-                kept = [row for row in document['identities'] if not target(packet['agent'], row)]
-                if kept != document['identities']:
-                    publish(registries[name], {**document, 'identities': kept}, original, owners[registries[name]])
-            rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False))
+                if packet.get('preserve_terminal') and name == 'pty':
+                    continue
+                field = 'agents' if name == 'pty' else 'identities'
+                kept = [row for row in document[field] if not target(packet['agent'], row)]
+                if kept != document[field]:
+                    publish(registries[name], {**document, field: kept}, original, owners[registries[name]])
+            rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
+                             packet.get('preserve_terminal', False))
             journal['revoke_complete'] = True
             _, current_stat = read(journal_path, private=True)
             publish(journal_path, journal, current_stat)

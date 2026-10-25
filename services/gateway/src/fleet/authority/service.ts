@@ -74,7 +74,9 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
       FOR SHARE OF agent,tenant,room,account`, [agent.runtime_key, agent.tenant_id, agent.alias, host])).rowCount;
     if (consent !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
   } else if (request.action === 'revoke' && !(row.status === 'cancelling' || row.cancel_requested
-      || row.steps.some(step => step.name === 'revoke' && step.status === 'running'))) {
+      || row.steps.some(step => step.name === 'revoke' && step.status === 'running')
+      || row.kind === 'purge' && row.steps.some(step => step.name === 'revoke' && step.status === 'succeeded')
+        && row.steps.some(step => step.name === 'purge' && step.status === 'running'))) {
     throw new FleetAuthorityError('AUTHORITY_REVOKED');
   }
   if (request.action === 'revoke' && slice.placement_role === 'destination' && row.status !== 'cancelling' && !row.cancel_requested) {
@@ -102,8 +104,10 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     }
     const { agent, row } = await authority(client, request.scope, request, host);
     const preserveLegacy = await preservesLegacy(client, row, request.scope);
+    const preserveTerminal = row.kind !== 'purge';
     const { scope, ...action } = request;
-    const packet = { ...action, ...(preserveLegacy ? { preserve_legacy: true } : {}), scope: { operation_id: scope.operation_id, host_id: host,
+    const packet = { ...action, ...(preserveLegacy ? { preserve_legacy: true } : {}),
+      ...(preserveTerminal ? { preserve_terminal: true } : {}), scope: { operation_id: scope.operation_id, host_id: host,
       scope_sha256: scope.scope_sha256, runtime_key: scope.runtime_key },
     agent: { tenant_id: agent.tenant_id, alias: agent.alias } };
     const output = await runAuthorityCommand(options.command, packet);
@@ -112,12 +116,14 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     if (request.action === 'issue' && 'token' in result
         && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
     if (request.action === 'verify_absent' || request.action === 'revoke') {
-      if (!('authorities' in result) || result.authorities.some(item => item.preserved === true ? !preserveLegacy
+      if (!('authorities' in result) || result.authorities.some(item => item.preserved === true
+        ? !(item.id === 'pty' ? preserveTerminal : preserveLegacy)
         : item.matching_records.length > 0)) {
         throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
       }
     }
-    if ('authorities' in result && result.authorities.some(item => item.preserved === true && !preserveLegacy)) {
+    if ('authorities' in result && result.authorities.some(item => item.preserved === true
+      && !(item.id === 'pty' ? preserveTerminal : preserveLegacy))) {
       throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
     }
     return result;

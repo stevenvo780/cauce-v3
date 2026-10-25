@@ -42,7 +42,7 @@ RELEASE_RE = re.compile(r'[0-9a-f]{40}')
 OPS_DIRECTORIES = ('cli', 'container-runtime', 'schemas', 'scripts')
 OPS_ENTRIES = ('cli/fleet-executor.py', 'cli/fleet-authority-issuer.py', 'cli/provider-login.py',
                'cli/fleet-provider-hook.py', 'cli/fleet-runtime-rebind.py', 'container-runtime/cauce-container-runtime.py',
-               'cli/space_backup_runtime.py', 'cli/space_backup_local.py')
+               'cli/space_backup_runtime.py', 'cli/space_backup_local.py', 'pty-agent/reap_orphan_agent.py')
 REBIND = 'ops/cli/fleet-runtime-rebind.py'
 CONFIGS = ('authority.v1.json', 'controller.v1.json', 'executor.server.v1.json', 'auth.server.v1.json')
 CLEAN_ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'PYTHONDONTWRITEBYTECODE': '1', 'HOME': '/root'}
