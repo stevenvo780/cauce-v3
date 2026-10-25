@@ -49,10 +49,14 @@ def approved_release(policy: dict, agent: dict) -> tuple[pathlib.Path, str, byte
     return root, version, (root / 'pty-agent/systemd/cauce-v3-pty@.service').read_bytes()
 
 
-def selector(ops: pathlib.Path, version: str, state: str, generation: str, key: str, identity: str, host: str) -> bytes:
+def selector(ops: pathlib.Path, version: str, state: str, generation: str, key: str, identity: str, host: str,
+             *, shared_tui: bool = False) -> bytes:
+    if type(shared_tui) is not bool:
+        raise SafeFailure('terminal shared TUI approval is invalid')
     values = {'CAUCE_PTY_OPS_ROOT': str(ops), 'CAUCE_PTY_AGENT_VERSION': version,
               'CAUCE_PTY_FLEET_STATE': state, 'CAUCE_PTY_FLEET_GENERATION': generation,
-              'CAUCE_PTY_FLEET_RUNTIME_KEY': key, 'CAUCE_PTY_FLEET_IDENTITY': identity, 'CAUCE_PTY_FLEET_HOST': host}
+              'CAUCE_PTY_FLEET_RUNTIME_KEY': key, 'CAUCE_PTY_FLEET_IDENTITY': identity, 'CAUCE_PTY_FLEET_HOST': host,
+              'CAUCE_PTY_FLEET_SHARED_TUI': str(int(shared_tui))}
     if any('\n' in value or '\r' in value or '\0' in value for value in values.values()):
         raise SafeFailure('terminal unit environment contains an invalid value')
     return ('[Service]\n' + ''.join('Environment="' + name + '=' + value.replace('\\', '\\\\').replace('"', '\\"') + '"\n'
@@ -86,13 +90,14 @@ def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: byte
                     allowed = {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION'}
                     if managed:
                         allowed |= {'CAUCE_PTY_FLEET_STATE', 'CAUCE_PTY_FLEET_GENERATION', 'CAUCE_PTY_FLEET_RUNTIME_KEY',
-                                    'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}
+                                    'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST', 'CAUCE_PTY_FLEET_SHARED_TUI'}
                     if not separator or key in values or key not in allowed:
                         raise SafeFailure('terminal legacy selector has unapproved environment fields')
                     values[key] = value
-        if managed and set(values) != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION', 'CAUCE_PTY_FLEET_STATE',
+        if managed and (set(values) - {'CAUCE_PTY_FLEET_SHARED_TUI'} != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION', 'CAUCE_PTY_FLEET_STATE',
                                       'CAUCE_PTY_FLEET_GENERATION', 'CAUCE_PTY_FLEET_RUNTIME_KEY',
-                                      'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}:
+                                      'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}
+                        or values.get('CAUCE_PTY_FLEET_SHARED_TUI', '0') not in {'0', '1'}):
             raise SafeFailure('terminal managed selector is incomplete')
         if values:
             ops = pathlib.Path(values.get('CAUCE_PTY_OPS_ROOT', ''))
@@ -151,7 +156,7 @@ def process_identity(pid: str, version: str, invocation: str) -> int:
         raise SafeFailure('terminal unit process identity is unavailable') from None
 
 
-def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
+def presence(unit: str, wire: str, version: str, *, attempts: int = 20, shared_tui: bool = False) -> dict:
     runtime = pathlib.Path('/run/user') / str(os.geteuid())
     try:
         boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip().replace('-', '')
@@ -192,8 +197,14 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
                         messages.append(row['MESSAGE'])
                 start = any(re.search(r'\bstarting alias=' + re.escape(wire) + r' .*\bversion=' + version + r'(?:\s|$)', row)
                             for row in messages)
-                accepted = [index for index, row in enumerate(messages)
-                            if re.search(r'\brelay accepted alias=' + re.escape(wire) + r' modes=shell(?:,|$)', row)]
+                accepted = []
+                required_modes = {'shell', 'harness', 'harness_rw'} if shared_tui else {'shell'}
+                for index, row in enumerate(messages):
+                    acknowledgement = re.search(r'\brelay accepted alias=' + re.escape(wire) + r' modes=([a-z_,]+)(?:\s|$)', row)
+                    if acknowledgement is not None:
+                        modes = acknowledgement[1].split(',')
+                        if required_modes <= set(modes) and len(modes) == len(set(modes)):
+                            accepted.append(index)
                 disconnected = any('relay connect failed:' in row or 'relay session ended:' in row
                                    for row in messages[accepted[-1] + 1:]) if accepted else True
                 if start and accepted and not disconnected:

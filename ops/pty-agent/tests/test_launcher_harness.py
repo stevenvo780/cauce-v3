@@ -264,6 +264,69 @@ class DynamicDescriptorTest(unittest.TestCase):
         self.assertLess(derive, facts)
 
 
+class ApprovedFleetTuiTest(unittest.TestCase):
+    def capability(self, harness, approved, *, explicit=False, managed=True, session_live=True, marker_harness=None):
+        import tempfile
+
+        text = LAUNCHER.read_text(encoding='utf-8')
+        prefix = text[text.index('publish_bundle() {'):text.index('  runtime_facts=$(measure_adapter_runtime_facts)')]
+        with tempfile.TemporaryDirectory() as raw:
+            fake = _fake_docker(pathlib.Path(raw), tmux_path='/usr/bin/tmux', session_live=session_live,
+                                marker_harness=marker_harness or harness,
+                                expected_tmux_tmpdir='/home/runtime/state' if managed else None)
+            script = PRELUDE.replace('harness=claude', 'harness=' + harness) + r'''
+declare -A CONFIG=()
+CONFIG[HARNESS_COMMAND]=${FIXTURE_COMMAND:-}
+wire_alias=logical_alias
+state_directory=/home/runtime/state
+read_adapter_generation() { :; }
+derive_openclaw_tui_command() { exit 98; }
+die_transient() { die "$1" 75; }
+''' + '\nADAPTER_V4_MANAGED=' + str(int(managed)) + '\n'
+            if approved is not None:
+                script += 'CAUCE_PTY_FLEET_SHARED_TUI=' + str(approved) + '\n'
+            script += _window_constant_source() + _function_source() + prefix
+            script += '\n  printf "%s\\n" "$tmux_tui" "$openclaw_tui" "$harness_command"\n}\npublish_bundle\n'
+            return subprocess.run(['bash', '-c', script], capture_output=True, text=True, check=False,
+                env={'PATH': '/usr/bin:/bin', 'FAKE_DOCKER': str(fake),
+                     'FIXTURE_COMMAND': '["/foreign/command"]' if explicit else ''})
+
+    def test_each_approved_shared_harness_uses_the_pinned_physical_tmux_identity(self):
+        for harness in ('claude', 'codex', 'muse', 'grok'):
+            with self.subTest(harness=harness):
+                result = self.capability(harness, '1', explicit=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                tmux, native, command = map(json.loads, result.stdout.splitlines())
+                self.assertEqual(tmux, {'path': '/usr/bin/tmux', 'socket': 'cauce', 'alias': 'zeus',
+                                        'state_directory': '/home/runtime/state'})
+                self.assertIsNone(native)
+                self.assertIsNone(command)
+
+    def test_unapproved_or_unpinned_v4_never_advertises_a_tui_or_manual_command(self):
+        for harness in ('claude', 'codex', 'muse', 'grok'):
+            for approved in ('0', None):
+                with self.subTest(harness=harness, approved=approved):
+                    result = self.capability(harness, approved, explicit=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(list(map(json.loads, result.stdout.splitlines())), [None, None, None])
+
+    def test_a_malformed_approved_flag_fails_closed(self):
+        result = self.capability('codex', '2')
+        self.assertEqual(result.returncode, 2)
+
+    def test_a_shared_approval_never_treats_the_binary_or_a_foreign_panel_as_a_live_tui(self):
+        for options in ({'session_live': False}, {'marker_harness': 'foreign'}):
+            with self.subTest(options=options):
+                result = self.capability('codex', '1', **options)
+                self.assertEqual(result.returncode, 75, result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_an_unmanaged_legacy_unit_keeps_its_explicit_command(self):
+        result = self.capability('claude', None, explicit=True, managed=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(map(json.loads, result.stdout.splitlines())), [None, None, ['/foreign/command']])
+
+
 class FleetPhysicalIdentityTest(unittest.TestCase):
     def labels(self, labels, owner=None):
         text = LAUNCHER.read_text(encoding="utf-8")

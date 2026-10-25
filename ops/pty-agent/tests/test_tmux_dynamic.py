@@ -5,17 +5,20 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import time
 import unittest
 import uuid
+from unittest import mock
 
 AGENT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
 import cauce_pty_agent as agent  # noqa: E402
+from cauce_pty_agent import tmux as tmux_runtime  # noqa: E402
 
 TMUX = shutil.which("tmux")
 
@@ -265,6 +268,47 @@ class TmuxDescriptorValidationTest(unittest.TestCase):
         self.assertIn("ignore-size", viewer[8])
         self.assertNotIn("attach-session -r ", writable[8])
         self.assertNotIn("ignore-size", writable[8])
+
+    def test_a_v4_descriptor_never_falls_back_from_its_pinned_state_socket(self) -> None:
+        state = '/home/runtime/state'
+        bundle = _bundle('cauce', alias='logical_alias', harness='codex')
+        bundle['tmux_tui'].update(alias='physical-one', state_directory=state)
+        bundle['session_recovery'] = {'state_directory': state}
+        approved = {'CAUCE_ALIAS': 'logical_alias', 'CAUCE_RUNTIME_KEY': 'physical-one', 'TMUX_TMPDIR': state}
+        for environment in ({key: value for key, value in approved.items() if key != 'TMUX_TMPDIR'},
+                            {**approved, 'TMUX_TMPDIR': '/foreign'}, {**approved, 'CAUCE_ALIAS': 'foreign'},
+                            {**approved, 'CAUCE_RUNTIME_KEY': 'foreign'}):
+            with self.subTest(environment=environment), mock.patch.object(
+                    tmux_runtime, '_matching_environments', return_value=[environment]):
+                self.assertIsNone(tmux_runtime.tmux_tui_prefix(bundle))
+        bundle['session_recovery']['state_directory'] = '/foreign'
+        with mock.patch.object(tmux_runtime, '_matching_environments', return_value=[approved]):
+            self.assertIsNone(tmux_runtime.tmux_tui_prefix(bundle))
+
+    def test_the_pinned_v4_socket_and_physical_identity_are_shared_by_both_attach_modes(self) -> None:
+        state = '/home/runtime/state'
+        bundle = _bundle('cauce', alias='logical_alias', harness='codex')
+        bundle['tmux_tui'].update(alias='physical-one', state_directory=state)
+        bundle['session_recovery'] = {'state_directory': state}
+        environment = {'CAUCE_ALIAS': 'logical_alias', 'CAUCE_RUNTIME_KEY': 'physical-one', 'TMUX_TMPDIR': state}
+        socket = state + '/tmux-' + str(os.geteuid()) + '/cauce'
+
+        def information(filename, **_options):
+            return mock.Mock(st_uid=os.geteuid(), st_mode=stat.S_IFSOCK if filename == socket else stat.S_IFDIR | 0o700)
+
+        with mock.patch.object(tmux_runtime, '_matching_environments', return_value=[environment]), \
+                mock.patch.object(tmux_runtime.os, 'stat', side_effect=information), \
+                mock.patch.object(tmux_runtime.os.path, 'realpath', side_effect=lambda value: value):
+            for harness in ('claude', 'codex', 'grok', 'muse'):
+                bundle['harness'] = harness
+                viewer = agent.resolve_tmux_tui_command(bundle)
+                writer = agent.resolve_tmux_tui_command(bundle, mode='harness_rw')
+                self.assertEqual(viewer[:3], [TMUX or '/usr/bin/tmux', '-S', socket])
+                self.assertEqual(viewer[:8], writer[:8])
+                self.assertIn('cauce-physical-one:agente', writer[8])
+                self.assertIn('#{==:#{@cauce_harness},' + harness + '}', writer[7])
+                self.assertIn('attach-session -r ', viewer[8])
+                self.assertNotIn('attach-session -r ', writer[8])
 
 
 @unittest.skipUnless(TMUX, "tmux is required to validate the descriptor")
