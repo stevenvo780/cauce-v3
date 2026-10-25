@@ -194,7 +194,8 @@ async function startIsolatedBrowser(caCertPath: string, runtime: BrowserRuntime,
     await docker(['exec', container, 'node', '-e', "const net=require('node:net');const s=net.connect('/qa-browser-transport/proxy.sock');s.setTimeout(3000,()=>{s.destroy();process.exitCode=1});s.on('connect',()=>{s.destroy()});s.on('error',()=>{process.exitCode=1})"], { timeout: plazo(5_000) });
     const proxyReady = await docker(['exec', container, 'cat', '/tmp/cauce-proxy-forward-ready']);
     if (proxyReady.stdout.trim() !== 'ready') throw new Error('Private proxy forwarder is not ready');
-    await docker(['exec', '--detach', container, browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', `--proxy-server=${network.proxyUrl}`, '--proxy-bypass-list=<-loopback>', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
+    // stderr stays in the container so a renderer crash can be explained when the fixture closes.
+    await docker(['exec', '--detach', container, 'sh', '-c', 'exec "$0" "$@" 2>/tmp/cauce-chrome-stderr.log', browserPath, '--no-sandbox', '--headless=new', '--disable-dev-shm-usage', '--no-first-run', '--no-default-browser-check', `--proxy-server=${network.proxyUrl}`, '--proxy-bypass-list=<-loopback>', '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0', '--user-data-dir=/tmp/cauce-ui-functional-chrome', 'about:blank']);
     const activePort = await fileInContainer(container, '/tmp/cauce-ui-functional-chrome/DevToolsActivePort', '/devtools/browser/');
     const parsedPort = activePort?.split(/\s+/u)[0];
     const port = parsedPort && /^\d+$/u.test(parsedPort) ? Number(parsedPort) : 0;
@@ -392,8 +393,11 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     proxyAgent = new HttpsAgent({ cert: await readFile(pki.consoleClient.cert), key: await readFile(pki.consoleClient.key), ca: await readFile(pki.ca.cert), rejectUnauthorized: true });
     const { createServer } = require('vite') as { createServer: (config: Record<string, unknown>) => Promise<ViteServer> };
     setupStage = 'start Vite HTTPS server';
-    const devServer = await createServer({ configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory, server: {
-      host: '127.0.0.1', port: frontendPort, strictPort: true, https: { key: await readFile(pki.server.key), cert: await readFile(pki.server.cert) },
+    // Own dependency cache per fixture: runs sharing one checkout re-optimised console/node_modules/.vite under each
+    // other's servers, and the outdated-dependency reloads made page.goto time out. No watcher and no HMR either: lanes
+    // and mirror syncs edit the checkout mid-run, and every edit re-sent styles.css or reloaded the page under the walk.
+    const devServer = await createServer({ configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory, cacheDir: join(directory, 'vite-cache'), server: {
+      host: '127.0.0.1', port: frontendPort, strictPort: true, https: { key: await readFile(pki.server.key), cert: await readFile(pki.server.cert) }, watch: null, hmr: false,
       proxy: { '/v3': { target: `https://localhost:${String(gatewayAddress.port)}`, agent: proxyAgent, secure: true, changeOrigin: false, ws: true } },
     } });
     vite = devServer;
@@ -410,6 +414,10 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
       database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts, gatewayDiagnostics,
       close: async () => {
         const cleanupErrors: Error[] = [];
+        try {
+          const crash = (await docker(['exec', isolatedBrowser.container, 'sh', '-c', "grep -E 'FATAL|Check failed|out of memory|OOM|[Cc]rash' /tmp/cauce-chrome-stderr.log | tail -n 40"])).stdout;
+          if (crash.trim()) process.stdout.write(`E2E browser stderr (crash lines):\n${crash}`);
+        } catch { /* diagnostic only: an empty match or a gone container is not a cleanup failure */ }
         for (const [index, context] of contexts.entries()) await attemptCleanup(cleanupErrors, `browser context ${String(index)}`, () => context.close());
         await attemptCleanup(cleanupErrors, 'CDP browser', () => activeBrowser.close());
         await attemptCleanup(cleanupErrors, 'owned browser container', isolatedBrowser.closeContainer);
