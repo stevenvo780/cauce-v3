@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Info, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useApi } from '../../api/context';
+import {
+  auditFilterKey, auditFilterProblem, auditServerQuery, EMPTY_AUDIT_FILTER, type AuditFilterDraft,
+} from '../../api/audit-server-filters';
+import type { AuditListOptions } from '../../api/client/system-client';
 import { useResource } from '../../api/use-resource';
 import type { AuditEvent, AuditPage } from '../../api/types';
 import { cn } from '../../cn';
 import { ActionButton } from '../../components/action-button';
-import { Button, Notice, SearchField, Toolbar } from '../../components/kit';
+import { Button, Notice, Toolbar } from '../../components/kit';
 import { Badge, EmptyState, ErrorState, LoadingState, Time, Unknown } from '../../components/ui';
 import { TONE_CLASS, type Tone } from '../../status-tone';
 import { compactId, display, plural, safeAuditDecision, UNKNOWN } from '../../lib';
@@ -18,9 +22,18 @@ const DECISION_TONE: Record<NonNullable<ReturnType<typeof safeAuditDecision>>, T
  * so the search text lives on the PAGE (the relay row lands here with its `trace_id` already in
  * the filter) and not in this component: switching tabs would lose it.
  */
+function listOptions(filter: AuditFilterDraft, before?: string): AuditListOptions {
+  return { limit: 100, ...(before === undefined ? {} : { before }), ...auditServerQuery(filter) };
+}
+
 export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value: string) => void }) {
   const api = useApi();
-  const resource = useResource('audit', () => api.listAudit({ limit: 100 }));
+  const [draft, setDraft] = useState<AuditFilterDraft>({ ...EMPTY_AUDIT_FILTER, trace: query });
+  const [applied, setApplied] = useState<AuditFilterDraft>(EMPTY_AUDIT_FILTER);
+  const [filterError, setFilterError] = useState<string>();
+  const appliedRef = useRef(applied);
+  appliedRef.current = applied;
+  const resource = useResource(`audit:${auditFilterKey(applied)}`, () => api.listAudit(listOptions(applied)));
   const [pagination, setPagination] = useState<{
     source: AuditPage;
     events: AuditEvent[];
@@ -63,6 +76,19 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
     };
   }, []);
 
+  useEffect(() => {
+    const trace = query.trim();
+    setDraft((current) => current.trace === query ? current : { ...current, trace: query });
+    const next = { ...appliedRef.current, trace };
+    const problem = auditFilterProblem(next);
+    if (problem !== undefined) {
+      setFilterError(problem);
+      return;
+    }
+    setFilterError(undefined);
+    setApplied((current) => current.trace === trace ? current : { ...current, trace });
+  }, [query]);
+
   const loadOlder = async () => {
     const source = resource.data;
     if (!source || olderLoading || nextCursor === null) return;
@@ -76,7 +102,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       requestId,
     });
     try {
-      const page = await api.listAudit({ limit: 100, before: requestedCursor });
+      const page = await api.listAudit(listOptions(applied, requestedCursor));
       if (!mounted.current || requestId !== requestSerial.current || sourceRef.current !== source) return;
       const following = page.next_cursor ?? null;
       if (following !== null && (
@@ -113,50 +139,102 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
       return { error };
     }
   };
-  const needle = query.trim().toLocaleLowerCase();
-  const filtered = needle ? events.filter((event) => [event.action, event.actor_alias, event.tenant_id, event.request_id, event.trace_id, event.summary]
-    .some((value) => value?.toLocaleLowerCase().includes(needle))) : events;
-  /* The search runs in the browser over what is LOADED —the server takes no filter—, so with pages
-     left to walk "no events match" is a claim about the whole log that cannot be made here. */
-  const busquedaParcial = needle.length > 0 && nextCursor !== null;
+  const filtered = events;
+  const serverFilter = [applied.trace, applied.alias, applied.action, applied.from, applied.to].some((value) => value !== '');
 
-  if (resource.loading && !resource.data) return <LoadingState label="Leyendo la auditoría…" />;
-  if (resource.error && !resource.data) return <ErrorState error={resource.error} onRetry={resource.reload} />;
+  function applyFilters() {
+    const next: AuditFilterDraft = {
+      trace: draft.trace.trim(),
+      alias: draft.alias.trim(),
+      action: draft.action.trim(),
+      from: draft.from.trim(),
+      to: draft.to.trim(),
+    };
+    const problem = auditFilterProblem(next);
+    if (problem !== undefined) {
+      setFilterError(problem);
+      return;
+    }
+    setFilterError(undefined);
+    setDraft(next);
+    setApplied(next);
+    if (next.trace !== query.trim()) onQuery(next.trace);
+  }
+
+  function clearFilters() {
+    setDraft(EMPTY_AUDIT_FILTER);
+    setApplied(EMPTY_AUDIT_FILTER);
+    setFilterError(undefined);
+    if (query !== '') onQuery('');
+  }
+
+  const filterFields: readonly { key: keyof AuditFilterDraft; label: string; placeholder: string }[] = [
+    { key: 'trace', label: 'Traza', placeholder: 'identificador exacto' },
+    { key: 'alias', label: 'Alias', placeholder: 'alias exacto' },
+    { key: 'action', label: 'Acción', placeholder: 'delivery.cancel' },
+    { key: 'from', label: 'Desde', placeholder: '2020-01-01T00:00:00Z' },
+    { key: 'to', label: 'Hasta', placeholder: '2020-01-02T00:00:00Z' },
+  ];
 
   return (
     <>
-      <Toolbar className="mb-3">
-        <SearchField label="Filtrar auditoría" value={query} onChange={onQuery} placeholder="Filtrar por actor, acción o traza…" />
-        <span className="text-xs text-muted">{plural(filtered.length, 'visible', 'visibles')} de {String(events.length)}</span>
-        <ActionButton size="sm" label="Releer auditoría" busy={resource.loading} announceError={false} action={() => resource.reload()} />
-      </Toolbar>
-      {resource.error ? (
+      <form className="mb-3 grid gap-2" onSubmit={(event) => { event.preventDefault(); applyFilters(); }}>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {filterFields.map((field) => (
+            <label key={field.key} className="grid gap-1 text-xs text-muted">
+              {field.label}
+              <input
+                value={draft[field.key]}
+                placeholder={field.placeholder}
+                spellCheck={false}
+                className="w-full"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft((current) => ({ ...current, [field.key]: value }));
+                }}
+              />
+            </label>
+          ))}
+        </div>
+        <Toolbar className="mb-0">
+          <Button type="submit" size="sm">Aplicar filtros</Button>
+          {serverFilter || draft.trace !== '' || draft.alias !== '' || draft.action !== '' || draft.from !== '' || draft.to !== '' ? (
+            <Button type="button" size="sm" onClick={clearFilters}>Quitar filtros</Button>
+          ) : null}
+          {resource.data ? <span className="text-xs text-muted">{plural(filtered.length, 'visible', 'visibles')} de {String(events.length)}</span> : null}
+          <ActionButton size="sm" label="Releer auditoría" busy={resource.loading} announceError={false} action={() => resource.reload()} />
+        </Toolbar>
+      </form>
+      {filterError ? <Notice tone="danger" role="alert" className="mb-3">{filterError}</Notice> : null}
+      {resource.loading && !resource.data ? <LoadingState label="Leyendo la auditoría…" /> : null}
+      {resource.error && !resource.data ? <ErrorState error={resource.error} onRetry={resource.reload} /> : null}
+      {resource.error && resource.data ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">No se pudo actualizar la auditoría: {resource.error.message} Se muestran los eventos ya cargados.</span>
           <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => resource.reload()} />
         </Notice>
       ) : null}
-      {needle ? (
+      {serverFilter ? (
         <Notice role="status" className="mb-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">
-            Filtrando por <span className="mono">{query.trim()}</span>{busquedaParcial
-              ? ` entre los ${String(events.length)} eventos ya cargados; la auditoría tiene más atrás.`
-              : '.'}
+            El servidor filtró esta lectura
+            {applied.trace ? <> por la traza <span className="mono">{applied.trace}</span></> : null}
+            {applied.alias ? <> por el alias <span className="mono">{applied.alias}</span></> : null}
+            {applied.action ? <> por la acción <span className="mono">{applied.action}</span></> : null}
+            {applied.from ? <> desde <span className="mono">{applied.from}</span></> : null}
+            {applied.to ? <> hasta <span className="mono">{applied.to}</span></> : null}.
           </span>
-          <Button size="sm" onClick={() => { onQuery(''); }}>Quitar el filtro</Button>
+          <Button size="sm" onClick={clearFilters}>Quitar filtros</Button>
         </Notice>
       ) : null}
-      {filtered.length === 0 ? (
+      {resource.data && filtered.length === 0 ? (
         <EmptyState>
-          {busquedaParcial
-            ? `Ninguno de los ${String(events.length)} eventos cargados coincide. NO quiere decir que no exista: `
-              + 'la búsqueda sólo cubre lo cargado y quedan eventos anteriores sin leer — seguí con '
-              + '«Cargar anteriores».'
-            : needle
-              ? 'No hay eventos que coincidan.'
-              : 'Todavía no hay eventos de auditoría en esta lectura. Cuando el gateway registre decisiones, aparecerán aquí; si esperabas eventos, pulsa «Releer auditoría».'}
+          {serverFilter
+            ? 'No hay eventos que coincidan con el filtro del servidor.'
+            : 'Todavía no hay eventos de auditoría en esta lectura. Cuando el gateway registre decisiones, aparecerán aquí; si esperabas eventos, pulsa «Releer auditoría».'}
         </EmptyState>
-      ) : (
+      ) : null}
+      {resource.data && filtered.length > 0 ? (
         <ul className="m-0 grid list-none divide-y divide-line overflow-hidden rounded-lg border border-line bg-surface p-0" aria-label="Eventos de auditoría">
           {filtered.map((event, index) => {
             const decision = safeAuditDecision(event.decision);
@@ -191,7 +269,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
             </li>;
           })}
         </ul>
-      )}
+      ) : null}
       {olderError ? (
         <Notice tone="danger" role="alert" className="mt-3 flex flex-wrap items-center gap-2">
           <span className="min-w-0 flex-1 basis-64">No se pudieron cargar eventos anteriores: {olderError.message}.</span>

@@ -11,6 +11,7 @@ import {
 } from '../../components/ui';
 import { compactId, safeOriginRelayState } from '../../lib';
 import { AuditPanel } from '../audit/AuditPanel';
+import { DiagnosticChainPanel } from '../audit/DiagnosticChainPanel';
 import { onNavClick } from '../../router';
 
 /** The durable egress states, in Spanish. `sent` is decided separately: it requires `sent_at`. */
@@ -152,6 +153,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
     </ViewTabPanel> : null}
 
     {tab === 'auditoria' ? <ViewTabPanel id="auditoria">
+      <DiagnosticChainPanel />
       <AuditPanel query={auditQuery} onQuery={setAuditQuery} />
     </ViewTabPanel> : null}
   </div>;

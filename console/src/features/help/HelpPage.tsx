@@ -4,6 +4,7 @@ import { PageHeader } from '../../components/ui';
 import { NAV_ENTRIES } from '../../nav';
 import { onNavClick } from '../../router';
 import type { Tone } from '../../status-tone';
+import { DELIVERY_POLICY, DELIVERY_STATES } from '../deliveries/delivery-policy';
 import { LIVE_STATE_META, LIVE_STATES } from '../live/agent-state';
 
 const TITULO = 'Ayuda y documentación';
@@ -12,9 +13,12 @@ const DETALLE: Record<string, string> = {
   live: 'La oficina en vivo y el cajón de cada agente. «Contexto» es el único lugar para modificar '
     + 'su perfil canónico y su manual; «Ficheros» es un visor de lo materializado.',
   accounts: 'Alta y baja de cuentas de proveedores, techos, fallback, límites y consumo.',
+  'my-quotas': 'Cuentas de proveedor propias, sin agente: alta, consulta de ventanas, inicio de sesión, '
+    + 'actualización del CLI y baja.',
   messages: 'Redactar y publicar mensajes durables, con el estado de sus entregas.',
   queues: 'Reinyectar, cancelar o resolver entregas, con confirmación y recibo exacto.',
-  observability: 'Eventos auditables del bus, métricas del gateway, egress y trazas de auditoría firmadas.',
+  observability: 'Instantánea del gateway, avisos de vuelta al canal de origen y el registro inmutable '
+    + 'de decisiones de auditoría.',
   config: 'Topología (tenants, salas, membresías, roles y ACL) con historial de revisiones y reversión. '
     + 'No edita contextos ni cuentas: eso vive en Contexto y Cuentas.',
   terminal: 'TUI en vivo del agente y shell nueva en su espacio, con permisos y control auditado.',
@@ -32,17 +36,23 @@ const CONCEPTOS: readonly [string, string][] = [
     + 'el control vive en «Contexto», no en este visor.'],
 ];
 
-/** Delivery lifecycle, in the order a delivery travels it. Labels match the ones the queues print. */
-const ENTREGAS: readonly { etiqueta: string; tono: Tone; detalle: string }[] = [
-  { etiqueta: 'Pendiente', tono: 'info', detalle: 'En la cola; todavía ningún agente la tomó.' },
-  { etiqueta: 'En curso', tono: 'info', detalle: 'Un agente la tomó con un lease y está trabajando en ella.' },
-  { etiqueta: 'Hecha', tono: 'ok', detalle: 'El agente la cerró bien.' },
-  { etiqueta: 'En reintento', tono: 'warn', detalle: 'Falló y el bus la vuelve a intentar sola.' },
-  { etiqueta: 'Muerta', tono: 'danger', detalle: 'Agotó los reintentos: nadie la va a contestar hasta que alguien la reinyecte.' },
-];
+const DELIVERY_TONE: Record<(typeof DELIVERY_POLICY)[keyof typeof DELIVERY_POLICY]['tone'], Tone> = {
+  done: 'ok', danger: 'danger', warning: 'warn', running: 'info',
+};
+
+const ENTREGA_DETALLE: Record<(typeof DELIVERY_STATES)[number], string> = {
+  pending: 'En la cola; todavía ningún agente la tomó.',
+  leased: 'Un agente reservó el turno, pero aún no aceptó el trabajo.',
+  accepted: 'El agente aceptó la entrega y todavía no empezó a ejecutarla.',
+  started: 'Un agente la tomó con un lease y está trabajando en ella.',
+  done: 'El agente la cerró bien.',
+  failed: 'Terminó con fallo y espera revisión; se puede reinyectar.',
+  retry: 'Falló y el bus la vuelve a intentar sola.',
+  dead: 'Agotó los reintentos: nadie la va a contestar hasta que alguien la reinyecte.',
+};
 
 const ATAJOS: readonly [string[], string][] = [
-  [['Alt', 'Shift', 'B'], 'Pliega y despliega la barra lateral.'],
+  [['Alt', 'Shift', 'B'], 'En escritorio, pliega y despliega la barra lateral.'],
   [['Esc'], 'Cierra modales activos, cajones de detalle de agente e inspectores.'],
   [['Enter'], 'Confirma formularios y filtros de búsqueda.'],
   [['Ctrl', 'Clic'], 'Abre enlaces en una pestaña independiente. En macOS, Cmd + Clic.'],
@@ -159,12 +169,15 @@ export function HelpPage() {
             </dl>
             <h3 className="m-0 mt-4 mb-1 text-xs font-medium text-muted">Una entrega</h3>
             <dl className="m-0 block divide-y divide-line">
-              {ENTREGAS.map((entrega) => (
-                <div key={entrega.etiqueta} className={FILA}>
-                  <dt><Pill tone={entrega.tono}>{entrega.etiqueta}</Pill></dt>
-                  <dd className="text-[13px] text-fg-2">{entrega.detalle}</dd>
-                </div>
-              ))}
+              {DELIVERY_STATES.map((estado) => {
+                const politica = DELIVERY_POLICY[estado];
+                return (
+                  <div key={estado} className={FILA}>
+                    <dt><Pill tone={DELIVERY_TONE[politica.tone]}>{politica.label}</Pill></dt>
+                    <dd className="text-[13px] text-fg-2">{ENTREGA_DETALLE[estado]}</dd>
+                  </div>
+                );
+              })}
             </dl>
             <p className="m-0 mt-3 text-xs text-muted">
               Si el lease vence o hay un consumidor concurrente, la entrega queda revocada (<em>fenced</em>) y su resultado tardío se descarta.
