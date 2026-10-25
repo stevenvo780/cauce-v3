@@ -297,7 +297,7 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [x] 7. Mensajes de error accionables en español y motivo de cada capacidad no disponible (33f37937; QA 17-oct tradujo los restantes, bd7c012f).
 - [x] 8. Pantalla «Empresa retirada».
 - ~~9. Validar `harness_definitions` contra los descriptores~~ — retirado: la BD y los descriptores coinciden y la UI ya usa el descriptor aprobado (17-oct).
-- [x] 10. [local real + prod] Un agente aplica la versión nueva de su contexto en su siguiente turno natural (00e3784f; ver §8). El autor real en `git log` ya está hecho (177947c1, 919bd20e).
+- [ ] 10. [local real] Un agente aplica la versión nueva de su contexto en su siguiente turno natural (00e3784f; ver §8; N+1 con OpenClaw y Grok en 5630fb5f). **25-oct 09:00 [prod, solo lectura]: reabierto.** Ningún agente de producción tiene una versión aplicada (`applied_version = 0` en 18 de 18). Quince filas se rechazaron con `context_runtime_unsupported` cuando sus adaptadores aún no anunciaban `versioned_context_v1`, quedaron en `infinity` y nada las vuelve a evaluar, aunque ocho ya lo anuncian. Aplicar ahora las versiones sembradas el 18-oct haría retroceder a los agentes que cambiaron sus ficheros después (la memoria de Argos es del 20-oct). Ese cambio no se registró, porque OpenClaw guarda en `workspace/` y la ingesta mira el espacio estándar. Está en c7 (codex-13). El autor en `git log` es el alias principal de la sesión (`kant`), no la persona: c6 (grok-2).
 - [x] 11. [local real] Inmutabilidad del historial de contextos. (659099d9, 68ac2f7c)
 - [x] 12. Contrato entre los handlers MSW y las rutas reales del gateway.
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
