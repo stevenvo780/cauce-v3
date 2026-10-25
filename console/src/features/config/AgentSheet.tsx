@@ -12,7 +12,7 @@ import { AgentLifecyclePanel } from './AgentLifecyclePanel';
 import { AgentDangerZone, AgentQuickActions } from './AgentQuickActions';
 import { AgentRegistryEditor } from './AgentRegistryEditor';
 import { AgentRemovalDialog } from './AgentRemovalDialog';
-import { GroupsTab, SummaryTab } from './AgentSheetTabs';
+import { Fact, GroupChips, GroupsTab, SummaryTab } from './AgentSheetTabs';
 import { useLiveAgent } from './use-live-agent';
 import { AmpliacionesTab } from './AmpliacionesTab';
 import { ConsoleAccessBoundary } from '../../api/console-access';
@@ -147,6 +147,10 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
         </div> : null}
         {retired ? <div className={`${DIALOG_BODY} grid content-start gap-6`}>
           <Notice role="note">Este agente está retirado: no recibe mensajes y su historial se conserva. Puedes restaurarlo o eliminarlo definitivamente.</Notice>
+          <dl className="m-0 grid-cols-1 gap-0 rounded-lg border border-line bg-surface px-4" aria-label={`Datos de ${view.ref}`}>
+            <Fact label="Grupos"><span className="flex flex-wrap gap-1.5"><GroupChips agent={agent} /></span></Fact>
+          </dl>
+          {!agent.groups.length ? <Notice role="note">Este agente no tiene membresías registradas.</Notice> : null}
           <ErrorBoundary label={`Operación de ${view.ref}`} onReset={onClose}>
             <AgentLifecyclePanel snapshot={snapshot} onReloaded={retainOperationResult} initialOpen hideTrigger embedded target={target}
               initialKind={intent.kind} />

@@ -105,3 +105,24 @@ it('offers «Solo preparar, sin desplegar» in the same modal and explains each 
   await user.click(screen.getByRole('radio', { name: /Registrar el agente/ }));
   expect(screen.getByRole('list', { name: 'Pasos del alta' })).toBeInTheDocument();
 });
+
+it('renders retired agent with its historical groups in sheet when opened', async () => {
+  const snapshotWithRetired: ConfigurationSnapshot = {
+    ...snapshot,
+    retired: {
+      tenants: [],
+      rooms: [],
+      agents: [{ tenant_id: 'A', alias: 'retirado', display_name: 'Agente Retirado', harness_id: 'codex' }],
+      memberships: [{ tenant_id: 'A', alias: 'retirado', room_id: 'grp.a', enabled: false }],
+    },
+  };
+  const user = userEvent.setup();
+  renderWithApi(<ConsoleAccessBoundary><AgentesSection snapshot={snapshotWithRetired} /></ConsoleAccessBoundary>);
+  const openButton = await screen.findByRole('button', { name: 'Restaurar o revisar A/retirado' });
+  await user.click(openButton);
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText(/Grupo A \(pausada\)/)).toBeInTheDocument();
+  expect(within(dialog).getByTitle('grp.a · membresía deshabilitada')).toBeInTheDocument();
+  expect(within(dialog).queryByText('Sin grupos')).not.toBeInTheDocument();
+  expect(within(dialog).queryByText('Este agente no tiene membresías registradas.')).not.toBeInTheDocument();
+});

@@ -16,7 +16,7 @@ const HOST_DETAIL = {
   reachable: 'La computadora está conectada.', unreachable: 'La computadora no responde.', unknown: 'No hay datos recientes de la computadora.',
 } as const;
 
-function Fact({ label, children }: { label: string; children: ReactNode }) {
+export function Fact({ label, children }: { label: string; children: ReactNode }) {
   return <div className={FACT}><dt className="text-xs text-muted">{label}</dt><dd className="m-0 min-w-0 break-words text-[13px] text-fg">{children}</dd></div>;
 }
 

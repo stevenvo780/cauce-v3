@@ -69,6 +69,18 @@ it('is read-only when config.write is absent', async () => {
   expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });
 
+it('fails closed when the permission snapshot cannot be read', async () => {
+  server.use(http.get('http://localhost/v3/console/access', () =>
+    HttpResponse.json({ error: 'unavailable' }, { status: 500 })));
+  renderSettings();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
+  expect(await screen.findByText(/No se pudo comprobar el permiso para modificar este registro/)).toBeInTheDocument();
+  expect(screen.getByText(/Recarga la página o vuelve a entrar/)).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
+});
+
 it('sends a record create after an exact dry-run and closes with focus returned', async () => {
   const changes: ChangeBody[] = [];
   server.use(

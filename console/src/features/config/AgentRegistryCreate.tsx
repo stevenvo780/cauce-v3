@@ -178,9 +178,11 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
   const roomLabel = rooms.find((room) => room.id === draft.roomId)?.label;
   const preparing = !created && mode === 'prepare';
 
-  const permissionDenied = permissionState(access.error ? undefined : access.data, 'config.write') === 'denied';
+  const permState = access.error ? 'unknown' : permissionState(access.data, 'config.write');
   const permissionNotice = writeBlock ? <Notice role="note">{writeBlock}</Notice>
-    : permissionDenied ? <Notice role="note">Tu cuenta no tiene permiso para modificar este registro.</Notice> : null;
+    : permState === 'denied' ? <Notice role="note">Tu cuenta no tiene permiso para modificar este registro.</Notice>
+    : permState === 'unknown' ? <Notice role="note">No se pudo comprobar el permiso para modificar este registro. Recarga la página o vuelve a entrar.</Notice>
+    : null;
   const notices = <>
     {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
     <ConfigChangeReceipt notice={runner.notice} preview={runner.preview} label="Preview del alta de agente" />
