@@ -237,12 +237,12 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
           </div>
           <div className={DIALOG_FOOTER}>
             {preparing ? <Button onClick={() => { onOpenChange(false); }}>Cerrar</Button> : <>
-              {stepIndex > 0 ? <Button className="mr-auto" onClick={back} disabled={busy}>Atrás</Button> : null}
+              {stepIndex > 0 ? <Button className="mr-auto" onClick={back} disabled={disabled}>Atrás</Button> : null}
               {step === 'revision' ? <>
                 <Button onClick={() => { void preview(); }} disabled={disabled}>Previsualizar alta</Button>
                 <Button variant="primary" onClick={() => { void apply(); }}
                   disabled={disabled || !mutation || !runner.isValidated(mutation) || Boolean(hostReason)}>Crear registro</Button>
-              </> : <Button variant="primary" onClick={next} disabled={busy}>Siguiente</Button>}
+              </> : <Button variant="primary" onClick={next} disabled={disabled}>Siguiente</Button>}
             </>}
           </div>
         </>}

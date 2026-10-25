@@ -31,15 +31,16 @@ const retiredAlias = `${prefix}-retirado`;
 const retiredRoomId = `${prefix}-room-retirado`;
 const retiredRoomName = `Equipo Histórico Retirado ${run}`;
 
-interface RouteAbort {
-  abort(errorCode?: string): Promise<void>;
-  fulfill(options: { status?: number; contentType?: string; body?: string }): Promise<void>;
+interface GatewayResponse {
+  url(): string;
+  status(): number;
+  json(): Promise<{ error?: unknown }>;
 }
-interface RoutablePage {
-  route(url: string, handler: (route: RouteAbort) => Promise<void>): Promise<void>;
+interface GatedPage {
+  route(url: string, handler: (route: { continue(): Promise<void> }) => Promise<void>): Promise<void>;
   unroute(url: string): Promise<void>;
+  waitForResponse(predicate: (response: GatewayResponse) => boolean): Promise<GatewayResponse>;
 }
-const routable = (p: V4Page): RoutablePage => p as unknown as RoutablePage;
 
 const active = () => { if (!fixture) throw new Error('fixture unavailable'); return fixture; };
 const browser = () => { if (!page) throw new Error('browser unavailable'); return page; };
@@ -170,28 +171,50 @@ describe.sequential('r9-ficha-retirada-permiso: ficha de agente retirado y alta 
     // Reset to desktop viewport
     await browser().setViewportSize({ width: 1280, height: 800 });
 
-    // Track any POST requests to verify no POST is made
-    let postOccurred = false;
-    const postRequests: string[] = [];
-    browser().on('response', (res) => {
-      if (res.request().method() === 'POST') {
-        postOccurred = true;
-        postRequests.push(`${res.request().method()} ${res.url()} -> ${String(res.status())}`);
+    const writeRequests: string[] = [];
+    browser().on('request', (value: unknown) => {
+      const request = value as { method(): string; url(): string };
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method())) {
+        writeRequests.push(`${request.method()} ${new URL(request.url()).pathname}`);
       }
     });
-
-    // Intercept /v3/console/access to return a 500 error simulating gateway access failure
-    await routable(browser()).route('**/v3/console/access', async (route) => {
-      await route.fulfill({
-        status: 500,
-        contentType: 'application/json',
-        body: '{"error":"internal_error","message":"No se pudo comprobar el permiso"}',
-      });
-    });
+    const actor = (await pool().query<{ actor_alias: string }>(
+      'SELECT alias AS actor_alias FROM console_users WHERE tenant_id=$1 AND email=$2', [tenant, person.email],
+    )).rows[0];
+    if (!actor) throw new Error('console actor missing');
+    const memberships = (await pool().query<{ room_id: string }>(
+      'SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2 AND enabled', [tenant, actor.actor_alias],
+    )).rows;
+    const restoreMemberships = async () => {
+      await pool().query(
+        'UPDATE memberships SET enabled=true WHERE tenant_id=$1 AND alias=$2 AND room_id=ANY($3::text[])',
+        [tenant, actor.actor_alias, memberships.map((membership) => membership.room_id)],
+      );
+    };
+    const gatedPage = browser() as unknown as GatedPage;
+    const accessFailure = gatedPage.waitForResponse((response) => new URL(response.url()).pathname === '/v3/console/access');
 
     try {
-      // Reload page: /v3/console/access will receive 500
+      expect(memberships.length).toBeGreaterThan(0);
+      await gatedPage.route('**/v3/console/access', async (route) => {
+        await pool().query(
+          'UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND alias=$2 AND room_id=ANY($3::text[])',
+          [tenant, actor.actor_alias, memberships.map((membership) => membership.room_id)],
+        );
+        await route.continue();
+      });
+      // Configuration must read restored authority after the real access rejection, without replacing either response.
+      await gatedPage.route('**/v3/console/config', async (route) => {
+        await accessFailure;
+        await restoreMemberships();
+        await route.continue();
+      });
       await browser().goto(`${active().baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
+      const response = await accessFailure;
+      const body = await response.json();
+      expect(response.status()).toBe(422);
+      expect(body.error).toBe('invalid_actor');
+      evidence.accessFailure = { status: response.status(), error: body.error };
       await browser().getByRole('heading', { name: 'Tus agentes', exact: true }).waitFor({ timeout: 30_000 });
 
       const createButton = browser().getByRole('button', { name: 'Añadir agente', exact: true });
@@ -211,9 +234,13 @@ describe.sequential('r9-ficha-retirada-permiso: ficha de agente retirado y alta 
       // Verify inputs are disabled
       expect(await modal.getByLabel('Alias', { exact: true }).isDisabled()).toBe(true);
       expect(await modal.getByLabel('Nombre visible', { exact: true }).isDisabled()).toBe(true);
+      expect(await modal.getByRole('button', { name: 'Siguiente', exact: true }).isDisabled()).toBe(true);
+      expect(await modal.locator('input:enabled, select:enabled, textarea:enabled').count()).toBe(0);
+      expect(await modal.getByRole('button', { name: 'Previsualizar alta', exact: true }).count()).toBe(0);
+      expect(await modal.getByRole('button', { name: 'Crear registro', exact: true }).count()).toBe(0);
 
       // Verify no POST was sent
-      expect(postOccurred).toBe(false);
+      expect(writeRequests).toEqual([]);
 
       await capture('F02-permiso-fallido-desktop');
 
@@ -232,18 +259,22 @@ describe.sequential('r9-ficha-retirada-permiso: ficha de agente retirado y alta 
       expect(await modalMobile.getByText(/Recarga la página o vuelve a entrar/u).count()).toBeGreaterThan(0);
       expect(await modalMobile.getByText('Tu cuenta no tiene permiso para modificar este registro.').count()).toBe(0);
       expect(await modalMobile.getByLabel('Alias', { exact: true }).isDisabled()).toBe(true);
+      expect(await modalMobile.getByRole('button', { name: 'Siguiente', exact: true }).isDisabled()).toBe(true);
+      expect(await modalMobile.locator('input:enabled, select:enabled, textarea:enabled').count()).toBe(0);
 
-      expect(postOccurred).toBe(false);
+      expect(writeRequests).toEqual([]);
 
       await capture('F02-permiso-fallido-mobile');
 
       await browser().locator('body').press('Escape');
       await modalMobile.waitFor({ state: 'hidden', timeout: 10_000 });
 
-      evidence.postRequests = postRequests;
+      evidence.writeRequests = writeRequests;
       (evidence.verdicts as Record<string, string>)['permiso-fallido'] = 'PASA';
     } finally {
-      await routable(browser()).unroute('**/v3/console/access');
+      await restoreMemberships();
+      await gatedPage.unroute('**/v3/console/access');
+      await gatedPage.unroute('**/v3/console/config');
     }
   });
 });
