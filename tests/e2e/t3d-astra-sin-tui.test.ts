@@ -13,7 +13,8 @@ const receipts = join(root, '.delegados/v4/recibos', owner, 'lab');
 
 test('prepara sin TUI y conserva el panel tras dos actualizaciones, dos veces seguidas', async () => {
   const daemon = await execute('docker', ['info', '--format', '{{.Name}}']);
-  assert.equal(daemon.stdout.trim(), 'docker-lab');
+  const vm = daemon.stdout.trim();
+  assert.ok(['docker-lab', 'docker-lab-2'].includes(vm));
   const build = JSON.parse(await readFile(join(receipts, 'build-proof.json'), 'utf8')) as {
     bundle: string; clean_source: string;
   };
@@ -38,7 +39,8 @@ test('prepara sin TUI y conserva el panel tras dos actualizaciones, dos veces se
         '--root=/proc/1/root', `--wdns=${root}`, '/usr/sbin/runuser', '-u', 'deploy', '--',
         '/usr/bin/env', 'HOME=/home/deploy', 'PATH=/usr/bin:/bin',
         'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
-        'T3D_ON_VM=1', `T3D_RUN=${run}`, `T3D_SOURCE=${build.clean_source}`, `T3D_BUNDLE=${build.bundle}`,
+        'T3D_ON_VM=1', `T3D_LAB_VM=${vm}`, `T3D_RUN=${run}`, `T3D_SOURCE=${build.clean_source}`, `T3D_BUNDLE=${build.bundle}`,
+        `T3D_PREREQUISITE_PROOF=${join(receipts, 'prerequisite-systemd-proof.json')}`,
         node, '--import', 'tsx',
         'tests/e2e/t3d-astra-sin-tui.lab.mjs'], { timeout: 600_000, maxBuffer: 1024 * 1024 });
       assert.match(result.stdout, /ASTRA_ABSENT_TUI_LAB_PASS/u);
@@ -48,7 +50,7 @@ test('prepara sin TUI y conserva el panel tras dos actualizaciones, dos veces se
     }
   }
   await writeFile(join(receipts, 'two-consecutive-runs.json'), JSON.stringify({
-    owner, campaign, result: 'PASS', runner: 'scripts/e2e-lab.sh', daemon: 'docker-lab',
+    owner, campaign, result: 'PASS', runner: 'scripts/e2e-lab.sh', daemon: vm,
     method: 'owned-container-enters-vm-namespaces-and-drops-to-deploy',
     credentials_copied: false, production_writes: false, results,
   }, null, 2) + '\n', { mode: 0o600 });

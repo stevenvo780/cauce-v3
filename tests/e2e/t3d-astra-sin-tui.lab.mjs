@@ -13,7 +13,9 @@ import { createSelfSignedCert } from '../../tests/terminal-pty/certs.mjs';
 
 const ROOT = process.cwd();
 assert.equal(process.env.T3D_ON_VM, '1');
-assert.equal((await readFile('/etc/hostname', 'utf8')).trim(), 'docker-lab');
+const expectedVm = process.env.T3D_LAB_VM ?? 'docker-lab';
+assert.ok(['docker-lab', 'docker-lab-2'].includes(expectedVm));
+assert.equal((await readFile('/etc/hostname', 'utf8')).trim(), expectedVm);
 assert.equal(process.getuid(), 1000);
 const SOURCE = process.env.T3D_SOURCE ?? ROOT;
 const fromSource = path => import(pathToFileURL(join(SOURCE, path)).href);
@@ -88,7 +90,7 @@ try {
   delete process.env.DOCKER_CONTEXT;
   process.env.TESTCONTAINERS_HOST_OVERRIDE = '127.0.0.1';
   process.env.TESTCONTAINERS_RYUK_DISABLED = 'true';
-  const daemon = await waitFor(() => command('docker', ['info', '--format', '{{.Name}}']).then(result => result.stdout.trim() === 'docker-lab' ? result.stdout.trim() : undefined, () => undefined));
+  const daemon = await waitFor(() => command('docker', ['info', '--format', '{{.Name}}']).then(result => result.stdout.trim() === expectedVm ? result.stdout.trim() : undefined, () => undefined));
   const { GenericContainer, Wait } = await import('testcontainers');
   const password = randomUUID();
   database = await arrancarPostgresDePrueba(() => new GenericContainer('postgres:16-alpine')
@@ -200,7 +202,7 @@ try {
   const inventory = join(directory, 'inventory.json');
   await writeFile(inventory, JSON.stringify({ version: 1, agents: [agent] }), { mode: 0o600 });
   const safetyReceipt = join(RECEIPTS, 'tool-safety-receipt.json');
-  const t3bProof = join(ROOT, '.delegados/v4/recibos/t3b-adaptadores-v3-astra-1025/systemd/lab-proof.json');
+  const t3bProof = process.env.T3D_PREREQUISITE_PROOF ?? join(ROOT, '.delegados/v4/recibos/t3b-adaptadores-v3-astra-1025/systemd/lab-proof.json');
   async function toolPython(label, source) {
     const began = Date.now();
     try {
@@ -288,9 +290,9 @@ try {
   assert.equal(deliveries.length, 2);
   assert.deepEqual(await toolHashes(), frozenTools);
   assert.equal(createHash('sha256').update(await readFile(join(ROOT, 'tests/e2e/t3d-astra-sin-tui.lab.mjs'))).digest('hex'), frozenDriver);
-  proof = { schema_version: 1, result: 'PASS', owner: OWNER, lab: 'docker-lab', daemon, unit_kind: 'user', harness,
+  proof = { schema_version: 1, result: 'PASS', owner: OWNER, lab: expectedVm, daemon, unit_kind: 'user', harness,
     provider: 'controlled-tui-fixture', production_writes: false, real_adapter: true, ref: bundleRef, bundle,
-    bundle_ref: bundleRef, bundle_sha256: bundleDigest, product_source: SOURCE, execution_host: 'docker-lab', kill_mode: 'process', same_pane: true,
+    bundle_ref: bundleRef, bundle_sha256: bundleDigest, product_source: SOURCE, execution_host: expectedVm, kill_mode: 'process', same_pane: true,
     same_pane_pid_starttime: true, same_conversation: true, adapter_restarted: true, adopted: true,
     adopted_by_new_adapter: true, fresh_heartbeats_after_start: true, initial_tui: 'absent',
     no_tmux_server: true, no_harness_process: true, no_delivery_in_progress: true,
