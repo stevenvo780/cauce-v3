@@ -8,7 +8,7 @@ import {
   type Tenant,
 } from '@cauce/protocol';
 import { AgentContextRevisionsStore, AgentProfileRepository, CauceRepository, StoreError,
-  recordNativeContextVersionInTransaction } from '@cauce/store';
+  recordNativeContextVersionInTransaction, withTransaction } from '@cauce/store';
 import { messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
@@ -361,8 +361,9 @@ function registerConsoleAgentRoutes(
         recordRuntimeExpectation(
           tenantId, alias, runtimeContractFromVerification(revision, verification),
         ),
-      recordDesiredExpectation: (tenantId, alias, contract) =>
-        recordRuntimeExpectation(tenantId, alias, contract),
+      withProfileWriteTransaction: (work) => withTransaction(options.pool, work),
+      recordDesiredExpectationInTransaction: (client, tenantId, alias, contract, expectedPrior) =>
+        repository.recordProfileRuntimeExpectationInTransaction(client, tenantId, alias, contract, expectedPrior),
       readDesiredAdoption: (tenantId, alias, contract) =>
         repository.readProfileRuntimeAdoption(tenantId, alias, contract),
       readRuntimeAdoption: (tenantId, alias, revision, verification) =>

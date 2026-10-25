@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { isaTenant, newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { isaTenant, newTrustedPage } from './console-functional-browser.fixtures.js';
 import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 import { login, publish, startContextFixture, waitForDone, waitForLease } from './context-multiuser-continuity.fixtures.js';
 import { apiGet, asV4Page, type V4Page } from './v4-console-real-browser.helpers.js';
@@ -89,8 +89,8 @@ describe('contexto aplicado V4 en navegador real contra gateway y PostgreSQL rea
       return Number(row.rows[0]?.revision ?? 0);
     }, { timeout: 30_000 }).toBe(revisionBefore + 1);
     const desired = revisionBefore + 1;
-    const expectation = await fx.database.pool.query(
-      'SELECT revision FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2',
+    const expectation = await fx.database.pool.query<{ revision: string }>(
+      'SELECT revision::text AS revision FROM agent_profile_runtime_expectations WHERE tenant_id=$1 AND alias=$2',
       [isaTenant.tenant, isaTenant.target],
     );
     expect(Number(expectation.rows[0]?.revision ?? 0)).toBe(desired);
@@ -111,7 +111,8 @@ describe('contexto aplicado V4 en navegador real contra gateway y PostgreSQL rea
         'SELECT applied_revision::text FROM agent_profiles WHERE tenant_id=$1 AND alias=$2',
         [isaTenant.tenant, isaTenant.target],
       );
-      return row.rows[0]?.applied_revision === null ? null : Number(row.rows[0].applied_revision);
+      const appliedValue = row.rows[0]?.applied_revision;
+      return appliedValue === null || appliedValue === undefined ? null : Number(appliedValue);
     }, { timeout: 30_000 }).toBe(desired);
 
     const applied = await apiGet(page, perfilPath());

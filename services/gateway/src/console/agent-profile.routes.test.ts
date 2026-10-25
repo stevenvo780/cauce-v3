@@ -287,6 +287,77 @@ describe('PUT perfil: desired durable + ACK runtime', () => {
     expect(markProfileApplied).not.toHaveBeenCalled();
   });
 
+  it('sin sonda: desired, auditoría y expectativa se confirman o se revierten juntos', async () => {
+    async function escenario(failExpectation: boolean) {
+      const durable = {
+        purpose: 'prior purpose', revision: 1,
+        audits: [] as { action: string; metadata: Record<string, unknown> }[],
+        expectation: undefined as { revision: number } | undefined,
+      };
+      let staged: typeof durable | undefined;
+      const app = await appDeEscritura({
+        prepareRuntime: async () => {
+          throw Object.assign(new Error('runtime no medido'), { code: 'unavailable' });
+        },
+        readContext: async () => ({
+          contexto: contexto({ ...PERFIL_BODY, purpose: durable.purpose }, 'codex'),
+          exists: true, revision: durable.revision, applied_revision: 1,
+        }),
+        replaceProfile: async (profile) => {
+          if (!staged) throw new Error('replace fuera de transacción');
+          staged.purpose = profile.purpose ?? staged.purpose;
+          staged.revision = 2;
+          return { perfil: profile, exists: true, revision: 2, applied_revision: 1 };
+        },
+        recordAudit: async (entry) => {
+          if (!staged) throw new Error('auditoría fuera de transacción');
+          staged.audits.push(entry);
+        },
+        withProfileWriteTransaction: async (work) => {
+          staged = {
+            purpose: durable.purpose, revision: durable.revision,
+            audits: [], expectation: durable.expectation,
+          };
+          try {
+            const value = await work({} as never);
+            durable.purpose = staged.purpose;
+            durable.revision = staged.revision;
+            durable.audits.push(...staged.audits);
+            durable.expectation = staged.expectation;
+            return value;
+          } finally {
+            staged = undefined;
+          }
+        },
+        recordDesiredExpectationInTransaction: async (_client, _tenant, _alias, contract) => {
+          if (failExpectation) throw new Error('fallo inyectado en la expectativa');
+          if (!staged) throw new Error('expectativa fuera de transacción');
+          staged.expectation = { revision: contract.revision };
+        },
+      });
+      const res = await app.inject({
+        method: 'PUT', url: RUTA,
+        payload: { expected_revision: 1, profile: PERFIL_BODY, reason: MOTIVO },
+      });
+      return { res, durable };
+    }
+
+    const ok = await escenario(false);
+    expect(ok.res.statusCode).toBe(202);
+    expect(ok.res.json()).toMatchObject({ ok: true, state: 'pending_session_refresh', revision: 2, applied_revision: 1 });
+    expect(ok.durable).toMatchObject({ purpose: PERFIL_BODY.purpose, revision: 2, expectation: { revision: 2 } });
+    expect(ok.durable.audits).toHaveLength(1);
+    expect(ok.durable.audits[0]).toMatchObject({ action: 'agent_profile.write', decision: 'allow' });
+    expect(ok.durable.audits[0]?.metadata).toMatchObject({ operation: 'profile_write', revision: 2 });
+
+    const ko = await escenario(true);
+    expect(ko.res.statusCode).toBeGreaterThanOrEqual(500);
+    expect(ko.res.json()).not.toMatchObject({ ok: true });
+    expect(ko.durable).toEqual({
+      purpose: 'prior purpose', revision: 1, audits: [], expectation: undefined,
+    });
+  });
+
   it('el tenant objetivo del PUT viene de la ruta canónica, nunca del actor', async () => {
     const autorizado = vi.fn(async () => ({ tenant_id: 'Miguel', alias: 'kant', enabled: true }));
     const ctx = contexto({ ...PERFIL_BODY, purpose: 'prior purpose' }, 'codex');

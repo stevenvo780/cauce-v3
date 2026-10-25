@@ -22,7 +22,7 @@ export type ConsoleRouteRepository = Pick<GatewayRepository,
   | 'getConfiguration' | 'getConfigurationDependencies' | 'getMessage' | 'listAdapters' | 'listAgents' | 'listAudit' | 'listJobs'
   | 'listMessages' | 'listNotifications' | 'listOperationalDlq' | 'listOriginRelays'
   | 'principalAccess' | 'queueSnapshot' | 'readProfileRuntimeAdoption'
-  | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'replayDelivery'
+  | 'reconcileAgentContextRuntime' | 'recordProfileRuntimeExpectation' | 'recordProfileRuntimeExpectationInTransaction' | 'replayDelivery'
   | 'resolveOperationalDlqWithoutReplay'
   | 'rollbackConfiguration' | 'status' | 'topology'
 >;

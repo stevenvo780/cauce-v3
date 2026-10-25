@@ -86,13 +86,20 @@ export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
   ): Promise<void>;
   /**
    * Records the desired contract when no governance probe can measure the runtime (V4 fleet
-   * agents). The adapter accredits it on a later delivery by measuring its own files; without
-   * this row the claim never carries a contract and `applied_revision` can never advance.
+   * agents), inside the same transaction as the desired replace and its audit row, with a
+   * compare-and-set on the prior expectation. The adapter accredits it on a later delivery by
+   * measuring its own files; without this row the claim never carries a contract and
+   * `applied_revision` can never advance.
    */
-  recordDesiredExpectation?(
+  withProfileWriteTransaction?<Value>(
+    work: (client: DatabaseClient) => Promise<Value>,
+  ): Promise<Value>;
+  recordDesiredExpectationInTransaction?(
+    client: DatabaseClient,
     tenantId: string,
     alias: string,
     contract: ProfileRuntimeContract,
+    expectedPrior: ProfileRuntimeContract | null,
   ): Promise<void>;
   /** Reads the durable adapter adoption for an exact desired contract, without a live probe. */
   readDesiredAdoption?(
@@ -649,21 +656,44 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           message: runtimeErrorMessage(error, tope.message),
         });
       }
+      const replaceInTx = deps.replaceProfileInTransaction?.bind(deps);
+      const auditInTx = deps.recordAuditInTransaction?.bind(deps);
+      const recordExpectationInTx = deps.recordDesiredExpectationInTransaction?.bind(deps);
       if (runtimeErrorCode(error) === 'unavailable'
-        && deps.recordDesiredExpectation !== undefined && deps.replaceProfile !== undefined) {
+        && deps.withProfileWriteTransaction !== undefined && replaceInTx !== undefined
+        && auditInTx !== undefined && recordExpectationInTx !== undefined) {
         const harness = current.contexto.hechos.arnes.harness;
         const newRevision = expectedRevision === null ? 1
           : canonicallyEqual(profile, current.contexto.perfil) ? expectedRevision : expectedRevision + 1;
         const contract = desiredProfileContract(harness, { perfil: profile, hechos: current.contexto.hechos }, newRevision);
         if (contract !== undefined) {
-          const desired = await deps.replaceProfile(profile, expectedRevision, actor);
-          if (desired.revision === newRevision) {
-            await deps.recordDesiredExpectation(tenantId, alias, contract);
-            return reply.code(202).send({
+          try {
+            const priorExpectation = await deps.readWriteExpectation(tenantId, alias);
+            await deps.withProfileWriteTransaction(async (client) => {
+              const desired = await replaceInTx(client, profile, expectedRevision, actor);
+              if (desired.revision !== newRevision || desired.source_receipt !== undefined) {
+                throw new Error('profile_revision_mismatch');
+              }
+              await auditInTx(client, {
+                tenant_id: actor.tenant_id, actor_alias: actor.alias, action: 'agent_profile.write', decision: 'allow',
+                metadata: perfilAuditMetadata(escritura, { revision: newRevision, bytes: Buffer.byteLength(JSON.stringify(profile), 'utf8') }),
+              });
+              await recordExpectationInTx(client, tenantId, alias, contract, priorExpectation === undefined ? null : {
+                revision: priorExpectation.revision, generation: priorExpectation.generation,
+                documents: priorExpectation.documents.map((document) => ({ name: document.name, path: document.path, sha: document.sha })),
+              });
+            });
+            return await reply.code(202).send({
               ok: true, state: 'pending_session_refresh', tenant_id: tenantId, alias,
               message: 'el perfil quedó como desired; sin sonda de gobierno, el runtime lo acreditará en su próximo turno',
               revision: newRevision, applied_revision: current.applied_revision,
               acknowledgements: [], runtime_verification: null, runtime_adoption: null,
+            });
+          } catch (writeError) {
+            return denegar(runtimeErrorStatus(writeError), {
+              error: runtimeErrorCode(writeError) ?? 'profile_write_failed',
+              revision: current.revision,
+              applied_revision: current.applied_revision,
             });
           }
         }

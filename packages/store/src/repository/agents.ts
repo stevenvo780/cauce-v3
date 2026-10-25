@@ -88,6 +88,51 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
   }
 
 
+  /**
+   * Transactional twin of {@link recordProfileRuntimeExpectation} with a compare-and-set on the
+   * prior expectation, so a profile write and its expectation commit or roll back together.
+   * The caller already locked the profile row in this transaction (the desired replace did).
+   */
+  async recordProfileRuntimeExpectationInTransaction(
+    client: DatabaseClient,
+    tenantId: Tenant,
+    alias: string,
+    input: ProfileRuntimeContract,
+    expectedPrior: { readonly revision: number; readonly generation: string;
+      readonly documents: readonly { readonly name: string; readonly path: string; readonly sha: string }[] } | null,
+  ): Promise<void> {
+    const contract = canonicalProfileRuntimeContract(input);
+    if (contract === undefined) {
+      throw new StoreError('invalid_input', 'runtime profile expectation is invalid');
+    }
+    const profile = await client.query<{ revision: string | number }>(
+      `SELECT revision FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`,
+      [tenantId, alias],
+    );
+    if (profile.rowCount !== 1 || Number(profile.rows[0]?.revision) !== contract.revision) {
+      throw new StoreError('conflict', 'runtime profile expectation is not the desired revision');
+    }
+    if (expectedPrior === null) {
+      const inserted = await client.query(
+        `INSERT INTO agent_profile_runtime_expectations(tenant_id, alias, revision, generation, documents)
+         VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT (tenant_id, alias) DO NOTHING`,
+        [tenantId, alias, contract.revision, contract.generation, JSON.stringify(contract.documents)],
+      );
+      if (inserted.rowCount !== 1) throw new StoreError('conflict', 'profile runtime expectation changed during write');
+      return;
+    }
+    const prior = canonicalProfileRuntimeContract(expectedPrior);
+    if (prior === undefined) throw new StoreError('invalid_input', 'prior profile runtime expectation is invalid');
+    const updated = await client.query(
+      `UPDATE agent_profile_runtime_expectations
+          SET revision=$3,generation=$4,documents=$5::jsonb,updated_at=clock_timestamp()
+        WHERE tenant_id=$1 AND alias=$2 AND revision=$6 AND generation=$7 AND documents=$8::jsonb`,
+      [tenantId, alias, contract.revision, contract.generation, JSON.stringify(contract.documents),
+        prior.revision, prior.generation, JSON.stringify(prior.documents)],
+    );
+    if (updated.rowCount !== 1) throw new StoreError('conflict', 'profile runtime expectation changed during write');
+  }
+
   async readProfileRuntimeAdoption(
     tenantId: Tenant,
     alias: string,
