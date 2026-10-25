@@ -14,14 +14,31 @@ const BLOCKING_AUTH: Readonly<Record<SharedSessionHarness, RegExp>> = {
   muse: /^Your saved Meta credentials are invalid\. Your message was not sent\. Quit Muse Code and run `muse login`\.$/u,
 };
 
+const CLAUDE_BULLET = /^[●⏺]\s+/u;
+
 export function providerLoginRequired(harness: SharedSessionHarness, pane: string | undefined): boolean {
   if (pane === undefined) return false;
-  let fenced = false;
+  let fence: string | undefined;
+  let userContinuation = false;
   const lines = pane.split(/\r?\n/u).map(line => {
     // eslint-disable-next-line no-control-regex
-    const text = line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '').replace(/^[\s│║]+|[\s│║]+$/gu, '');
-    if (text.startsWith('```')) { fenced = !fenced; return ''; }
-    return fenced ? '' : text;
+    const raw = line.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '');
+    const text = raw.replace(/^[\s│║]+|[\s│║]+$/gu, '');
+    const fenceText = harness === 'claude' ? text.replace(CLAUDE_BULLET, '') : text;
+    const marker = /^(`{3,}|~{3,})/u.exec(fenceText)?.[1];
+    if (fence !== undefined) {
+      if (marker !== undefined && marker.startsWith(fence.slice(0, 1)) && marker.length >= fence.length
+        && fenceText.slice(marker.length).trim() === '') fence = undefined;
+      return '';
+    }
+    if (harness === 'claude') {
+      const prompt = /^[❯›»](?:\s(.*)|$)/u.exec(text);
+      if (prompt !== null) userContinuation = (prompt[1]?.trim().length ?? 0) > 0;
+      else if (userContinuation && /^[ \t]{2}/u.test(raw)) return '';
+      else if (text !== '') userContinuation = false;
+    }
+    if (marker !== undefined) { fence = marker; return ''; }
+    return text;
   });
   const prompt = lines.findLastIndex(line => /^[❯›»](?:\s|$)/u.test(line));
   const active = lines.slice(prompt + 1);
@@ -36,7 +53,7 @@ export function providerLoginRequired(harness: SharedSessionHarness, pane: strin
   }
   switch (harness) {
     case 'claude':
-      return active.some(line => blocking.test(line))
+      return active.some(line => blocking.test(line.replace(CLAUDE_BULLET, '')))
         && active.some(line => /^Paste code here if prompted\s*>\s*$/iu.test(line));
     case 'codex':
       return (active.some(line => /^Sign in with ChatGPT(?:\s|$)/u.test(line))
