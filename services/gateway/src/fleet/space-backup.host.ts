@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { SPACE_BACKUP_MAX_BYTES,SPACE_BACKUP_CHUNK_BYTES,SPACE_BACKUP_CHUNK_BASE64_BYTES,SpaceBackupClaimSchema,SpaceBackupHash,type SpaceBackupClaim } from '@cauce/store';
 import type { SignedHostChannel } from './signed-source.js';
-import { invokeSpaceBackupHelper,type SpaceBackupHostConfig } from './space-backup.process.js';
+import { invokeSpaceBackupHelper,streamSpaceBackupHelper,type SpaceBackupHostConfig } from './space-backup.process.js';
 import { backupFailure,SpaceBackupHelperError } from './space-backup.failure.js';
 const Receipt=z.object({bytes:z.number().int().positive().max(SPACE_BACKUP_MAX_BYTES),sha256:SpaceBackupHash,manifest_sha256:SpaceBackupHash,
   metrics:z.object({peak_rss_kib:z.number().int().positive().max(Number.MAX_SAFE_INTEGER)}).strict().optional()}).strict();
@@ -15,7 +15,7 @@ interface SpaceBackupHostChannel {identity:Pick<SignedHostChannel['identity'],'h
 export class SpaceBackupHost {
   private active:Promise<boolean>|undefined;
   constructor(private readonly channel:SpaceBackupHostChannel,private readonly config:SpaceBackupHostConfig,
-    private readonly helper=invokeSpaceBackupHelper) {}
+    private readonly helper=invokeSpaceBackupHelper,private readonly stream=streamSpaceBackupHelper) {}
   runOnce(signal:AbortSignal):Promise<boolean> {
     if (signal.aborted) return Promise.resolve(false);
     this.active??=this.turn(signal).finally(()=>{this.active=undefined;});return this.active;
@@ -65,12 +65,12 @@ export class SpaceBackupHost {
       message:'INSUFFICIENT_SPACE: insufficient free space in gateway backup storage for this copy and concurrent uploads',stage:'worker'});
     let offset=Offset.parse(begun).offset;
     if (offset>receipt.bytes) throw new Error('Space backup upload offset differs');
-    while(offset<receipt.bytes) {
+    await this.stream(this.config,{action:'read',claim,offset},receipt.bytes,signal,async rawChunk=>{
       if (signal.aborted) throw new Error('Space backup lease stopped');
-      const chunk=Chunk.parse(await this.helper(this.config,{action:'read',claim,offset},signal));const bytes=Buffer.byteLength(chunk.data,'base64');
+      const chunk=Chunk.parse(rawChunk);const bytes=Buffer.byteLength(chunk.data,'base64');
       if(chunk.offset!==offset||bytes!==Math.min(SPACE_BACKUP_CHUNK_BYTES,receipt.bytes-offset)) throw new Error('Space backup helper chunk differs');
       const next=Offset.parse(await this.command('append',{claim:fence,...chunk},signal)).offset;
-      if (next!==offset+bytes) throw new Error('Space backup durable upload offset differs');offset=next;
-    }
+      if (next!==offset+bytes) throw new Error('Space backup durable upload offset differs');offset=next;return offset;
+    });
   }
 }

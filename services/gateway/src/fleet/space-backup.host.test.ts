@@ -20,7 +20,11 @@ function fixture(bytes=2*SPACE_BACKUP_CHUNK_BYTES+1) {
     if(payload.action==='remove') return {removed:true};
     const offset=Number(payload.offset);return {offset,data:data.subarray(offset,offset+SPACE_BACKUP_CHUNK_BYTES).toString('base64')};
   });
-  return {current,calls,request,helper,worker:new SpaceBackupHost({identity:{host_id:'north-host',company_id:'north'},request},config,helper)};
+  const stream=vi.fn(async(_config:typeof config,body:Record<string,unknown>,length:number,signal:AbortSignal,consume:(chunk:unknown)=>Promise<number>)=>{
+    let offset=Number(body.offset);
+    while(offset<length) offset=await consume(await helper(_config,{action:'read',claim:body.claim,offset},signal));
+  });
+  return {current,calls,request,helper,stream,worker:new SpaceBackupHost({identity:{host_id:'north-host',company_id:'north'},request},config,helper,stream)};
 }
 describe('signed space backup host worker',()=>{
   it('uploads bounded chunks and settles only after every durable offset',async()=>{
@@ -28,6 +32,7 @@ describe('signed space backup host worker',()=>{
     expect(test.worker.runOnce(new AbortController().signal)).toBe(pending);expect(await pending).toBe(true);
     expect(test.calls.map(call=>call.action)).toEqual(['claim','begin','append','append','append','finish']);
     expect(test.calls.filter(call=>call.action==='append').map(call=>Buffer.byteLength(String(call.data),'base64'))).toEqual([SPACE_BACKUP_CHUNK_BYTES,SPACE_BACKUP_CHUNK_BYTES,1]);
+    expect(test.stream).toHaveBeenCalledTimes(1);
     expect(test.helper.mock.calls.at(-1)?.[1].action).toBe('remove');
   });
   it('records explicit limit failure without uploading or settling an incomplete archive',async()=>{
@@ -82,6 +87,25 @@ describe('signed space backup host worker',()=>{
     const pending=test.worker.runOnce(new AbortController().signal);await vi.advanceTimersByTimeAsync(15_000);
     expect(rejectHelper).toBeDefined();expect(await pending).toBe(true);expect(test.calls.map(call=>call.action)).toEqual(['claim','renew','fail']);
     await vi.advanceTimersByTimeAsync(60_000);expect(test.calls.filter(call=>call.action==='renew')).toHaveLength(1);
+  });
+  it('never publishes ready when the final stream binding or policy check fails after the last append',async()=>{
+    const test=fixture(1);test.stream.mockImplementationOnce(async(_config,_body,_bytes,_signal,consume)=>{
+      await consume({offset:0,data:'Wg=='});throw new Error('space backup policy changed before final receipt');
+    });
+    await test.worker.runOnce(new AbortController().signal);
+    expect(test.calls.map(call=>call.action)).toEqual(['claim','begin','append','fail']);
+    expect(test.calls.at(-1)).toMatchObject({error:'EXPORT_FAILED'});
+  });
+  it('aborts the persistent reader when a renewal loses its fence',async()=>{
+    vi.useFakeTimers();const test=fixture(1);let reading:AbortSignal|undefined;
+    test.stream.mockImplementationOnce(async(_config,_body,_bytes,signal)=>new Promise((_resolve,reject)=>{
+      reading=signal;signal.addEventListener('abort',()=>{reject(new Error('lease lost'));},{once:true});
+    }));
+    const original=test.request.getMockImplementation();if(!original) throw new Error('fixture absent');
+    test.request.mockImplementation(async(method,path,payload)=>{if(payload.action==='renew') throw new Error('fence replaced');return original(method,path,payload);});
+    const pending=test.worker.runOnce(new AbortController().signal);await vi.advanceTimersByTimeAsync(15_000);
+    expect(await pending).toBe(true);expect(reading?.aborted).toBe(true);
+    expect(test.calls.map(call=>call.action)).toEqual(['claim','begin','fail']);
   });
   it('does not claim after shutdown and never marks a cancelled export failed',async()=>{
     const test=fixture();const stopped=new AbortController();stopped.abort();expect(await test.worker.runOnce(stopped.signal)).toBe(false);

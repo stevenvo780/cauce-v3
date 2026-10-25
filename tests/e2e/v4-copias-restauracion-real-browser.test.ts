@@ -12,12 +12,11 @@ import { LARGE_BYTES, RUN, SMALL_FILES, TASK, agentPython, capture, receipt,
 import calibration from './v4-copias-rendimiento.calibration.json' with { type: 'json' };
 import { installBackupMeasurement, collectBackupMeasurement } from './v4-copias-rendimiento.js';
 
-const measurementOnly=(import.meta as ImportMeta&{env:{MODE:string}}).env.MODE==='backup-upload-measurement';
 function measuredBudget(scenario:'large'|'many') {
   const sample=calibration[scenario];
   const ready=Math.ceil(sample.ready_ms*calibration.margin);
   const total=Math.ceil((sample.ready_ms+sample.browser_download_ms+sample.restore_ms+sample.agent_read_ms)*calibration.margin);
-  return {ready,total:measurementOnly?ready:total,source_sha:calibration.source_sha,margin:calibration.margin};
+  return {ready,total,source_sha:calibration.source_sha,margin:calibration.margin};
 }
 
 interface BackupRow {
@@ -162,7 +161,7 @@ describe.each(['large', 'many'] as const)('copia completa por streaming del espa
   const active = () => { if (!fixture) throw new Error('copy fixture is not initialized'); return fixture; };
   beforeAll(async () => { fixture = await startCopyRestorationFixture(scenario); }, 600_000);
   afterAll(async () => { await fixture?.close(); }, 240_000);
-  it(measurementOnly?'mide la subida física sin acreditar descarga ni restauración':'crea en consola, descarga en Chromium, restaura y responde leyendo el archivo restaurado', async () => {
+  it('crea en consola, descarga en Chromium, restaura y responde leyendo el archivo restaurado', async () => {
     const f = active(); const page = f.page; const pool = f.computer.pool; const preparation=performance.now();const seed = await seedSpace(f);
     if (scenario === 'large') { expect(seed.reader_bytes).toBe(LARGE_BYTES); expect(seed.allocated_bytes).toBeGreaterThanOrEqual(LARGE_BYTES); }
     else expect(seed.files).toBe(SMALL_FILES + 4);
@@ -188,8 +187,7 @@ describe.each(['large', 'many'] as const)('copia completa por streaming del espa
     const available = panel.getByText('Backup disponible', { exact: true }); await available.waitFor({ timeout: 30_000 });
     await capture(page, `${scenario}-backup-ready`, available); const exportMs = performance.now() - started;
     const measurement=await collectBackupMeasurement(f,readyId);
-    await receipt(`${scenario}-upload-measurement`,{...measurement,ready_ms:exportMs,preparation_ms:preparationMs,budget,measurement_only:measurementOnly});
-    if(measurementOnly) return;
+    await receipt(`${scenario}-upload-measurement`,{...measurement,ready_ms:exportMs,preparation_ms:preparationMs,budget});
     const downloadStarted = performance.now(); const download = await downloadCopy(f, ready); const downloadMs = performance.now() - downloadStarted;
     const inspection = JSON.parse(await agentPython(f, `import json,pathlib,sys
 parent=pathlib.Path(sys.argv[1]);parent.mkdir(mode=0o700)

@@ -7,7 +7,7 @@ import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
 import { readFleetHostConfig } from './main.js';
 import { boundedProviderReceipt } from './provider-login.js';
 import { SignedHostChannel } from './signed-source.js';
-import { invokeSpaceBackupProcess } from './space-backup.process.js';
+import { invokeSpaceBackupProcess, streamSpaceBackupHelper } from './space-backup.process.js';
 
 const auxiliary = vi.hoisted(() => ({ enabled: false }));
 vi.mock('./worker.js', () => ({ FleetHostWorker: class {
@@ -41,6 +41,13 @@ elif request['action']=='read': result={'offset':0,'data':'Wg=='}
 else: result={'removed':True}
 print(json.dumps(result))
 `, { mode: 0o600 });
+  await writeFile(join(scripts, 'space_backup_local.py'), `import json,sys
+request=json.loads(sys.stdin.readline())
+assert request['action']=='read' and request['offset']==0
+print(json.dumps({'offset':0,'data':'Wg=='}),flush=True)
+assert json.loads(sys.stdin.readline())=={'offset':1}
+print(json.dumps({'done':True,'offset':1}),flush=True)
+`, { mode: 0o600 });
   const claim = { id: 'ab000000-0000-4000-8000-000000000001', claim_token: 'ab000000-0000-4000-8000-000000000002', claim_epoch: 1,
     company_id: 'test-company', tenant_id: 'Test', alias: 'worker', host_id: 'test-host', policy_sha256: 'a'.repeat(64),
     agent_snapshot: { company_id: 'test-company', tenant_id: 'Test', alias: 'worker', runtime_key: 'worker', host_id: 'test-host', harness_id: 'codex',
@@ -71,6 +78,69 @@ it('kills a real helper at its explicit backup deadline and rejects an unbounded
   await expect(run()).rejects.toThrow('exceeded its time or output limit');
   await expect(invokeSpaceBackupProcess('/usr/bin/python3', ['-c', 'raise SystemExit(99)'], {}, new AbortController().signal, 3_600_001))
     .rejects.toThrow('helper is unavailable');
+});
+
+it.each([
+  ['premature completion', "print('{\"done\":true,\"offset\":1}',flush=True)", 'completion differs'],
+  ['oversized unterminated frame', "sys.stdout.write('x'*(8*1024*1024+1));sys.stdout.flush()", 'frame exceeds'],
+  ['trailing frame', "print('{\"offset\":0,\"data\":\"Wg==\"}',flush=True)\nsys.stdin.readline()\nprint('{\"done\":true,\"offset\":1}\\n{\"done\":true,\"offset\":1}',flush=True)", 'unexpected frame'],
+  ['completion followed by failed exit', "print('{\"offset\":0,\"data\":\"Wg==\"}',flush=True)\nsys.stdin.readline()\nprint('{\"done\":true,\"offset\":1}',flush=True)\nsys.exit(7)", 'without a verified diagnostic'],
+  ['truncated completion', "print('{\"offset\":0,\"data\":\"Wg==\"}',flush=True)\nsys.stdin.readline()\nsys.stdout.write('{\"done\":true');sys.stdout.flush()", 'without a verified receipt'],
+  ['EOF without completion', "print('{\"offset\":0,\"data\":\"Wg==\"}',flush=True)\nsys.stdin.readline()", 'without a verified receipt'],
+])('rejects a real persistent helper with %s', async (_label, script, error) => {
+  directory = await mkdtemp(join(tmpdir(), 'cauce-stream-'));
+  const scripts = join(directory, 'ops/cli'); await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, 'space_backup_local.py'), `import sys\nsys.stdin.readline()\n${script}\n`);
+  await expect(streamSpaceBackupHelper({ python: '/usr/bin/python3', policyFile: join(directory, 'policy'), projectRoot: directory },
+    { action: 'read', claim: {}, offset: 0 }, 1, new AbortController().signal, async () => 1)).rejects.toThrow(error);
+});
+
+it('waits for a real reader to observe cancellation and exit before rejecting', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'cauce-stream-cancel-'));
+  const scripts = join(directory, 'ops/cli'); await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, 'space_backup_local.py'), `import json,pathlib,sys
+sys.stdin.readline()
+print('{"offset":0,"data":"Wg=="}',flush=True)
+assert json.loads(sys.stdin.readline())=={'cancel':True}
+pathlib.Path(__file__).with_name('cancel-observed').write_text('closed')
+`);
+  const abort = new AbortController();
+  await expect(streamSpaceBackupHelper({ python: '/usr/bin/python3', policyFile: join(directory, 'policy'), projectRoot: directory },
+    { action: 'read', claim: {}, offset: 0 }, 1, abort.signal, async () => { abort.abort(); return 1; })).rejects.toThrow('lease stopped');
+  expect(await readFile(join(scripts, 'cancel-observed'), 'utf8')).toBe('closed');
+});
+
+it('reaps a real reader that ignores cancellation and TERM before rejecting', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'cauce-stream-kill-'));
+  const scripts = join(directory, 'ops/cli'); await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, 'space_backup_local.py'), `import os,pathlib,signal,sys,time
+signal.signal(signal.SIGTERM,signal.SIG_IGN)
+pathlib.Path(__file__).with_name('pid').write_text(str(os.getpid()))
+sys.stdin.readline()
+print('{"offset":0,"data":"Wg=="}',flush=True)
+time.sleep(60)
+`);
+  const abort=new AbortController();
+  await expect(streamSpaceBackupHelper({python:'/usr/bin/python3',policyFile:join(directory,'policy'),projectRoot:directory},
+    {action:'read',claim:{},offset:0},1,abort.signal,async()=>{abort.abort();return 1;})).rejects.toThrow('lease stopped');
+  const pid=Number(await readFile(join(scripts,'pid'),'utf8'));
+  expect(()=>process.kill(pid,0)).toThrow();
+},20_000);
+
+it('passes the same bounded Docker selection to export and persistent read helpers', async () => {
+  directory=await mkdtemp(join(tmpdir(),'cauce-stream-environment-'));
+  const scripts=join(directory,'ops/cli');await mkdir(scripts,{recursive:true});
+  const keys=['DOCKER_CONTEXT','DOCKER_HOST','DOCKER_CONFIG'] as const;
+  const expected=Object.fromEntries(keys.map(key=>[key,`fixture-${key.toLowerCase()}`]));
+  for(const key of keys) vi.stubEnv(key,expected[key]);
+  vi.stubEnv('CAUCE_BACKUP_UNRELATED_ENV','unavailable');
+  try {
+    const check=`import json,os,sys\nexpected=${JSON.stringify(expected)}\nassert all(os.environ.get(key)==value for key,value in expected.items())\nassert 'CAUCE_BACKUP_UNRELATED_ENV' not in os.environ\n`;
+    await expect(invokeSpaceBackupProcess('/usr/bin/python3',['-c',`${check}print('{"verified":true}')`],{},new AbortController().signal)).resolves.toEqual({verified:true});
+    await writeFile(join(scripts,'space_backup_local.py'),`${check}sys.stdin.readline()\nprint('{"offset":0,"data":"Wg=="}',flush=True)\nsys.stdin.readline()\nprint('{"done":true,"offset":1}',flush=True)\n`);
+    await expect(streamSpaceBackupHelper({python:'/usr/bin/python3',policyFile:join(directory,'policy'),projectRoot:directory},
+      {action:'read',claim:{},offset:0},1,new AbortController().signal,async()=>1)).resolves.toBeUndefined();
+  } finally {vi.unstubAllEnvs();}
 });
 
 it('publishes unavailable quota actions from the executor receipt on the enrolled host channel', async () => {
