@@ -6,11 +6,14 @@ import json
 import os
 import pathlib
 import pwd
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 
 ROOT = pathlib.Path(sys.argv[1])
+tempfile.tempdir = '/var/tmp'
 sys.path.insert(0, str(ROOT / 'ops/cli'))
 from fleet_executor_policy import SafeFailure  # noqa: E402
 from fleet_executor_terminal import purge_terminal  # noqa: E402
@@ -154,15 +157,80 @@ from test_fleet_executor_authority import CentralAuthorityAdapterTest  # noqa: E
 from test_fleet_executor_container import DisposableContainerExecutorTest  # noqa: E402
 
 
+def visible_case(case):
+    original = case.temporary
+    previous = str(case.root)
+    temporary = tempfile.TemporaryDirectory(prefix='zz-canary-h7-case-', dir='/var/tmp')
+    try:
+        shutil.copytree(case.root, temporary.name, dirs_exist_ok=True)
+        def relocated(value):
+            return json.loads(json.dumps(value).replace(previous, temporary.name))
+        for name in ('root', 'bundle', 'worker', 'policy_file'):
+            setattr(case, name, pathlib.Path(str(getattr(case, name)).replace(previous, temporary.name)))
+        case.roots = {name: pathlib.Path(str(path).replace(previous, temporary.name)) for name, path in case.roots.items()}
+        case.policy, case.context, case.agent = relocated(case.policy), relocated(case.context), relocated(case.agent)
+        case.temporary = temporary
+        case.save_policy()
+    except BaseException:
+        temporary.cleanup()
+        raise
+    finally:
+        original.cleanup()
+
+
+def runtime_diagnostic(case, mode, result):
+    probe = r'''import errno,json,os,pathlib,re,stat,sys
+state,control=map(pathlib.Path,sys.argv[1:3])
+result={'files':{},'classes':[],'indicators':[]}
+for role,path in [('metadata',control/'cauce-v3-adapter.json'),('controller_lock',control/'cauce-v3-adapter.lock'),('adapter_log',state/'.cauce-adapter.log')]:
+ try:
+  details=path.lstat();entry={'exists':True,'uid':details.st_uid,'gid':details.st_gid,'mode':oct(stat.S_IMODE(details.st_mode)),'regular':stat.S_ISREG(details.st_mode),'bytes':details.st_size}
+  result['files'][role]=entry
+  if not entry['regular'] or details.st_nlink!=1: continue
+  fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+  try:
+   os.lseek(fd,max(0,details.st_size-65536),os.SEEK_SET);raw=os.read(fd,65536).decode(errors='replace')
+  finally: os.close(fd)
+  if role=='metadata':
+   try: document=json.loads(raw)
+   except ValueError: entry['json_valid']=False;continue
+   entry['json_valid']=True;entry['phase']=document.get('phase') if document.get('phase') in ('starting','running') else 'unknown'
+   for key in ('pid','controllerPid'):
+    pid=document.get(key)
+    if type(pid) is int and pid>1: entry[key]={'pid':pid,'proc_present':pathlib.Path('/proc',str(pid)).exists()}
+  elif role=='adapter_log':
+   classes=('PermissionError','FileNotFoundError','ModuleNotFoundError','ImportError','RuntimeError','OSError','PermanentError','ValueError','SyntaxError','TypeError')
+   result['classes']=[name for name in classes if re.search(r'(?m)^'+name+r':',raw)]
+   phrases={'missing_file':'No such file or directory','permission_denied':'Permission denied','operation_not_permitted':'Operation not permitted','no_space':'No space left on device','traceback':'Traceback (most recent call last)','consumer_lease':'consumer lease','missing_module':'No module named','metadata_absent':'adapter lifecycle metadata is absent'}
+   result['indicators']=[name for name,text in phrases.items() if text in raw]
+ except OSError as error: result['files'][role]={'exists':False,'errno':errno.errorcode.get(error.errno,'UNKNOWN')}
+print(json.dumps(result))'''
+    state = case.agent['state_directory']
+    control = '/run/cauce-fleet/' + case.agent['runtime_key'] if mode == 'container' else str(case.roots['runtime'] / '.control' / case.agent['runtime_key'])
+    args = ['docker', 'exec', '--user', '0', case.container, '/usr/bin/python3', '-I', '-B', '-c', probe] if mode == 'container' \
+        else [sys.executable, '-I', '-B', '-c', probe]
+    try:
+        observed = subprocess.run([*args, state, control], capture_output=True, text=True, timeout=10)
+        detail = json.loads(observed.stdout) if observed.returncode == 0 else {'probe_exit': observed.returncode}
+    except (subprocess.TimeoutExpired, ValueError, OSError) as error:
+        detail = {'probe_failure_class': type(error).__name__}
+    print('PURGE_RUNTIME_DIAGNOSTIC ' + json.dumps({'mode': mode, 'runtime_step_exit': result.returncode,
+        'observer_reported_metadata_absent': 'adapter lifecycle metadata is absent' in result.stderr,
+        'controller_exit_code_observed': False, 'observation': detail}), file=sys.stderr, flush=True)
+
+
 def canonical_cli(mode):
     central = CentralAuthorityAdapterTest()
     central.setUp()
     case = DisposableContainerExecutorTest() if mode == 'container' else PhysicalExecutorTest()
     case.setUp()
+    primary = None
     try:
+        visible_case(case)
         if mode == 'container':
             case.image = command('docker', 'image', 'inspect', sys.argv[2], '--format', '{{.Id}}')
             case.configure_container(prefix='zz-canary-h7-trasladados-1025-')
+            print('PURGE_INNER_SCOPE ' + json.dumps({'scope': case.container, 'host': case.policy['host_id']}), file=sys.stderr, flush=True)
         case.configure_signer()
         alias = 'zz-canary-cli-' + mode
         def mapped(document):
@@ -172,6 +240,8 @@ def canonical_cli(mode):
         case.save_policy()
         for step in ('artifacts', 'credentials', 'runtime'):
             result = case.run_step(step, timeout=60)
+            if step == 'runtime' and result.returncode != 0:
+                runtime_diagnostic(case, mode, result)
             assert result.returncode == 0, step + ': ' + result.stderr
         if mode == 'container':
             assert json.loads(command('docker', 'inspect', case.container))[0]['State']['Running'] is True
@@ -289,18 +359,31 @@ def canonical_cli(mode):
                 'canonical_cli': True, 'runtime_removal_observed': True, 'orphan_cleaned_before_container_removal': orphan_bundle is not None,
                 'orphan_live_before_purge': orphan_pid is not None,
                 'removed': receipt['removed']}
+    except Exception as error:
+        primary = error
+        raise
     finally:
-        if mode == 'container':
-            case.tearDown()
-        else:
-            PhysicalExecutorTest.tearDown(case)
-        central.tearDown()
+        failures = []
+        for cleanup in (case.tearDown, central.tearDown):
+            try:
+                cleanup()
+            except Exception as error:
+                failures.append(error)
+        if failures:
+            raise ExceptionGroup('terminal purge fixture cleanup failed', ([primary] if primary else []) + failures) from None
 
 
 CentralAuthorityAdapterTest.setUpClass()
+primary = None
 try:
     for mode in ('native', 'container'):
         evidence[mode] = canonical_cli(mode)
+except Exception as error:
+    primary = error
+    raise
 finally:
-    CentralAuthorityAdapterTest.tearDownClass()
+    try:
+        CentralAuthorityAdapterTest.tearDownClass()
+    except Exception as error:
+        raise ExceptionGroup('terminal purge authority cleanup failed', ([primary] if primary else []) + [error]) from None
 print(json.dumps(evidence, sort_keys=True))
