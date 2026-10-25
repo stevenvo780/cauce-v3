@@ -57,7 +57,7 @@ describe('entregaEnVuelo', () => {
     expect(DELIVERY_IN_FLIGHT_LISTED).toBe(20);
   });
 
-  it('lee sólo las entregas en vuelo del alias y las ordena por antigüedad del reclamo', async () => {
+  it('lee solo las entregas en vuelo del alias y las ordena por antigüedad del reclamo', async () => {
     const { pool, queries } = poolCon([]);
 
     const enVuelo = await entregaEnVuelo(pool, 'Steven', 'jarvis');

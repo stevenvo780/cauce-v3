@@ -189,7 +189,7 @@ describe('terminal control plane', () => {
     expect(database.sessions.size).toBe(0);
   });
 
-  it('sólo le pide al relay el manual del sitio, nunca settings.json ni .claude.json', async () => {
+  it('solo le pide al relay el manual del sitio, nunca settings.json ni .claude.json', async () => {
     hechos.set('Steven:jarvis', CLAUDE);
 
     const response = await app.inject({ method: 'GET', url: DIRECTIVA });

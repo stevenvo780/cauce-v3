@@ -36,7 +36,7 @@ describe('derivación de contraseñas', () => {
     expect(await verifyPassword('', 'lo-que-sea')).toBe(false);
   });
 
-  it('la política mínima sólo se aplica al alta', () => {
+  it('la política mínima solo se aplica al alta', () => {
     expect(() => { assertPasswordPolicy('corta'); }).toThrow(/al menos/);
     expect(() => { assertPasswordPolicy('x'.repeat(MAX_PASSWORD_LENGTH + 1)); }).toThrow(/superar/);
     expect(() => { assertPasswordPolicy('doce-caracteres-o-mas'); }).not.toThrow();

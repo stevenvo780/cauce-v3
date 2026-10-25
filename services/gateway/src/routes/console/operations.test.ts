@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 describe('rutas de operación de la consola', () => {
-  it('publica la capacidad terminal exacta sólo después de autorizar control', async () => {
+  it('publica la capacidad terminal exacta solo después de autorizar control', async () => {
     const capability = { available: true, backend: 'terminal-relay', protocol: 3 };
     const { app, repository } = fixture(capability);
     const response = await app.inject({

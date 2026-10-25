@@ -58,15 +58,15 @@ function spanishZodMessage(error: z.ZodError): string {
   }
   const key = String(issue?.path.at(-1) ?? '');
   const label = FIELD_LABELS[key] ?? 'Configuración';
-  if (issue?.code === 'custom') return `${label}: modificá al menos un campo antes de guardar.`;
-  return `${label}: valor no válido. Revisá el formato y los límites del campo.`;
+  if (issue?.code === 'custom') return `${label}: modifica al menos un campo antes de guardar.`;
+  return `${label}: valor no válido. Revisa el formato y los límites del campo.`;
 }
 
 /** The store messages name the field in English; the console contract is field and reason in Spanish. */
 export function spanishCatalogMessage(message: string): string {
   if (message.startsWith('harness.id:')) {
     if (message.includes('no published descriptor declares this harness')) {
-      return 'Id del arnés: no hay un descriptor publicado para ese id. Publicá primero el descriptor '
+      return 'Id del arnés: no hay un descriptor publicado para ese id. Publica primero el descriptor '
         + 'en packages/adapter-sdk/descriptors con su aprobación por digest; los descriptores aprobados no se editan desde la web.';
     }
     if (message.includes('its published descriptor is invalid')) {
@@ -79,7 +79,7 @@ export function spanishCatalogMessage(message: string): string {
     return message;
   }
   if (message.startsWith('harness.capabilities:')) {
-    if (message.includes('at least one capability is required')) return 'Capacidades: elegí al menos una capacidad.';
+    if (message.includes('at least one capability is required')) return 'Capacidades: elige al menos una capacidad.';
     const outside = /'([^']+)' is outside the closed vocabulary/u.exec(message)?.[1];
     if (outside !== undefined) {
       return `Capacidades: «${outside}» no pertenece al vocabulario cerrado `
@@ -95,29 +95,29 @@ export function spanishCatalogMessage(message: string): string {
   const revision = /^configuration revision changed: expected (\d+), current (\d+)/u.exec(message);
   if (revision?.[1] !== undefined && revision[2] !== undefined) {
     return `Conflicto de revisión: esperabas la revisión ${revision[1]} y el servidor ya va por la ${revision[2]}. `
-      + 'Releé el catálogo y volvé a intentarlo sobre la revisión actual.';
+      + 'Relee el catálogo y vuelve a intentarlo sobre la revisión actual.';
   }
   const known: Readonly<Record<string, string>> = {
     'harness definition already exists': 'Id del arnés: ya existe una definición con ese id.',
     'harness definition was not found': 'Id del arnés: no existe una definición con ese id.',
     'role policy already exists': 'Id del rol: ya existe una política con ese rol.',
     'role policy was not found': 'Id del rol: no existe una política con ese rol.',
-    'harness display_name is required': 'Nombre visible: completá el nombre visible del arnés.',
-    'expected revision is required': 'Revisión esperada: falta la revisión sobre la que pedís el cambio; releé el catálogo.',
+    'harness display_name is required': 'Nombre visible: completa el nombre visible del arnés.',
+    'expected revision is required': 'Revisión esperada: falta la revisión sobre la que pides el cambio; relee el catálogo.',
     'configuration cannot remove the last qualified platform administrator':
-      'El cambio dejaría a la plataforma sin su último administrador calificado. Asigná otro administrador antes de intentarlo.',
+      'El cambio dejaría a la plataforma sin su último administrador calificado. Asigna otro administrador antes de intentarlo.',
     'configuration change violates a durable constraint':
-      'El cambio contradice una restricción guardada. Si estás borrando, revisá qué agentes o membresías todavía lo usan.',
+      'El cambio contradice una restricción guardada. Si estás borrando, revisa qué agentes o membresías todavía lo usan.',
     'configuration resource has durable dependencies':
-      'No se puede borrar: agentes o membresías todavía usan este recurso. Resolvé las dependencias antes de intentarlo.',
-    'authority is busy; reload and retry': 'La autoridad está ocupada por otro cambio; releé el catálogo y volvé a intentarlo.',
+      'No se puede borrar: agentes o membresías todavía usan este recurso. Resuelve las dependencias antes de intentarlo.',
+    'authority is busy; reload and retry': 'La autoridad está ocupada por otro cambio; relee el catálogo y vuelve a intentarlo.',
     'platform administrator authority is required':
       'Solo el administrador de plataforma puede ver y cambiar las definiciones de arnés y las políticas de rol.',
   };
   const translated = Object.hasOwn(known, message) ? known[message] : undefined;
   if (translated !== undefined) return translated;
   if (message.includes('must keep a qualified')) {
-    return 'El cambio dejaría sin su última autoridad calificada a la plataforma o a una empresa. Asigná otro administrador antes de intentarlo.';
+    return 'El cambio dejaría sin su última autoridad calificada a la plataforma o a una empresa. Asigna otro administrador antes de intentarlo.';
   }
   return message;
 }

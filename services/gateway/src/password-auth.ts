@@ -62,7 +62,7 @@ export interface ConsolePasswordAuthState {
 /** Distinguished from the rest of `AuthError` only so the user can be told what happened. */
 class SessionExpiredError extends AuthError {
   constructor() {
-    super('La sesión venció. Volvé a iniciar sesión.');
+    super('La sesión venció. Vuelve a iniciar sesión.');
   }
 }
 
@@ -592,7 +592,7 @@ export class PasswordAuthProvider implements AuthProvider {
       await reply
         .header('Retry-After', String(Math.ceil(retryAfterMs / 1_000)))
         .code(429)
-        .send({ error: 'too_many_requests', message: 'Demasiados intentos fallidos. Probá de nuevo más tarde.' });
+        .send({ error: 'too_many_requests', message: 'Demasiados intentos fallidos. Prueba de nuevo más tarde.' });
       return;
     }
     const releaseEmail = this.throttle.reserve(throttleKey);
@@ -606,7 +606,7 @@ export class PasswordAuthProvider implements AuthProvider {
     } catch (error) {
       if (!(error instanceof PasswordWorkSaturated)) throw error;
       await reply.header('Retry-After', '5').code(429)
-        .send({ error: 'too_many_requests', message: 'Hay demasiados inicios de sesión en curso. Probá de nuevo en unos segundos.' });
+        .send({ error: 'too_many_requests', message: 'Hay demasiados inicios de sesión en curso. Prueba de nuevo en unos segundos.' });
       return;
     } finally {
       releaseEmail(); releaseAddress();

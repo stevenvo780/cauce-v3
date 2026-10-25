@@ -19,10 +19,10 @@ fuera de ella; la denegación `read_revoked_or_expired` usa el cliente, dentro.
 tickets, bytes de PTY y contenidos de documento. Su unión de acciones (`SecretAuditAction`) es propia:
 ampliarla para que coincida con `TerminalAuditAction` dejaría que una consulta pensada para el
 terminal alcanzara una fila de credencial. Nunca se registra un secreto ni los bytes sellados: del
-ciphertext sólo es durable su sha256 truncado a 16 hex — suficiente para atar una fila `secret.read`
+ciphertext solo es durable su sha256 truncado a 16 hex — suficiente para atar una fila `secret.read`
 a su `secret.granted`, inútil para cualquier otra cosa.
 
-### Escalera de denegaciones, sólo para las filas DENY
+### Escalera de denegaciones, solo para las filas DENY
 
 El límite de tasa cubre las filas de denegación y nada más. Una denegación la escribe la misma
 petición que el atacante controla, así que un `secret.denied` sin freno convierte un flood que el
@@ -79,7 +79,7 @@ invariantes sostienen cada ruta:
 ### Errores opacos: lista de admitidos, no de rechazados
 
 Cualquier otro plano puede responder 400 con el texto que sea que se lanzó; aquí un desconocido no
-debe aprender ningún hecho, así que sólo llegan al cliente los errores que este plano lanza a
+debe aprender ningún hecho, así que solo llegan al cliente los errores que este plano lanza a
 propósito — más los de autenticación y autorización, cuyo texto habla del llamador y nunca del
 despliegue. Un fallo del driver, un pool muerto o un `TypeError` colapsan todos en un único 500
 opaco: un error de conexión lleva el host y el puerto de la base, y un fallo interno no es un error
@@ -118,7 +118,7 @@ y a nada que la petición nombre — un cuerpo que rota el destinatario debe cos
 filas que uno que lo repite. `denials_in_window` dice cuántas denegaciones representa la fila; la
 escalera que decide cuáles se escriben vive en `audit.ts`.
 
-### `key_published` sólo cuando cambia lo que el alias anuncia
+### `key_published` solo cuando cambia lo que el alias anuncia
 
 Un agente publica su PROPIA mitad pública. El sujeto es el principal autenticado y el cuerpo no
 puede nombrar a nadie: publicar una clave para otro alias dejaría que el publicador se convirtiera
@@ -126,10 +126,10 @@ en el destinatario de todo traspaso futuro dirigido a ese alias.
 
 `read` es el permiso porque ésta es la mitad RECEPTORA del plano, la misma autoridad que lista y
 reclama traspasos: un alias que no puede recibir uno no tiene por qué anunciar la clave a la que
-otros sellarían. `route` es la mitad emisora y no pertenece aquí — dejaría que un agente que sólo
+otros sellarían. `route` es la mitad emisora y no pertenece aquí — dejaría que un agente que solo
 puede enviar se hiciera direccionable.
 
-Sólo se audita una publicación que CAMBIA lo que el alias anuncia: un `key_id` nuevo, o bytes
+Solo se audita una publicación que CAMBIA lo que el alias anuncia: un `key_id` nuevo, o bytes
 nuevos. Mover el `not_after` de la clave ya publicada es un toque, no un evento, y auditarlo escribió
 17363 filas permanentes en 10 s a partir de una sola fila, medido. La fila lleva el `key_id` y una
 huella, nunca los bytes. Crear identidades está acotado por alias por la misma razón: el `key_id` lo
@@ -137,9 +137,9 @@ elige quien llama y cada uno nuevo es una fila durable aquí más una fila durab
 
 ### La clave pública del destinatario
 
-Sin esta ruta el plano no se podría usar en absoluto: `agent_sealing_keys.public_key` sería de sólo
+Sin esta ruta el plano no se podría usar en absoluto: `agent_sealing_keys.public_key` sería de solo
 escritura y ningún emisor podría direccionar jamás a un destinatario. Está protegida por la misma
-autoridad de ruteo que el traspaso — un alias sólo conoce la clave de alguien a quien ya se le
+autoridad de ruteo que el traspaso — un alias solo conoce la clave de alguien a quien ya se le
 permite entregarle un secreto.
 
 ### El emisor sella en su propio proceso; el gateway no puede abrir nada
@@ -154,7 +154,7 @@ existe sin su fila de auditoría sería una credencial reclamable que nadie sabe
 
 El sobre se decide PRIMERO, en este proceso y contra ninguna tabla: un cuerpo que este plano
 rechazaría de todos modos no debe comprar una consulta de ruteo, ni la fila de auditoría que escribe
-un rechazo. Si el destinatario existe sólo se pregunta de una petición que merece la pregunta.
+un rechazo. Si el destinatario existe solo se pregunta de una petición que merece la pregunta.
 
 El barrido corre ANTES de que el techo cuente: el destinatario que está en el techo es precisamente
 aquel cuyos restos asentados están ocupando los cupos, y un rechazo que vuelve antes nunca barre.
@@ -169,9 +169,9 @@ puede ver después.
 deciden cuántos traspasos existen, así que el tamaño de la respuesta tampoco puede ser suyo decidir.
 `next_cursor` es null cuando la página es la última.
 
-### Reclamo de un solo uso, sólo por POST
+### Reclamo de un solo uso, solo por POST
 
-El destinatario lee una vez, y sólo mediante un POST. El reclamo destruye lo que devuelve, así que
+El destinatario lee una vez, y solo mediante un POST. El reclamo destruye lo que devuelve, así que
 jamás puede colgar de un GET: un prefetch, una vista previa de enlace, una sonda de monitoreo, un
 reintento o un `<img src>` en la página de un atacante quemarían el secreto sin recuperación posible
 y sin forma de distinguirlo de una lectura legítima. Como POST, los dos ganchos CSRF de este gateway
@@ -185,11 +185,11 @@ Reclamo y fila de auditoría confirman juntos.
 
 ### Revocación
 
-El emisor retira lo que dio, y sólo mientras haya algo que retirar: un traspaso ya leído está
+El emisor retira lo que dio, y solo mientras haya algo que retirar: un traspaso ya leído está
 consumido, y responder 204 ahí escribiría `secret.revoked` después de `secret.read` y dejaría un
 rastro afirmando que se recuperó una credencial ya entregada.
 
-Un operador con `control` también puede revocar, pero sólo sobre un borde que toca su propio
+Un operador con `control` también puede revocar, pero solo sobre un borde que toca su propio
 tenant: `control` no es una licencia sobre tenants ajenos. Todos los demás necesitan `route`, el
 mismo permiso con el que crearon el traspaso.
 
@@ -231,7 +231,7 @@ lectura-y-luego-escritura: repetir los mismos bytes bajo el mismo `key_id` actua
 nada más; volver a publicar los mismos bytes bajo un `key_id` NUEVO se rechaza, porque esa fila
 nacería `enabled` y volvería a dejar que ese mismo material de clave direccionara al alias.
 
-`published` y `refreshed` se distinguen porque sólo el primero es un evento: `prior` lee el estado
+`published` y `refreshed` se distinguen porque solo el primero es un evento: `prior` lee el estado
 con el que arrancó la sentencia — un `WITH` ve la instantánea, nunca el `INSERT` de al lado — así que
 quien llama moviendo el `not_after` de la clave que ya anuncia es un toque, no una publicación nueva,
 y no debe escribir una fila de auditoría por petición. Lo que el alias anuncia no cambió.
@@ -261,7 +261,7 @@ Un traspaso lo crea el EMISOR contra un destinatario que nunca lo pidió, y cual
 buzón de otro agente — y su disco, con blobs de 64 KiB — tan rápido como pueda hacer POST.
 
 Se cuenta lo que se CREÓ para ese destinatario dentro de la ventana, NO lo que sigue vivo. Contar
-sólo lo vivo acotaba únicamente el buzón: un emisor que elegía un `expires_at` a unos cientos de
+solo lo vivo acotaba únicamente el buzón: un emisor que elegía un `expires_at` a unos cientos de
 milisegundos de distancia creaba filas invisibles al conteo en el instante en que aterrizaban, y aun
 así residentes en disco — medido: 2131 filas y 133 MiB en 20 s mientras el conteo de vivos marcaba 32
 todo el tiempo. Toda fila dentro de la ventana está en disco o ya fue barrida, así que este conteo es
@@ -333,7 +333,7 @@ Tres escrituras de este plano se dejaron deliberadamente sin techo ni escalera p
 - **El toque silencioso de una clave deshabilitada.** El `ON CONFLICT` de `publishSealingKey`
   selecciona por `(tenant_id,alias,key_id)`, no por si la clave está `enabled`. Repetir la
   publicación de un `key_id` que ya fue deshabilitado actualiza su `not_after` igual, sin
-  reactivarla y sin fila de auditoría — sólo toca metadata de una fila que ya no direcciona a nadie.
+  reactivarla y sin fila de auditoría — solo toca metadata de una fila que ya no direcciona a nadie.
   El camino que SÍ se rechaza (`disabled_material`) es el de bytes iguales bajo un `key_id`
   DISTINTO, porque ésa sí volvería a hacer que el material deshabilitado direccionara al alias.
 

@@ -1,7 +1,7 @@
 /**
  * Poda automática de grabaciones TUI (T014a/FR-012, decisión del dueño: 30 días).
  * Las grabaciones las escribe el terminal-relay en `CAUCE_TERMINAL_RECORDING_DIR` como
- * `<session_id>.cast` (0700/0600, tope por sesión); este sweeper sólo borra dentro de ese
+ * `<session_id>.cast` (0700/0600, tope por sesión); este sweeper solo borra dentro de ese
  * directorio los `.cast` regulares de primer nivel con mtime más antiguo que la retención.
  * Si la variable está vacía, el relay no abre TUI escribibles; este sweeper recibe la ruta
  * explícitamente y no lee la variable.

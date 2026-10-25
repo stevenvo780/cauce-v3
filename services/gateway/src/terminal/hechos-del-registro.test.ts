@@ -308,7 +308,7 @@ describe('la presencia acepta el `home` sin exigirlo', () => {
 });
 
 describe('fencing y resolución multi-relay', () => {
-  it('expone sólo generaciones respaldadas por un snapshot autenticado y fresco', () => {
+  it('expone solo generaciones respaldadas por un snapshot autenticado y fresco', () => {
     const registry = new AgentRegistry();
     const now = Date.now();
     expect(registry.available(now)).toBe(false);
