@@ -25,8 +25,13 @@ test("cauce routes exact argv to validated SSH destinations", async () => {
   const remoteLog = path.join(temporary, "remote.jsonl");
 
   function environment(extra = {}) {
+    // The operator's own console session must not route the SSH path under test to the gateway.
+    const inherited = { ...process.env };
+    delete inherited.CAUCE_CONSOLE_SESSION_FILE;
+    delete inherited.CAUCE_GATEWAY_URL;
     return {
-      ...process.env,
+      ...inherited,
+      XDG_STATE_HOME: path.join(temporary, "state"),
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       FAKE_LOCAL_HOME: localHome,
       FAKE_REMOTE_HOME: remoteHome,

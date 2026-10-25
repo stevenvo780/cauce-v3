@@ -25,6 +25,14 @@ from test_fleet_runtime_materialization import dynamic_source  # noqa: E402
 OPS = pathlib.Path(__file__).resolve().parents[1]
 
 
+def without_console_session(environment: dict[str, str], root: pathlib.Path) -> dict[str, str]:
+    """The operator's own console session must not decide how the CLI under test routes a command."""
+    hermetic = {key: value for key, value in environment.items()
+                if key not in ("CAUCE_CONSOLE_SESSION_FILE", "CAUCE_GATEWAY_URL")}
+    hermetic["XDG_STATE_HOME"] = str(root / "state")
+    return hermetic
+
+
 class DynamicReaderTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="cauce-readers-", dir="/var/tmp")
@@ -160,7 +168,8 @@ class DynamicReaderTests(unittest.TestCase):
             wrapper = bin_directory / reader
             wrapper.write_text('#!/bin/sh\nprintf "%s %s\\n" "${0##*/}" "$*"\n')
             wrapper.chmod(0o700)
-        environment = {**os.environ, "HOME": str(home), "PATH": str(bin_directory) + ":" + os.environ["PATH"]}
+        environment = without_console_session(
+            {**os.environ, "HOME": str(home), "PATH": str(bin_directory) + ":" + os.environ["PATH"]}, home)
         for verb, reader in (("estado", "cauce-estado"), ("sesiones", "cauce-sesiones"), ("panel", "cauce-panel")):
             result = subprocess.run(["bash", str(OPS / "cli/cauce"), "Otro/shared_alias", verb],
                                     env=environment, capture_output=True, text=True, check=False)
@@ -177,7 +186,8 @@ class DynamicMutationBlockTests(unittest.TestCase):
                 script = root / command
                 script.write_text('#!/bin/sh\nprintf "%s\\n" "$0" >> "$CAUCE_TEST_EFFECTS"\nexit 91\n')
                 script.chmod(0o700)
-            environment = {**os.environ, "PATH": str(root) + ":" + os.environ["PATH"], "CAUCE_TEST_EFFECTS": str(log)}
+            environment = without_console_session(
+                {**os.environ, "PATH": str(root) + ":" + os.environ["PATH"], "CAUCE_TEST_EFFECTS": str(log)}, root)
             for inventory in ("", "/missing/receipt"):
                 environment["CAUCE_FLEET_RUNTIME_STATE"] = inventory
                 for arguments in (["physical-one", "on"], ["physical-one", "off"], ["physical-one", "retirar"],
@@ -206,8 +216,10 @@ class DynamicMutationBlockTests(unittest.TestCase):
                 script = root / command
                 script.write_text('#!/bin/sh\nprintf "%s\\n" "$0" >> "$CAUCE_TEST_EFFECTS"\nexit 91\n')
                 script.chmod(0o700)
-            environment = {**os.environ, "HOME": str(home), "PATH": str(root) + ":" + os.environ["PATH"],
-                           "CAUCE_TEST_EFFECTS": str(log), "PYTHONDONTWRITEBYTECODE": "1"}
+            environment = without_console_session({**os.environ, "HOME": str(home),
+                                                    "PATH": str(root) + ":" + os.environ["PATH"],
+                                                    "CAUCE_TEST_EFFECTS": str(log), "PYTHONDONTWRITEBYTECODE": "1"},
+                                                   home)
             for inventory in ("", str(root / "missing-receipt")):
                 result = subprocess.run(["bash", str(OPS / "cli/cauce"), "physical-one"],
                                         env={**environment, "CAUCE_FLEET_RUNTIME_STATE": inventory},

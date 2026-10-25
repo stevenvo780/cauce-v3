@@ -281,6 +281,10 @@ class GuardEnvironmentTests(unittest.TestCase):
         os.chmod(bindir / "ssh", 0o755)
         env = os.environ.copy()
         env.pop("CAUCE_FLEET_RUNTIME_STATE", None)
+        # The operator's own console session must not route the legacy SSH path under test to the gateway.
+        env.pop("CAUCE_CONSOLE_SESSION_FILE", None)
+        env.pop("CAUCE_GATEWAY_URL", None)
+        env["XDG_STATE_HOME"] = str(home / ".local/state")
         if remote_user is None:
             env.pop("CAUCE_REMOTE_USER", None)
         else:
