@@ -69,7 +69,8 @@ export async function readFleetGroupAgents(client: DatabaseClient, request: Flee
   const target = request.target;
   return (await client.query<Record<string, unknown>>(`SELECT agent.tenant_id,agent.alias,agent.runtime_key,agent.harness_id,
     agent.host_id,agent.runtime_mode,agent.container_name,agent.runtime_user,agent.home_directory,agent.state_directory,
-    agent.systemd_user,agent.primary_room_id,agent.primary_account_id,agent.model_id,agent.reasoning_effort,agent.extensions,agent.enabled,agent.lifecycle_state
+    agent.systemd_user,agent.primary_room_id,agent.primary_account_id,agent.model_id,agent.reasoning_effort,
+    COALESCE(to_jsonb(agent)->'extensions','[]'::jsonb) AS extensions,agent.enabled,agent.lifecycle_state
     FROM agents agent WHERE agent.tenant_id=$1 AND agent.purged_at IS NULL
       AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
       AND ($2::text IS NULL OR agent.alias=$2)
@@ -207,7 +208,7 @@ export function hostStepEvidence(name: FleetHostStep, input: FleetEvidence): Fle
         : name === 'profile' ? proof.profile_verified === true : name === 'verify' ? proof.bootstrap_verified === true && proof.roundtrip_verified === true
           : name === 'stop' ? proof.stopped_verified === true : name === 'revoke' ? proof.revocation_verified === true
             : name === 'admission' ? proof.authority_verified === true && !!proof.artifact_sha256 : false;
-  if (!valid) conflict('host receipt has not demonstrated its declared physical effect');
+  if (!valid || (proof.removed?.length ?? 0) > 512) conflict('host receipt has not demonstrated its declared physical effect');
   return proof;
 }
 export async function readFleetHostReceipts(
@@ -248,7 +249,11 @@ export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetH
       ...(placement_role === undefined ? {} : { placement_role }) })));
   if (name === 'artifacts') return { artifact_sha256: evidence };
   if (name === 'admission') return { authority_verified: true, artifact_sha256: evidence };
-  if (name === 'compensate' || name === 'purge') return { stopped_verified: true, revocation_verified: true };
+  if (name === 'purge') return { stopped_verified: true, revocation_verified: true,
+    ...(receipts.some(receipt => receipt.evidence.removed !== undefined)
+      ? { removed: [...receipts].sort((left, right) => left.host_id.localeCompare(right.host_id)).flatMap(receipt => receipt.evidence.removed ?? []) } : {}),
+    ...(receipts.some(receipt => receipt.evidence.native_decommissioned === true) ? { native_decommissioned: true } : {}) };
+  if (name === 'compensate') return { stopped_verified: true, revocation_verified: true };
   if (name === 'stop') return { stopped_verified: true };
   if (name === 'revoke') return { revocation_verified: true };
   if (receipts.length !== 1) conflict('agent activation requires one exact host receipt');

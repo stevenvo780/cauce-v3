@@ -7,16 +7,10 @@ import pathlib
 import re
 import shutil
 import ssl
-import stat
 
 from fleet_executor_pki import checked_file
 from fleet_executor_policy import SafeFailure, approve_agent, open_absolute_directory, open_regular_at
 from fleet_executor_runtime import native_identity, stop
-
-
-def assert_purge_supported(agent: dict) -> None:
-    if agent['runtime_mode'] == 'native' and agent['_placement'].get('manager') is not None:
-        raise SafeFailure('managed native unit must be decommissioned before residual removal')
 
 
 def scoped_agents(policy: dict, context: dict) -> list[dict]:
@@ -51,8 +45,6 @@ def scoped_agents(policy: dict, context: dict) -> list[dict]:
         # profile, which needs the durable account trust of this operation.
         agent = approve_agent(policy, {**row, '_trusted_accounts': context.get('trusted_accounts', []),
                                        '_trusted_accounts_present': 'trusted_accounts' in context})
-        if context['request']['kind'] == 'purge':
-            assert_purge_supported(agent)
         approved.append(agent)
     return approved
 
@@ -123,19 +115,25 @@ def remove_registry_principals(policy: dict, agent: dict, script_loader) -> None
     publish_gateway_registry(policy)
 
 
-def drop_owned_directory(root: pathlib.Path, name: str, removed: list[dict]) -> None:
+def drop_owned_directory(root: pathlib.Path, name: str, removed: list[dict], *, journal: dict | None = None, save=None) -> None:
     path = root / name
-    try:
-        existed = stat.S_ISDIR(os.lstat(path).st_mode)
-    except FileNotFoundError:
-        existed = False
-    remove_tree(root, name)
-    if existed and not path.exists():
+    observed = journal is not None and journal.get('directory_removals', {}).get(str(path)) is True
+    def remember():
+        nonlocal observed
+        if journal is not None:
+            journal.setdefault('directory_removals', {})[str(path)] = True
+            save()
+        observed = True
+    remove_tree(root, name, before_remove=remember)
+    if observed and not os.path.lexists(path):
         removed.append({'type': 'directory', 'name': str(path)})
 
 
-def remove_tree(root: pathlib.Path, name: str) -> None:
-    parent = open_absolute_directory(root)
+def remove_tree(root: pathlib.Path, name: str, *, before_remove=None) -> None:
+    try:
+        parent = open_absolute_directory(root)
+    except FileNotFoundError:
+        return
     try:
         try:
             descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
@@ -148,6 +146,8 @@ def remove_tree(root: pathlib.Path, name: str) -> None:
                 raise SafeFailure('purge directory changed before removal')
             if not shutil.rmtree.avoids_symlink_attacks:
                 raise SafeFailure('safe runtime directory removal is unavailable')
+            if before_remove is not None:
+                before_remove()
             shutil.rmtree(name, dir_fd=parent)
             os.fsync(parent)
         finally:
@@ -209,9 +209,12 @@ def remove_runtime_credentials(policy: dict, agent: dict) -> None:
                             '--root', '/run/cauce-credentials/' + agent['runtime_key'], '--remove'))
 
 
-def purge_runtime(policy: dict, agent: dict) -> dict:
-    assert_purge_supported(agent)
-    stop(policy, agent)
+def purge_runtime(policy: dict, agent: dict, *, decommissioned: dict | None = None, journal: dict | None = None, save=None) -> dict:
+    if agent['runtime_mode'] == 'native' and agent['_placement'].get('manager') is not None:
+        from fleet_executor_native_retirement import verify_native_stopped
+        verify_native_stopped(policy, agent, decommissioned, absent=True)
+    else:
+        stop(policy, agent)
     removed: list[dict] = []
     if agent['runtime_mode'] == 'container':
         from fleet_executor_container import purge_container
@@ -219,11 +222,10 @@ def purge_runtime(policy: dict, agent: dict) -> dict:
     else:
         identity = native_identity(policy, agent)
         control = identity['control']
-        if control.parent.exists():
-            drop_owned_directory(control.parent, agent['runtime_key'], removed)
-        drop_owned_directory(pathlib.Path(agent['_placement']['state_root']), agent['runtime_key'], removed)
+        drop_owned_directory(control.parent, agent['runtime_key'], removed, journal=journal, save=save)
+        drop_owned_directory(pathlib.Path(agent['_placement']['state_root']), agent['runtime_key'], removed,
+                             journal=journal, save=save)
     views = pathlib.Path(policy['roots']['runtime']) / '.credential-views'
-    if views.exists():
-        drop_owned_directory(views, agent['runtime_key'], removed)
+    drop_owned_directory(views, agent['runtime_key'], removed, journal=journal, save=save)
     remove_credentials(policy, agent)
     return {'removed': removed}

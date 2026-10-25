@@ -14,6 +14,7 @@ import sys
 
 from fleet_executor_hooks import binding_for, invoke, invoke_revoke
 from fleet_executor_identity import principal_for
+from fleet_executor_native_retirement import decommission_native, verify_native_stopped
 from fleet_executor_pki import provision
 from fleet_executor_policy import SafeFailure, approve_agent, private_directory, target_agent
 from fleet_executor_retirement import (
@@ -150,6 +151,13 @@ class Executor:
     def agent(self):
         return approve_agent(self.policy, target_agent(self.context))
 
+    def stop_placement(self, row: dict):
+        entry = self.journal.get('native_decommission', {}).get(row['runtime_key'])
+        if entry is not None:
+            verify_native_stopped(self.policy, row, entry, absent=entry.get('complete') is True)
+        else:
+            stop(self.policy, row)
+
     def materialize_snapshot(self, source: dict) -> dict:
         source = copy.deepcopy(source)
         for agent in source.get('agents', []):
@@ -186,7 +194,7 @@ class Executor:
                 raise SafeFailure('fenced artifacts require observed stop and revocation')
             rows = scoped_agents(self.policy, self.context)
             for row in rows:
-                stop(self.policy, row)
+                self.stop_placement(row)
             source = copy.deepcopy(self.context.get('snapshot'))
             if not isinstance(source, dict):
                 raise SafeFailure('missing durable fenced snapshot')
@@ -315,7 +323,7 @@ class Executor:
     def stop(self):
         rows = scoped_agents(self.policy, self.context)
         for row in rows:
-            stop(self.policy, row)
+            self.stop_placement(row)
         self.journal['stopped'] = True
         self.save()
         return {'stopped_verified': True}
@@ -326,7 +334,7 @@ class Executor:
         rows = scoped_agents(self.policy, self.context)
         revoked = self.journal.setdefault('revoked', {})
         for row in rows:
-            stop(self.policy, row)
+            self.stop_placement(row)
             from fleet_executor_authority import revocation_scope
             revocation_policy, scoped = revocation_scope(self.policy, self.context, row)
             references = credential_references(revocation_policy, scoped)
@@ -346,7 +354,7 @@ class Executor:
                 if references.get('legacy') is not None and 'authority' not in self.policy:
                     from fleet_executor_legacy_credentials import capture_absence
                     self.journal.setdefault('legacy_authority_absence', {})[key] = capture_absence(references, row)
-                stop(self.policy, row)
+                self.stop_placement(row)
                 revoked[key] = references
                 self.save()
             remove_credentials(self.policy, row)
@@ -369,11 +377,17 @@ class Executor:
                 revoke(self.policy, self.context, row, self.journal, self.save)
             if credential_references(self.policy, row)['credentials']:
                 raise SafeFailure('new credential material appeared after revocation')
-            observed = purge_runtime(self.policy, row)
+            decommissioned = decommission_native(self.policy, row, self.journal, self.save)
+            observed = purge_runtime(self.policy, row, decommissioned=decommissioned,
+                                     journal=self.journal, save=self.save)
+            if decommissioned is not None:
+                observed['removed'] = [*decommissioned['removed'], *observed['removed']]
             if record and isinstance(observed, dict):
                 fresh = [item for item in observed.get('removed', []) if isinstance(item, dict)]
                 if fresh:
-                    removed = [*removed, *fresh]
+                    for item in fresh:
+                        if item not in removed:
+                            removed.append(item)
                     self.journal['removed'] = removed
                     self.save()
         if record:
@@ -382,7 +396,10 @@ class Executor:
             self.save()
         elif not isinstance(known, list):
             return {'stopped_verified': True, 'revocation_verified': True}
-        return {'stopped_verified': True, 'revocation_verified': True, 'removed': removed}
+        evidence = {'stopped_verified': True, 'revocation_verified': True, 'removed': removed}
+        if self.journal.get('native_decommission'):
+            evidence['native_decommissioned'] = True
+        return evidence
 
     def authenticate(self):
         agent = self.agent()
@@ -539,7 +556,7 @@ class Executor:
                     from fleet_executor_container import stop_container
                     stop_container(self.policy, row, login=True)
                 else:
-                    stop(self.policy, row)
+                    self.stop_placement(row)
             if 'runtime' in self.journal:
                 self.journal['login_stopped'] = True
                 self.save()
@@ -560,7 +577,7 @@ class Executor:
             if row.get('runtime_mode') == 'container':
                 from fleet_executor_container import discard_operation
                 discard_operation(self.policy, row, self.context['operation_id'])
-            stop(self.policy, row)
+            self.stop_placement(row)
         self.journal['stopped'] = True
         self.save()
         if placement_role(self.context) == 'source':

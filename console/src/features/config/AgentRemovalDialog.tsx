@@ -39,7 +39,9 @@ export function AgentRemovalDialog({ tenantId, alias, retired, snapshot, onReloa
         <li className={STEP} data-current={retired ? '' : undefined}>
           <span className="flex items-center gap-2"><strong className="text-sm">2. Eliminar definitivamente</strong>
             {retired ? <Pill tone="info">Paso actual</Pill> : <Pill tone="neutral">Después del retiro</Pill>}</span>
-          <span className="text-[13px] text-fg-2">Borra el perfil, la apariencia, las cuentas vinculadas, los techos de ruteo,
+          <span className="text-[13px] text-fg-2">Elimina los recursos físicos. Si la ejecución nativa está administrada por Cauce,
+            detiene y deshabilita su unidad, retira la unidad y su configuración y comprueba su ausencia antes de borrar residuos.
+            Borra el perfil, la apariencia, las cuentas vinculadas, los techos de ruteo,
             los destinos de salida, las llaves de sellado y los favoritos. Los mensajes y entregas ya enviados y las membresías
             con historial se conservan. Si queda historial o una identidad de ejecución, el alias sigue reservado para no mezclar
             identidades; si no, queda libre. No se puede deshacer; la previsualización muestra el detalle exacto.</span>

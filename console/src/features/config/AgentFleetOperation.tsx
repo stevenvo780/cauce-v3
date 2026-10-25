@@ -39,7 +39,7 @@ export function GuidedRecreateProgress({ state }: { state: GuidedState }) {
   </ol>;
 }
 
-const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio', network: 'Red' };
+const RESOURCE_TYPES = { container: 'Contenedor', volume: 'Volumen', directory: 'Directorio', network: 'Red', unit: 'Unidad systemd', file: 'Archivo' };
 
 export function OperationStatusIcon({ status, size = 14 }: { status: FleetOperation['status']; size?: number }) {
   if (status === 'succeeded') return <CheckCircle2 size={size} aria-hidden="true" />;
@@ -143,6 +143,7 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
     {preview.resources.length ? <section aria-label="Recursos físicos del plan" className="grid gap-1 text-sm">
       {toDelete.length ? <p className="m-0">Se borrará: {toDelete.map((resource) => `${RESOURCE_TYPES[resource.type].toLowerCase()} ${resource.name}`).join(', ')}.</p> : null}
       {toKeep.length ? <p className="m-0 text-muted">Se conservará: {toKeep.map((resource) => `${RESOURCE_TYPES[resource.type].toLowerCase()} ${resource.name}`).join(', ')}.</p> : null}
+      {toDelete.some((resource) => resource.type === 'unit') ? <p className="m-0">Si Cauce administra y aprueba la unidad nativa, primero se detendrá y deshabilitará; se retirará junto con su configuración y se comprobará su ausencia antes de borrar los residuos.</p> : null}
     </section> : null}
     {deleted.length ? <p className="m-0 text-sm">Se borra: {deleted.join(', ')}.</p> : null}
     {kept.length ? <p className="m-0 text-sm text-muted">Se conserva como historial: {kept.join(', ')}.</p> : null}
@@ -171,12 +172,22 @@ export function AgentFleetPreview({ preview }: { preview: FleetOperationPreview 
 }
 
 export function PurgeOutcome({ operation }: { operation: FleetOperation }) {
-  const physical = physicalResult(operation);
   if (operation.kind !== 'purge') return null;
   const step = operation.steps.find((value) => value.name === 'purge');
   if (step?.status === 'failed') return <section aria-label="Resultado de la purga"><p role="status" className="m-0 text-sm">La eliminación física falló: no se comprobó qué se borró.</p></section>;
+  if (step?.status !== 'succeeded') return null;
+  const physical = physicalResult(operation);
   if (!physical) return null;
-  return <section aria-label="Resultado de la purga"><p role="status" className="m-0 text-sm">{physical}</p></section>;
+  const removed = operation.steps.flatMap((value) => value.status === 'succeeded' ? value.evidence?.removed ?? [] : []);
+  return <section aria-label="Resultado de la purga" className="grid gap-2">
+    <p role="status" className="m-0 text-sm">{physical}</p>
+    {step.evidence?.native_decommissioned ? <p className="m-0 text-sm">Desmantelamiento de la unidad nativa administrada comprobado.</p> : null}
+    {removed.length ? <ul aria-label="Recursos físicos borrados" className="m-0 grid gap-1 ps-4 text-sm">
+      {removed.map((resource, index) => <li key={`${resource.type}:${resource.name}:${String(index)}`}>
+        {RESOURCE_TYPES[resource.type]}: <code className="break-all">{resource.name}</code>
+      </li>)}
+    </ul> : null}
+  </section>;
 }
 
 export function AgentFleetOperation({ operation, busy, current, control, onAuthRefreshed, intended, stale = false, hostId, guided }: {

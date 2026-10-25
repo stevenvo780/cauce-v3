@@ -199,7 +199,8 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
         <option key={action} value={action}>{label}</option>)}</select></label> : null}
       {draftKind ? <AgentLifecycleFields draft={draft} snapshot={snapshot} capability={flow.capability} target={target}
         disabled={busy || inProgress || !canWrite || !available} edit={edit} /> : null}
-      {kind === 'purge' ? <p className="notice">La purga elimina el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.</p> : null}
+      {kind === 'purge' ? <p className="notice">La purga elimina los recursos físicos y el registro retirado. El servidor exige ausencia de dependencias antes de aplicar.
+        {agent?.runtime_mode === 'native' ? ' Si la unidad nativa está administrada por Cauce, primero la detiene, la deshabilita y la retira junto con su configuración; comprueba su ausencia antes de borrar los residuos.' : null}</p> : null}
       {kind === 'purge' && target?.resource === 'agent' ? <section aria-label="Recursos que se borrarán" className="grid gap-2">
         <p className="m-0">Escribe el alias y previsualiza la operación: el servidor lista los recursos físicos que la purga va a tocar. No se puede deshacer.</p>
         <p className="m-0"><a href={`/messages/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}?view=context`}>Descargar copia</a>

@@ -127,16 +127,18 @@ const REMOVED_NOUN: Record<string, { one: string; many: string }> = {
   volume: { one: 'el volumen', many: 'volúmenes' },
   directory: { one: 'el directorio', many: 'directorios' },
   network: { one: 'la red', many: 'redes' },
+  unit: { one: 'la unidad systemd', many: 'unidades systemd' },
+  file: { one: 'el archivo', many: 'archivos' },
 };
 
 /** Physical outcome in words: «Borró el contenedor cauce-x y 2 volúmenes». */
 export function physicalResult(operation: FleetOperation): string | undefined {
-  const removed = operation.steps.flatMap((step) => step.evidence?.removed ?? []);
+  const removed = operation.steps.flatMap((step) => step.status === 'succeeded' ? step.evidence?.removed ?? [] : []);
   const purgeStep = operation.steps.find((step) => step.name === 'purge');
   if (!removed.length) {
     if (operation.kind === 'purge' && operation.status === 'succeeded') {
-      return purgeStep?.evidence?.removed
-        ? 'No borró contenedores ni volúmenes.'
+      return purgeStep?.status === 'succeeded' && purgeStep.evidence?.removed
+        ? 'No borró contenedores ni volúmenes, unidades ni rutas.'
         : 'Terminó sin detallar qué recursos borró.';
     }
     return undefined;

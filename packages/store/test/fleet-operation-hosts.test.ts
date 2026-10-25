@@ -142,12 +142,17 @@ describe('durable exact fleet host barriers', () => {
     await completed(repo, claim, 'stop', { stopped_verified: true });
     await completed(repo, claim, 'revoke', { revocation_verified: true }); await repo.startStep(claim, 'purge');
     const [first, second] = await repo.hostSlices(claim);
-    await repo.completeHostStep(claim, 'purge', required(first).host_id, required(first).target_sha256, { stopped_verified: true, revocation_verified: true });
+    const proof: FleetEvidence = { stopped_verified: true, revocation_verified: true, native_decommissioned: true,
+      removed: [{ type: 'unit', name: 'cauce-v3-alias-host-a.service' }, { type: 'file', name: '/home/dev/.config/systemd/user/cauce-v3-alias-host-a.service' }] };
+    await repo.completeHostStep(claim, 'purge', required(first).host_id, required(first).target_sha256, proof);
     await expect(repo.completeHostStep(claim, 'purge', required(second).host_id, required(second).target_sha256, {})).rejects.toMatchObject({ code: 'conflict' });
     await expect(repo.completeStep(claim, 'purge', { stopped_verified: true, revocation_verified: true })).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT 1 FROM rooms WHERE id='host-group' AND purged_at IS NULL")).rowCount).toBe(1);
     expect((await pool.query("SELECT 1 FROM agents WHERE tenant_id='Isa' AND purged_at IS NULL")).rowCount).toBe(2);
-    await receipts(repo, claim, 'purge', { stopped_verified: true, revocation_verified: true });
+    await repo.completeHostStep(claim, 'purge', required(second).host_id, required(second).target_sha256, { stopped_verified: true, revocation_verified: true, removed: [] });
+    const aggregate = aggregateHostEvidence('purge', await repo.hostReceipts(claim, 'purge'));
+    expect(aggregate).toEqual(proof);
+    await repo.completeStep(claim, 'purge', aggregate);
     await completed(repo, claim, 'artifacts', { artifact_sha256: 'a'.repeat(64) });
     expect((await repo.settle(claim)).status).toBe('succeeded');
     expect((await pool.query("SELECT 1 FROM rooms WHERE id='host-group' AND purged_at IS NULL")).rowCount).toBe(0);

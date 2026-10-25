@@ -53,7 +53,10 @@ describe('fleet purge with preserved historical identities', () => {
     await pool.query("UPDATE agents SET container_name='purge-steven' WHERE tenant_id='Isa' AND alias='purge_agent'");
     expect(await resources()).toEqual([expect.objectContaining({ type: 'container', name: 'purge-steven', action: 'keep' })]);
     await pool.query("UPDATE agents SET runtime_mode='native',container_name='host:purge-host',state_directory='/home/dev/.cauce/purge-steven' WHERE tenant_id='Steven' AND alias='purge_agent'");
-    expect(await resources()).toEqual([expect.objectContaining({ type: 'directory', name: '/home/dev/.cauce/purge-steven', action: 'delete' })]);
+    expect(await resources()).toEqual([
+      expect.objectContaining({ type: 'unit', name: 'cauce-v3-alias-purge-steven.service', action: 'delete' }),
+      expect.objectContaining({ type: 'directory', name: '/home/dev/.cauce/purge-steven', action: 'delete' }),
+    ]);
   });
   it('purges owned configuration atomically and hides its tombstone while retaining messages and audit', async () => {
     const query = await readFile(new URL('../../../ops/scripts/fleet-query.sql', import.meta.url), 'utf8');

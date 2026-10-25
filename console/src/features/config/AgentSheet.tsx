@@ -35,7 +35,7 @@ export interface SheetIntent { tab: SheetTab; kind?: OperationKind; remove?: boo
  * the everyday questions and holds the frequent actions; the other tabs are for changing things. Every tab
  * stays mounted once visited, so an unsaved draft survives a tab switch; closing with one asks first.
  */
-export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, finalFocus, ctx, onReloaded, onDeleted, onClose }: {
+export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, finalFocus, ctx, onReloaded, onDeleted, onClose: close }: {
   agent: SettingsAgent;
   retired?: boolean;
   snapshot: ConfigurationSnapshot;
@@ -59,10 +59,22 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
   const dirty = dirtySources.size > 0;
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(Boolean(intent.remove) && agent.registered);
+  const [removedSnapshot, setRemovedSnapshot] = useState<ConfigurationSnapshot>();
   const [operation, setOperation] = useState<{ kind: OperationKind | undefined; mount: number }>({ kind: intent.kind, mount: 0 });
   const keepEditing = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const target = { resource: 'agent' as const, tenant_id: agent.tenantId, alias: agent.alias };
+
+  function retainOperationResult(next: ConfigurationSnapshot) {
+    const present = [...(next.agents ?? []), ...(next.retired?.agents ?? [])]
+      .some((row) => row.tenant_id === agent.tenantId && row.alias === agent.alias);
+    if (Array.isArray(next.agents) && !present) setRemovedSnapshot(next);
+    else { setRemovedSnapshot(undefined); onReloaded(next); }
+  }
+  function onClose() {
+    if (removedSnapshot) onReloaded(removedSnapshot);
+    close();
+  }
 
   useEffect(() => { if (confirming) keepEditing.current?.focus(); }, [confirming]);
 
@@ -136,7 +148,7 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
         {retired ? <div className={`${DIALOG_BODY} grid content-start gap-6`}>
           <Notice role="note">Este agente está retirado: no recibe mensajes y su historial se conserva. Puedes restaurarlo o eliminarlo definitivamente.</Notice>
           <ErrorBoundary label={`Operación de ${view.ref}`} onReset={onClose}>
-            <AgentLifecyclePanel snapshot={snapshot} onReloaded={onReloaded} initialOpen hideTrigger embedded target={target}
+            <AgentLifecyclePanel snapshot={snapshot} onReloaded={retainOperationResult} initialOpen hideTrigger embedded target={target}
               initialKind={intent.kind} />
           </ErrorBoundary>
           {danger}
@@ -166,14 +178,14 @@ export function AgentSheet({ agent, retired = false, snapshot, hosts, intent, fi
                     alias={agent.alias} onDeleted={onDeleted} onDirtyChange={markers.registro} />
                 </ErrorBoundary>
                   : <ErrorBoundary label={`Operación de ${view.ref}`} onReset={() => { select('resumen'); }}>
-                    <AgentLifecyclePanel key={operation.mount} snapshot={snapshot} onReloaded={onReloaded} initialOpen hideTrigger embedded target={target}
+                    <AgentLifecyclePanel key={operation.mount} snapshot={snapshot} onReloaded={retainOperationResult} initialOpen hideTrigger embedded target={target}
                       initialKind={operation.kind} onDirtyChange={markers.operacion} />
                   </ErrorBoundary>}
           </Tabs.Panel>)}
         </Tabs.Root>}
         {ctx ? <TeamFormDialog ctx={ctx} /> : null}
         {removing ? <AgentRemovalDialog tenantId={agent.tenantId} alias={agent.alias} retired={retired} snapshot={snapshot}
-          onReloaded={onReloaded} onClose={() => { setRemoving(false); }} /> : null}
+          onReloaded={retainOperationResult} onClose={() => { setRemoving(false); if (removedSnapshot) onClose(); }} /> : null}
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;

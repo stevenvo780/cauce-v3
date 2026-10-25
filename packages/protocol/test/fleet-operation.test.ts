@@ -79,10 +79,12 @@ describe('fleet effect and execution catalogue', () => {
   });
   it('lists only the resources a purge actually removed', () => {
     expect(protocol.FleetEvidenceSchema.safeParse({
-      stopped_verified: true, revocation_verified: true,
-      removed: [{ type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }, { type: 'network', name: 'n' }],
+      stopped_verified: true, revocation_verified: true, native_decommissioned: true,
+      removed: [{ type: 'container', name: 'ws-w' }, { type: 'volume', name: 'ws-w-state' }, { type: 'network', name: 'n' },
+        { type: 'unit', name: 'cauce-v3-alias-w.service' }, { type: 'file', name: '/home/dev/.config/systemd/user/cauce-v3-alias-w.service' }],
     }).success).toBe(true);
     expect(protocol.FleetEvidenceSchema.safeParse({ removed: [] }).success).toBe(true);
+    expect(protocol.FleetEvidenceSchema.safeParse({ removed: Array.from({ length: 600 }, (_, index) => ({ type: 'unit', name: `cauce-v3-alias-w${String(index)}.service` })) }).success).toBe(true);
     expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'secret', name: 'n' }] }).success).toBe(false);
     expect(protocol.FleetEvidenceSchema.safeParse({ removed: [{ type: 'volume', name: 'v', action: 'delete' }] }).success).toBe(false);
   });

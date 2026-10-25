@@ -92,9 +92,10 @@ export const FleetEvidenceSchema = z.object({
   bootstrap_verified: z.boolean().optional(),
   profile_verified: z.boolean().optional(), roundtrip_verified: z.boolean().optional(),
   stopped_verified: z.boolean().optional(), revocation_verified: z.boolean().optional(),
+  native_decommissioned: z.boolean().optional(),
   removed: z.array(z.object({
-    type: z.enum(['container', 'volume', 'directory', 'network']), name: z.string().min(1).max(512),
-  }).strict()).max(512).optional(),
+    type: z.enum(['container', 'volume', 'directory', 'network', 'unit', 'file']), name: z.string().min(1).max(512),
+  }).strict()).max(51_200).optional(),
 }).strict();
 export const FleetStepSchema = z.object({
   name: FleetStepNameSchema, status: z.enum(['pending', 'running', 'waiting', 'succeeded', 'failed', 'compensated']),
@@ -111,7 +112,7 @@ export const FleetErrorSchema = z.object({
  * evidence field `removed` lists the resources that removal actually deleted.
  */
 export const FleetPurgeResourceSchema = z.object({
-  type: z.enum(['container', 'volume', 'directory', 'network']), name: z.string().min(1).max(512),
+  type: z.enum(['container', 'volume', 'directory', 'network', 'unit', 'file']), name: z.string().min(1).max(512),
   action: z.enum(['delete', 'keep']), reason: z.string().min(1).max(256),
 }).strict();
 export const FleetOperationPreviewSchema = z.object({

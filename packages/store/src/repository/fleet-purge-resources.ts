@@ -4,7 +4,7 @@ import type { DatabaseClient } from '../db.js';
 
 interface PurgedAgent {
   container_name: string | null; runtime_mode: string | null; state_directory: string | null;
-  sharing: string; extensions: AgentExtensions;
+  runtime_key: string | null; sharing: string; extensions: AgentExtensions;
 }
 
 const LABELS = 'solo si lleva las etiquetas cauce.fleet esperadas';
@@ -16,7 +16,8 @@ const LABELS = 'solo si lleva las etiquetas cauce.fleet esperadas';
  * The executor decides again on what it observes, so this is the plan, not the outcome.
  */
 export async function fleetPurgeResources(client: DatabaseClient, tenantId: string, alias: string): Promise<FleetPurgeResource[]> {
-  const agent = (await client.query<PurgedAgent>(`SELECT agent.container_name,agent.runtime_mode,agent.state_directory,agent.extensions,
+  const agent = (await client.query<PurgedAgent>(`SELECT agent.container_name,agent.runtime_mode,agent.state_directory,
+      COALESCE(to_jsonb(agent)->'extensions','[]'::jsonb) AS extensions,agent.runtime_key,
       (SELECT count(*)::text FROM agents other WHERE other.container_name=agent.container_name AND other.purged_at IS NULL
         AND NOT (other.tenant_id=agent.tenant_id AND other.alias=agent.alias)) AS sharing
     FROM agents agent WHERE agent.tenant_id=$1 AND agent.alias=$2`, [tenantId, alias])).rows[0];
@@ -25,9 +26,13 @@ export async function fleetPurgeResources(client: DatabaseClient, tenantId: stri
   if (agent.runtime_mode === 'native' || name?.startsWith('host:')) {
     // `state_directory` already is `state_root/runtime_key` (the invariant the executor enforces), so it is shown as is.
     const directory = agent.state_directory?.replace(/(?<=.)\/+$/u, '');
-    return [directory
+    const resources: FleetPurgeResource[] = agent.runtime_key ? [{ type: 'unit',
+      name: `cauce-v3-alias-${agent.runtime_key}.service`, action: 'delete',
+      reason: 'Solo si Cauce la administra y aprueba sus archivos: detener, deshabilitar y retirar la unidad y su configuración antes de borrar residuos.' }] : [];
+    resources.push(directory
       ? { type: 'directory', name: directory, action: 'delete', reason: 'Estado y control del agente nativo en su equipo.' }
-      : { type: 'directory', name: 'Estado del agente nativo (ruta no registrada)', action: 'delete', reason: 'El agente nativo no tiene directorio de estado registrado: el ejecutor lo resuelve en su equipo.' }];
+      : { type: 'directory', name: 'Estado del agente nativo (ruta no registrada)', action: 'delete', reason: 'El agente nativo no tiene directorio de estado registrado: el ejecutor lo resuelve en su equipo.' });
+    return resources;
   }
   if (!name) return [];
   if (agent.sharing !== '0') {

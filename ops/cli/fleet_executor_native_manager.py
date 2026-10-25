@@ -14,19 +14,23 @@ from fleet_executor_policy import SafeFailure, digest, path, private_directory
 LAUNCH_FILE = 'native-executor-environment.json'
 
 
-def systemctl(*arguments: str) -> str:
+def systemctl(*arguments: str, allow_absent: bool = False) -> str:
     runtime = pathlib.Path('/run/user') / str(os.geteuid())
     private_directory(str(runtime))
     environment = {'PATH': '/usr/bin:/bin', 'HOME': pwd.getpwuid(os.geteuid()).pw_dir,
                    'XDG_RUNTIME_DIR': str(runtime), 'DBUS_SESSION_BUS_ADDRESS': 'unix:path=' + str(runtime / 'bus')}
     result = subprocess.run(['/usr/bin/systemctl', '--user', *arguments], capture_output=True, text=True,
                             timeout=60, check=False, env=environment)
-    if result.returncode:
+    properties = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    absent = allow_absent and arguments[0] == 'show' and result.returncode in {1, 4} \
+        and properties.get('LoadState') == 'not-found' and properties.get('ActiveState') == 'inactive' \
+        and properties.get('FragmentPath') == '' and properties.get('DropInPaths') == ''
+    if result.returncode and not absent:
         raise SafeFailure('approved native systemd manager did not complete its operation')
     return result.stdout.strip()
 
 
-def manager_for(policy: dict, agent: dict, identity: dict, bundle: dict | None = None) -> dict | None:
+def manager_definition(policy: dict, agent: dict, identity: dict, bundle: dict | None = None) -> dict | None:
     manager = agent['_placement'].get('manager')
     if manager is None:
         if (identity['control'] / 'cauce-v3-adoption.sock').exists() or (identity['control'] / LAUNCH_FILE).exists():
@@ -38,14 +42,6 @@ def manager_for(policy: dict, agent: dict, identity: dict, bundle: dict | None =
             or agent['runtime_user'] != policy['executor_user'] or agent['systemd_user'] != policy['executor_user'] \
             or pwd.getpwnam(agent['runtime_user']).pw_uid != os.geteuid() or os.geteuid() == 0:
         raise SafeFailure('native systemd manager identity is not approved')
-    properties = dict(line.split('=', 1) for line in systemctl('show', manager['unit'],
-        '--property=LoadState,FragmentPath,DropInPaths,NeedDaemonReload').splitlines())
-    files = manager['files']
-    actual = {properties.get('FragmentPath', ''), *properties.get('DropInPaths', '').split()}
-    if properties.get('LoadState') != 'loaded' or properties.get('NeedDaemonReload') != 'no' \
-            or not isinstance(files, dict) or not files or set(files) != actual \
-            or any(digest(path(filename)) != pin for filename, pin in files.items()):
-        raise SafeFailure('native systemd unit files changed')
     row = select(load_adoption_policy(manager['adoption_policy']),
                  {key: agent[key] for key in ('tenant_id', 'alias')})
     placement, observation = row['placement'], row['observation']
@@ -58,6 +54,21 @@ def manager_for(policy: dict, agent: dict, identity: dict, bundle: dict | None =
                 or os.path.realpath(observation['node_command']) != os.path.realpath(bundle['executable'])
                 or bundle['argv'] != [observation['adapter_entry']]):
         raise SafeFailure('native systemd launcher differs from its approved runtime')
+    return manager
+
+
+def manager_for(policy: dict, agent: dict, identity: dict, bundle: dict | None = None) -> dict | None:
+    manager = manager_definition(policy, agent, identity, bundle)
+    if manager is None:
+        return None
+    properties = dict(line.split('=', 1) for line in systemctl('show', manager['unit'],
+        '--property=LoadState,FragmentPath,DropInPaths,NeedDaemonReload').splitlines())
+    files = manager['files']
+    actual = {properties.get('FragmentPath', ''), *properties.get('DropInPaths', '').split()}
+    if properties.get('LoadState') != 'loaded' or properties.get('NeedDaemonReload') != 'no' \
+            or not isinstance(files, dict) or not files or set(files) != actual \
+            or any(digest(path(filename)) != pin for filename, pin in files.items()):
+        raise SafeFailure('native systemd unit files changed')
     environment = systemctl('show', manager['unit'], '--property=Environment', '--value')
     expected = 'CAUCE_NATIVE_EXECUTOR_ENVIRONMENT=' + str(identity['control'] / LAUNCH_FILE)
     if expected not in environment.split():
