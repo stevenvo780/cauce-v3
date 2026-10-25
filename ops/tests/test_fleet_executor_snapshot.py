@@ -1,6 +1,10 @@
+import hashlib
+import json
 import pathlib
 import sys
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_export_fleet_snapshot as fixtures
@@ -50,8 +54,6 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
     ENTRY = 'Steven:' + 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
 
     def environment(self, harness, row_extra):
-        import json
-        from unittest import mock
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
         import fleet_executor_runtime as runtime
         row = {'tenant': 'Miguel', 'user': 'node', 'runtimeStateDirectory': '/home/node/.cauce/gaia', 'enabled': True,
@@ -60,9 +62,70 @@ class SharedHumanEnvironmentTest(unittest.TestCase):
                   'bundles': {harness: {'shared_tui': False}}}
         agent = {'tenant_id': 'Miguel', 'alias': 'gaia', 'runtime_key': 'gaia', 'runtime_user': 'node',
                  'state_directory': '/home/node/.cauce/gaia', 'harness_id': harness}
-        with mock.patch('fleet_runtime_materialization.load_desired_fleet', return_value={'generation': 'g'}), \
-                mock.patch('fleet_executor_pki.checked_file', return_value=json.dumps({'fleet': {'gaia': row}}).encode()):
+        snapshot = json.dumps({'schemaVersion': 1, 'fleet': {'gaia': row}}).encode()
+        receipt = {'generation': 'g', 'snapshotSha256': hashlib.sha256(snapshot).hexdigest()}
+        with mock.patch('fleet_runtime_materialization.load_desired_fleet', return_value=receipt), \
+                mock.patch('fleet_executor_pki.checked_file', return_value=snapshot):
             return runtime.sdk_environment(policy, agent, False, 'op')
+
+    def materialized(self, snapshot):
+        import fleet_runtime_materialization as materialization
+        temporary = tempfile.TemporaryDirectory(prefix='cauce-sdk-snapshot-', dir='/var/tmp')
+        self.addCleanup(temporary.cleanup)
+        state = pathlib.Path(temporary.name) / 'state'
+        receipt = materialization.materialize(fixtures.source(agents=[], memberships=[]), {}, state)
+        generation = state / 'generations' / receipt['generation']
+        files = {name: (generation / name).read_bytes() for name in receipt['files']}
+        document = {'schemaVersion': 1, **snapshot} if isinstance(snapshot, dict) else snapshot
+        files['flota.json'] = fixtures.MODULE.canonical_bytes(document)
+        with mock.patch.object(materialization, 'render_artifacts', return_value=files):
+            receipt = materialization.materialize({}, {}, state)
+        return {'roots': {'state': str(state)}}, receipt
+
+    def test_verified_sdk_snapshot_accepts_an_absent_key_with_an_optional_bootstrap_section(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        for snapshot in ({'fleet': {}}, {'fleet': {}, 'bootstrap': {}}, {'fleet': {'other-runtime': {}}}):
+            with self.subTest(snapshot=snapshot):
+                policy, _ = self.materialized(snapshot)
+                self.assertTrue(runtime.materialized_sdk_identity_absent(policy, {'runtime_key': 'physical-one'}))
+
+    def test_a_present_sdk_key_is_never_absence_even_when_its_row_or_namespace_is_invalid(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        agent = {'runtime_key': 'physical-one', 'tenant_id': 'Equipo_42', 'alias': 'shared_alias',
+                 'runtime_user': 'nobody', 'state_directory': '/tmp/cauce-state/physical-one'}
+        for section in ('fleet', 'bootstrap'):
+            for row in (None, [], {}, {'tenant': 'AnotherCompany', 'alias': 'another-agent'}):
+                with self.subTest(section=section, row=row):
+                    policy, _ = self.materialized({'fleet': {}, section: {agent['runtime_key']: row}})
+                    self.assertFalse(runtime.materialized_sdk_identity_absent(policy, agent))
+                    with self.assertRaises(runtime.SafeFailure):
+                        runtime.sdk_environment(policy, agent, False, None)
+
+    def test_malformed_verified_sections_never_authorize_absence(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        for snapshot in ({}, [], {'fleet': None}, {'fleet': []},
+                         {'fleet': {}, 'bootstrap': None}, {'fleet': {}, 'bootstrap': []},
+                         {'schemaVersion': None, 'fleet': {}}, {'schemaVersion': True, 'fleet': {}},
+                         {'schemaVersion': 2, 'fleet': {}}):
+            with self.subTest(snapshot=snapshot):
+                policy, _ = self.materialized(snapshot)
+                with self.assertRaises(runtime.SafeFailure):
+                    runtime.materialized_sdk_identity_absent(policy, {'runtime_key': 'physical-one'})
+
+    def test_the_checked_sdk_bytes_must_match_the_verified_generation_digest(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+        import fleet_executor_runtime as runtime
+        policy, receipt = self.materialized({'fleet': {}})
+        with mock.patch('fleet_executor_pki.checked_file', return_value=b'{"fleet":{"physical-one":null}}'), \
+                self.assertRaises(runtime.SafeFailure):
+            runtime.materialized_sdk_identity_absent(policy, {'runtime_key': 'physical-one'})
+        state = pathlib.Path(policy['roots']['state'])
+        (state / 'generations' / receipt['generation'] / 'flota.json').write_text('{"fleet":{}}\n')
+        with self.assertRaises((runtime.SafeFailure, ValueError)):
+            runtime.materialized_sdk_identity_absent(policy, {'runtime_key': 'physical-one'})
 
     def test_openclaw_gets_the_shared_human_list_and_other_harnesses_are_refused(self):
         self.assertEqual(self.environment('openclaw', {'sharedHumanIds': [self.ENTRY]})['CAUCE_SHARED_HUMAN_IDS'], self.ENTRY)

@@ -41,7 +41,7 @@ class FakeDocker:
                 'CapAdd': container.BASE_CAPABILITIES, 'CapDrop': ['ALL'], 'SecurityOpt': ['no-new-privileges'],
                 'Tmpfs': {'/run': 'rw,nosuid,noexec,size=16m'}, 'Memory': 0, 'MemorySwap': 0, 'NanoCpus': 0, 'PidsLimit': 128},
             'NetworkSettings': {'Networks': {'none': {}}},
-            'State': {'Running': running, 'Pid': 4000 + self.counter if running else 0, 'StartedAt': f't{self.counter}'}}
+            'State': {'Running': running, 'Paused': False, 'Pid': 4000 + self.counter if running else 0, 'StartedAt': f't{self.counter}'}}
         return self.containers[name]
 
     def __call__(self, *arguments):
@@ -61,6 +61,9 @@ class FakeDocker:
                 return '\n'.join(self.volumes).encode()
             if arguments[1] == 'inspect':
                 return json.dumps([{'Labels': self.volumes[arguments[2]]}]).encode()
+            if arguments[1] == 'rm':
+                del self.volumes[arguments[2]]
+                return b''
             self.volumes[arguments[-1]] = dict(value.split('=', 1) for value in arguments[3:-1:2])
             return b''
         if command == 'rm':
@@ -84,6 +87,8 @@ class FakeDocker:
         if '-c' in arguments and not current_helper and '/cauce/lifecycle/cauce-container-runtime.py' not in arguments:
             return b'clear\n'
         name = self.by_id(arguments[arguments.index('--user') + 2] if '--env' not in arguments else arguments[arguments.index('--env') + 2])
+        if self.containers[name]['State']['Paused']:
+            raise SafeFailure('container is paused')
         if '/usr/bin/getent' in arguments:
             return b'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n'
         action = arguments[arguments.index(lifecycle.BOOTSTRAP) + 2] if current_helper else \
@@ -212,24 +217,25 @@ class RebindEffectTests(ReleaseFixture):
             self.docker.live.add(self.name)
         return row
 
-    def test_running_live_container_is_stopped_by_the_current_helper_then_recreated_on_the_current_release(self):
+    def test_stop_uses_the_current_helper_without_rebinding_the_previous_release(self):
         before = self.old_container(live=True)
-        with mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': True}):
+        mounts = json.loads(json.dumps(before['Mounts']))
+        with mock.patch.object(container, 'observe_container', side_effect=AssertionError('stop must not refresh')), \
+                mock.patch.object(container, 'approved_bundle', side_effect=AssertionError('stop must not approve a new adapter')), \
+                mock.patch.object(container, 'adapter_restart_state', side_effect=AssertionError('stop must not check the new bundle')), \
+                mock.patch.object(container, 'process_proof', side_effect=AssertionError('stop must not prove the new SDK')):
             result = container.stop_container(self.policy, self.agent)
         self.assertEqual(result, {'stopped_verified': True})
         after = self.docker.containers[self.name]
-        self.assertNotEqual(after['Id'], before['Id'])
+        self.assertEqual(after['Id'], before['Id'])
         self.assertTrue(after['State']['Running'])
         self.assertEqual(after['Config']['Labels'], before['Config']['Labels'])
-        sources = {row['Destination']: row['Source'] for row in after['Mounts']}
-        self.assertEqual(sources['/cauce/lifecycle'], str(self.new / 'ops/container-runtime'))
-        self.assertEqual(sources['/cauce/executor'], str(self.new / 'ops/cli'))
-        self.assertEqual(sources[str(self.new / 'adapter')], str(self.new / 'adapter'))
-        self.assertEqual(sources['/tmp/cauce-state'], self.name + '-state')
+        self.assertEqual(after['Mounts'], mounts)
+        self.assertNotIn(self.name, self.docker.live)
         helpers = [call for call in self.docker.calls if call[0] == 'helper']
-        self.assertEqual(helpers[:2], [('helper', 'stop', str(lifecycle.SOURCE_ROOT)),
-                                       ('helper', 'stopped', str(lifecycle.SOURCE_ROOT))])
-        self.assertTrue(all(source == str(lifecycle.SOURCE_ROOT) for _, _, source in helpers[2:]))
+        self.assertEqual(helpers, [('helper', 'stop', str(lifecycle.SOURCE_ROOT)),
+                                   ('helper', 'stopped', str(lifecycle.SOURCE_ROOT))])
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
         self.assertFalse(any(call[:2] == ('volume', 'create') or call[:2] == ('volume', 'rm') for call in self.docker.calls))
 
     def test_failed_old_helper_stop_preserves_the_original_container(self):
@@ -247,6 +253,40 @@ class RebindEffectTests(ReleaseFixture):
             container.stop_container(self.policy, self.agent)
         self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
         self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'rm', 'create'}])
+
+    def test_stop_rejects_untrusted_or_mixed_previous_releases_before_effects(self):
+        helper = self.old / 'ops/container-runtime/cauce-container-runtime.py'
+        for drift in ('writable', 'symlink', 'mixed', 'missing'):
+            with self.subTest(drift=drift):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                before = self.old_container(live=True)
+                if drift == 'writable':
+                    helper.chmod(0o666)
+                elif drift == 'symlink':
+                    helper.unlink()
+                    helper.symlink_to(self.new / 'ops/container-runtime/cauce-container-runtime.py')
+                elif drift == 'missing':
+                    shutil.rmtree(self.old / 'ops/cli')
+                else:
+                    next(row for row in before['Mounts'] if row['Destination'] == '/cauce/executor')['Source'] = str(self.new / 'ops/cli')
+                try:
+                    with self.assertRaises(SafeFailure):
+                        container.stop_container(self.policy, self.agent)
+                    self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                    self.assertIn(self.name, self.docker.live)
+                    self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'stop', 'start', 'rename', 'rm', 'create'}])
+                finally:
+                    if helper.is_symlink():
+                        helper.unlink()
+                        helper.write_text('helper\n')
+                    helper.chmod(0o644)
+
+    def test_stopped_previous_release_is_validated_without_executing_a_helper(self):
+        before = self.old_container(running=False)
+        self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+        self.assertFalse([call for call in self.docker.calls if call[0] in {'helper', 'stop', 'start', 'rename', 'rm', 'create'}])
 
     def test_rollback_pass_returns_containers_to_the_previous_release(self):
         self.old_container(running=True)
@@ -305,18 +345,18 @@ class RealDockerRebindTest(ReleaseFixture):
     def inspect(self):
         return json.loads(subprocess.run(['docker', 'inspect', self.name], capture_output=True, text=True, check=True).stdout)[0]
 
-    def test_real_container_keeps_name_labels_state_volume_and_run_state_across_rebind(self):
+    def test_real_stop_keeps_name_labels_state_volume_run_state_and_previous_release(self):
         container.create_container(self.policy, self.agent, container.runtime_mounts(self.policy, self.agent, self.old, self.new))
         subprocess.run(['docker', 'start', self.name], capture_output=True, check=True)
         subprocess.run(['docker', 'exec', self.name, '/bin/sh', '-c', 'echo kept > /tmp/cauce-state/sentinel'], capture_output=True, check=True)
         before = self.inspect()
         self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
         after = self.inspect()
-        self.assertNotEqual(after['Id'], before['Id'])
+        self.assertEqual(after['Id'], before['Id'])
         self.assertTrue(after['State']['Running'])
         self.assertEqual(after['Config']['Labels'], before['Config']['Labels'])
         self.assertEqual({row['Destination']: row['Source'] for row in after['Mounts'] if row['Type'] == 'bind'},
-                         container.runtime_mounts(self.policy, self.agent))
+                         container.runtime_mounts(self.policy, self.agent, self.old, self.new))
         kept = subprocess.run(['docker', 'exec', self.name, '/bin/cat', '/tmp/cauce-state/sentinel'], capture_output=True, text=True, check=True)
         self.assertEqual(kept.stdout, 'kept\n')
 

@@ -21,6 +21,7 @@ import fleet_executor_container as container
 import fleet_executor_hooks as hooks
 import fleet_executor_image as image_refresh
 import fleet_executor_rebind as rebind
+import fleet_executor_runtime as runtime
 import provider_login_container as login
 from fleet_executor_policy import SafeFailure, extension_resources
 from test_fleet_executor_rebind import IMAGE, FakeDocker, ReleaseFixture
@@ -205,21 +206,28 @@ class ImageRefreshTests(ReleaseFixture):
         self.assertFalse(after['State']['Running'])
         self.assertFalse(any(call[0] in {'start', 'helper'} for call in self.docker.calls))
 
-    def test_stop_and_start_use_the_new_image(self):
+    def test_stop_preserves_the_previous_image_and_start_uses_the_new_image(self):
         for effect in ('stop', 'start'):
             with self.subTest(effect=effect):
                 self.docker.containers.clear()
+                self.docker.calls.clear()
                 if self.receipt().exists():
                     self.receipt().unlink()
                 before = self.old_container()
-                with mock.patch.object(container, 'approved_bundle', return_value={}), \
-                        mock.patch.object(container, 'process_proof', return_value={'running': True}):
-                    if effect == 'stop':
+                if effect == 'stop':
+                    with mock.patch.object(container, 'observe_container', side_effect=AssertionError('stop must not refresh')), \
+                            mock.patch.object(container, 'approved_bundle', side_effect=AssertionError('stop must not approve the new bundle')), \
+                            mock.patch.object(container, 'process_proof', side_effect=AssertionError('stop must not check the new SDK')):
                         self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
-                    else:
+                    self.assert_original(before)
+                    self.assertFalse(self.receipt().exists())
+                    self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm', 'image'} for call in self.docker.calls))
+                else:
+                    with mock.patch.object(container, 'approved_bundle', return_value={}), \
+                            mock.patch.object(container, 'process_proof', return_value={'running': True}):
                         self.assertEqual(container.start_container(self.policy, self.agent), {'running': True})
-                self.assertEqual(self.docker.containers[self.name]['Image'], IMAGE)
-                self.assertNotEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                    self.assertEqual(self.docker.containers[self.name]['Image'], IMAGE)
+                    self.assertNotEqual(self.docker.containers[self.name]['Id'], before['Id'])
 
     def test_binding_read_rejects_an_old_image_without_recreation(self):
         before = self.old_container()
@@ -263,7 +271,7 @@ class ImageRefreshTests(ReleaseFixture):
             login.assert_unreserved(identity['container_id'])
         self.assertIsNone(login.assert_unreserved(before['Id']))
 
-    def test_login_stop_rejects_real_drift_before_stopping_or_replacing_the_old_container(self):
+    def test_stop_rejects_real_drift_before_stopping_or_replacing_the_old_container(self):
         drifts = {
             'owner': lambda row: row['Config']['Labels'].update({'cauce.fleet.owner': 'foreign'}),
             'host': lambda row: row['Config']['Labels'].update({'cauce.fleet.host': 'foreign'}),
@@ -275,18 +283,105 @@ class ImageRefreshTests(ReleaseFixture):
             'foreign_mount': lambda row: row['Mounts'][2].update(Source='/foreign/ops/cli'),
             'mixed_releases': lambda row: row['Mounts'][2].update(Source=str(self.new / 'ops/cli')),
             'extra_mount': lambda row: row['Mounts'].append({'Type': 'bind', 'Source': '/foreign', 'Destination': '/foreign', 'RW': False}),
+            'tagged_image': lambda row: row.update(Image='fixture:latest'),
+            'missing_image': lambda row: row.pop('Image'),
+        }
+        for login_stop in (False, True):
+            for name, drift in drifts.items():
+                with self.subTest(drift=name, login=login_stop):
+                    self.docker.containers.clear()
+                    self.docker.calls.clear()
+                    before = self.old_container()
+                    before['HostConfig']['CapAdd'] = list(container.BASE_CAPABILITIES)
+                    drift(before)
+                    with self.assertRaises(SafeFailure):
+                        container.stop_container(self.policy, self.agent, login=login_stop)
+                    self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                    self.assertEqual(self.mutating_calls(), [])
+
+    def test_paused_previous_container_is_preserved_without_claiming_a_verified_stop(self):
+        for login_stop in (False, True):
+            with self.subTest(login=login_stop):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                before = copy.deepcopy(self.old_container())
+                self.docker.containers[self.name]['State']['Paused'] = True
+                self.docker.live.add(self.name)
+                with self.assertRaisesRegex(SafeFailure, 'paused'):
+                    container.stop_container(self.policy, self.agent, login=login_stop)
+                self.assert_original(before)
+                self.assertTrue(self.docker.containers[self.name]['State']['Paused'])
+                self.assertIn(self.name, self.docker.live)
+                self.assertEqual(self.mutating_calls(), [])
+                self.assertFalse(self.receipt().exists())
+
+    def test_stop_accepts_the_existing_extension_shape_after_its_approval_is_revoked(self):
+        source = self.base.parent / 'extension-mount'
+        source.mkdir()
+        self.agent['extensions'] = [{'type': 'mount', 'source': str(source), 'target': '/fixture-data', 'mode': 'rw'}]
+        self.policy['extensions_allowed'] = {'types': ['mount'], 'mount_roots': [str(source)], 'networks': []}
+        previous = image_refresh.previous_agent(self.agent, PREVIOUS_IMAGE)
+        before = container.create_container(self.policy, previous, container.runtime_mounts(self.policy, self.agent, self.old, self.new))
+        self.docker('start', before['Id'])
+        self.docker.live.add(self.name)
+        self.policy['extensions_allowed'] = {'types': [], 'mount_roots': [], 'networks': []}
+        self.docker.calls.clear()
+        self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+        self.assert_original(before)
+        self.assertNotIn(self.name, self.docker.live)
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+
+    def test_purge_removes_the_validated_previous_image_without_refreshing_it(self):
+        before = copy.deepcopy(self.old_container())
+        self.docker.live.add(self.name)
+        with mock.patch.object(container, 'observe_container', side_effect=AssertionError('purge must not refresh')), \
+                mock.patch.object(container, 'approved_bundle', side_effect=AssertionError('purge must not approve a new bundle')):
+            result = container.purge_container(self.policy, self.agent)
+        self.assertEqual(result, {'removed': [{'type': 'container', 'name': self.name},
+                                             {'type': 'volume', 'name': self.name + '-state'}]})
+        self.assertEqual(self.docker.containers, {})
+        self.assertEqual(self.docker.volumes, {})
+        self.assertIn(('rm', '-f', before['Id']), self.docker.calls)
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename'} for call in self.docker.calls))
+
+    def test_shared_stop_keeps_the_original_identity_and_mount_pins(self):
+        before = self.docker.add(self.name, {}, [
+            {'Type': 'bind', 'Source': '/fixture-state', 'Destination': '/tmp/cauce-state', 'RW': True},
+            {'Type': 'bind', 'Source': str(container.HELPER.parent), 'Destination': '/cauce/lifecycle', 'RW': False},
+            {'Type': 'bind', 'Source': str(container.EXECUTOR_SOURCE), 'Destination': '/cauce/executor', 'RW': False},
+            {'Type': 'bind', 'Source': str(self.new / 'adapter'), 'Destination': str(self.new / 'adapter'), 'RW': False},
+        ], running=False)
+        self.policy['containers'].clear()
+        self.policy['shared_containers'] = {self.name: {'container_id': before['Id'], 'image': IMAGE,
+            'runtime_user': 'nobody', 'runtime_uid': 65534, 'runtime_gid': 65534, 'systemd_user': self.user,
+            'home_directory': '/nonexistent', 'state_root': '/tmp/cauce-state', 'control_root': '/run/cauce-shared',
+            'python': '/usr/local/bin/python3.12', 'mounts': copy.deepcopy(before['Mounts']),
+            'aliases': {self.agent['runtime_key']: {key: self.agent[key] for key in ('tenant_id', 'alias', 'harness_id')}}}}
+        original = copy.deepcopy(before)
+        drifts = {
+            'valid_stopped': lambda _row: None,
+            'image': lambda row: row.update(Image=PREVIOUS_IMAGE),
+            'container_id': lambda row: row.update(Id='f' * 64),
+            'writable_helper': lambda row: row['Mounts'][1].update(RW=True),
+            'mount_source': lambda row: row['Mounts'][2].update(Source=str(self.old / 'ops/cli')),
+            'privileged': lambda row: row['HostConfig'].update(Privileged=True),
         }
         for name, drift in drifts.items():
             with self.subTest(drift=name):
-                self.docker.containers.clear()
+                self.docker.containers[self.name] = copy.deepcopy(original)
+                drift(self.docker.containers[self.name])
                 self.docker.calls.clear()
-                before = self.old_container()
-                before['HostConfig']['CapAdd'] = list(container.BASE_CAPABILITIES)
-                drift(before)
-                with self.assertRaises(SafeFailure):
-                    container.stop_container(self.policy, self.agent, login=True)
-                self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                if name == 'valid_stopped':
+                    self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+                else:
+                    with self.assertRaises(SafeFailure):
+                        container.stop_container(self.policy, self.agent)
                 self.assertEqual(self.mutating_calls(), [])
+        self.docker.containers.clear()
+        self.docker.calls.clear()
+        with self.assertRaisesRegex(SafeFailure, 'not observed'):
+            container.stop_container(self.policy, self.agent)
+        self.assertEqual(self.mutating_calls(), [])
 
     def test_binding_read_while_runtime_guard_is_active_does_not_prepare_or_reserve(self):
         executor = entrypoint('fleet-executor.py')
@@ -410,25 +505,26 @@ class ImageRefreshTests(ReleaseFixture):
         self.assert_original(before)
         self.assertEqual(self.mutating_calls(), [])
 
-    def test_login_stop_preserves_reserved_container_across_image_and_release_changes(self):
-        for image in (PREVIOUS_IMAGE, IMAGE):
-            with self.subTest(image=image):
-                self.docker.containers.clear()
-                self.docker.calls.clear()
-                before = self.old_container()
-                before['Image'] = image
-                operation = str(uuid.uuid4())
-                with mock.patch.object(login, 'observe', return_value=True):
-                    login.reserve_runtime({'container_id': before['Id']}, operation)
-                self.docker.live.add(self.name)
-                self.assertEqual(container.stop_container(self.policy, self.agent, login=True), {'stopped_verified': True})
-                self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
-                self.assertEqual(self.docker.containers[self.name]['Image'], image)
-                self.assertNotIn(self.name, self.docker.live)
-                self.assertFalse(any(call[0] in {'create', 'stop', 'rename', 'rm', 'start'} for call in self.docker.calls))
-                with self.assertRaises(login.LoginFailure):
-                    login.assert_unreserved(before['Id'])
-                login.release_reservation(operation)
+    def test_stop_preserves_reserved_container_across_image_and_release_changes(self):
+        for login_stop in (False, True):
+            for image in (PREVIOUS_IMAGE, IMAGE):
+                with self.subTest(image=image, login=login_stop):
+                    self.docker.containers.clear()
+                    self.docker.calls.clear()
+                    before = self.old_container()
+                    before['Image'] = image
+                    operation = str(uuid.uuid4())
+                    with mock.patch.object(login, 'observe', return_value=True):
+                        login.reserve_runtime({'container_id': before['Id']}, operation)
+                    self.docker.live.add(self.name)
+                    self.assertEqual(container.stop_container(self.policy, self.agent, login=login_stop), {'stopped_verified': True})
+                    self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                    self.assertEqual(self.docker.containers[self.name]['Image'], image)
+                    self.assertNotIn(self.name, self.docker.live)
+                    self.assertFalse(any(call[0] in {'create', 'stop', 'rename', 'rm', 'start'} for call in self.docker.calls))
+                    with self.assertRaises(login.LoginFailure):
+                        login.assert_unreserved(before['Id'])
+                    login.release_reservation(operation)
 
     def test_cleanup_releases_a_login_reservation_when_the_helper_never_started(self):
         before = self.old_container()
@@ -525,6 +621,105 @@ class ImageRefreshTests(ReleaseFixture):
         self.assert_original(before)
         self.assertFalse(any(call[0] in {'stop', 'rename', 'create', 'rm'} for call in self.docker.calls))
 
+    def test_restore_without_a_materialized_sdk_identity_only_stops_the_original_adapter(self):
+        for running in (False, True):
+            with self.subTest(running=running):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                before = copy.deepcopy(self.old_container(running=running))
+                if running:
+                    self.docker.live.add(self.name)
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                        mock.patch.object(container, 'approved_bundle', wraps=container.approved_bundle) as approved, \
+                        mock.patch.object(image_refresh, 'refresh_image', side_effect=AssertionError('absent SDK must not refresh')), \
+                        mock.patch.object(container, 'adapter_restart_state', side_effect=AssertionError('absent SDK must not restart')), \
+                        mock.patch.object(container, 'start_existing_adapter', side_effect=AssertionError('absent SDK must not start')):
+                    result = container.restore_existing_adapter(self.policy, self.agent, bootstrap=False)
+                self.assertEqual(result, {'stopped_verified': True})
+                approved.assert_called_once()
+                self.assert_original(before, running=running)
+                self.assertNotIn(self.name, self.docker.live)
+                self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+                self.assertFalse(self.receipt().exists())
+
+    def test_sdk_absence_does_not_bypass_bundle_volume_or_observed_runtime_guards(self):
+        bundle_file = self.new / 'adapter/worker.py'
+        bundle_bytes = bundle_file.read_bytes()
+        for drift in ('bundle', 'owner', 'volume', 'mount'):
+            with self.subTest(drift=drift):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                self.docker.volumes[self.name + '-state'] = container.expected_labels(self.policy, self.agent)
+                before = self.old_container()
+                if drift == 'bundle':
+                    bundle_file.write_bytes(bundle_bytes + b'changed\n')
+                elif drift == 'owner':
+                    before['Config']['Labels']['cauce.fleet.owner'] = 'foreign'
+                elif drift == 'volume':
+                    self.docker.volumes[self.name + '-state']['cauce.fleet.owner'] = 'foreign'
+                else:
+                    before['Mounts'][1]['RW'] = True
+                try:
+                    with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                            self.assertRaises(SafeFailure):
+                        container.restore_existing_adapter(self.policy, self.agent, bootstrap=False)
+                    self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                    self.assertEqual(self.mutating_calls(), [])
+                finally:
+                    bundle_file.write_bytes(bundle_bytes)
+
+    def test_normal_sdk_presence_and_bootstrap_restoration_keep_the_approved_refresh_path(self):
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                self.old_container()
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=bootstrap) as absent, \
+                        mock.patch.object(image_refresh, 'refresh_image', side_effect=SafeFailure('approved refresh still required')) as refresh, \
+                        self.assertRaisesRegex(SafeFailure, 'approved refresh still required'):
+                    container.restore_existing_adapter(self.policy, self.agent, bootstrap=bootstrap)
+                refresh.assert_called_once()
+                if bootstrap:
+                    absent.assert_not_called()
+                else:
+                    absent.assert_called_once()
+                self.assertEqual(self.mutating_calls(), [])
+
+    def test_refresh_without_a_materialized_normal_sdk_identity_preserves_the_original(self):
+        for operation in (None, str(uuid.uuid4())):
+            with self.subTest(operation=operation):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                before = copy.deepcopy(self.old_container())
+                self.docker.live.add(self.name)
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                        mock.patch.object(container, 'start_existing_adapter', side_effect=AssertionError('absent SDK must not start')):
+                    after = image_refresh.refresh_image(self.policy, self.agent, before,
+                        restore_adapter={'bootstrap': False, 'operation_id': operation})
+                self.assertEqual(after['_adapter_restored'], {'stopped_verified': True})
+                self.assertEqual(after['Id'], before['Id'])
+                self.assert_original(before)
+                self.assertNotIn(self.name, self.docker.live)
+                self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+                self.assertFalse(self.receipt().exists())
+
+    def test_refresh_without_sdk_identity_keeps_volume_and_login_guards(self):
+        for drift in ('volume', 'login'):
+            with self.subTest(drift=drift):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                self.docker.volumes[self.name + '-state'] = container.expected_labels(self.policy, self.agent)
+                self.docker.login_open = drift == 'login'
+                before = copy.deepcopy(self.old_container())
+                if drift == 'volume':
+                    self.docker.volumes[self.name + '-state']['cauce.fleet.owner'] = 'foreign'
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                        self.assertRaises(SafeFailure):
+                    image_refresh.refresh_image(self.policy, self.agent, before,
+                        restore_adapter={'bootstrap': False, 'operation_id': None})
+                self.assert_original(before)
+                self.assertEqual(self.mutating_calls(), [])
+
     def test_failure_details_redact_credentials_before_persisting_or_reporting(self):
         details = image_refresh.failure_details(SafeFailure('denied password=fixture-pass Bearer fixture-bearer '
             '{"token":"fixture-token"} https://fixture:fixture-url@example.test/path'))
@@ -567,6 +762,48 @@ class ImageRefreshTests(ReleaseFixture):
                     self.docker.calls.clear()
                     image_refresh.recover_image(self.policy, self.agent, preserve_only=preserve)
                     self.assertEqual(self.mutating_calls(), [])
+
+    def test_missing_normal_sdk_recovery_keeps_prepared_or_preserved_original_stopped(self):
+        for status in ('prepared', 'preserved'):
+            for candidate in (False, True):
+                with self.subTest(status=status, candidate=candidate):
+                    self.docker.containers.clear()
+                    before = self.prepare_interruption(candidate=candidate, status=status)
+                    receipt = json.loads(self.receipt().read_text())
+                    receipt.update(restore_adapter={'bootstrap': False, 'operation_id': str(uuid.uuid4())},
+                                   adapter_running=True, adapter_bootstrap=False)
+                    self.receipt().write_text(json.dumps(receipt))
+                    self.docker.calls.clear()
+                    with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                            mock.patch.object(container, 'start_existing_adapter', side_effect=AssertionError('absent SDK must not start')):
+                        image_refresh.recover_image(self.policy, self.agent)
+                    self.assert_original(before, running=False)
+                    self.assertEqual(json.loads(self.receipt().read_text())['status'], 'preserved')
+                    self.assertFalse(any(call[0] in {'create', 'start', 'helper'} for call in self.docker.calls))
+                    self.docker.calls.clear()
+                    with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True):
+                        image_refresh.recover_image(self.policy, self.agent)
+                    self.assertEqual(self.mutating_calls(), [])
+
+    def test_missing_sdk_recovery_rejects_foreign_volume_before_removing_or_renaming_any_container(self):
+        for status in ('prepared', 'preserved'):
+            for candidate in (False, True):
+                with self.subTest(status=status, candidate=candidate):
+                    self.docker.containers.clear()
+                    self.docker.volumes[self.name + '-state'] = container.expected_labels(self.policy, self.agent)
+                    self.prepare_interruption(candidate=candidate, status=status)
+                    receipt = json.loads(self.receipt().read_text())
+                    receipt['restore_adapter'] = {'bootstrap': False, 'operation_id': None}
+                    self.receipt().write_text(json.dumps(receipt))
+                    self.docker.volumes[self.name + '-state']['cauce.fleet.owner'] = 'foreign'
+                    before = copy.deepcopy(self.docker.containers)
+                    self.docker.calls.clear()
+                    with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=True), \
+                            self.assertRaisesRegex(SafeFailure, 'another owner'):
+                        image_refresh.recover_image(self.policy, self.agent)
+                    self.assertEqual(self.docker.containers, before)
+                    self.assertEqual(self.mutating_calls(), [])
+                    self.assertEqual(json.loads(self.receipt().read_text()), receipt)
 
     def test_recovery_refuses_a_foreign_candidate(self):
         for preserve in (False, True):

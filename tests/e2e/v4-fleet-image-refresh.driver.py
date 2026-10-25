@@ -47,7 +47,7 @@ def prepare_credentials(directory: pathlib.Path, policy: dict, raw: dict) -> Non
     fleet = {'image': {'tenant': raw['tenant_id'], 'alias': raw['alias'], 'user': raw['runtime_user'],
                       'runtimeStateDirectory': raw['state_directory'], 'enabled': True, 'room': 'fixture'}}
     files = {name: b'{}' for name in ('container-aliases.json', 'generated/fleet.json', 'schemas/alias-manifest.schema.json')}
-    files['flota.json'] = json.dumps({'fleet': fleet}).encode()
+    files['flota.json'] = json.dumps({'schemaVersion': 1, 'fleet': fleet}).encode()
     receipt = _receipt(files)
     state = pathlib.Path(policy['roots']['state'])
     _publish_generation(state, receipt, files)

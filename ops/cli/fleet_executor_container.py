@@ -517,6 +517,11 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
     previous = validate_previous(policy, agent, observed)
     if not was_running:
         return stop_running_adapter(previous, observed)
+    if not bootstrap:
+        from fleet_executor_runtime import materialized_sdk_identity_absent
+        if materialized_sdk_identity_absent(policy, agent):
+            owned_volumes(policy, previous)
+            return stop_running_adapter(previous, observed)
     restored = policy
     approved = agent
     if not allow_refresh:
@@ -690,6 +695,20 @@ def ownership_labels_match(policy: dict, agent: dict, observed: dict) -> bool:
     return all(labels.get(key) == value for key, value in expected_labels(policy, agent).items())
 
 
+def teardown_agent(policy: dict, agent: dict, observed: dict) -> dict:
+    if agent['_placement'].get('ownership') == 'shared':
+        validate_container(policy, agent, observed, teardown=True)
+        return agent
+    from fleet_executor_image import previous_agent
+    from fleet_executor_rebind import bound_release
+    previous = previous_agent(agent, observed.get('Image'))
+    root = bound_release(observed, RELEASE_ROOT)
+    binds = runtime_mounts(policy, agent, root, RELEASE_ROOT) if root is not None else None
+    validate_container(policy, previous, observed, binds, teardown=True)
+    owned_volumes(policy, previous)
+    return previous
+
+
 def stop_running_adapter(agent: dict, observed: dict) -> dict:
     if not observed['State']['Running'] and observed['State']['Pid'] == 0:
         return {'stopped_verified': True}
@@ -702,35 +721,12 @@ def stop_running_adapter(agent: dict, observed: dict) -> dict:
 
 def stop_container(policy: dict, raw_agent: dict, *, login: bool = False) -> dict:
     agent = approve_agent(policy, raw_agent)
-    extensions_approved = True
-    try:
-        approve_extensions(policy, agent)
-    except SafeFailure:
-        extensions_approved = False
     observed = inspect_container(agent['container_name'])
     if agent['_placement'].get('ownership') == 'shared' and observed is None:
         raise SafeFailure('approved shared container is not observed')
     if observed is None:
         return {'stopped_verified': True}
-    placement = agent['_placement']
-    if login and placement.get('ownership') != 'shared':
-        # Login remains bound to this exact container across release and image changes.
-        if not ownership_labels_match(policy, agent, observed):
-            raise SafeFailure('container image or ownership labels differ')
-        from fleet_executor_image import validate_previous
-        validate_previous(policy, agent, observed)
-        return stop_running_adapter(agent, observed)
-    if extensions_approved:
-        observed = observe_container(policy, agent)
-        if agent['_placement'].get('ownership') == 'shared' and observed is None:
-            raise SafeFailure('approved shared container is not observed')
-        if observed is None:
-            return {'stopped_verified': True}
-    from fleet_executor_rebind import bound_release
-    previous = bound_release(observed, RELEASE_ROOT)
-    binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
-    validate_container(policy, agent, observed, binds, teardown=True)
-    return stop_running_adapter(agent, observed)
+    return stop_running_adapter(teardown_agent(policy, agent, observed), observed)
 
 
 def purge_container(policy: dict, raw_agent: dict) -> dict:
@@ -743,7 +739,7 @@ def purge_container(policy: dict, raw_agent: dict) -> dict:
         return {'removed': []}
     removed = []
     if observed is not None:
-        validate_container(policy, agent, observed, teardown=True)
+        teardown_agent(policy, agent, observed)
         docker('rm', '-f', observed['Id'])
         removed.append({'type': 'container', 'name': agent['container_name']})
     sidecars = purge_sidecars(policy, agent) or {}

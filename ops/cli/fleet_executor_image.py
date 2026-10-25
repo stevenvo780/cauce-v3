@@ -143,14 +143,26 @@ def failure_details(error: BaseException) -> str:
     return type(error).__name__ + ': ' + diagnostic(message.encode())
 
 
+def preserve_without_sdk(policy: dict, agent: dict, restore_adapter: dict | None) -> bool:
+    if restore_adapter is None:
+        return False
+    if not isinstance(restore_adapter, dict) or set(restore_adapter) != {'bootstrap', 'operation_id'} \
+            or type(restore_adapter['bootstrap']) is not bool:
+        raise SafeFailure('adapter restoration namespace is invalid')
+    from fleet_executor_runtime import materialized_sdk_identity_absent
+    return not restore_adapter['bootstrap'] and materialized_sdk_identity_absent(policy, agent)
+
+
 def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.Path | None = None, *,
                      preserve_only: bool = False) -> None:
     from fleet_executor_container import (
         assert_idle_command,
         docker,
         inspect_container,
+        owned_volumes,
         ownership_labels_match,
         restore_existing_adapter,
+        stop_running_adapter,
     )
     name = agent['container_name']
     backup = inspect_container(name + '-image-rollback')
@@ -158,7 +170,11 @@ def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.
     original = backup or current
     if original is None or original['Id'] != receipt['previous_id'] or original['Image'] != receipt['previous_image']:
         raise SafeFailure('image refresh rollback requires the preserved original container')
-    validate_previous(policy, agent, original, release)
+    previous = validate_previous(policy, agent, original, release)
+    preserve_stopped = preserve_only and preserve_without_sdk(policy, agent, receipt.get('restore_adapter'))
+    if preserve_stopped:
+        assert_persistent_profile(policy, previous)
+        owned_volumes(policy, previous)
     if backup is not None:
         if current is not None:
             with image_guard(current['Id']):
@@ -171,6 +187,8 @@ def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.
     if current is None or current['Id'] != receipt['previous_id']:
         raise SafeFailure('preserved original container was not observed at its canonical name')
     if preserve_only:
+        if preserve_stopped:
+            stop_running_adapter(previous, current)
         remember(policy, agent, {**receipt, 'status': 'preserved'})
         return
     if receipt['was_running'] and not current['State']['Running']:
@@ -206,7 +224,8 @@ def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None
                 'runtime_key': agent['runtime_key'], 'container_name': agent['container_name']}
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise SafeFailure('image refresh recovery belongs to another runtime')
-    if receipt['status'] == 'prepared':
+    if receipt['status'] == 'prepared' or receipt['status'] == 'preserved' \
+            and preserve_without_sdk(policy, agent, receipt.get('restore_adapter')):
         with image_guard(receipt['previous_id']):
             restore_previous(policy, agent, receipt, release,
                              preserve_only=preserve_only or 'restore_adapter' in receipt)
@@ -242,12 +261,15 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
         if current is None or current['Id'] != observed['Id']:
             raise SafeFailure('container changed before image refresh')
         previous = validate_previous(policy, agent, current, release)
+        assert_persistent_profile(policy, agent)
+        owned_volumes(policy, previous)
+        if preserve_without_sdk(policy, agent, restore_adapter):
+            assert_no_login(agent, current)
+            return {**current, '_adapter_restored': stop_running_adapter(previous, current)}
         executor = next(row['Source'] for row in current['Mounts'] if row['Destination'] == '/cauce/executor')
         if current['State']['Running'] and not (pathlib.Path(executor) / 'fleet_executor_image.py').is_file() \
                 and not LEGACY_REFRESH.get():
             raise SafeFailure('legacy login reservations are unavailable; refresh requires an explicit agent operation')
-        assert_persistent_profile(policy, agent)
-        owned_volumes(policy, agent)
         try:
             assert_no_login(agent, current)
         except (SafeFailure, LoginFailure):

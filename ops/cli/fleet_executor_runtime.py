@@ -169,12 +169,29 @@ def namespace_proof(environment: dict, bootstrap: bool, operation_id: str | None
 SHARED_HUMAN = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
 
-def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: str | None) -> dict:
+def materialized_sdk_snapshot(policy: dict) -> tuple[dict, dict]:
     from fleet_executor_pki import checked_file
     from fleet_runtime_materialization import load_desired_fleet
     state = pathlib.Path(policy['roots']['state'])
     receipt = load_desired_fleet(state)
-    snapshot = json.loads(checked_file(state / 'generations' / receipt['generation'] / 'flota.json', False))
+    body = checked_file(state / 'generations' / receipt['generation'] / 'flota.json', False)
+    if hashlib.sha256(body).hexdigest() != receipt['snapshotSha256']:
+        raise SafeFailure('SDK materialized fleet digest changed')
+    snapshot = json.loads(body)
+    if not isinstance(snapshot, dict) or type(snapshot.get('schemaVersion')) is not int or snapshot['schemaVersion'] != 1 \
+            or not isinstance(snapshot.get('fleet'), dict) \
+            or not isinstance(snapshot.get('bootstrap', {}), dict):
+        raise SafeFailure('SDK materialized fleet sections are invalid')
+    return receipt, snapshot
+
+
+def materialized_sdk_identity_absent(policy: dict, agent: dict) -> bool:
+    _, snapshot = materialized_sdk_snapshot(policy)
+    return all(agent['runtime_key'] not in snapshot.get(section, {}) for section in ('fleet', 'bootstrap'))
+
+
+def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: str | None) -> dict:
+    receipt, snapshot = materialized_sdk_snapshot(policy)
     row = snapshot.get('bootstrap' if bootstrap else 'fleet', {}).get(agent['runtime_key'])
     if not isinstance(row, dict) or row.get('tenant') != agent['tenant_id'] or row.get('alias', agent['runtime_key']) != agent['alias'] \
             or row.get('user') != agent['runtime_user'] or row.get('runtimeStateDirectory') != agent['state_directory'] \
