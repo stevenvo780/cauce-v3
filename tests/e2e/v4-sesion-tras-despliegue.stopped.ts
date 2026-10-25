@@ -48,21 +48,20 @@ export async function assertStoppedCurrentRuntimeSkipped(): Promise<void> {
     }
     const running = await observeCancelDeployActor(actor);
     expect(running.adapterAlive).toBe(true);
-    const known = new Set((await automaticOperations(actor)).map(row => row.id));
     // El contenedor corre sin CAP_KILL: se para el contenedor entero, que es como queda un adaptador parado fuera de flota.
     const inspect = async () => JSON.parse(await docker(['inspect', '--format', '{{json .}}', actor.container])) as {
       Id: string; State: { Running: boolean }; Mounts: { Type: string; Source: string; Name?: string }[] };
     const mounts = (row: Awaited<ReturnType<typeof inspect>>) => row.Mounts.map(mount => mount.Type + ':' + (mount.Name ?? mount.Source)).sort();
     const before = await inspect();
-    await docker(['stop', '--time', '10', actor.container]);
-    const killedAt = Date.now();
+    await docker(['kill', actor.container]);
     const stopped = await inspect();
     expect(stopped.State.Running).toBe(false);
     expect(stopped.Id).toBe(before.Id);
     expect(mounts(stopped)).toEqual(mounts(before));
+    // Todo lo solicitado hasta aquí se hizo con el adaptador vivo; solo cuenta lo que llegue con el contenedor parado.
+    const known = new Set((await automaticOperations(actor)).map(row => row.id));
     scans.afterStop();
-    await expect.poll(async () => (await skips()).filter(row => !known.has(row.id)
-      && row.created_at.getTime() > killedAt).length, { timeout: 95_000 }).toBeGreaterThan(0);
+    await expect.poll(async () => (await skips()).filter(row => !known.has(row.id)).length, { timeout: 95_000 }).toBeGreaterThan(0);
     const operations = await automaticOperations(actor);
     evidence.operations = operations.map(row => ({ id: row.id.slice(0, 8), status: row.status, desired: row.desired_revision,
       skipped: row.events.map(event => event.metadata.maintenance_skipped).filter(Boolean) }));
