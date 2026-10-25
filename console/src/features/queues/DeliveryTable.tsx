@@ -237,7 +237,7 @@ export function DeliveryTable({
                   <td data-label="Disponible"><span className="whitespace-nowrap"><Time value={item.available_at} relativo /></span></td>
                   {/* "No error" is not UNKNOWN when the lifecycle policy says no failure is expected. */}
                   <td data-label="Último error" data-wide className="error-copy">
-                    {error.clase === 'texto' ? <span className="line-clamp-2 break-words" title={error.texto}>{error.texto}</span>
+                    {error.clase === 'texto' ? <span className="break-words" title={error.texto}>{error.texto}</span>
                       : error.clase === 'sin-error' ? <span className="text-muted">sin error</span>
                         : <Unknown
                           value={null}
