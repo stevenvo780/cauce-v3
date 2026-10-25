@@ -57,7 +57,7 @@ function createBody(path: string, url: URL, body: Buffer, prefix: string, name: 
     const postgres = typeof value.Image === 'string' && /(?:^|\/)postgres(?=[:@]|$)/u.test(value.Image);
     const existing = url.searchParams.get('name');
     if (!ownedName(existing, prefix)) {
-      url.searchParams.set('name', postgres ? `${prefix}-postgres` : `${prefix}-helper-${randomUUID().slice(0, 8)}`);
+      url.searchParams.set('name', postgres ? `zz-canary-qa-0db-${name}` : `${prefix}-helper-${randomUUID().slice(0, 8)}`);
     }
     if (postgres) {
       const host = value.HostConfig === undefined ? {} : object(value.HostConfig);

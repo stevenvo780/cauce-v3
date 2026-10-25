@@ -6,8 +6,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OWNER=qa0-entorno-exploracion-1025
 action=${1:-}
 name=${2:-}
-[[ $# == 2 && $name =~ ^[a-z][a-z0-9-]{0,19}$ ]] || {
-  printf 'Uso: scripts/qa-lab.sh up|status|down <nombre: a-z, 0-9, guion, máximo 20>\n' >&2; exit 2;
+[[ $# == 2 && $name =~ ^[a-z][a-z0-9-]{0,18}$ ]] || {
+  printf 'Uso: scripts/qa-lab.sh up|status|down <nombre: a-z, 0-9, guion, máximo 19>\n' >&2; exit 2;
 }
 prefix=zz-canary-qa-$name
 receipt=$ROOT/.delegados/v4/recibos/$OWNER/$name
@@ -43,8 +43,8 @@ stop_and_reclaim() {
   running=$(lab ps -q --filter "name=^/$prefix-runner$" --filter "label=cauce.e2e.owner=$OWNER" --filter "label=cauce.qa.name=$name") || return 1
   [[ -z $running ]] || lab stop -t 90 "$running" >/dev/null || return 1
   running=$(lab ps -q --filter "name=^/$prefix-daemon$" --filter "label=cauce.e2e.owner=$OWNER" --filter "label=cauce.qa.name=$name") || return 1
-  if [[ -n $running ]] && lab exec "$running" test -d "/tmp/$prefix-work"; then
-    lab exec "$running" chown -R "$(id -u):$(id -g)" "/tmp/$prefix-work" || return 1
+  if [[ -n $running ]] && lab exec "$running" test -d "/datos/$prefix-work"; then
+    lab exec "$running" chown -R "$(id -u):$(id -g)" "/datos/$prefix-work" || return 1
   fi
 }
 save_runner_log() {
@@ -152,7 +152,7 @@ supervise() {
       remote rm -rf -- "$vmroot/.delegados/v4/recibos/$OWNER/$name/private" || code=1
       sync_receipts || code=1
       if remove_resources && assert_empty; then absent=true; else code=1; fi
-      remote rm -rf -- "/tmp/$prefix-runtime" "/tmp/$prefix-work" || code=1
+      remote rm -rf -- "/tmp/$prefix-runtime" "/datos/$prefix-work" || code=1
       if [[ $ctx != lab ]]; then remote rm -rf -- "/tmp/$prefix-checkout" || code=1; fi
     fi
     rm -rf -- "$receipt/private" || code=1
@@ -166,8 +166,7 @@ supervise() {
   trap cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM HUP
-  for ((turn=0; turn<18; turn++)); do
-    if choose_context; then break; fi
+  until choose_context; do
     sleep 10
   done
   (( selected )) || return 75

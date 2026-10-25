@@ -57,7 +57,7 @@ function failureDetail(error: unknown): FailureDetail {
 function configuration() {
   const name = process.env.QA_LAB_NAME ?? '', directory = process.env.QA_LAB_DIRECTORY ?? '';
   const url = new URL(process.env.QA_LAB_URL ?? '');
-  if (!/^[a-z0-9][a-z0-9-]{0,30}$/u.test(name) || !isAbsolute(directory)
+  if (!/^[a-z][a-z0-9-]{0,18}$/u.test(name) || !isAbsolute(directory)
       || url.protocol !== 'https:' || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
     throw new Error('QA laboratory name, directory or URL is invalid');
   }
@@ -82,14 +82,17 @@ function waitForFile(directory: string, name: string, signal: AbortSignal, timeo
     });
     const finish = (value: 'file' | 'stopped' | 'timeout') => {
       if (timer) clearTimeout(timer);
+      clearInterval(poll);
       watcher.close(); signal.removeEventListener('abort', stopped); resolve(value);
     };
     const stopped = () => { finish('stopped'); };
     watcher.once('error', error => {
       if (timer) clearTimeout(timer);
+      clearInterval(poll);
       watcher.close(); signal.removeEventListener('abort', stopped); reject(error);
     });
     signal.addEventListener('abort', stopped, { once: true });
+    const poll = setInterval(() => { if (existsSync(join(directory, name))) finish('file'); }, 500);
     if (timeout !== undefined) timer = setTimeout(() => { finish('timeout'); }, timeout);
     if (existsSync(join(directory, name))) finish('file');
     else if (signal.aborted) finish('stopped');
@@ -116,7 +119,7 @@ async function registerOwner(computer: ComputerHarness, prefix: string, email: s
 
 async function main(): Promise<void> {
   const { directory, prefix, url, name } = configuration();
-  const privateDirectory = join(directory, 'private'), workRoot = join('/tmp', `${prefix}-work`);
+  const privateDirectory = join(directory, 'private'), workRoot = join('/datos', `${prefix}-work`);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await mkdir(privateDirectory, { recursive: true, mode: 0o700 });
   await chmod(privateDirectory, 0o700);
@@ -161,7 +164,7 @@ async function main(): Promise<void> {
       ports: ports.ports, releasePorts: () => ports.releaseAll() });
     checkStop();
     current = { ...current, ...owner, email, computer: computer.container,
-      database: { container: `${prefix}-postgres`, name: new URL(computer.databaseUrl).pathname.slice(1) },
+      database: { container: `zz-canary-qa-0db-${name}`, name: new URL(computer.databaseUrl).pathname.slice(1) },
       relay: application.relay, status: 'ready' };
     await receipt(directory, current);
     stage = 'up_confirmation';
@@ -186,7 +189,8 @@ async function main(): Promise<void> {
       async () => rm(workRoot, { recursive: true, force: true })]) {
       try { await action(); } catch (error) { cleanup.push(error); }
     }
-    await receipt(directory, { ...current, status: cleanup.length ? 'cleanup_failed' : 'down', cleanupScope: 'fixture_handles', cleanupErrors: cleanup.length });
+    await receipt(directory, { ...current, status: cleanup.length ? 'cleanup_failed' : 'down', cleanupScope: 'fixture_handles',
+      cleanupErrors: cleanup.length, cleanupErrorDetails: cleanup.map(failureDetail) });
     if (failed || cleanup.length) process.exitCode = 1;
   }
 }

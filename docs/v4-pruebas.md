@@ -6,7 +6,7 @@ Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos cor
 
 ## Laboratorio para exploración manual
 
-1. Arranca: `CAUCE_QA_CONTEXT=lab scripts/qa-lab.sh up <nombre>`; nombre de hasta 20 minúsculas, números o guiones, empezando por letra.
+1. Arranca: `CAUCE_QA_CONTEXT=lab scripts/qa-lab.sh up <nombre>`; nombre de hasta 19 minúsculas, números o guiones, empezando por letra.
 2. URL: la imprime `up` y queda en `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/url`; usuario: `zz-canary-qa-<nombre>@example.test`.
 3. Contraseña: úsala desde `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/password` (0600), sin imprimirla ni guardarla en logs.
 4. Comprueba disponibilidad y URL: `scripts/qa-lab.sh status <nombre>`.
