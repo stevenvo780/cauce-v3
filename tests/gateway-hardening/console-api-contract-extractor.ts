@@ -106,6 +106,7 @@ function evaluate(expression: ts.Expression, env: Environment, depth = 0): reado
   }
   if (ts.isCallExpression(expression)) {
     if (ts.isPropertyAccessExpression(expression.expression) && expression.expression.name.text === 'toString') return ['1'];
+    if (ts.isPropertyAccessExpression(expression.expression) && expression.expression.name.text === 'trim') return next(expression.expression.expression);
     if (ts.isIdentifier(expression.expression)) {
       if (['encodeURIComponent', 'String'].includes(expression.expression.text)) return expression.arguments[0] ? next(expression.arguments[0]) : ['1'];
       const found = binding(expression.expression);
