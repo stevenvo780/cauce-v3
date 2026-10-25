@@ -2,13 +2,15 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "container-runtime"))
 
-from cauce_container_base import PermanentError
+from cauce_container_base import PermanentError, framed_hash
 from cauce_container_restart import (
     RestartPane,
+    adapter_harness,
     assert_empty_composer,
     process_environment,
     restart_fence,
@@ -261,10 +263,84 @@ class RestartGuardTests(unittest.TestCase):
             environment.assert_not_called()
 
     def test_empty_prompt_and_dim_placeholder(self):
-        for pane in ("❯ \n", "› \x1b[2mTry an owned prompt\x1b[22m\n",
-                     "❯ \n──────\n\x1b[2mbypass permissions on (shift+tab to cycle)\x1b[22m\n"):
-            with self.subTest(pane=repr(pane)):
-                assert_empty_composer(pane, 2, 0)
+        assert_empty_composer("› \x1b[2mTry an owned prompt\x1b[22m\n", 2, 0)
+        assert_empty_composer("──────\n❯ \n──────\nbypass permissions on\n", 2, 1, "claude")
+
+    def test_truecolor_and_indexed_input_are_not_dim_placeholders(self):
+        for color in ("38;2;225;225;225", "38;2;2;22;0", "48;2;225;225;225", "58;5;2",
+                      "38:2::225:225:225", "38:5:2"):
+            with self.subTest(color=color):
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_NOT_EMPTY$"):
+                    assert_empty_composer("❯ \x1b[" + color + "mowned draft\x1b[39m\n", 2, 0)
+
+    def test_dim_placeholders_keep_intensity_across_color_components(self):
+        for color in ("38;2;0;22;2", "48;5;22", "38:2::0:22:2", "38:5:0"):
+            with self.subTest(color=color):
+                assert_empty_composer("neutral history\n\n› \x1b[2m\x1b[" + color
+                                      + "mTry an owned prompt\x1b[22m\n", 2, 2)
+
+    def test_grok_truecolor_frame_with_owner_text_holds(self):
+        pane = ("neutral history\n\n  \x1b[38;2;80;80;88m╭────────────────╮\n"
+                "  \x1b[38;2;80;80;88m│\x1b[38;2;225;225;225m \x1b[38;2;200;200;200m❯ "
+                "\x1b[38;2;225;225;225mowned draft\x1b[38;2;80;80;88m│\n"
+                "  \x1b[38;2;80;80;88m╰──────────── Grok\n")
+        with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_NOT_EMPTY$"):
+            assert_empty_composer(pane, 6, 3, "grok")
+
+    def test_quoted_box_cannot_replace_the_pinned_codex_composer(self):
+        pane = ("neutral history\n\n› quote this UI:\n  ╭──────────╮\n  │ >        │\n"
+                "  ╰──────────╯\n\n  GPT ultra · Context 67% left\n  ? for shortcuts\n")
+        with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_FAMILY_UNKNOWN$"):
+            assert_empty_composer(pane, 6, 4, "codex")
+
+    def test_harness_family_comes_from_the_pinned_adapter_command(self):
+        raw = b"node\0/opt/owned/packages/adapter-sdk/dist/src/bin/codex.js\0"
+        document = {"pid": 101, "runtimeUid": 1000, "runtimeGid": 1000,
+                    "executable": {"cmdlineSha256": framed_hash([raw])}}
+        with patch("cauce_container_restart.matched_fs_credentials", return_value=nullcontext()), \
+                patch("cauce_container_restart.pathlib.Path.read_bytes", return_value=raw):
+            self.assertEqual(adapter_harness(document), "codex")
+            document["executable"]["cmdlineSha256"] = framed_hash([b"changed"])
+            with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_PROCESS_COMMAND_CHANGED$"):
+                adapter_harness(document)
+
+    def test_input_rules_and_footer_words_do_not_close_the_composer(self):
+        cases = [("neutral history\n\n› \n  ───────\n  owned draft\n", 2, 2),
+                 ("neutral history\n\n› \n\n  explain context left with examples\n", 2, 2),
+                 ("neutral history\n\n› \n\n  Context 67% left\n", 2, 2)]
+        for pane, x, y in cases:
+            with self.subTest(case=cases.index((pane, x, y))):
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_[A-Z_]+$"):
+                    assert_empty_composer(pane, x, y)
+
+    def test_bounded_families_reject_owner_continuations(self):
+        for harness in ("claude", "muse", "gemini"):
+            for continuation in ("  ───────\n  owned draft", "\n  ? for shortcuts"):
+                with self.subTest(harness=harness, continuation=continuation), \
+                        self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_CONTINUATION_UNKNOWN$"):
+                    assert_empty_composer("neutral history\n────────\n❯ \n" + continuation
+                                          + "\n────────\n", 2, 2, harness)
+        with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_CONTINUATION_UNKNOWN$"):
+            assert_empty_composer("╭──────╮\n│ ❯ │\n│   owned │\n╰──────╯\n", 4, 1, "grok")
+
+    def test_unbounded_empty_viewport_does_not_prove_an_empty_buffer(self):
+        for pane in ("❯ \n", "neutral history\n\n› \n\n\n"):
+            with self.subTest(history="history" in pane):
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_[A-Z_]+$"):
+                    assert_empty_composer(pane, 2, 2 if "history" in pane else 0)
+
+    def test_pending_remote_images_hold_but_separated_history_survives(self):
+        image = "  \x1b[36m[Image #1]\x1b[39m\n"
+        prompt = "› \x1b[2mTry an owned prompt\x1b[22m\n"
+        with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_ATTACHMENT_PENDING$"):
+            assert_empty_composer("neutral history\n\n" + image + "\n" + prompt, 2, 4)
+        assert_empty_composer("neutral history\n" + image + "\n\n" + prompt, 2, 4)
+
+    def test_dim_paste_and_image_widgets_are_not_placeholders(self):
+        for widget in ("[Pasted text #1 +20 lines]", "[Image #1]"):
+            with self.subTest(widget=widget):
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_ATTACHMENT_PENDING$"):
+                    assert_empty_composer("› \x1b[2m" + widget + "\x1b[22m\n" + "\n" * 30, 2, 0)
 
     def test_idle_harness_layouts_with_history_and_status_footers(self):
         # Idle composers as each TUI drew them on 25-oct, with their history replaced.
@@ -281,11 +357,13 @@ class RestartGuardTests(unittest.TestCase):
                   "? for shortcuts\x1b[39m        \x1b[2mGemini · high\n")
         muse = ("◆ Worked for 1h 26m\n\x1b[2m\x1b[38;2;103;108;116m──────────────\n"
                 "\x1b[0m\x1b[38;2;251;191;36m❯ \x1b[39m\n\x1b[2m──────────────\n\x1b[0m  muse-wonder · max · YOLO\n")
-        synthetic = "STANDARD_READY:0000\n\n›\n\n\n"
+        claude = ("neutral completed response\n──────────────── neutral mode ─\n❯ \n"
+                  "────────────────────────────────\n  neutral model · bypass permissions on\n")
+        synthetic = "STANDARD_READY:0000\n\n› \x1b[2mTry an owned prompt\x1b[22m\n\n\n"
         for harness, pane, x, y in (("codex", codex, 2, 4), ("grok", grok, 6, 3), ("gemini", gemini, 2, 2),
-                                    ("muse", muse, 2, 2), ("synthetic", synthetic, 2, 2)):
+                                    ("muse", muse, 2, 2), ("claude", claude, 2, 2), ("synthetic", synthetic, 2, 2)):
             with self.subTest(harness=harness):
-                assert_empty_composer(pane, x, y)
+                assert_empty_composer(pane, x, y, "codex" if harness == "synthetic" else harness)
 
     def test_drafts_and_unknown_states_hold_without_disclosing_text(self):
         cases = [("❯ owned unsent text\n", 2, 0),
@@ -293,7 +371,6 @@ class RestartGuardTests(unittest.TestCase):
                  ("❯ \n  owned wrapped draft\n", 2, 0),
                  ("❯ first line\n  \n", 2, 1),
                  ("❯ owned draft\n› \n", 2, 1),
-                 ("╭──────╮\n│ ❯ │\n│   owned │\n╰──────╯\n", 4, 1),
                  ("────────\nowned draft\n› \n", 2, 2),
                  ("owned wrapped input\n› \n", 2, 1),
                  ("› owned quote\n  \n  > \n", 4, 2),
