@@ -18,6 +18,8 @@ La clave `fleet` de `ops/flota.json` describe catorce agentes. `ops/container-al
 los doce alias que viven en Docker; los hosts nativos son Astra y Kant. La ubicación no
 se deduce del nombre del harness. Los respaldos conservan las copias anteriores al traslado.
 
+La tabla de arriba es el snapshot de máquinas. El PTY de un agente trasladado no se queda en el manager anterior: lo atiende el manager de la colocación actual. En server2, con el usuario `server`, están los PTY de argos, gaia, hades, hegel, perseo, salva y teseo. Kant sigue como runtime nativo en ese host. El rollout de ese traslado va acotado al manager y el guion no imprime material; el procedimiento está en [terminal-pty.md](terminal-pty.md#rollout-acotado-y-traslado-de-una-terminal).
+
 ## Humanos y sus grupos
 - **Steven** (dueño/operador): jarvis (asistente personal OpenClaw), zeus (gestor de Cauce e infra de agentes), argos (director general de desarrollo — **OpenClaw**), socrates (dev personal), kant (DevOps de todos los servidores), astra (Codex en la VM `pc-agente`) y hades (Grok).
 - **Miguel**: janus (asistente multi-empresa), atlas y kratos (devs; kratos suele llevar Demeter y graf), iza (Humanizar), gaia (Finca Directa).

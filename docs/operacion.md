@@ -447,6 +447,10 @@ El gateway añade a cada fila OpenClaw del snapshot de flota los dueños y admin
 - Un adaptador nuevo que recibe `TAKEOVER_REJECTED` porque el arriendo de la instancia detenida sigue vigente reintenta con espera creciente hasta `lease_expires_at`, en lugar de salir. El gateway sigue admitiendo un solo dueño.
 - El `stop` previo a un `start` lleva la confianza de cuentas de la operación. Tras un despliegue la imagen cambia, el `stop` recrea el contenedor y resuelve el perfil del proveedor; sin esa confianza el arranque fallaba con `provider account has no current authorized durable binding`.
 
+Cancelar una actualización de flota conserva el runtime anterior solo cuando se admite la restauración: la operación es `update`, hay revisión deseada, una sola fila anterior del agente, el paso `prepare` terminó bien, todo paso distinto de `prepare` y `stop` sigue pendiente, y la colocación no cambió (clave de runtime, modo contenedor, ordenador, nombre de contenedor, usuario y los dos directorios). El mandato al host lleva `restore_previous_runtime` y el ejecutor llama a restaurar el adaptador existente en vez de descartarlo. Si ese adaptador estaba en marcha, vuelve a arrancar sobre la imagen anterior; los volúmenes y la generación de credencial previa se quedan. La compensación deja la fila deshabilitada y el ciclo de vida en `failed` (o `retiring` si ya estaba retirado). En la consola el estado es **Cancelada** y el titular dice que no se siguieron aplicando pasos. El paso siguiente es **Estado → Arrancar**, que solo abre **Ejecución** con **Iniciar**; hay que **Previsualizar operación** y **Confirmar operación**. Si ya empezaron credenciales o runtime, esa restauración no se admite: la compensación para y revoca, y exige `stopped_verified` o `revocation_verified`.
+
+Un fallo al refrescar la imagen de **Actualizar ejecución** no muestra la causa inglesa en la tarjeta: el error tipado solo lleva código, paso y si se puede reintentar, y el texto es «El ejecutor no pudo completar este paso.» La causa queda en el diario del gateway, en `fleet host command failed component=fleet.executor`, dentro de `stderr`, que empieza por `fleet effect failed:`. El ejecutor redacta secretos, tokens largos y hexadecimales. Si el retroceso sale bien, la línea es `image refresh failed; original container restored and volumes preserved; cause=<tipo>: <diagnóstico>`. El contenedor de respaldo recupera el nombre, arranca si estaba en marcha y, si el adaptador corría, se restaura; un adaptador parado sigue parado. Los volúmenes se conservan. Si el retroceso también falla, la línea es `original container preserved for recovery; cause=...; rollback=...`: el contenedor original se guarda para recuperarlo y el adaptador no está ya en marcha. En ambos casos el fallo de la operación deja el agente deshabilitado. Para volver a admitirlo, **Arrancar** y confirmar **Iniciar**. No es el aviso de **Actualizar CLI** de Mis cuotas.
+
 ### Cambiar la identidad de una cuenta de proveedor
 
 Cuando un dueño retira un correo y entra con otro, no se escribe el correo nuevo en `provider_accounts.external_account_id`. El camino admitido es:
@@ -509,6 +513,24 @@ systemctl --user -M <usuario>@ is-active cauce-v3-container-<alias>.service
 
 Confirmar el lease:
 `SELECT alias, lease_until > now() FROM connection_leases WHERE alias='<alias>';`.
+
+### Identidad rechazada del arriendo
+
+Un consumidor V4 solo conserva el arriendo si la sesión del certificado es `adapter-` seguida de su clave de runtime, esa clave coincide con la del agente, el certificado no está vencido y, si presenta un ordenador, ese ordenador es el `host_id` del agente y tampoco está vencido.
+
+Un agente V3 (`runtime_mode` nulo) solo queda cercado si su línea base en `fleet_runtime_identities` guardó un `host_id`. Si esa línea base no tiene ordenador, el agente se admite aunque su `host_id` sea otro. Si la línea base sí guardó un ordenador, `agents.host_id` tiene que ser ese mismo. No se corrige un rechazo V3 apuntando el agente al ordenador del controlador.
+
+Si no casa, el almacén rechaza con `forbidden` y motivo de recuperación `consumer_placement_mismatch` («consumer identity does not match durable placement»). En el saludo y en el latido el gateway envía `{type:error, code:consumer_placement_mismatch}` y cierra el socket `4403` con «consumer placement mismatch». El diario avisa `connection_lease_identity_rejected`, en nivel warn, con el tenant, el alias, el motivo y la fase `hello` o `heartbeat`. La fila durable es `audit_events`: acción `connection.lease.rejected`, decisión `deny`, metadato `reason` = `consumer_placement_mismatch` y `phase`. Si esa inserción falla, el diario dice `connection_lease_rejection_audit_failed` y el rechazo ya ocurrió.
+
+No confundir con `placement_provenance_unverified`. Ese evento se permite cuando el certificado no trae ordenador: avisa, no cierra el socket y no es un rechazo de colocación.
+
+```sql
+SELECT action, decision, metadata->>'reason' AS reason, metadata->>'phase' AS phase, created_at
+  FROM audit_events
+ WHERE actor_alias = '<alias>' AND action = 'connection.lease.rejected'
+ ORDER BY created_at DESC
+ LIMIT 20;
+```
 
 El médico (`ops/guardias/cauce-v3-medico-monitor`) aplica un veto adicional antes de reiniciar un
 adaptador: consulta dos veces las entregas `leased`, `accepted` o `started`, una al entrar al ciclo y

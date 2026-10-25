@@ -291,6 +291,8 @@ de forma, `STOP_UNCONFIRMED`, `HOST_UNAVAILABLE`, `SESSION_CONFLICT`, `IDENTITY_
 `FUNCTIONAL_CHECK_FAILED` y `SESSION_EXPIRED`). Esa sección es la referencia vigente; este
 inventario histórico no la duplica.
 
+El rechazo de identidad de un arriendo tampoco usa este inventario. `connection_lease_identity_rejected` y el código `consumer_placement_mismatch` (cierre de socket `4403`) se leen en [Identidad rechazada del arriendo](operacion.md#identidad-rechazada-del-arriendo): qué cerca un V4, cuándo una línea base V3 no cerca, y la consulta de `audit_events`.
+
 ## 11. Aplicación de la poda (ola w4, carril muse1)
 
 Registro de ejecución; las secciones 1–10 quedan como se midieron.

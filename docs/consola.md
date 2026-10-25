@@ -85,7 +85,7 @@ mismo dato para dar contexto, pero sólo enlazan a su autoridad:
 
 - `/live`, pestañas **Perfil** y **Ficheros**: perfil canónico y manual del arnés del agente;
 - `/accounts` (**Cuentas**): **Inventario** y **Asignaciones** para administrar las cuentas y qué agentes las usan;
-- `/my-quotas` (**Mis cuotas**): única vista del saldo por cuenta; permite registrar la cuenta, iniciar sesión en el terminal web del proveedor y actualizar sus cuotas;
+- `/my-quotas` (**Mis cuotas**): única vista del saldo por cuenta. Registrar, editar o borrar la cuenta lo hacen el dueño de la empresa o un administrador de plataforma; un administrador de la empresa inicia sesión en el terminal web del proveedor y actualiza el entorno. La barra de vida de esa cuota está en la ficha, la oficina y el campus;
 - `/messages/:tenant/:alias`: redacción y publicación durable;
 - `/queues?delivery=:id`: replay, cancelación y resolución de DLQ;
 - `/config`: topología, registro de agentes, computadoras, políticas y revisiones; no acepta
@@ -281,6 +281,10 @@ son preferencia personal y no se auditan.
 ## Terminal interactiva
 
 `src/features/terminal/pty-session.ts` gestiona la sesión WebSocket en el mismo origen, que el gateway proxea hacia `terminal-relay`. Véase [terminal-pty.md](terminal-pty.md) y [services/terminal-relay/README.md](../services/terminal-relay/README.md).
+
+Con un agente elegido, esa página muestra **Reiniciar agente**. El mismo botón está en la hoja del agente de Oficina, no en la ficha de Ajustes. Consulta la conversación y, si se puede reanudar sin entregas en vuelo, pide **Confirmar reinicio y reanudar**. El procedimiento está en la [guía](v4-guia.md#recuperar-la-tui-tras-un-ctrlc).
+
+**Concesiones de terminal** está en **Ajustes → Acceso y roles**. El panel solo se muestra a un dueño, un administrador de la empresa o un administrador de plataforma, y solo cuando el relé está en estado `available`. Si falta la autoridad, o el relé se está comprobando o no está disponible, el panel no aparece. Modos y unión con `grants.json`: [terminal-pty.md](terminal-pty.md).
 
 El contenedor de `TerminalPageContent` usa `h-dvh`; hasta 760 px de ancho usa
 `h-[calc(100dvh-56px-env(safe-area-inset-bottom))]`. No calcula un techo de altura en runtime ni

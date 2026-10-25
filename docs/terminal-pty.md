@@ -200,6 +200,8 @@ cualquiera. Cada alta, cambio y baja queda en `audit_events`
 (`terminal.grant.create|update|revoke`) con su actor, y revocar corta las
 sesiones abiertas de esa concesión en la misma transacción.
 
+En la consola el panel vive en **Ajustes → Acceso y roles** y se titula **Concesiones de terminal**. No se pinta si quien mira no es dueño, administrador de la empresa o administrador de plataforma. Aunque lo sea, falta mientras el relé no está en estado `available`: mientras se comprueba, o si está `no-desplegado`, `sin-permiso` o `sin-comprobar`, no hay formulario deshabilitado y no se consultan las concesiones. Los modos del formulario son **Shell**, **Visor de TUI** y **TUI escribible**. Un 403 dice «Solo el dueño o un administrador de la empresa del agente puede conceder acceso a su terminal.»
+
 **Precedencia: ninguna fuente prevalece; vale la UNIÓN.** Una sesión se admite
 si la concede el archivo **o** una fila viva de la tabla (no revocada y sin
 caducar), sobre cada alias de la cohorte del contenedor. Se eligió la unión para
@@ -289,6 +291,14 @@ Alta de un alias de contenedor de solo lectura:
 5. Si el alias tenía una unidad PTY en el host anterior, desactivarla: su contenedor ya no existe y quedaría
    reiniciándose en bucle con el mismo certificado.
 6. Añadir la fila de `grants.json` (Paso 4) o cubrirlo con `alias: "*"` del tenant.
+
+#### Rollout acotado y traslado de una terminal
+
+`ops/pty-agent/rollout-pty.py`, en `status`, `preflight` y `rollout`, acepta `--scope-manager` junto con `--aliases` explícitos. Esos alias tienen que pertenecer a ese manager. No se combina con `--retire-historical`. Quien lo lanza tiene que acreditar que la identidad ya no está en el origen del traslado. `rollback <alias> --scope-manager` exige además `--transaction` y se limita al manager declarado de ese alias. Sin `--scope-manager` el comando sigue cubriendo todos los managers declarados.
+
+El traslado de una identidad PTY lo hace `ops/scripts/v4_mover_terminal.py`. Lo despacha `ops/scripts/v4_mover_host.py` para las acciones que empiezan por `terminal-`, salvo `terminal-probe`. El mover de agente llama `terminal-export` y después `terminal-install`. Si hay que revertir, `terminal-start` reactiva el origen cuando el paro se intentó, y `terminal-cleanup` retira el destino cuando la instalación se intentó. Las acciones, sin el prefijo, son `preflight`, `export`, `stop`, `start`, `install`, `destination-preflight` y `cleanup`. En el origen, el usuario systemd tiene que coincidir con el del inventario.
+
+Mueve una sola identidad. Antes de activarla en el destino, cerca el manager anterior: `stop` deshabilita la unidad de origen y siega el proceso viejo; `install` se niega si el destino ya tiene una identidad que no es de esta migración. Reutiliza la PKI que ya existía y no imprime el material. El PTY de un agente cuya colocación es server2 lo atiende el manager de ese host, el usuario `server`, no el manager anterior. Qué alias están en ese host: [La flota y sus participantes](flota-y-participantes.md#máquinas).
 
 ### Paso 3 — el ÚNICO reinicio del gateway
 

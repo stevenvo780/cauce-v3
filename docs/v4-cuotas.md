@@ -55,6 +55,12 @@ La consulta del agente lee la identidad dentro de su contenedor y no la imprime:
 
 `ops/cli/fleet_executor_agent_quota.py` compara, para Claude, Codex y Grok, las ventanas de la web con la salida JSON de `coutas` del mismo instante: mismas claves, el porcentaje dentro de ±1 (restante, o 100 menos el usado) y el mismo reinicio. `contrast_same_instant(web, coutas)` exige los tres proveedores. `audit_quota_logs` cuenta coincidencias de `access_token`, `refresh_token`, `sk-ant-`, `eyJ` y `user_code` en logs de gateway, logs de host y `audit_events`. `redact_secrets` las sustituye; el control positivo es que el secreto sembrado se detecta antes y no queda ninguna coincidencia después. La corrida contra producción la hace el orquestador con los logs vivos; aquí el procedimiento se prueba con fixtures.
 
+## Barra de vida y quién puede registrar
+
+La ficha del agente, la hoja de la oficina, la tarjeta del campus (no la de un visitante) y el panel del grupo dibujan la cuota como barra de vida de la ventana que se agota antes. Verde por encima del 50 %, ámbar desde el 20 % y rojo por debajo. Sin porcentaje la barra es un rayado gris, distinto de cuota agotada. El texto es `5h` o `sem` con el porcentaje, o el estado de la cuenta: **Disponible**, **Cansado** (menos del 25 %), **Sin disponibilidad**, **Sin datos**, **Error de consulta**, **Datos antiguos**, **En pausa**, **Varía por modelo**, **Pendiente de autenticación** o **Sin lector de cuota**. El color de la barra usa los cortes del 50 % y del 20 % de esa ventana; no es un icono de batería.
+
+Registrar, editar o eliminar la cuenta lo hacen el dueño de la empresa o un administrador de plataforma. Un administrador de la empresa opera los entornos y **Actualizar CLI**; no registra ni borra cuentas. Un lector consulta. Los avisos literales están en la [guía](v4-guia.md#registrar-una-cuenta-y-ver-su-cuota). El aviso de **Actualizar CLI** en esta página no es la causa de un fallo de **Actualizar ejecución** en la ficha del agente: aquella queda en el diario del ejecutor de flota, como describe la [guía](v4-guia.md#editar-detener-o-eliminar-un-agente).
+
 ## Evidencia
 
 Las pruebas locales, los recibos negativos y sus límites están en la [matriz de verificación](v4-matriz-local.md). No acreditan autenticación actual de proveedores ni publicación del ciclo de entorno en producción.
