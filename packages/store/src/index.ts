@@ -25,6 +25,7 @@ export type { ContextWritePlan, ContextWriteAuditAttribution } from './repositor
 export { persistAgentContextReconcileInTransaction, type AgentContextFenceInput, type AgentContextReconcileEffect } from './repository/agent-context-reconcile.js';
 export * from './human-client-provenance.js';
 export * from './repository/fleet-operation-contracts.js';
+export * from './repository/fleet-operation-maintenance.js';
 export * from './repository/fleet-operation-compensation.js';
 export * from './repository/fleet-operation-hosts.js';
 export * from './fleet-adoption-contracts.js';
@@ -35,7 +36,7 @@ export { lockFleetRevision } from './repository/fleet-operation-authority.js';
 export { lockPreparedFleetRevision } from './repository/fleet-operation-slice.js';
 export { providerAccountConsentSql } from './configuration/company-scope.js';
 export { hubStarRouteSql } from './repository/acl-edges.js';
-export { assertFleetOperationAuthority } from './repository/fleet-operation-human.js';
+export { assertFleetOperationAuthority, loadFleetOrigin } from './repository/fleet-operation-human.js';
 export { lockFleetClaim, preparedState } from './repository/fleet-operation-state.js';
 export * from './agent-preferences.js';
 export * from './client-mailbox.js';

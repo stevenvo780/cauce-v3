@@ -1,4 +1,4 @@
-import { FleetOperationError, lockFleetClaim, lockFleetRevision, lockPreparedFleetRevision, loadFleetHostScope, preparedState, publicFleetOperation,
+import { FleetOperationError, getMaintenanceRelease, isMaintenanceOperation, lockFleetClaim, lockFleetRevision, lockPreparedFleetRevision, loadFleetHostScope, preparedState, publicFleetOperation,
   type DatabaseClient, type FleetOperationClaim } from '@cauce/store';
 import type { FleetExecution } from './executor.js';
 import { readFleetProviderAccounts, scopedFleetProviderAgents } from './accounts.js';
@@ -10,7 +10,7 @@ interface Agent extends Record<string,unknown> {tenant_id:string;alias:string;ho
 export async function hostFleetExecution(client:DatabaseClient,identity:Identity,claim:FleetOperationClaim):Promise<FleetExecution> {
   const row=await lockFleetClaim(client,claim,true);
   if (row.status==='cancelling' || row.desired_revision===null) {
-    await lockFleetRevision(client,row.status==='cancelling'?undefined:Number(row.expected_revision),row.company_id);
+    await lockFleetRevision(client,row.status==='cancelling'||isMaintenanceOperation(row)?undefined:Number(row.expected_revision),row.company_id);
   } else await lockPreparedFleetRevision(client,row);
   const prepared=await preparedState(client,row.id);
   const agents=(await client.query<Agent>(`SELECT tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,
@@ -37,6 +37,8 @@ export async function hostFleetExecution(client:DatabaseClient,identity:Identity
   const previous=prepared.previous_agents.filter(agent=>agent.host_id===identity.host_id);
   const execution:FleetExecution={operation:publicFleetOperation(row),request:row.request,...prepared,
     previous_agents:await trustedFleetBaseline(client,previous),snapshot};
+  const maintenanceRelease=getMaintenanceRelease(row);
+  if (maintenanceRelease!==undefined) execution.maintenance={release_sha256:maintenanceRelease};
   if (row.desired_revision===null) {
     const targets=agents.map(agent=>({tenant_id:agent.tenant_id,alias:agent.alias}));
     Object.assign(execution,fleetHostInputs(targets,execution));

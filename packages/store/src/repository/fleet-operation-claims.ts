@@ -4,6 +4,7 @@ import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.j
 import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow } from './fleet-operation-contracts.js';
 import { assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
+import { cancelStaleMaintenance } from './fleet-operation-maintenance.js';
 
 function leaseParameters(worker: string, host: string, leaseMs: number): void {
   if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(worker) || !/^[a-z][a-z0-9_-]{0,63}$/u.test(host)
@@ -44,6 +45,10 @@ export abstract class FleetOperationClaims {
             AND (operation.lease_expires_at IS NULL OR operation.lease_expires_at<=now())
             AND NOT EXISTS (SELECT 1 FROM fleet_operations other WHERE other.id<>operation.id
               AND other.company_id=operation.company_id AND other.worker_id IS NOT NULL)
+            AND (operation.cancel_requested OR operation.status='cancelling' OR NOT EXISTS (SELECT 1 FROM (SELECT metadata->'maintenance_deferred'->>'retry_at' AS retry_at
+              FROM fleet_operation_events WHERE operation_id=operation.id AND event='renewed'
+                AND metadata ? 'maintenance_deferred' ORDER BY id DESC LIMIT 1) deferred
+              WHERE deferred.retry_at::timestamptz>clock_timestamp()))
             AND NOT EXISTS (SELECT 1 FROM (
               SELECT count(*) AS failures, max(failure.created_at) AS last_failure FROM fleet_operation_events failure
                WHERE failure.operation_id=operation.id AND failure.event='failed' AND failure.metadata->>'compensation'='true'
@@ -54,7 +59,11 @@ export abstract class FleetOperationClaims {
           ORDER BY operation.created_at,operation.id LIMIT 1 FOR UPDATE OF operation SKIP LOCKED`,
         [host, FLEET_COMPENSATION_BACKOFF_BASE_MS, FLEET_COMPENSATION_BACKOFF_CAP_MS, companyId ?? null])).rows[0];
       if (!row) return null;
-      try { await assertFleetOperationAuthority(client, row); }
+      try {
+        await loadFleetOrigin(client, row);
+        if (await cancelStaleMaintenance(client, row)) return null;
+        await assertFleetOperationAuthority(client, row);
+      }
       catch (error) {
         if (!(error instanceof FleetOperationError) || error.code !== 'forbidden') throw error;
         const failed = (await client.query<FleetOperationRow>(

@@ -9,6 +9,7 @@ import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 import { isFleetRecoveryProbe, prepareFleetRecovery, restoreFleetRecovery } from './fleet-operation-recovery.js';
 import { preparedState } from './fleet-operation-state.js';
 import { grantCreatorTerminalAccess } from '../terminal-grants.js';
+import { assertHostMaintenanceAuthority, isMaintenanceOperation } from './fleet-operation-maintenance.js';
 export { admitFleetAgent } from './fleet-operation-admission.js';
 
 export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperationRow): Promise<FencedFleetTarget[]> {
@@ -117,7 +118,8 @@ export async function prepareFleetDesired(
   await fenceFleetAgents(client, targets);
   if (row.kind === 'create' || row.kind === 'update') await prepareAgentDesired(client, row);
   else await prepareFleetTransition(client, row);
-  await assertFleetOperationAuthority(client, row);
+  if (isMaintenanceOperation(row)) await assertHostMaintenanceAuthority(client, row, true);
+  else await assertFleetOperationAuthority(client, row);
   return targets;
 }
 

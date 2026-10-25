@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { AgentQuotaClaimSchema, AgentQuotaFailureCodeSchema, AgentQuotaReceiptSchema,
   FleetEvidenceSchema, FleetErrorSchema, FleetStepNameSchema } from '@cauce/protocol';
 import { HostCapabilitiesSchema } from './host-channel.capabilities.js';
+import { MaintenanceDeferReasonSchema } from './host-maintenance-guard.js';
 
 const Lease = z.number().int().min(1000).max(300_000).default(30_000);
 const FleetFence = z.object({ operation_id:z.uuid(),claim_token:z.uuid(),epoch:z.number().int().positive() }).strict();
@@ -38,9 +39,19 @@ export const HostAgentQuotaCommandSchema = z.discriminatedUnion('action',[
   z.object({...AgentQuota,action:z.literal('finish'),claim:AgentQuotaClaimSchema,receipt:AgentQuotaReceiptSchema}).strict(),
   z.object({...AgentQuota,action:z.literal('fail'),claim:AgentQuotaClaimSchema,code:AgentQuotaFailureCodeSchema}).strict(),
 ]);
+export const HostMaintenanceCommandSchema = z.discriminatedUnion('action', [
+  z.object({ resource: z.literal('host_maintenance'), action: z.literal('reconcile'),
+    release_sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict(),
+  z.object({ resource: z.literal('host_maintenance'), action: z.literal('defer'), claim: FleetFence,
+    reason: MaintenanceDeferReasonSchema }).strict(),
+  z.object({ resource: z.literal('host_maintenance'), action: z.literal('prepare'), claim: FleetFence }).strict(),
+  z.object({ resource: z.literal('host_maintenance'), action: z.literal('skip'), claim: FleetFence,
+    reason: z.enum(['runtime_current', 'release_changed']).optional() }).strict(),
+]);
 export const HostChannelCommandSchema = z.discriminatedUnion('resource',[
-  HostFleetCommandSchema,HostQuotaCommandSchema,HostAgentQuotaCommandSchema,HostCapabilitiesSchema]);
+  HostFleetCommandSchema,HostQuotaCommandSchema,HostAgentQuotaCommandSchema,HostCapabilitiesSchema,HostMaintenanceCommandSchema]);
 export type HostChannelCommand = z.infer<typeof HostChannelCommandSchema>;
 export type HostFleetCommand = z.infer<typeof HostFleetCommandSchema>;
 export type HostQuotaCommand = z.infer<typeof HostQuotaCommandSchema>;
 export type HostAgentQuotaCommand = z.infer<typeof HostAgentQuotaCommandSchema>;
+export type HostMaintenanceCommand = z.infer<typeof HostMaintenanceCommandSchema>;

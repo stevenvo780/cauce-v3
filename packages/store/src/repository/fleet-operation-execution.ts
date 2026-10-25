@@ -1,6 +1,6 @@
 import { FleetEvidenceSchema, FleetErrorSchema, sha256Hex, type FleetEvidence, type FleetError, type FleetOperation, type FleetStepName } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
-import { lockFleetRevision } from './fleet-operation-authority.js';
+import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationClaims } from './fleet-operation-claims.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow, type FleetExecutionState } from './fleet-operation-contracts.js';
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
@@ -11,6 +11,8 @@ import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifec
 import { fleetRecoveryEvidence, isFleetRecoveryProbe, lockFleetRecoveryConnection, restoreFleetRecovery } from './fleet-operation-recovery.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
   readFleetGroupAgents, readFleetHostReceipts, usesFleetHostSlices, type FleetHostReceipt, type FleetHostSlice, type FleetHostStep } from './fleet-operation-hosts.js';
+import { assertHostMaintenanceAuthority, assertHostMaintenanceIdle, isMaintenanceOperation, maintenanceBackoffMs, type MaintenanceDeferReason } from './fleet-operation-maintenance.js';
+import { loadFleetOrigin } from './fleet-operation-human.js';
 
 function stepEvidence(row: FleetOperationRow, name: FleetStepName, input: FleetEvidence): FleetEvidence {
   const parsed = FleetEvidenceSchema.safeParse(input);
@@ -91,6 +93,12 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
 
   async prepare(claim: FleetOperationClaim): Promise<Omit<FleetExecutionState, 'request'>> {
     return this.transaction(async (client) => {
+      if (isMaintenanceOperation(claim.operation)) {
+        await lockFleetRevision(client);
+        const pending = (await client.query<{ company_id: string; expected_revision: string; desired_revision: string | null }>(
+          'SELECT company_id,expected_revision,desired_revision FROM fleet_operations WHERE id=$1', [claim.operation.id])).rows[0];
+        if (pending?.desired_revision === null) await lockFleetRevision(client, Number(pending.expected_revision), pending.company_id);
+      }
       const row = await lockFleetClaim(client, claim);
       if (row.desired_revision !== null) {
         await lockPreparedFleetRevision(client, row);
@@ -104,6 +112,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         return { operation: publicFleetOperation(row), ...await preparedState(client, row.id) };
       }
       await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
+      await assertHostMaintenanceIdle(client, row);
       await lockFleetRecoveryConnection(client, row);
       const previous = await previousFleetAgents(client, row);
       const intent = await cancelledFleetMembershipIntent(client, row, previous, await fleetMembershipIntent(client, row));
@@ -120,6 +129,59 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         ...await sealFleetTargetSlice(client, row, targets, previous) });
       return { operation: publicFleetOperation(next), fenced_targets: targets, previous_agents: previous, desired_memberships: intent };
     });
+  }
+
+  async deferMaintenance(claim: FleetOperationClaim, reason: MaintenanceDeferReason): Promise<FleetOperation> {
+    if (!['pending_deliveries', 'provider_login', 'composer_busy', 'turn_active', 'tui_unreadable', 'preflight_unavailable'].includes(reason)) {
+      throw new FleetOperationError('invalid_input', 'maintenance deferral reason is invalid');
+    }
+    return this.transaction(async client => {
+      const row = await lockFleetClaim(client, claim);
+      if (!isMaintenanceOperation(row) || row.cancel_requested || row.status !== 'running'
+          || row.desired_revision !== null || row.steps.some(step => step.status !== 'pending')) {
+        throw new FleetOperationError('conflict', 'maintenance cannot defer after preparation has started');
+      }
+      const attempt = Number((await client.query<{ attempts: string }>(`SELECT count(*)::text AS attempts FROM fleet_operation_events
+        WHERE operation_id=$1 AND event='renewed' AND metadata ? 'maintenance_deferred'`, [row.id])).rows[0]?.attempts ?? 0) + 1;
+      const retry = (await client.query<{ retry_at: Date }>(`SELECT clock_timestamp()+$1::integer*interval '1 millisecond' AS retry_at`,
+        [maintenanceBackoffMs(attempt)])).rows[0];
+      if (!retry) throw new Error('maintenance retry clock is unavailable');
+      row.status = 'queued'; row.error = null;
+      return publicFleetOperation(await saveFleetState(client, row, claim, 'renewed',
+        { maintenance_deferred: { reason, attempt, retry_at: retry.retry_at.toISOString() } }, true));
+    });
+  }
+
+  async skipMaintenance(claim: FleetOperationClaim, reason: 'runtime_current' | 'revision_changed' | 'release_changed' = 'runtime_current'): Promise<FleetOperation> {
+    if (!['runtime_current', 'revision_changed', 'release_changed'].includes(reason)) throw new FleetOperationError('invalid_input', 'maintenance skip reason is invalid');
+    return this.transaction(async client => {
+      await lockFleetRevision(client);
+      const row = (await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE id=$1 AND worker_id=$2 AND claim_token=$3
+        AND epoch=$4 AND lease_expires_at>clock_timestamp() AND status='running' FOR UPDATE`,
+      [claim.operation.id, claim.worker_id, claim.claim_token, claim.epoch])).rows[0];
+      if (!row) throw new FleetOperationError('conflict', 'fleet operation worker is fenced');
+      await loadFleetOrigin(client, row);
+      this.assertUnpreparedMaintenance(row);
+      await assertHostMaintenanceAuthority(client, row, false, reason !== 'runtime_current');
+      const revision = await lockFleetRevision(client, undefined, row.company_id);
+      if (reason === 'revision_changed' && revision === Number(row.expected_revision)) {
+        throw new FleetOperationError('conflict', 'maintenance revision has not changed');
+      }
+      const next = (await client.query<FleetOperationRow>(`UPDATE fleet_operations SET status='cancelled',version=version+1,
+        error='{"code":"CANCELLED","retryable":false}',worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+        WHERE id=$1 AND worker_id=$2 AND claim_token=$3 AND epoch=$4 AND lease_expires_at>clock_timestamp() RETURNING *`,
+      [row.id, claim.worker_id, claim.claim_token, claim.epoch])).rows[0];
+      if (!next) throw new FleetOperationError('conflict', 'fleet operation worker lease expired before commit');
+      await recordFleetEvent(client, row.id, Number(next.version), 'cancelled', { maintenance_skipped: reason });
+      return publicFleetOperation(await loadFleetOrigin(client, next));
+    });
+  }
+
+  private assertUnpreparedMaintenance(row: FleetOperationRow): void {
+    if (!isMaintenanceOperation(row) || row.desired_revision !== null || row.cancel_requested || row.status !== 'running'
+        || row.steps.some(step => step.status !== 'pending')) {
+      throw new FleetOperationError('conflict', 'maintenance can only release an unprepared operation');
+    }
   }
 
   async startStep(claim: FleetOperationClaim, name: FleetStepName): Promise<FleetOperation> {
@@ -193,6 +255,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       row.status = row.cancel_requested ? 'cancelling' : 'failed'; row.error = parsed.data;
       if (parsed.data.step) fleetStep(row, parsed.data.step).status = 'failed';
       if (row.target.resource === 'agent' && !isFleetRecoveryProbe(row.request)
+          && (!isMaintenanceOperation(row) || row.desired_revision !== null)
           && (row.kind !== 'recover' || row.desired_revision !== null)) await client.query(`UPDATE agents SET enabled=false,lifecycle_state=CASE
         WHEN retired_at IS NULL THEN 'failed' ELSE 'retiring' END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`,
       [row.target.tenant_id, row.target.alias]);

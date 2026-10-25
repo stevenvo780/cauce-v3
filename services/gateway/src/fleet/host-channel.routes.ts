@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { AgentQuotaInvalidatedError, AgentQuotaOperationsRepository, FleetOperationError, FleetOperationsRepository, HostEnrollmentRepository, HostId, QuotaOperationsRepository, StoreError,
-  lockFleetRevision, publicFleetOperation, type DatabaseClient, type DatabasePool, type FleetOperationClaim, type FleetOperationRow } from '@cauce/store';
+  loadFleetOrigin, lockFleetRevision, publicFleetOperation, type DatabaseClient, type DatabasePool, type FleetOperationClaim, type FleetOperationRow } from '@cauce/store';
 import { AuthError, AuthorizationError } from '../auth.js';
 import { replyError } from '../routes/shared.js';
 import { HostChannelCommandSchema, type HostAgentQuotaCommand, type HostFleetCommand, type HostQuotaCommand } from './host-channel.contracts.js';
 import { hostFleetExecution } from './host-channel.execution.js';
 import { recordHostCapabilities } from './host-channel.capabilities.js';
 import { readFleetProviderAccounts } from './accounts.js';
+import { enqueueHostMaintenance, isMaintenanceOperation, MaintenanceDeferredError } from '@cauce/store';
+import type { HostMaintenanceCommand } from './host-channel.contracts.js';
 
 const Params = z.object({host_id:HostId}).strict();
 interface HostIdentity {host_id:string;company_id:string}
@@ -19,6 +21,7 @@ async function fleetClaim(client:DatabaseClient,identity:HostIdentity,
     AND claim_token=$4 AND epoch=$5 AND worker_id IS NOT NULL FOR UPDATE`,
   [fence.operation_id,identity.host_id,identity.company_id,fence.claim_token,fence.epoch])).rows[0];
   if (!row?.worker_id) throw new StoreError('forbidden','fleet operation is outside the authenticated host scope');
+  await loadFleetOrigin(client,row);
   return {operation:publicFleetOperation(row),request:row.request,worker_id:row.worker_id,claim_token:fence.claim_token,epoch:fence.epoch};
 }
 async function fleetCommand(repository:FleetOperationsRepository,client:DatabaseClient,identity:HostIdentity,command:HostFleetCommand):Promise<unknown> {
@@ -60,6 +63,32 @@ async function quotaCommand(repository:QuotaOperationsRepository,client:Database
     case 'fail':await quota.fail(command.claim,command.code,command.detail);return {operation_id:command.claim.id,status:'failed'};
   }
 }
+async function maintenanceCommand(repository: FleetOperationsRepository, client: DatabaseClient,
+  identity: HostIdentity, command: HostMaintenanceCommand): Promise<unknown> {
+  if (command.action === 'reconcile') {
+    const enrolled = (await client.query<{ enrollment_id: string; key_fingerprint: string }>(
+      'SELECT enrollment_id,key_fingerprint FROM fleet_host_identities WHERE host_id=$1 AND company_id=$2 AND enabled',
+      [identity.host_id, identity.company_id])).rows[0];
+    if (!enrolled) throw new StoreError('forbidden', 'host maintenance identity is unavailable');
+    return enqueueHostMaintenance(client, { ...identity, ...enrolled }, command.release_sha256);
+  }
+  const claim = await fleetClaim(client, identity, command.claim);
+  if (!isMaintenanceOperation(claim.operation)) throw new StoreError('forbidden', 'operation is not host maintenance');
+  const fleet = repository.forTransaction(client);
+  if (command.action === 'defer') return fleet.deferMaintenance(claim, command.reason);
+  if (command.action === 'skip') return fleet.skipMaintenance(claim, command.reason);
+  try { await fleet.prepare(claim); return { prepared: true }; }
+  catch (error) {
+    if (error instanceof MaintenanceDeferredError) {
+      await fleet.deferMaintenance(claim, error.reason); return { prepared: false };
+    }
+    if (error instanceof FleetOperationError && error.code === 'conflict' && claim.operation.desired_revision === null
+        && error.message === 'configuration revision changed; preview the operation again') {
+      await fleet.skipMaintenance(claim, 'revision_changed'); return { prepared: false };
+    }
+    throw error;
+  }
+}
 export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,options:HostChannelOptions={}):void {
   const identity=new HostEnrollmentRepository(pool); const fleet=new FleetOperationsRepository(pool,options); const quota=new QuotaOperationsRepository(pool);
   const agentQuota=new AgentQuotaOperationsRepository(pool);
@@ -71,6 +100,7 @@ export function registerHostChannelRoutes(app:FastifyInstance,pool:DatabasePool,
       const result=await identity.request(host_id,'POST',`/v3/fleet/hosts/${host_id}/channel`,request.body,async(client,verified)=>{
         const packet=request.body as {payload:unknown}; const command=HostChannelCommandSchema.parse(packet.payload);
         if (command.resource==='host') return recordHostCapabilities(client,verified,command);
+        if (command.resource==='host_maintenance') return maintenanceCommand(fleet,client,verified,command);
         if (command.resource==='agent_quota') {
           try { return await agentQuotaCommand(agentQuota,client,verified,command); }
           catch(error) { if (error instanceof AgentQuotaInvalidatedError) return {agent_quota_invalidated:true}; throw error; }

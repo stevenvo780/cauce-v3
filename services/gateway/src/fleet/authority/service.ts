@@ -14,6 +14,7 @@ export interface FleetAuthorityService {
   executeInTransaction(client: DatabaseClient, input: unknown): Promise<unknown>;
 }
 async function preservesLegacy(client: DatabaseClient, row: FleetOperationRow, scope: AuthorityScope): Promise<boolean> {
+  if (!row.actor_subject?.startsWith('console:')) return false;
   return (await client.query(`SELECT 1 FROM audit_events marker
     JOIN config_revisions checkpoint ON checkpoint.id::text=marker.metadata->>'checkpoint_revision' AND checkpoint.company_id=marker.company_id
     LEFT JOIN fleet_operations original ON original.id::text=marker.metadata->>'create_operation_id'
@@ -25,7 +26,7 @@ async function preservesLegacy(client: DatabaseClient, row: FleetOperationRow, s
       AND checkpoint.operation->>'resource'='fleet_migration' AND checkpoint.operation->>'action'='prepare_legacy'
       AND checkpoint.operation->'target'->>'tenant_id'=$8 AND checkpoint.operation->'target'->>'alias'=$9
       AND checkpoint.operation->'before'->'runtime_mode'='null'::jsonb LIMIT 1`,
-  [row.company_id, row.actor_subject?.slice('console:'.length), row.request.idempotency_key, row.kind,
+  [row.company_id, row.actor_subject.slice('console:'.length), row.request.idempotency_key, row.kind,
     JSON.stringify(row.target), scope.runtime_key, scope.host_id, row.target.tenant_id,
     row.target.resource === 'agent' ? row.target.alias : null])).rowCount === 1;
 }

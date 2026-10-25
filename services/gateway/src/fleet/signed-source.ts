@@ -21,6 +21,7 @@ const ExecutionSchema = z.object({ operation: FleetOperationSchema, request: Fle
   fenced_targets: z.array(Target), previous_agents: Records.optional(), desired_memberships: z.array(Membership).optional(),
   global_desired_memberships: z.array(Membership).optional(), trusted_accounts: FleetProviderAccountsSchema.optional(),
   snapshot: z.record(z.string(), z.unknown()).optional(), snapshot_revision: z.number().int().nonnegative().optional(),
+  maintenance: z.object({ release_sha256: z.string().regex(/^[a-f0-9]{64}$/u) }).strict().optional(),
   fleet_scope: z.object({ operation_id: z.uuid(), host_id: HostId, scope_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     prepared_revision: z.number().int().nonnegative(), worker_id: z.string(), claim_token: z.uuid(), claim_epoch: z.number().int().positive() }).strict().optional(),
 }).strict();
@@ -112,6 +113,7 @@ export class HostChannelFleetSource implements FleetExecutionRepository {
       ...(result.trusted_accounts === undefined ? {} : { trusted_accounts: result.trusted_accounts }),
       ...(result.snapshot === undefined ? {} : { snapshot: result.snapshot }),
       ...(result.fleet_scope === undefined ? {} : { fleet_scope: result.fleet_scope }),
+      ...(result.maintenance === undefined ? {} : { maintenance: result.maintenance }),
     };
   }
   async startStep(claim: FleetOperationClaim, name: FleetStepName) {

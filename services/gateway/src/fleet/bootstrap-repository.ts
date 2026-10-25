@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
-  providerAccountConsentSql, withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
+  providerAccountConsentSql, withTransaction, isMaintenanceOperation, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
   type BootstrapAck, type BootstrapCreate, type BootstrapDescriptor, type BootstrapIdentity,
@@ -33,10 +33,9 @@ export class BootstrapRepository {
         || operation.target.alias !== identity.alias || !['create', 'update', 'start', 'restore'].includes(operation.kind)) throw forbidden();
     if (!state && (operation.status !== 'running' || operation.cancel_requested || !operation.worker_live
         || !operation.worker_id || !operation.claim_token)) throw conflict();
-    // The bootstrap acts for the person who queued the operation, with the authority that person still holds.
     try { await assertFleetOperationAuthority(client, operation); }
     catch (error) { if (error instanceof FleetOperationError) throw forbidden(); throw error; }
-    if (!operation.actor_subject?.startsWith('console:')) throw forbidden();
+    if (!operation.actor_subject?.startsWith('console:') && !isMaintenanceOperation(operation)) throw forbidden();
     const agent = (await client.query<Agent>(`SELECT agent.* FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
       JOIN harness_definitions harness ON harness.id=agent.harness_id
       JOIN provider_accounts account ON account.id=agent.primary_account_id
