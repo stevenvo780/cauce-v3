@@ -9,26 +9,30 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { canonicalJson, sha256Hex } from '../../packages/protocol/src/canonical.js';
 import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
-import { docker, FIXTURE_PROVIDER_IDENTITY, hostEnrollments, startComputerHarness,
+import { docker as outerDocker, FIXTURE_PROVIDER_IDENTITY, hostEnrollments, startComputerHarness,
   type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { inviteSetupHost } from '../../services/gateway/src/fleet/host-setup.fixtures.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   login, openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
+import { connectXOuterDocker, startXDockerIsolation, type XDockerIsolation } from './v4-agentes-x-docker-isolation.js';
+import { attachX2Transport, diagnoseX2Policy, diagnoseX2ProfileTransport, observeX2Package, prepareX2Package, preloadX2Image, startX2SshTarget, X2_BROWSER_IMAGE, X2_PACKAGE,
+  X2_PROXY_IMAGE, type X2Docker, type X2SshTarget } from './v4-agentes-x2-services.js';
+import { assertX2SidecarsRemoved, cdpFromX2Agent, observeX2Browser, observeX2Docker, observeX2Tunnel } from './v4-agentes-x2-observations.js';
 
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
-const owner = 'x-admision-efecto-1025';
+const owner = 'x2-filas-restantes-1025';
 const run = randomUUID().slice(0, 8);
 const prefix = `zz-canary-${owner}-${run}`;
 const alias = `${prefix}-x`;
-const runtime = `x-${run}`;
+const runtime = `x-${run.slice(0, 4)}`;
 const container = `${prefix}-${runtime}`;
 const markerPath = `/home/cauce/.cauce/${runtime}/preserved-marker`;
 const network = `${prefix}-base`;
 const extraNetwork = `${prefix}-extra`;
-const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'repro', run);
+const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'driver', run);
 const person = { ...syntheticPerson('extensions', run), name: prefix, email: `${prefix}@example.test`,
   company: { name: prefix, slug: prefix } };
 const reader = { ...person, email: `${prefix}-reader@example.test`, password: syntheticPerson('reader', run).password };
@@ -61,6 +65,16 @@ let tenant = '';
 let hostId = '';
 let room = '';
 let mountRoot = '';
+let isolation: XDockerIsolation | undefined;
+let runtimeClient: X2Docker | undefined;
+let services: X2SshTarget | undefined;
+let outerNetworkCreated = false;
+let extraNetworkCreated = false;
+let browserAvailable = false;
+let proxyAvailable = false;
+const inner = () => { if (!runtimeClient) throw new Error('laboratory Docker unavailable'); return runtimeClient; };
+const docker = (args: string[]) => inner().docker(args);
+const extensionCount = () => 8 + Number(browserAvailable) + Number(proxyAvailable);
 const accountId = `${prefix}-account`;
 const active = () => { if (!computer) throw new Error('extension computer unavailable'); return computer; };
 const view = () => { if (!page) throw new Error('extension browser unavailable'); return page; };
@@ -235,6 +249,7 @@ async function waitOperation(known: Set<string>, kind: string): Promise<Operatio
     const current = (await operations()).find(value => !known.has(value.id) && value.kind === kind);
     if (current && ['succeeded', 'failed', 'cancelled'].includes(current.status)) {
       evidence[`operation-${current.id}`] = current;
+      if ((current.error as { step?: string } | null)?.step === 'profile') evidence.profileTransport = await diagnoseX2ProfileTransport(active(), inner(), container);
       expect(current.status, JSON.stringify(current.error)).toBe('succeeded');
       return current;
     }
@@ -292,7 +307,7 @@ async function apply(name: string, offline = false): Promise<Operation> {
         expect(canonicalJson(frozen)).toEqual(canonicalJson(input)); expect(frozen.idempotency_key).toBe(input.idempotency_key);
         evidence[`${name}-offline-request`] = frozen;
         const alert = sheet().getByRole('alert'); await alert.waitFor(); expect((await alert.innerText()).length).toBeGreaterThan(0);
-        await sheet().getByRole('heading', { name: 'Borrador de ampliaciones (7)', exact: true }).waitFor();
+        await sheet().getByRole('heading', { name: `Borrador de ampliaciones (${String(extensionCount())})`, exact: true }).waitFor();
         await enabled(sheet().getByRole('button', { name: 'Reintentar envío', exact: true }));
         expect(await operations()).toHaveLength(known.size);
         evidence[`${name}-offline-block`] = { alert: await alert.innerText(), requestHash: sha256Hex(frozen), newOperations: 0, retryEnabled: true };
@@ -347,8 +362,8 @@ async function apply(name: string, offline = false): Promise<Operation> {
   return operation;
 }
 async function inspect(): Promise<Record<string, unknown>> {
-  const raw = JSON.parse(await docker(['inspect', container])) as Record<string, unknown>[];
-  const result = raw[0]; if (!result) throw new Error('agent container missing');
+  const format = '{"Id":{{json .Id}},"State":{{json .State}},"HostConfig":{{json .HostConfig}},"Mounts":{{json .Mounts}},"NetworkSettings":{{json .NetworkSettings}}}';
+  const result = JSON.parse(await docker(['inspect', '--format', format, container])) as Record<string, unknown>;
   const state = result.State as { Running: boolean; Status: string; ExitCode: number };
   return { Id: result.Id, State: { Running: state.Running, Status: state.Status, ExitCode: state.ExitCode },
     HostConfig: result.HostConfig, Mounts: result.Mounts, NetworkSettings: result.NetworkSettings };
@@ -376,9 +391,25 @@ beforeAll(async () => {
   await chmod(caKey, 0o600); await chmod(key, 0o600);
   const ports = await reserveNamedLoopbackPorts(['frontend'] as const); await ports.releaseAll();
   origin = `https://localhost:${String(ports.ports.frontend)}`;
-  for (const name of [network, extraNetwork]) await docker(['network', 'create', '--label', `cauce.e2e.owner=${owner}`, name]);
-  computer = await startComputerHarness({ prefix, consoleOrigins: [origin], workRoot: '/datos', agentNetwork: { name: network }, resourceOwner: owner,
-    extraSourceFiles: ['services/gateway/src/fleet/space-backup.failure.ts'] });
+  if (process.env.CAUCE_X_DOCKER_ISOLATION !== '0') {
+    try { isolation = await startXDockerIsolation({ prefix, owner }); evidence.isolation = isolation.receipt; runtimeClient = isolation; }
+    catch (error) { evidence.isolationFailure = (error as { isolationReceipt?: unknown }).isolationReceipt; throw error; }
+  } else { const outer = await connectXOuterDocker(); runtimeClient = { ...outer, dockerSocket: '/var/run/docker.sock' }; evidence.outerRunner = outer.runner; }
+  await outerDocker(['network', 'create', '--label', `cauce.e2e.owner=${owner}`, network]); outerNetworkCreated = true;
+  if (isolation) evidence.transportAttachment = await attachX2Transport(isolation, network, owner, outerDocker);
+  if (isolation) await docker(['network', 'create', '--label', `cauce.e2e.owner=${owner}`, network]);
+  await docker(['network', 'create', '--label', `cauce.e2e.owner=${owner}`, extraNetwork]); extraNetworkCreated = true;
+  computer = await startComputerHarness({ prefix, consoleOrigins: [origin],
+    ...(isolation ? { workRoot: isolation.workRoot, dockerSocket: isolation.dockerSocket } : { workRoot: '/datos' }),
+    agentNetwork: { name: network }, resourceOwner: owner,
+    extraSourceFiles: ['services/gateway/src/fleet/space-backup.failure.ts', 'packages/protocol/src/context-retirement.ts',
+      'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
+      'services/gateway/src/console/context-repository/retirement-routes.ts', 'services/gateway/src/fleet/space-backup.finish.ts',
+      'ops/cli/space_archive_stream.py', 'packages/store/src/context-version-reevaluation.ts'] });
+  if (isolation) {
+    const namespace = JSON.parse(await outerDocker(['inspect', '--format', '{"network":{{json .HostConfig.NetworkMode}},"pid":{{json .HostConfig.PidMode}},"ipc":{{json .HostConfig.IpcMode}},"cgroup":{{json .HostConfig.CgroupnsMode}}}', computer.container])) as Record<string, string>;
+    expect(namespace).toMatchObject({ network, cgroup: 'private' }); expect(namespace.pid).not.toBe('host'); expect(namespace.ipc).not.toBe('host'); evidence.computerNamespace = namespace;
+  }
   vite = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
     configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
     cacheDir: join(directory, 'vite-cache'), server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true, watch: null, hmr: false,
@@ -404,10 +435,11 @@ beforeAll(async () => {
   const preparedRoot = await computer.onComputer(['mkdir', '-p', mountRoot]); expect(preparedRoot.code).toBe(0);
   await computer.onComputer(['python3', '-c', 'import pathlib,sys;pathlib.Path(sys.argv[1],"marker").write_text("MOUNT-CANARY")', mountRoot]);
   const allowed = { types: ['mount', 'network', 'resources', 'ssh', 'mcp', 'tools', 'full_control', 'browser', 'docker'],
-    mount_roots: [mountRoot], networks: [extraNetwork], docker_access: ['read', 'control'] };
+    mount_roots: [mountRoot], networks: [extraNetwork], docker_access: ['read', 'control'], ...(isolation ? { docker_daemon_dedicated: true } : {}) };
+  if (isolation) evidence.dedicated = await isolation.assertDedicated();
   await computer.pool.query('UPDATE fleet_hosts SET extensions_allowed=$2::jsonb WHERE host_id=$1', [hostId, JSON.stringify(allowed)]);
   const setup = await computer.cli(['setup', '--install-root', computer.installRoot]);
-  if (setup.code !== 0) throw new Error(`extension setup failed: ${setup.stderr}`);
+  if (setup.code !== 0) { evidence.setupFailureCapabilities = await diagnoseX2Policy(computer); throw new Error(`extension setup failed: ${setup.stderr}`); }
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) {
     ready = (await hostEnrollments(active(), session)).enrollments.some(value => value.host_id === hostId && value.executor_ready);
@@ -420,6 +452,9 @@ beforeAll(async () => {
   await computer.pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
     VALUES($1,'codex',$2,$3,'env_path','CAUCE_E2E_EXTENSION_PROFILE_PATH',true)`, [accountId, FIXTURE_PROVIDER_IDENTITY, tenant]);
   evidence.allowed = allowed;
+  const [browser, proxy] = await Promise.all([preloadX2Image(inner(), X2_BROWSER_IMAGE), isolation
+    ? preloadX2Image(inner(), X2_PROXY_IMAGE) : Promise.resolve({ available: false, reason: 'X09 isolated fixture blocked by EADDRINUSE; shared daemon control prohibited' })]);
+  evidence.imageAvailability = { browser, proxy }; browserAvailable = browser.available === true; proxyAvailable = proxy.available === true;
 }, 900_000);
 
 afterAll(async () => {
@@ -439,12 +474,15 @@ afterAll(async () => {
   }
   evidence.browser = { unexpected: errors.unexpected, ignored: Object.fromEntries(errors.ignored),
     readerUnexpected: readerErrors.unexpected, readerIgnored: Object.fromEntries(readerErrors.ignored) };
-  for (const action of [async () => trusted?.close(), async () => vite?.close(), async () => {
+  for (const action of [async () => trusted?.close(), async () => vite?.close(), async () => services?.close(),
+    async () => { if (isolation) evidence.innerCleanup = await isolation.cleanupRuntime(); }, async () => {
     if (computer) {
       evidence.cleanup = await computer.close();
       expect(evidence.cleanup).toEqual({ containers: '', volumes: '', images: '' });
     }
-  }, ...[extraNetwork, network].map(name => async () => { await docker(['network', 'rm', name]); }), async () => {
+  }, async () => { if (!isolation && extraNetworkCreated) await outerDocker(['network', 'rm', extraNetwork]); },
+  async () => { if (isolation) evidence.isolationClosed = await isolation.close(); },
+  async () => { if (outerNetworkCreated) await outerDocker(['network', 'rm', network]); }, async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   }]) { try { await action(); } catch (error) { failures.push(String(error)); } }
   evidence.cleanupFailures = failures;
@@ -568,7 +606,7 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
     expect(await operations()).toHaveLength(1);
     pass(['X16', 'X17', 'X19'], { negatives: invalid.map(value => value[0]), duplicateIdentities: ['mount target', 'network name', 'mcp name', 'resources type'], persisted: [] });
     functions.X06 = { result: 'FALLA', details: 'GPU añadida y vista previa rechazada por política real; laboratorio sin GPU física admitida.' };
-    functions.X09 = { result: 'FALLA', details: 'Borradores Docker read/control ejercidos; proxy físico no probado. El daemon compartido exige aislamiento antes de admitir Docker.' };
+    functions.X09 = { result: 'FALLA', details: 'Reproducción aislada features02 bloqueada por EADDRINUSE en fixture compartido ajeno. Sin control Docker sobre el daemon compartido.' };
     functions.X10 = { result: 'FALLA', details: 'Borrador sidecar ejercido; Chromium sidecar físico no probado.' };
     functions.X11 = { result: 'FALLA', details: 'Túnel sin SSH rechazado; borrador válido con SSH y host/puerto. Conexión remota no probada.' };
     functions.X13 = { result: 'FALLA', details: 'Paquete sin pin rechazado, pin exacto aceptado en borrador; instalación física no probada.' };
@@ -582,8 +620,18 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
       await add('Montaje', [['Origen en el ordenador', mountRoot], ['Destino en el contenedor', '/workspace/writable']], ['Modo', 'rw']);
       await add('Red adicional', [['Nombre de la red Docker', extraNetwork]]);
       await add('Recursos', [['Memoria', '512m'], ['CPU', '1.5'], ['Procesos (máx. 4096)', '256']]);
-      await add('SSH saliente', [['Destinos (uno por línea, usuario@host[:puerto])', 'cauce@localhost:22']]);
+      services = await startX2SshTarget(inner(), prefix, owner, active().agentImage, network);
+      const wheel = await prepareX2Package(active(), inner(), container, mountRoot, `/home/cauce/.cauce/${runtime}`) as { wheel: string };
+      evidence.packageWheel = wheel;
+      const artifact = await active().onComputer(['python3', '-I', '-B', '-c',
+        'import base64,pathlib,sys;print(base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode())', wheel.wheel]);
+      expect(artifact.code).toBe(0);
+      await writeFile(join(receiptDirectory, 'cauce_x2_probe-1.0.0-py3-none-any.whl'), Buffer.from(artifact.stdout.trim(), 'base64'));
+      await add('SSH saliente', [['Destinos (uno por línea, usuario@host[:puerto])', services.destination]]);
       await add('Servidor MCP', [['Nombre', 'canary'], ['Comando', 'node'], ['Argumentos (uno por línea)', '--version'], ['Variables de entorno (solo nombres, nunca valores)', 'ZZ_CANARY']]);
+      await add('Herramientas', [['Paquetes con versión fija (uno por línea)', X2_PACKAGE]]);
+      if (browserAvailable) await add('Navegador', [], ['Modo', 'sidecar']);
+      if (proxyAvailable) await add('Docker', [], ['Acceso', 'read']);
       await add('Control total');
       const aliasInput = sheet().getByLabel(`Escribe el alias ${alias} para confirmar el control total`, { exact: true });
       await aliasInput.fill('incorrect'); expect(await sheet().getByRole('button', { name: 'Vista previa', exact: true }).isDisabled()).toBe(true);
@@ -597,7 +645,8 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
       const config = after.HostConfig as { Memory: number; NanoCpus: number; PidsLimit: number; ReadonlyRootfs: boolean; CapDrop: string[] | null; Privileged: boolean };
       expect(config).toMatchObject({ Memory: 536870912, NanoCpus: 1500000000, PidsLimit: 256, ReadonlyRootfs: false, Privileged: false });
       expect(config.CapDrop ?? []).toEqual([]);
-      expect(Object.keys((after.NetworkSettings as { Networks: Record<string, unknown> }).Networks).sort()).toEqual([extraNetwork, network].sort());
+      expect(Object.keys((after.NetworkSettings as { Networks: Record<string, unknown> }).Networks).sort())
+        .toEqual([extraNetwork, network, ...(browserAvailable || proxyAvailable ? [`${container}-sidecars`] : [])].sort());
       const observed = JSON.parse(await docker(['exec', '--user', 'cauce', container, 'python3', '-c',
         'import json,pathlib,sys;ro=pathlib.Path("/workspace/readonly");rw=pathlib.Path("/workspace/writable");rw.joinpath("written").write_text("RW");failed=False\ntry:ro.joinpath("forbidden").write_text("FAIL")\nexcept OSError:failed=True\nprint(json.dumps({"ro":ro.joinpath("marker").read_text(),"rw":rw.joinpath("written").read_text(),"roRejected":failed,"preserved":pathlib.Path(sys.argv[1]).read_text()}))', markerPath])) as Record<string, unknown>;
       expect(observed).toEqual({ ro: 'MOUNT-CANARY', rw: 'RW', roRejected: true, preserved: 'PRESERVED' }); evidence.observed = observed;
@@ -608,20 +657,47 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
       const publicKey = sheet().locator('code').filter({ hasText: 'ssh-ed25519' });
       expect(await publicKey.innerText()).toMatch(/^ssh-ed25519 /u);
       expect(await sheet().innerText()).toMatch(/Huella: SHA256:/u);
+      await services.authorize(await publicKey.innerText());
+      evidence.sshSession = await services.observe(container, `X2SSH-${run}`); pass(['X07'], evidence.sshSession);
+      evidence.installedPackage = await observeX2Package(inner(), container, `/home/cauce/.cauce/${runtime}`); pass(['X13'], evidence.installedPackage);
+      if (browserAvailable) { evidence.browserSidecar = await observeX2Browser(inner(), container); pass(['X10'], evidence.browserSidecar); }
+      if (proxyAvailable) evidence.dockerRead = await observeX2Docker(inner(), container, 'read', `${prefix}-read-denied`);
       expect(operation.steps.some(step => !!step.evidence?.extensions_receipt)).toBe(true);
       const beforeMounts = (evidence.baseline as { Mounts: { Name?: string; Type: string }[] }).Mounts.filter(value => value.Type === 'volume').map(value => value.Name).sort();
       const afterMounts = (after.Mounts as { Name?: string; Type: string }[]).filter(value => value.Type === 'volume').map(value => value.Name).sort();
       expect(afterMounts).toEqual(beforeMounts);
-      expect(await storedExtensions()).toHaveLength(7);
+      expect(await storedExtensions()).toHaveLength(extensionCount());
       pass(['X03', 'X04', 'X05', 'X08', 'X12', 'X15', 'X20', 'X21', 'X22', 'X24', 'X25'], { operation: operation.id, runtime: observed, volumeNames: afterMounts });
-      functions.X07 = { result: 'FALLA', details: 'Destinos validados, duplicados rechazados, clave y huella físicas; sesión SSH remota no ejecutada.' };
       await capture('05-physical-receipt');
     } catch (error) { evidence.failure = { error: String(error), page: await bodySnippet(view()) }; await capture('failure-apply'); throw error; }
   }, 500_000);
 
+  it('aplica control Docker y consume el descriptor de túnel SSH del producto con CDP real', async () => {
+    expect(evidence.main, 'the physical extension update must have succeeded').toBeDefined();
+    if (proxyAvailable) {
+      expect(evidence.dockerRead, 'the actual read proxy exchange must have succeeded').toBeDefined();
+      await sheet().getByRole('button', { name: 'Quitar ampliación Docker', exact: true }).click();
+      await add('Docker', [], ['Acceso', 'control']);
+      await sheet().getByLabel(`Escribe el alias ${alias} para confirmar el control total`, { exact: true }).fill(alias);
+      await apply('05-docker-control');
+      evidence.dockerControl = await observeX2Docker(inner(), container, 'control', `${prefix}-control-volume`); pass(['X09'], evidence.dockerControl);
+    }
+    if (browserAvailable) {
+      if (!services) throw new Error('owned SSH target is unavailable');
+      evidence.remoteBrowser = await services.startBrowser();
+      evidence.remoteBrowserReady = await cdpFromX2Agent(inner(), container, `http://${services.host}:9222`);
+      await sheet().getByRole('button', { name: 'Quitar ampliación Navegador', exact: true }).click();
+      await add('Navegador', [['Host del navegador', services.host], ['Puerto CDP', '9222']], ['Modo', 'ssh_tunnel']);
+      await sheet().getByLabel(`Escribe el alias ${alias} para confirmar el control total`, { exact: true }).fill(alias);
+      await apply('05-browser-tunnel');
+      evidence.tunnelConsumer = await observeX2Tunnel(inner(), container, `/home/cauce/.cauce/${runtime}`); pass(['X11'], evidence.tunnelConsumer);
+    }
+  }, 400_000);
+
   it('retira todas las ampliaciones y recrea el perfil seguro conservando el estado', async () => {
     expect(evidence.main, 'the real extension update must have succeeded').toBeDefined();
-    for (const label of ['Montaje', 'Montaje', 'Red adicional', 'Recursos', 'SSH saliente', 'Servidor MCP', 'Control total']) {
+    for (const label of ['Montaje', 'Montaje', 'Red adicional', 'Recursos', 'SSH saliente', 'Servidor MCP', 'Control total', 'Herramientas',
+      ...(proxyAvailable ? ['Docker'] : []), ...(browserAvailable ? ['Navegador'] : [])]) {
       await sheet().getByRole('button', { name: `Quitar ampliación ${label}`, exact: true }).first().click();
     }
     await sheet().getByText(/se retirarán todas las ampliaciones/u).waitFor();
@@ -632,8 +708,9 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
     expect(Object.keys((after.NetworkSettings as { Networks: Record<string, unknown> }).Networks)).toEqual([network]);
     expect(await docker(['exec', '--user', 'cauce', container, 'cat', markerPath])).toBe('PRESERVED');
     expect(await storedExtensions()).toEqual([]);
+    evidence.sidecarsWithdrawn = await assertX2SidecarsRemoved(inner(), container);
     pass(['X18'], { operation: operation.id, safeProfile: true, preserved: true });
-    functions.X01 = { result: 'FALLA', details: 'Estados activas0, borrador y activas7 probados con runtime; servidor no publicado no reproducido sin mocks.' };
+    functions.X01 = { result: 'FALLA', details: `Estados activas0, borrador y activas${String(extensionCount())} probados con runtime; servidor no publicado no reproducido sin mocks.` };
     functions.X02 = { result: 'FALLA', details: 'Política de host publicada comprobada y gpu rechazada; estado no publicado no reproducido sin mocks.' };
     errors.assertClean();
   }, 400_000);
