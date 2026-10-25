@@ -4,8 +4,49 @@ import json
 import pathlib
 import re
 import time
+import uuid
 
 from fleet_executor_policy import SafeFailure
+
+STARTUP_STDERR = '''import os,stat,sys
+action,control,name=sys.argv[1:4]
+directory=os.open(control,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+details=os.fstat(directory)
+if details.st_uid!=0 or details.st_mode&0o077:
+    raise SystemExit('controller diagnostic directory is unsafe')
+flags=os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC
+try:
+    fd=os.open(name,flags|(os.O_WRONLY|os.O_CREAT|os.O_EXCL if action=='run' else os.O_RDONLY),0o600,dir_fd=directory)
+except FileNotFoundError:
+    raise SystemExit(0)
+details=os.fstat(fd)
+if not stat.S_ISREG(details.st_mode) or details.st_uid!=0 or details.st_nlink!=1 or stat.S_IMODE(details.st_mode)!=0o600:
+    raise SystemExit('controller diagnostic file is unsafe')
+if action=='run':
+    os.dup2(fd,2)
+    os.close(fd)
+    os.close(directory)
+    os.execv(sys.argv[4],sys.argv[4:])
+elif action=='read':
+    os.lseek(fd,max(0,details.st_size-8192),os.SEEK_SET)
+    sys.stdout.buffer.write(os.read(fd,8192))
+elif action=='remove':
+    current=os.stat(name,dir_fd=directory,follow_symlinks=False)
+    if (current.st_dev,current.st_ino)!=(details.st_dev,details.st_ino):
+        raise SystemExit('controller diagnostic file changed')
+    os.unlink(name,dir_fd=directory)
+else:
+    raise SystemExit('controller diagnostic action is invalid')
+os.close(fd)
+os.close(directory)
+'''
+
+
+def startup_stderr(agent: dict, identity: dict, name: str, action: str) -> bytes:
+    import fleet_executor_container as runtime
+
+    return runtime.docker('exec', '-w', '/', '--user', '0', identity['container_id'],
+        agent['_placement']['python'], '-I', '-B', '-c', STARTUP_STDERR, action, str(identity['control']), name)
 
 
 def retirement_arguments(policy: dict, agent: dict, observed: dict) -> list[str]:
@@ -82,8 +123,10 @@ def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: di
     if operation_id is not None:
         environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
     arguments = [f'{key}={value}' for key, value in environment.items()]
+    diagnostic_name = '.startup-' + uuid.uuid4().hex + '.stderr'
     try:
         runtime.docker('exec', '-d', '-w', '/', '--user', '0', identity['container_id'], '/usr/bin/env', '-i', *arguments,
+               agent['_placement']['python'], '-I', '-B', '-c', STARTUP_STDERR, 'run', str(identity['control']), diagnostic_name,
                *runtime.isolated_python(agent['_placement']['python'], f'{runtime.HELPER_DESTINATION}/{runtime.HELPER.name}', 'run', *runtime.lifecycle_arguments(agent, identity),
                *retirement_arguments(policy, agent, observed),
                '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', uid, '--runtime-gid', gid,
@@ -97,7 +140,22 @@ def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: di
             except runtime.SafeFailure as error:
                 last = error
                 time.sleep(0.1)
-        raise runtime.SafeFailure(f'container adapter identity was not observed ({last}); see {agent["state_directory"]}/.cauce-adapter.log')
-    except BaseException:
-        runtime.helper(agent, identity, 'stop', *runtime.lifecycle_arguments(agent, identity))
+        from fleet_executor_image import failure_details
+        try:
+            raw = startup_stderr(agent, identity, diagnostic_name, 'read')
+            details = '; controller stderr: ' + failure_details(SafeFailure(raw.decode('utf-8', 'replace'))) if raw.strip() else ''
+        except Exception as error:
+            details = '; controller stderr unavailable: ' + failure_details(error)
+        raise runtime.SafeFailure(f'container adapter identity was not observed ({last}){details}; see {agent["state_directory"]}/.cauce-adapter.log')
+    except BaseException as error:
+        try:
+            runtime.helper(agent, identity, 'stop', *runtime.lifecycle_arguments(agent, identity))
+        except Exception as stop_error:
+            from fleet_executor_image import failure_details
+            raise SafeFailure(f'{error}; cleanup failed: {failure_details(stop_error)}') from error
         raise
+    finally:
+        try:
+            startup_stderr(agent, identity, diagnostic_name, 'remove')
+        except Exception:
+            pass

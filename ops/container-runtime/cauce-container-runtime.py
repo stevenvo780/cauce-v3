@@ -156,6 +156,7 @@ def startup_metadata(control_fd: int, alias: str, state_directory: str, containe
 def run_adapter(args: argparse.Namespace) -> int:
     if not args.command:
         raise PermanentError("adapter command is required")
+    args.command[0] = os.path.realpath(args.command[0])
     launch_credentials = child_credentials(args.runtime_uid, args.runtime_gid)
     set_dumpable()
     control_fd = open_control_directory(args.control_dir)
