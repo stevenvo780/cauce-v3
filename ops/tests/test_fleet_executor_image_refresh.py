@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import unittest
 import uuid
@@ -515,10 +516,20 @@ class ImageRefreshTests(ReleaseFixture):
         before = copy.deepcopy(self.old_container())
         self.docker.live.add(self.name)
         self.docker.stuck.add(self.name)
-        with self.assertRaises(SafeFailure):
+        with mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': True}), \
+                self.assertRaises(SafeFailure):
             container.observe_container(self.policy, self.agent)
         self.assert_original(before)
         self.assertFalse(any(call[0] in {'stop', 'rename', 'create', 'rm'} for call in self.docker.calls))
+
+    def test_failure_details_redact_credentials_before_persisting_or_reporting(self):
+        details = image_refresh.failure_details(SafeFailure('denied password=fixture-pass Bearer fixture-bearer '
+            '{"token":"fixture-token"} https://fixture:fixture-url@example.test/path'))
+        self.assertTrue(details.startswith('SafeFailure: denied'))
+        for secret in ('fixture-pass', 'fixture-bearer', 'fixture-token', 'fixture-url'):
+            self.assertNotIn(secret, details)
+        timeout = image_refresh.failure_details(subprocess.TimeoutExpired(['env', 'secret=fixture-timeout'], 40))
+        self.assertEqual(timeout, 'TimeoutExpired: runtime command exceeded 40s')
 
     def prepare_interruption(self, *, candidate=False, status='prepared'):
         before = copy.deepcopy(self.old_container())

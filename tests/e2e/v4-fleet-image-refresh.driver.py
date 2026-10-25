@@ -117,6 +117,8 @@ def run_case(directory: pathlib.Path, name: str, old_image: str, new_image: str,
         (directory / 'setup.json').write_text(json.dumps({'policy': policy, 'raw': raw, 'id': observed['Id']}))
         return {'setup': True}
     old_started = observed['State']['StartedAt']
+    if scenario == 'idle-container-rollback':
+        container.stop_running_adapter(agent, observed)
     placement['image'] = new_image
     desired = approve_agent(policy, raw)
     failure = None
@@ -126,7 +128,7 @@ def run_case(directory: pathlib.Path, name: str, old_image: str, new_image: str,
                    'image': new_image, 'was_running': True, 'adapter_running': True, 'adapter_bootstrap': False,
                    'status': 'prepared'}
         if hasattr(container, 'adapter_restart_state'):
-            receipt.update(container.adapter_restart_state(agent, observed))
+            receipt.update(container.adapter_restart_state(policy, agent, observed))
         refresh.remember(policy, desired, receipt)
         container.stop_running_adapter(agent, observed)
         refresh.restore_previous(policy, desired, receipt)
@@ -148,11 +150,12 @@ def run_case(directory: pathlib.Path, name: str, old_image: str, new_image: str,
         proof = container.process_proof(policy, agent, container.identity_for(agent, current), policy['bundles']['codex'])
     except Exception:
         pass
+    receipt = json.loads(refresh.receipt_path(policy, desired).read_text())
     return {'scenario': scenario, 'failure': failure, 'original_id': current['Id'] == observed['Id'],
             'original_image': current['Image'] == old_image, 'running': current['State']['Running'],
             'container_never_stopped': current['State']['StartedAt'] == old_started,
             'adapter_running': bool(proof),
-            'receipt': json.loads(refresh.receipt_path(policy, desired).read_text())['status']}
+            'receipt': receipt['status'], 'failure_cause': receipt.get('failure_cause')}
 
 
 if __name__ == '__main__':

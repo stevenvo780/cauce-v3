@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 
 from fleet_executor_policy import SafeFailure, private_directory
@@ -122,8 +123,28 @@ def assert_no_login(agent: dict, observed: dict) -> None:
         raise SafeFailure('provider login session is open or unverified; image refresh refused')
 
 
+def failure_details(error: BaseException) -> str:
+    from fleet_executor_container import diagnostic
+    if isinstance(error, subprocess.TimeoutExpired):
+        message = f'runtime command exceeded {error.timeout}s'
+    elif isinstance(error, subprocess.CalledProcessError):
+        message = f'runtime command exited with status {error.returncode}'
+    else:
+        message = str(error)
+    for pattern, replacement in (
+        (r'-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)', '[redacted]'),
+        (r'\bbearer\s+[^\s"\']+', 'Bearer [redacted]'),
+        (r'\b((?:pass(?:word|wd)?|secret|token|api[_-]?key)["\']?\s*[=:]\s*)(?:"[^"]*"|\'[^\']*\'|[^\s"\',;]+)', r'\1[redacted]'),
+        (r'([a-z][a-z0-9+.-]*://)[^\s/:@]+:[^\s/@]+@', r'\1[redacted]@'),
+        (r'[A-Za-z0-9+/]{33,}={0,2}', '[redacted]'),
+        (r'\b[0-9a-f]{33,}\b', '[redacted]'),
+    ):
+        message = re.sub(pattern, replacement, message, flags=re.IGNORECASE)
+    return type(error).__name__ + ': ' + diagnostic(message.encode())
+
+
 def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.Path | None = None) -> None:
-    from fleet_executor_container import docker, inspect_container, ownership_labels_match
+    from fleet_executor_container import docker, inspect_container, ownership_labels_match, restore_existing_adapter
     name = agent['container_name']
     backup = inspect_container(name + '-image-rollback')
     current = inspect_container(name)
@@ -145,6 +166,9 @@ def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.
         current = inspect_container(name)
         if current is None or not current['State']['Running'] or current['State']['Pid'] <= 0:
             raise SafeFailure('restored original container is not observed running')
+    if receipt.get('adapter_running'):
+        restore_existing_adapter(policy, agent, bootstrap=receipt.get('adapter_bootstrap', False),
+                                 operation_id=receipt.get('adapter_operation_id'))
     remember(policy, agent, {**receipt, 'status': 'rolled_back'})
 
 
@@ -185,6 +209,7 @@ def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None
 
 def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None) -> dict:
     from fleet_executor_container import (
+        adapter_restart_state,
         create_container,
         docker,
         inspect_container,
@@ -218,6 +243,7 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
         receipt = {'host_id': policy['host_id'], 'tenant_id': agent['tenant_id'], 'runtime_key': agent['runtime_key'],
                    'container_name': agent['container_name'], 'previous_id': current['Id'], 'previous_image': current['Image'],
                    'image': image, 'was_running': current['State']['Running'], 'status': 'prepared'}
+        receipt.update(adapter_restart_state(policy, previous, current, release))
         remember(policy, agent, receipt)
         try:
             stop_running_adapter(previous, current)
@@ -235,11 +261,13 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
                     raise SafeFailure('refreshed container is not observed running')
             validate_container(policy, agent, replacement, binds)
         except BaseException as error:
+            receipt['failure_cause'] = failure_details(error)
             try:
                 restore_previous(policy, agent, receipt, release)
-            except BaseException:
-                raise SafeFailure('image refresh failed; original container preserved for recovery') from error
-            raise SafeFailure('image refresh failed; original container restored and volumes preserved') from error
+            except BaseException as rollback_error:
+                raise SafeFailure('image refresh failed; original container preserved for recovery; cause=' + receipt['failure_cause']
+                                  + '; rollback=' + failure_details(rollback_error)) from error
+            raise SafeFailure('image refresh failed; original container restored and volumes preserved; cause=' + receipt['failure_cause']) from error
         remember(policy, agent, {**receipt, 'status': 'succeeded', 'container_id': replacement['Id']})
         docker('rm', current['Id'])
         return replacement

@@ -531,27 +531,50 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
             'executable': rebased(bundle['executable'], RELEASE_ROOT, previous),
             'argv': [rebased(value, RELEASE_ROOT, previous) if value.startswith('/') else value for value in bundle['argv']]}})
     bundle = approved_bundle(restored, agent)
+    restart = adapter_restart_state(restored, agent, observed)
+    if not restart['adapter_running']:
+        return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
+    return process_proof(restored, agent, identity_for(agent, observed), bundle,
+                         bootstrap=bootstrap, operation_id=restart['adapter_operation_id'])
+
+
+def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None) -> dict:
+    from fleet_executor_image import validate_previous
+    from fleet_executor_rebind import bound_release
+    agent = validate_previous(policy, agent, observed, release)
+    if not observed['State']['Running']:
+        return {'adapter_running': False}
     identity = identity_for(agent, observed)
     try:
-        process_proof(restored, agent, identity, bundle)
+        helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
+        return {'adapter_running': False}
     except SafeFailure:
-        return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
+        pass
+    root = release or RELEASE_ROOT
+    previous = bound_release(observed, root)
+    bundle = policy['bundles'][agent['harness_id']]
+    if previous is not None:
+        bundle = {**bundle, 'directory': rebased(bundle['directory'], root, previous)}
+    process_proof(policy, agent, identity, bundle)
     metadata = json.loads(docker('exec', '--user', '0', identity['container_id'], '/bin/cat',
-                                 str(identity['control'] / 'cauce-v3-adapter.json')))
+                                str(identity['control'] / 'cauce-v3-adapter.json')))
     script = ('import json,pathlib,sys; p=pathlib.Path("/proc")/sys.argv[1]; '
               'assert int((p/"stat").read_text().rsplit(")",1)[1].split()[19])==int(sys.argv[2]); '
-              'values=[v.split(b"=",1)[1].decode() for v in (p/"environ").read_bytes().split(b"\\0") '
-              'if v.startswith(b"CAUCE_FLEET_OPERATION_ID=")]; '
-              'assert len(values)<=1; print(json.dumps(values[0] if values else None))')
-    previous_operation = json.loads(docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
-                                           '-I', '-B', '-c', script, str(metadata['pid']), str(metadata['starttime'])))
-    if previous_operation is not None:
-        try:
-            if not isinstance(previous_operation, str) or str(uuid.UUID(previous_operation)) != previous_operation:
-                raise ValueError
-        except ValueError:
-            raise SafeFailure('original adapter operation identity is invalid') from None
-    return process_proof(restored, agent, identity, bundle, bootstrap=bootstrap, operation_id=previous_operation)
+              'values=dict(v.split(b"=",1) for v in (p/"environ").read_bytes().split(b"\\0") if b"=" in v); '
+              'print(json.dumps({"bootstrap":values.get(b"CAUCE_BOOTSTRAP",b"").decode(),'
+              '"operation_id":values.get(b"CAUCE_FLEET_OPERATION_ID",b"").decode()}))')
+    namespace = json.loads(docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
+                                 '-I', '-B', '-c', script, str(metadata['pid']), str(metadata['starttime'])))
+    if namespace['bootstrap'] not in {'0', '1'}:
+        raise SafeFailure('original adapter credential namespace is invalid')
+    operation = namespace['operation_id']
+    try:
+        if operation and (not isinstance(operation, str) or str(uuid.UUID(operation)) != operation):
+            raise ValueError
+    except ValueError:
+        raise SafeFailure('original adapter operation identity is invalid') from None
+    return {'adapter_running': True, 'adapter_bootstrap': namespace['bootstrap'] == '1',
+            'adapter_operation_id': operation or None}
 
 
 def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: dict, *,

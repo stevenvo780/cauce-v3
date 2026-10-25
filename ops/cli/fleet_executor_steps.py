@@ -323,6 +323,16 @@ class Executor:
     def stop(self):
         rows = scoped_agents(self.policy, self.context)
         for row in rows:
+            if self.context['request']['kind'] == 'update' and placement_role(self.context) is None \
+                    and row.get('runtime_mode') == 'container':
+                from fleet_executor_container import adapter_restart_state, inspect_container
+                previous = self.journal.setdefault('previous_adapter_state', {})
+                if row['runtime_key'] not in previous:
+                    agent = approve_agent(self.policy, row)
+                    observed = inspect_container(agent['container_name'])
+                    if observed is not None:
+                        previous[row['runtime_key']] = adapter_restart_state(self.policy, agent, observed)
+                        self.save()
             self.stop_placement(row)
         self.journal['stopped'] = True
         self.save()
@@ -637,9 +647,12 @@ class Executor:
                        ('host_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory')):
             raise SafeFailure('runtime restoration differs from the previous placement')
         from fleet_executor_container import restore_existing_adapter
+        previous_state = self.journal.get('previous_adapter_state', {}).get(agent['runtime_key'], {})
         restored = restore_existing_adapter(self.policy, {**agent, '_trusted_accounts': self.context.get('trusted_accounts', []),
                                             '_trusted_accounts_present': 'trusted_accounts' in self.context},
-                                            was_running=agent.get('enabled') is True)
+                                            was_running=previous_state.get('adapter_running', agent.get('enabled') is True),
+                                            bootstrap=previous_state.get('adapter_bootstrap', False),
+                                            operation_id=previous_state.get('adapter_operation_id'))
         self.journal['previous_runtime_restored'] = restored
         self.save()
         return {**restored, 'revocation_verified': True}
@@ -678,4 +691,7 @@ def perform(policy: dict, context: dict, step: str) -> dict:
     if target['resource'] == 'agent':
         approve_agent(policy, target_agent(context))
     with executor_lock(policy):
+        if context['request']['kind'] == 'recover':
+            from fleet_executor_recovery import perform as recover
+            return recover(policy, context, step)
         return Executor(policy, context).perform(step)

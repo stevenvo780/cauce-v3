@@ -206,7 +206,8 @@ class RebindEffectTests(ReleaseFixture):
 
     def test_running_live_container_is_stopped_by_its_own_helper_then_recreated_on_the_current_release(self):
         before = self.old_container(live=True)
-        result = container.stop_container(self.policy, self.agent)
+        with mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': True}):
+            result = container.stop_container(self.policy, self.agent)
         self.assertEqual(result, {'stopped_verified': True})
         after = self.docker.containers[self.name]
         self.assertNotEqual(after['Id'], before['Id'])
@@ -226,7 +227,8 @@ class RebindEffectTests(ReleaseFixture):
     def test_failed_old_helper_stop_preserves_the_original_container(self):
         before = self.old_container(live=True)
         self.docker.stuck.add(self.name)
-        with self.assertRaises(SafeFailure):
+        with mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': True}), \
+                self.assertRaises(SafeFailure):
             container.stop_container(self.policy, self.agent)
         self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
 
