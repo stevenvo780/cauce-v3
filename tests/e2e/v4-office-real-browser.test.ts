@@ -610,10 +610,13 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await page.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
       expect((await refreshed).status()).toBe(200);
       await page.getByRole('button', { name: 'Campus', exact: true }).click();
-      const campus = page.getByRole('region', { name: 'Cansancio de agentes del campus', exact: true });
-      const campusAgent = campus.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') });
-      await campusAgent.getByText(scenario.label, { exact: true }).waitFor();
-      expect(await campusAgent.locator(`[data-fatigue="${scenario.state}"]`).count()).toBe(1);
+      const team = page.getByRole('region', { name: 'Equipo', exact: true });
+      const member = team.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') });
+      await member.waitFor({ timeout: 20_000 });
+      await member.click();
+      const summary = page.getByRole('region', { name: `Cuota de ${agentAlias}`, exact: true });
+      await summary.getByText(new RegExp(escapeRegex(scenario.label), 'u')).waitFor({ timeout: 20_000 });
+      await page.getByRole('button', { name: 'Cerrar la tarjeta', exact: true }).click();
       await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
       await assertAgentInPlan(page, renamedRoomLabel);
       const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${renamedRoomLabel}`, exact: true });
