@@ -112,6 +112,11 @@ def safe_observation(provider: str, raw: dict, error_codes: list[str]) -> dict:
             raise ValueError('quota_reader_invalid')
         safe['status'] = status
         observation['windows'].append(safe)
+    remaining = [window['remainingPercent'] if window['remainingPercent'] is not None else 100 - window['usedPercent']
+        for window in observation['windows'] if window['status'] not in {'unknown', 'error', 'rate-limited'}
+        and (window['remainingPercent'] is not None or window['usedPercent'] is not None)]
+    if successful and remaining and len(remaining) == len(observation['windows']):
+        observation['effectiveRemainingPercent'] = min(remaining)
     encoded = json.dumps([provider, identity], ensure_ascii=False, separators=(',', ':')).encode()
     return {'identity_hash': hashlib.sha256(encoded).hexdigest(), 'observation': observation}
 
