@@ -78,6 +78,9 @@ it('fails closed when the permission snapshot cannot be read', async () => {
   expect(await screen.findByText(/No se pudo comprobar el permiso para modificar este registro/)).toBeInTheDocument();
   expect(screen.getByText(/Recarga la página o vuelve a entrar/)).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Siguiente' })).toBeDisabled();
+  expect(screen.getByRole('radio', { name: /Registrar el agente/ })).toBeDisabled();
+  expect(screen.getByRole('radio', { name: /Solo preparar, sin desplegar/ })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
 });
 
