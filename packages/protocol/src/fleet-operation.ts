@@ -94,7 +94,25 @@ export type FleetOperationRecentQuery = z.infer<typeof FleetOperationRecentQuery
 export const FleetOperationStatusSchema = z.enum(['queued', 'running', 'awaiting_auth', 'cancelling', 'cancelled', 'failed', 'succeeded']);
 export const AgentLifecycleSchema = z.enum(['draft', 'provisioning', 'auth_pending', 'verifying', 'ready', 'failed', 'retiring', 'retired']);
 export const FleetStepNameSchema = z.enum(['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge']);
+export const FleetReplacementVerifiedSchema = z.object({
+  snapshot_sha256: Sha256HexSchema, original_container_id: Sha256HexSchema,
+  replacement_container_id: Sha256HexSchema, replacement_started_at: z.string().min(1).max(128), runtime_digest: Sha256HexSchema,
+}).strict();
+export const FleetReplacementCommitSchema = FleetReplacementVerifiedSchema.extend({
+  version: z.literal(1), decision: z.literal('configuration_committed'),
+  operation_id: z.uuid(), company_id: z.string().min(1), host_id: z.string().min(1),
+  request_sha256: Sha256HexSchema, target_slice_sha256: Sha256HexSchema, applied_revision: z.number().int().nonnegative(),
+  commit_canonical: z.string().min(1).max(8192), commit_sha256: Sha256HexSchema,
+}).strict();
 export const FleetEvidenceSchema = z.object({
+  replacement_verified: FleetReplacementVerifiedSchema.optional(),
+  replacement_retired: z.object({ commit_sha256: Sha256HexSchema, original_container_id: Sha256HexSchema,
+    replacement_container_id: Sha256HexSchema, runtime_digest: Sha256HexSchema, volumes_retained: z.literal(true),
+  }).strict().optional(),
+  replacement_restored: z.object({ snapshot_sha256: Sha256HexSchema, original_container_id: Sha256HexSchema,
+    checkpoint_sha256: Sha256HexSchema, authority_sha256: Sha256HexSchema, runtime_digest: Sha256HexSchema,
+    shared_authority_preserved: z.literal(true), created_authority_revoked: z.literal(true),
+  }).strict().optional(),
   recovery: z.object({ identity: FleetRecoveryIdentitySchema,
     session: z.object({ type: z.literal('session'),
       state: z.enum(['present', 'absent', 'resumed', 'recreated', 'unsupported', 'conflict', 'failed']),
@@ -124,7 +142,8 @@ export const FleetRecoveryReasonSchema = z.enum(['runtime_mounts_differ', 'share
   'harness_unsupported', 'runtime_without_shared_tui']);
 export const FleetExecutionReasonSchema = z.enum([...FleetRecoveryReasonSchema.options,
   'runtime_identity_mismatch', 'runtime_security_mismatch', 'runtime_bundle_changed',
-  'runtime_stop_unverified', 'provider_functional_proof_failed', 'terminal_provision_failed']);
+  'runtime_stop_unverified', 'provider_functional_proof_failed', 'terminal_provision_failed',
+  'replacement_snapshot_missing', 'replacement_original_unverified', 'replacement_authority_unverified']);
 export type FleetExecutionReason = z.infer<typeof FleetExecutionReasonSchema>;
 export const FleetErrorSchema = z.object({
   code: z.enum(['AUTHORITY_REVOKED', 'REVISION_CONFLICT', 'HOST_UNAVAILABLE', 'DEPENDENCIES_PRESENT',

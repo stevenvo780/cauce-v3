@@ -3,8 +3,10 @@ import type { FleetError, FleetOperation } from '@cauce/protocol';
 import { withTransaction, type DatabaseClient, type DatabasePool } from '../db.js';
 import { lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, type FleetOperationRow } from './fleet-operation-contracts.js';
+import { fleetReplacementCommit } from './fleet-operation-retirement.js';
 import { assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
 import { cancelStaleMaintenance } from './fleet-operation-maintenance.js';
+import { fleetRollbackIntent } from './fleet-operation-rollback-intent.js';
 
 function leaseParameters(worker: string, host: string, leaseMs: number): void {
   if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(worker) || !/^[a-z][a-z0-9_-]{0,63}$/u.test(host)
@@ -51,7 +53,8 @@ export abstract class FleetOperationClaims {
               WHERE deferred.retry_at::timestamptz>clock_timestamp()))
             AND NOT EXISTS (SELECT 1 FROM (
               SELECT count(*) AS failures, max(failure.created_at) AS last_failure FROM fleet_operation_events failure
-               WHERE failure.operation_id=operation.id AND failure.event='failed' AND failure.metadata->>'compensation'='true'
+               WHERE failure.operation_id=operation.id AND failure.event='failed'
+                 AND (failure.metadata->>'compensation'='true' OR failure.metadata->>'retirement'='true')
                  AND failure.id>COALESCE((SELECT max(marker.id) FROM fleet_operation_events marker WHERE marker.operation_id=operation.id
                    AND marker.event IN ('cancel_requested','resumed','step_completed','succeeded')),0)) backoff
               WHERE backoff.failures>0 AND backoff.last_failure
@@ -66,16 +69,19 @@ export abstract class FleetOperationClaims {
       }
       catch (error) {
         if (!(error instanceof FleetOperationError) || error.code !== 'forbidden') throw error;
+        const pendingRollback = row.status === 'cancelling' && await fleetRollbackIntent(client, row.id) !== undefined;
+        const pendingRetirement = await fleetReplacementCommit(client, row.id) !== undefined;
         const failed = (await client.query<FleetOperationRow>(
-          `UPDATE fleet_operations SET status='failed',version=version+1,
+          `UPDATE fleet_operations SET status=CASE WHEN $2 THEN 'cancelling' WHEN $3 THEN 'running' ELSE 'failed' END,version=version+1,
            error='{"code":"AUTHORITY_REVOKED","retryable":false}',worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,updated_at=now()
-           WHERE id=$1 RETURNING *`, [row.id])).rows[0];
-        if (failed) await recordFleetEvent(client, row.id, Number(failed.version), 'failed', { code: 'AUTHORITY_REVOKED' });
+           WHERE id=$1 RETURNING *`, [row.id, pendingRollback, pendingRetirement])).rows[0];
+        if (failed) await recordFleetEvent(client, row.id, Number(failed.version), 'failed', { code: 'AUTHORITY_REVOKED',
+          ...(pendingRollback ? { compensation: true } : {}), ...(pendingRetirement ? { retirement: true } : {}) });
         return null;
       }
       const token = randomUUID();
       const next = (await client.query<FleetOperationRow>(
-        `UPDATE fleet_operations SET status=CASE WHEN cancel_requested THEN 'cancelling' ELSE 'running' END,
+        `UPDATE fleet_operations SET status=CASE WHEN cancel_requested OR status='cancelling' THEN 'cancelling' ELSE 'running' END,
            worker_id=$2,claim_token=$3,epoch=epoch+1,lease_expires_at=now()+$4::integer*interval '1 millisecond',
            version=version+1,updated_at=now() WHERE id=$1 RETURNING *`, [row.id, worker, token, leaseMs])).rows[0];
       if (!next) throw new Error('fleet operation claim returned no row');

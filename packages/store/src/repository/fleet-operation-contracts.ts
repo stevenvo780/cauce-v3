@@ -41,12 +41,23 @@ export interface FleetOperationClaim {
 }
 
 export type FencedFleetTarget = Extract<FleetOperation['target'], { resource: 'agent' }>;
+export interface FleetCompensationSnapshot {
+  version: 1;
+  operation_id: string;
+  company_id: string;
+  target: FencedFleetTarget;
+  previous_agents: Record<string, unknown>[];
+  previous_memberships: Record<string, unknown>[];
+  snapshot_canonical: string;
+  snapshot_sha256: string;
+}
 export interface FleetExecutionState {
   operation: FleetOperation;
   request: FleetOperationRequest;
   fenced_targets: FencedFleetTarget[];
   previous_agents: Record<string, unknown>[];
   desired_memberships: FleetMembershipIntent[];
+  compensation_snapshot?: FleetCompensationSnapshot;
 }
 
 /** A registry row created from the console before any runtime exists; a fleet `create` adopts it instead of refusing. */

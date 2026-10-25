@@ -81,9 +81,9 @@ export async function sealFleetTargetSlice(client: DatabaseClient, row: FleetOpe
  * seal: the company revision moves with every unrelated write, so a moved revision falls back to the sealed slice.
  * An operation never sealed keeps the exact revision comparison.
  */
-export async function lockPreparedFleetRevision(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
+export async function lockPreparedFleetRevision(client: DatabaseClient, row: FleetOperationRow, requireSeal = false): Promise<void> {
   if (row.desired_revision === null) throw new FleetOperationError('conflict', 'fleet operation has not been prepared');
-  if (await lockFleetRevision(client, undefined, row.company_id) === Number(row.desired_revision)) return;
+  if (await lockFleetRevision(client, undefined, row.company_id) === Number(row.desired_revision) && !requireSeal) return;
   const sealed = (await client.query<{ digest: unknown; identities: unknown }>(`SELECT metadata->'target_slice_sha256' AS digest,
     metadata->'account_identities' AS identities FROM fleet_operation_events
     WHERE operation_id=$1 AND metadata ? 'target_slice_sha256' ORDER BY id DESC LIMIT 1`, [row.id])).rows[0];

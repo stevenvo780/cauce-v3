@@ -1,7 +1,7 @@
 import type { FleetStepName } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { fleetHumanId, lockFleetRevision, recordFleetEvent } from './fleet-operation-authority.js';
-import { FleetOperationError, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
+import { FleetOperationError, type FleetOperationClaim, type FleetOperationRow, type FencedFleetTarget, type FleetCompensationSnapshot } from './fleet-operation-contracts.js';
 import type { FleetMembershipIntent } from './fleet-operation-lifecycle.js';
 import { assertFleetOperationAuthority, loadFleetOrigin } from './fleet-operation-human.js';
 
@@ -11,7 +11,7 @@ export async function lockFleetClaim(client: DatabaseClient, claim: FleetOperati
     `SELECT * FROM fleet_operations WHERE id=$1 AND worker_id=$2 AND claim_token=$3 AND epoch=$4
       AND lease_expires_at>clock_timestamp() AND status IN ('running','cancelling') FOR UPDATE`,
     [claim.operation.id, claim.worker_id, claim.claim_token, claim.epoch])).rows[0];
-  if (!row || (!cancelling && row.cancel_requested)) throw new FleetOperationError('conflict', 'fleet operation worker is fenced');
+  if (!row || (!cancelling && (row.cancel_requested || row.status === 'cancelling'))) throw new FleetOperationError('conflict', 'fleet operation worker is fenced');
   await assertFleetOperationAuthority(client, row);
   return row;
 }
@@ -64,9 +64,12 @@ export async function recordFleetRevision(client: DatabaseClient, row: FleetOper
 
 export async function preparedState(client: DatabaseClient, id: string): Promise<{
   fenced_targets: FencedFleetTarget[]; previous_agents: Record<string, unknown>[]; desired_memberships: FleetMembershipIntent[];
+  compensation_snapshot?: FleetCompensationSnapshot;
 }> {
-  const event = (await client.query<{ metadata: { fenced_targets: FencedFleetTarget[]; previous_agents: Record<string, unknown>[]; desired_memberships: FleetMembershipIntent[] } }>(
+  const event = (await client.query<{ metadata: { fenced_targets: FencedFleetTarget[]; previous_agents: Record<string, unknown>[]; desired_memberships: FleetMembershipIntent[];
+    compensation_snapshot?: FleetCompensationSnapshot } }>(
     `SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event='step_completed'
       AND metadata->>'step' IN ('prepare','fence') ORDER BY id LIMIT 1`, [id])).rows[0];
-  return { fenced_targets: event?.metadata.fenced_targets ?? [], previous_agents: event?.metadata.previous_agents ?? [], desired_memberships: event?.metadata.desired_memberships ?? [] };
+  return { fenced_targets: event?.metadata.fenced_targets ?? [], previous_agents: event?.metadata.previous_agents ?? [], desired_memberships: event?.metadata.desired_memberships ?? [],
+    ...(event?.metadata.compensation_snapshot === undefined ? {} : { compensation_snapshot: event.metadata.compensation_snapshot }) };
 }

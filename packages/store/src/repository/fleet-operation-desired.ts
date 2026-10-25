@@ -127,10 +127,8 @@ export async function previousFleetAgents(client: DatabaseClient, row: FleetOper
   const targets = await fleetAgentTargets(client, row);
   const previous: Record<string, unknown>[] = [];
   for (const target of targets) {
-    const agent = (await client.query<Record<string, unknown>>(`SELECT tenant_id,alias,runtime_key,harness_id,
-      host_id,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user,
-      primary_room_id,primary_account_id,model_id,reasoning_effort,extensions,enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2`,
-    [target.tenant_id, target.alias])).rows[0];
+    const agent = (await client.query<{ agent: Record<string, unknown> }>(`SELECT to_jsonb(agent) AS agent
+      FROM agents agent WHERE tenant_id=$1 AND alias=$2`, [target.tenant_id, target.alias])).rows[0]?.agent;
     if (agent) previous.push(agent);
   }
   return previous;

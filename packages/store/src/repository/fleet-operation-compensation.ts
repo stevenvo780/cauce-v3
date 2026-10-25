@@ -1,9 +1,10 @@
-import { ConfigMutationSchema, FleetTargetSchema, type ConfigMutation, type FleetOperation, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
+import { canonicallyEqual, ConfigMutationSchema, FleetTargetSchema, type ConfigMutation, type FleetOperation, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import { z } from 'zod';
 import type { DatabaseClient } from '../db.js';
 import { FleetOperationError, type FleetOperationRow, type FencedFleetTarget } from './fleet-operation-contracts.js';
 import type { FleetMembershipIntent } from './fleet-operation-lifecycle.js';
 import { sealFleetTargetSlice } from './fleet-operation-slice.js';
+import { parseFleetCompensationSnapshot } from './fleet-operation-compensation-snapshot.js';
 
 const FleetRevisionSchema = z.object({ resource: z.literal('fleet_operation'), action: z.enum(['prepare', 'settle', 'compensate']),
   operation_id: z.uuid(), target: FleetTargetSchema }).strict();
@@ -75,16 +76,42 @@ export async function cancelledFleetMembershipIntent(client: DatabaseClient, row
   return intent.map(member => ({ ...member, enabled: recovered.find(desired => desired.room_id === member.room_id)?.enabled ?? member.enabled }));
 }
 
+export function isFleetContainerReplacement(request: FleetOperationRequest, previous: readonly Record<string, unknown>[]): boolean {
+  if (request.kind !== 'update' || previous.length !== 1) return false;
+  const agent = previous[0];
+  return agent?.tenant_id === request.target.tenant_id && agent.alias === request.target.alias
+    && agent.runtime_mode === 'container' && request.parameters.placement.mode === 'container'
+    && agent.host_id === request.parameters.placement.host_id
+    && typeof agent.container_name === 'string' && agent.container_name !== request.parameters.placement.container_name;
+}
+
+export function isFleetUpdateRestoration(request: FleetOperationRequest, previous: readonly Record<string, unknown>[]): boolean {
+  if (isFleetContainerReplacement(request, previous)) return true;
+  if (request.kind !== 'update' || previous.length !== 1) return false;
+  const agent = previous[0];
+  return agent?.tenant_id === request.target.tenant_id && agent.alias === request.target.alias
+    && agent.runtime_mode === 'container' && request.parameters.placement.mode === 'container'
+    && agent.host_id === request.parameters.placement.host_id && agent.runtime_key === request.parameters.runtime_key
+    && typeof agent.container_name === 'string' && agent.enabled === true && agent.lifecycle_state === 'ready'
+    && agent.retired_at === null && agent.purged_at === null;
+}
+
 export function canRestoreFleetUpdate(
   operation: Pick<FleetOperation, 'desired_revision' | 'steps'>, request: FleetOperationRequest,
-  previous: readonly Record<string, unknown>[],
+  previous: readonly Record<string, unknown>[], compensationSnapshot?: unknown,
 ): boolean {
   if (request.kind !== 'update' || operation.desired_revision === null || previous.length !== 1
-      || !operation.steps.some(step => step.name === 'prepare' && step.status === 'succeeded')
-      || operation.steps.some(step => !['prepare', 'stop'].includes(step.name) && step.status !== 'pending')) return false;
+      || !operation.steps.some(step => step.name === 'prepare' && step.status === 'succeeded')) return false;
   const agent = previous[0];
   const { target, parameters } = request;
   const placement = parameters.placement;
+  if (isFleetUpdateRestoration(request, previous) && compensationSnapshot !== undefined) {
+    const snapshot = parseFleetCompensationSnapshot(compensationSnapshot);
+    return snapshot !== undefined && canonicallyEqual(snapshot.target, target) && canonicallyEqual(snapshot.previous_agents, previous)
+      && agent?.runtime_key === parameters.runtime_key && agent.enabled === true && agent.lifecycle_state === 'ready'
+      && agent.retired_at === null && agent.purged_at === null;
+  }
+  if (operation.steps.some(step => !['prepare', 'stop'].includes(step.name) && step.status !== 'pending')) return false;
   return agent?.tenant_id === target.tenant_id && agent.alias === target.alias
     && agent.runtime_key === parameters.runtime_key && agent.runtime_mode === 'container'
     && placement.mode === 'container' && agent.host_id === placement.host_id

@@ -249,13 +249,27 @@ export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetH
     .map(({ host_id, target_sha256, evidence, placement_role }) => ({ host_id, target_sha256, evidence,
       ...(placement_role === undefined ? {} : { placement_role }) })));
   if (name === 'artifacts') return { artifact_sha256: evidence };
-  if (name === 'admission') return { authority_verified: true, artifact_sha256: evidence };
+  if (name === 'admission') {
+    const verified = receipts.filter(receipt => receipt.evidence.replacement_verified !== undefined);
+    if (verified.length && (receipts.length !== 1 || verified.length !== 1)) conflict('replacement admission requires one exact host');
+    return { authority_verified: true, artifact_sha256: evidence,
+      ...(verified[0]?.evidence.replacement_verified === undefined ? {} : { replacement_verified: verified[0].evidence.replacement_verified }) };
+  }
   if (name === 'purge') return { stopped_verified: true, revocation_verified: true,
     ...(receipts.some(receipt => receipt.evidence.removed !== undefined)
       ? { removed: [...receipts].sort((left, right) => left.host_id.localeCompare(right.host_id)).flatMap(receipt => receipt.evidence.removed ?? []) } : {}),
     ...(receipts.some(receipt => receipt.evidence.native_decommissioned === true) ? { native_decommissioned: true } : {}) };
   if (name === 'compensate') {
     if (receipts.every(receipt => receipt.evidence.recovery_compensated === true)) return { recovery_compensated: true };
+    if (receipts.some(receipt => receipt.evidence.replacement_restored !== undefined)) {
+      const first = receipts[0];
+      if (receipts.length !== 1 || first?.evidence.replacement_restored === undefined
+          || first.evidence.stopped_verified !== true || first.evidence.revocation_verified !== true
+          || first.evidence.runtime_digest !== first.evidence.replacement_restored.runtime_digest) {
+        conflict('replacement restoration requires one exact runtime and authority receipt');
+      }
+      return first.evidence;
+    }
     if (receipts.some(receipt => !!receipt.evidence.runtime_digest)) {
       if (receipts.length !== 1) conflict('previous runtime restoration requires one exact host');
       return { runtime_digest: evidence, revocation_verified: true };

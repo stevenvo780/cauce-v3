@@ -8,6 +8,8 @@ import { assertFleetHumanAuthority, assertFleetOperationAuthority, loadFleetOrig
 import { assertFleetSealedHostBarrier, loadFleetHostSlices } from './fleet-operation-hosts.js';
 import { lockPreparedFleetRevision } from './fleet-operation-slice.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
+import { fleetRollbackCompleted, fleetRollbackIntent } from './fleet-operation-rollback-intent.js';
+import { fleetReplacementCommit } from './fleet-operation-retirement.js';
 
 export class FleetOperationsRepository extends FleetOperationExecution {
   protected readonly controllerHost: string | undefined;
@@ -136,8 +138,13 @@ export class FleetOperationsRepository extends FleetOperationExecution {
       await assertFleetOperationAuthority(client, row);
       if (Number(row.version) !== expected) throw new FleetOperationError('conflict', 'operation version changed');
       if (row.status === 'cancelled' || row.status === 'succeeded') throw new FleetOperationError('conflict', 'operation is terminal');
+      if (await fleetReplacementCommit(client, row.id) !== undefined) throw new FleetOperationError('conflict', 'replacement is committed and its retirement must finish');
+      const restoredFailure = row.status === 'failed' && await fleetRollbackCompleted(client, row.id);
       let status: FleetOperation['status'];
       if (action === 'resume') {
+        if (restoredFailure || await fleetRollbackIntent(client, row.id) !== undefined) {
+          throw new FleetOperationError('conflict', 'the failed update requires restoration or a new update after closing it');
+        }
         if (!['failed', 'awaiting_auth'].includes(row.status) || row.cancel_requested) throw new FleetOperationError('conflict', 'operation cannot be resumed');
         if (row.kind === 'purge' && row.desired_revision !== null && row.steps.some(step => step.name === 'purge' && step.status === 'succeeded')) {
           await loadFleetHostSlices(client, row);
@@ -148,7 +155,7 @@ export class FleetOperationsRepository extends FleetOperationExecution {
         if (row.desired_revision === null) await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
         else await lockPreparedFleetRevision(client, row);
         status = 'queued';
-      } else status = (row.status === 'queued' || row.kind === 'recover' && row.desired_revision === null)
+      } else status = restoredFailure || (row.status === 'queued' || row.kind === 'recover' && row.desired_revision === null)
         && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';
       const next = (await client.query<FleetOperationRow>(
         `UPDATE fleet_operations SET status=$2,cancel_requested=$3,version=version+1,error=NULL,updated_at=now(),
@@ -158,7 +165,8 @@ export class FleetOperationsRepository extends FleetOperationExecution {
          WHERE id=$1 RETURNING *`, [id, status, action === 'cancel'])).rows[0];
       if (!next) throw new Error('fleet operation control returned no row');
       await recordFleetEvent(client, id, Number(next.version), action === 'resume' ? 'resumed' : status === 'cancelled' ? 'cancelled' : 'cancel_requested',
-        { actor_tenant: tenant, actor_alias: alias, ...(actorSubject === undefined ? {} : { actor_subject: actorSubject }) });
+        { actor_tenant: tenant, actor_alias: alias, ...(restoredFailure ? { rollback_archived: true } : {}),
+          ...(actorSubject === undefined ? {} : { actor_subject: actorSubject }) });
       return publicFleetOperation(await loadFleetOrigin(client, next));
     });
   }

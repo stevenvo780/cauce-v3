@@ -6,9 +6,12 @@ import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, ty
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
 import { lockPreparedFleetRevision, sealFleetTargetSlice } from './fleet-operation-slice.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
-import { cancelledFleetMembershipIntent, canRestoreFleetUpdate } from './fleet-operation-compensation.js';
+import { cancelledFleetMembershipIntent, canRestoreFleetUpdate, isFleetContainerReplacement, isFleetUpdateRestoration } from './fleet-operation-compensation.js';
+import { assertFleetReplacementEvidence, captureFleetCompensationSnapshot, restoreFleetCompensationSnapshot } from './fleet-operation-compensation-snapshot.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
 import { fleetRecoveryEvidence, isFleetRecoveryProbe, lockFleetRecoveryConnection, restoreFleetRecovery } from './fleet-operation-recovery.js';
+import { assertFleetCompensationIntent, recordFleetFailure, restoredFleetFailure } from './fleet-operation-rollback.js';
+import { assertFleetReplacementCommit, assertFleetRetirementEvidence, replacementRetirementRequired } from './fleet-operation-retirement.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
   readFleetGroupAgents, readFleetHostReceipts, usesFleetHostSlices, type FleetHostReceipt, type FleetHostSlice, type FleetHostStep } from './fleet-operation-hosts.js';
 import { assertHostMaintenanceAuthority, assertHostMaintenanceIdle, isMaintenanceOperation, maintenanceBackoffMs, type MaintenanceDeferReason } from './fleet-operation-maintenance.js';
@@ -36,6 +39,12 @@ function stepEvidence(row: FleetOperationRow, name: FleetStepName, input: FleetE
   return proof;
 }
 
+function sealedUpdateRestoration(row: FleetOperationRow, prepared: Pick<FleetExecutionState, 'previous_agents' | 'compensation_snapshot'>): boolean {
+  return isFleetUpdateRestoration(row.request, prepared.previous_agents) && (prepared.compensation_snapshot !== undefined
+    || isFleetContainerReplacement(row.request, prepared.previous_agents)
+    || row.steps.some(step => !['prepare', 'stop'].includes(step.name) && step.status !== 'pending'));
+}
+
 export abstract class FleetOperationExecution extends FleetOperationClaims {
   protected abstract readonly controllerHost: string | undefined;
   protected abstract readonly coordinatorEnabled: boolean;
@@ -55,13 +64,17 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if (row.kind !== 'recover' && (proof.recovery !== undefined || proof.recovery_compensated !== undefined)) {
         throw new FleetOperationError('invalid_input', 'recovery evidence requires a recovery operation');
       }
-      if (name === 'compensate' && proof.runtime_digest !== undefined
-          && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
-            row.request, (await preparedState(client, row.id)).previous_agents)) {
-        throw new FleetOperationError('conflict', 'runtime restoration requires an unchanged update placement before artifacts');
-      }
       if (name === 'compensate') {
-        if (!row.cancel_requested || row.status !== 'cancelling') throw new FleetOperationError('conflict', 'host compensation requires cancellation');
+        const prepared = await preparedState(client, row.id);
+        await assertFleetCompensationIntent(client, row, prepared);
+        const replacement = sealedUpdateRestoration(row, prepared);
+        if ((proof.runtime_digest !== undefined || replacement)
+            && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
+              row.request, prepared.previous_agents, prepared.compensation_snapshot)) {
+          throw new FleetOperationError('conflict', 'runtime restoration requires a sealed replacement or an unchanged early update');
+        }
+        if (replacement) assertFleetReplacementEvidence(row, prepared.previous_agents, prepared.compensation_snapshot, proof);
+        else if (proof.replacement_restored !== undefined) throw new FleetOperationError('invalid_input', 'restoration evidence requires a restorable update');
       } else {
         assertPrecedingSteps(row, name);
         if (!['running', 'succeeded'].includes(fleetStep(row, name).status)) throw new FleetOperationError('conflict', 'host step has not been started');
@@ -115,6 +128,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       await assertHostMaintenanceIdle(client, row);
       await lockFleetRecoveryConnection(client, row);
       const previous = await previousFleetAgents(client, row);
+      const compensationSnapshot = await captureFleetCompensationSnapshot(client, row, previous);
       const intent = await cancelledFleetMembershipIntent(client, row, previous, await fleetMembershipIntent(client, row));
       const targets = await prepareFleetDesired(client, row, this.controllerHost, this.coordinatorEnabled, this.coordinatorHosts);
       row.desired_revision = isFleetRecoveryProbe(row.request) ? row.expected_revision : await recordFleetRevision(client, row, 'prepare');
@@ -126,8 +140,10 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       fleetStep(row, name).status = 'succeeded';
       const next = await saveFleetState(client, row, claim, 'step_completed', { step: name, fenced_targets: targets,
         previous_agents: previous, desired_memberships: intent, host_slices: slices, prepared_revision: Number(row.desired_revision),
+        ...(compensationSnapshot === undefined ? {} : { compensation_snapshot: compensationSnapshot }),
         ...await sealFleetTargetSlice(client, row, targets, previous) });
-      return { operation: publicFleetOperation(next), fenced_targets: targets, previous_agents: previous, desired_memberships: intent };
+      return { operation: publicFleetOperation(next), fenced_targets: targets, previous_agents: previous, desired_memberships: intent,
+        ...(compensationSnapshot === undefined ? {} : { compensation_snapshot: compensationSnapshot }) };
     });
   }
 
@@ -250,26 +266,22 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   async fail(claim: FleetOperationClaim, input: FleetError): Promise<FleetOperation> {
     const parsed = FleetErrorSchema.safeParse(input);
     if (!parsed.success) throw new FleetOperationError('invalid_input', 'fleet failure must use the typed error contract');
-    return this.transaction(async (client) => {
-      const row = await lockFleetClaim(client, claim, true);
-      row.status = row.cancel_requested ? 'cancelling' : 'failed'; row.error = parsed.data;
-      if (parsed.data.step) fleetStep(row, parsed.data.step).status = 'failed';
-      if (row.target.resource === 'agent' && !isFleetRecoveryProbe(row.request)
-          && (!isMaintenanceOperation(row) || row.desired_revision !== null)
-          && (row.kind !== 'recover' || row.desired_revision !== null)) await client.query(`UPDATE agents SET enabled=false,lifecycle_state=CASE
-        WHEN retired_at IS NULL THEN 'failed' ELSE 'retiring' END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`,
-      [row.target.tenant_id, row.target.alias]);
-      const compensation = row.cancel_requested && (await client.query<{ cancelling: boolean }>(
-        `SELECT COALESCE((metadata->>'cancelling')::boolean,false) AS cancelling FROM fleet_operation_events
-          WHERE operation_id=$1 AND event='claimed' ORDER BY id DESC LIMIT 1`, [row.id])).rows[0]?.cancelling === true;
-      return publicFleetOperation(await saveFleetState(client, row, claim, 'failed',
-        { code: parsed.data.code, ...(compensation ? { compensation: true } : {}) }, true));
-    });
+    return this.transaction(async client => publicFleetOperation(await recordFleetFailure(client, claim, parsed.data)));
   }
 
-  async settle(claim: FleetOperationClaim): Promise<FleetOperation> {
+  async settle(claim: FleetOperationClaim, retirement?: FleetEvidence): Promise<FleetOperation> {
     return this.transaction(async (client) => {
       const row = await this.current(client, claim);
+      const committed = await assertFleetReplacementCommit(client, row);
+      const prepared = await preparedState(client, row.id);
+      if (committed !== undefined) {
+        const previous = prepared.previous_agents[0];
+        if (!previous || retirement === undefined) throw new FleetOperationError('conflict', 'committed replacement requires its retirement receipt');
+        assertFleetRetirementEvidence(committed, previous, FleetEvidenceSchema.parse(retirement));
+        row.status = 'succeeded'; row.error = null;
+        return publicFleetOperation(await saveFleetState(client, row, claim, 'succeeded', { replacement_retired: retirement.replacement_retired }, true));
+      }
+      if (retirement !== undefined) throw new FleetOperationError('conflict', 'retirement requires a durable replacement commit');
       if (row.steps.some((step) => step.status !== 'succeeded')) {
         throw new FleetOperationError('conflict', 'fleet operation still has unverified steps');
       }
@@ -277,9 +289,24 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         stepEvidence(row, step.name, step.evidence ?? {});
         await assertFleetSealedHostBarrier(client, row, step.name, step.evidence ?? {});
       }
+      const requiresRetirement = replacementRetirementRequired(row, prepared.previous_agents);
+      const normal = row.steps.find(step => step.name === 'admission')?.evidence?.replacement_verified;
+      if (requiresRetirement && (normal === undefined || normal.original_container_id === normal.replacement_container_id
+          || normal.snapshot_sha256 !== prepared.compensation_snapshot?.snapshot_sha256)) {
+        throw new FleetOperationError('conflict', 'replacement lacks its verified original and admitted runtime identities');
+      }
       await settleFleetDesired(client, row);
       if (!isFleetRecoveryProbe(row.request)) row.desired_revision = await recordFleetRevision(client, row, 'settle');
       row.applied_revision = row.desired_revision;
+      if (requiresRetirement && normal !== undefined) {
+        const seal = await sealFleetTargetSlice(client, row);
+        const body = { ...normal, version: 1, decision: 'configuration_committed', operation_id: row.id, company_id: row.company_id,
+          host_id: String(prepared.previous_agents[0]?.host_id), request_sha256: row.request_hash,
+          target_slice_sha256: seal.target_slice_sha256, applied_revision: Number(row.applied_revision) };
+        const commit_canonical = JSON.stringify(body);
+        return publicFleetOperation(await saveFleetState(client, row, claim, 'step_completed', {
+          replacement_commit: { ...body, commit_canonical, commit_sha256: sha256Hex(commit_canonical) }, ...seal }));
+      }
       row.status = 'succeeded'; row.error = null;
       return publicFleetOperation(await saveFleetState(client, row, claim, 'succeeded', {}, true));
     });
@@ -290,7 +317,8 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     if (!proof.success) throw new FleetOperationError('invalid_input', 'compensation evidence contains unsupported fields');
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
-      if (!row.cancel_requested) throw new FleetOperationError('conflict', 'compensation requires an operator cancellation');
+      const prepared = await preparedState(client, row.id);
+      const rollbackIntent = await assertFleetCompensationIntent(client, row, prepared);
       if (row.kind === 'recover') {
         if (row.desired_revision !== null && !isFleetRecoveryProbe(row.request)) {
           if (proof.data.recovery_compensated !== true) throw new FleetOperationError('conflict', 'recovery compensation has not been acknowledged');
@@ -305,12 +333,15 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if (proof.data.recovery !== undefined || proof.data.recovery_compensated !== undefined) {
         throw new FleetOperationError('invalid_input', 'recovery evidence requires a recovery operation');
       }
-      if (proof.data.runtime_digest !== undefined
+      const replacement = sealedUpdateRestoration(row, prepared);
+      if ((proof.data.runtime_digest !== undefined || replacement)
           && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
-            row.request, (await preparedState(client, row.id)).previous_agents)) {
-        throw new FleetOperationError('conflict', 'runtime restoration requires an unchanged update placement before artifacts');
+            row.request, prepared.previous_agents, prepared.compensation_snapshot)) {
+        throw new FleetOperationError('conflict', 'runtime restoration requires a sealed replacement or an unchanged early update');
       }
-      if (row.desired_revision !== null && (usesFleetHostSlices(row.request)
+      const snapshot = replacement ? assertFleetReplacementEvidence(row, prepared.previous_agents, prepared.compensation_snapshot, proof.data) : undefined;
+      if (!replacement && proof.data.replacement_restored !== undefined) throw new FleetOperationError('invalid_input', 'restoration evidence requires a restorable update');
+      if (row.desired_revision !== null && (snapshot !== undefined || usesFleetHostSlices(row.request)
           || (await loadFleetHostSlices(client, row)).some(slice => slice.placement_role !== undefined))) {
         await assertFleetHostBarrier(client, row, claim, 'compensate', proof.data);
       }
@@ -319,13 +350,19 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       if ((attempted('credentials') || attempted('authenticate')) && proof.data.revocation_verified !== true) {
         throw new FleetOperationError('conflict', 'credential compensation has not been verified');
       }
-      if (row.target.resource === 'agent') await client.query(`UPDATE agents SET enabled=false,
+      if (snapshot !== undefined) {
+        await lockPreparedFleetRevision(client, row, true);
+        await restoreFleetCompensationSnapshot(client, snapshot);
+      } else if (row.target.resource === 'agent') await client.query(`UPDATE agents SET enabled=false,
         lifecycle_state=CASE WHEN retired_at IS NULL THEN 'failed' ELSE 'retiring' END,updated_at=clock_timestamp()
         WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`, [row.target.tenant_id, row.target.alias]);
       for (const step of row.steps) if (step.status !== 'pending') step.status = 'compensated';
-      row.status = 'cancelled'; row.error = { code: 'CANCELLED', retryable: false };
+      const automatic = !row.cancel_requested && rollbackIntent !== undefined;
+      row.status = automatic ? 'failed' : 'cancelled'; row.error = automatic ? restoredFleetFailure(rollbackIntent) : { code: 'CANCELLED', retryable: false };
       if (row.desired_revision !== null) row.desired_revision = await recordFleetRevision(client, row, 'compensate');
-      return publicFleetOperation(await saveFleetState(client, row, claim, 'cancelled', {}, true));
+      return publicFleetOperation(await saveFleetState(client, row, claim, row.status, snapshot === undefined ? {} : {
+        replacement_restored: proof.data.replacement_restored, ...(automatic ? { rollback_completed: true } : {}), ...await sealFleetTargetSlice(client, row),
+      }, true));
     });
   }
 

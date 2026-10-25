@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FleetEvidence, FleetOperationRequest, FleetStepName } from '@cauce/protocol';
-import { ConfigurationRepository, FleetOperationsRepository, lockCompanyAuthority, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
+import { ConfigurationRepository, FleetOperationsRepository, fleetReplacementRuntimeDigest, lockCompanyAuthority, type DatabasePool, type FleetOperationClaim } from '../src/index.js';
 import { admitFleetAgent } from '../src/repository/fleet-operation-admission.js';
 import type { FleetOperationRow } from '../src/repository/fleet-operation-contracts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -69,14 +69,25 @@ describe('fleet admission current configuration', () => {
     }
     const repo = new FleetOperationsRepository(pool); const initial = await claim(repo);
     await repo.prepare(initial); await verify(repo, initial); await repo.settle(initial);
+    const beforeAgent = (await pool.query(`SELECT to_jsonb(agent)-'updated_at' AS agent FROM agents agent WHERE alias='admitted_agent'`)).rows;
+    const beforeMemberships = (await pool.query(`SELECT to_jsonb(member) AS member FROM memberships member WHERE alias='admitted_agent' ORDER BY room_id`)).rows;
     const input = create(); if (input.kind !== 'create') throw new Error('creation fixture absent');
     await repo.enqueue('Steven', 'admission_operator', { ...input, kind: 'update', expected_revision: 2, idempotency_key: 'cancelled-intent' }, subject);
     const update = await repo.claim('update-worker', 'admission-host'); if (!update) throw new Error('update claim absent');
-    await repo.prepare(update); await repo.startStep(update, 'stop');
+    const prepared = await repo.prepare(update); await repo.startStep(update, 'stop');
     const failed = await repo.fail(update, { code: 'STEP_FAILED', step: 'stop', retryable: true });
     await repo.cancel('Steven', 'admission_operator', failed.id, failed.version, subject);
     const cleanup = await repo.claim('cleanup-worker', 'admission-host'); if (!cleanup) throw new Error('cleanup claim absent');
-    const cancelled = await repo.compensate(cleanup); let revision = cancelled.desired_revision ?? 0;
+    const snapshot = prepared.compensation_snapshot; if (!snapshot) throw new Error('snapshot absent');
+    const binding = { snapshot_sha256: snapshot.snapshot_sha256, original_container_id: 'e'.repeat(64), checkpoint_sha256: 'f'.repeat(64), authority_sha256: 'a'.repeat(64) };
+    const runtime_digest = fleetReplacementRuntimeDigest(binding);
+    const evidence: FleetEvidence = { stopped_verified: true, revocation_verified: true, runtime_digest,
+      replacement_restored: { ...binding, runtime_digest, shared_authority_preserved: true, created_authority_revoked: true } };
+    const slices = await repo.hostSlices(cleanup); const slice = slices[0]; if (!slice) throw new Error('scope absent');
+    await repo.completeHostStep(cleanup, 'compensate', slice.host_id, slice.target_sha256, evidence);
+    const cancelled = await repo.compensate(cleanup, evidence); let revision = cancelled.desired_revision ?? 0;
+    expect((await pool.query(`SELECT to_jsonb(agent)-'updated_at' AS agent FROM agents agent WHERE alias='admitted_agent'`)).rows).toEqual(beforeAgent);
+    expect((await pool.query(`SELECT to_jsonb(member) AS member FROM memberships member WHERE alias='admitted_agent' ORDER BY room_id`)).rows).toEqual(beforeMemberships);
     if (mode !== 'unchanged') {
       const mutation = mode === 'unrelated'
         ? { resource: 'room' as const, action: 'update' as const, tenant_id: 'Steven', id: 'admission-control', value: { display_name: 'Unrelated room' } }
@@ -86,17 +97,21 @@ describe('fleet admission current configuration', () => {
         client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'admission_operator', humanId: subject.slice('console:'.length) }));
       revision = changed.revision;
     }
+    const beforeStartAgent = (await pool.query(`SELECT to_jsonb(agent)-'updated_at' AS agent FROM agents agent WHERE alias='admitted_agent'`)).rows;
+    const beforeStartMemberships = (await pool.query(`SELECT to_jsonb(member) AS member FROM memberships member WHERE alias='admitted_agent' ORDER BY room_id`)).rows;
     await repo.enqueue('Steven', 'admission_operator', { kind: 'start', target: input.target, parameters: {},
       expected_revision: revision, idempotency_key: 'start-cancelled-intent' }, subject);
     const start = await repo.claim('start-worker', 'admission-host'); if (!start) throw new Error('start claim absent');
-    if (mode === 'disabled' || mode === 'disabled-batch') await expect(repo.prepare(start)).rejects.toMatchObject({ code: 'conflict' });
-    else {
+    if (mode === 'disabled' || mode === 'disabled-batch') {
+      await expect(repo.prepare(start)).rejects.toMatchObject({ code: 'conflict' });
+      expect((await pool.query(`SELECT to_jsonb(agent)-'updated_at' AS agent FROM agents agent WHERE alias='admitted_agent'`)).rows).toEqual(beforeStartAgent);
+    } else {
       await repo.prepare(start);
       expect((await repo.execution(start)).desired_memberships.map(member => [member.room_id, member.enabled])).toEqual([
         ['admission-optional', false], ['admission-room', true]]);
+      expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='admitted_agent'")).rows[0]?.enabled).toBe(false);
     }
-    expect((await pool.query("SELECT 1 FROM memberships WHERE tenant_id='Isa' AND alias='admitted_agent' AND enabled")).rowCount).toBe(0);
-    expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='admitted_agent'")).rows[0]?.enabled).toBe(false);
+    expect((await pool.query(`SELECT to_jsonb(member) AS member FROM memberships member WHERE alias='admitted_agent' ORDER BY room_id`)).rows).toEqual(beforeStartMemberships);
     if (mode === 'unchanged' || mode === 'unrelated') {
       await verify(repo, start); await repo.settle(start);
       expect((await pool.query("SELECT room_id,enabled FROM memberships WHERE tenant_id='Isa' AND alias='admitted_agent' ORDER BY room_id")).rows)
