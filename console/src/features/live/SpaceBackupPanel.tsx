@@ -9,6 +9,7 @@ import { CompanySession } from '../auth/company-authority';
 import { sessionAuthority } from '../auth/auth-session';
 import { canBackupSpace } from './space-backup-authority';
 import { Sha256Stream } from './sha256-stream';
+import { backupFailureText } from './space-backup-failure';
 
 const STATUS = { pending: 'Backup pendiente', running: 'Preparando backup', ready: 'Backup disponible', failed: 'El backup falló' };
 const LIST_STATUS = { pending: 'Pendiente', running: 'En preparación', ready: 'Lista para descargar', failed: 'Fallida' };
@@ -190,7 +191,8 @@ function BackupPanel({ target, allowed }: { target: SpaceBackupTarget; allowed: 
         <Button size="sm" disabled={!enabled || !!busy} onClick={() => { setDeleting(row); setError(''); }}>Eliminar copia {row.id.slice(0, 8)}</Button></div>
     </li>)}</ul> : null}
     {backup ? <div className="grid gap-1"><p className="m-0 text-sm" role="status">{STATUS[backup.status]}</p>
-      {backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
+      {backup.failure ? <Notice tone="danger" role="alert">{backupFailureText(backup.failure)}</Notice>
+        : backup.error ? <Notice tone="danger" role="alert">{ERRORS[backup.error]}</Notice> : null}
       {backup.status === 'ready' ? <p className="m-0 text-xs text-muted">{backupSize(backup.bytes ?? 0)} · ZIP listo para descargar; el navegador lo guarda sin cargarlo en memoria.</p> : null}
       {backup.status === 'ready' && backup.sha256 ? <p className="m-0 break-all text-xs text-muted">SHA-256: <code>{backup.sha256}</code></p> : null}
       {busy === 'downloading' ? <p className="m-0 text-xs" role="status">Descargando y verificando el SHA-256: {backupSize(progress ?? 0)} de {backupSize(backup.bytes ?? 0)}.</p> : null}
