@@ -76,7 +76,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
   const tone = fatigue === 'available' ? 'ok' : fatigue === 'low' || fatigue === 'stale' ? 'warn'
     : fatigue === 'exhausted' || fatigue === 'error' ? 'danger' : 'neutral';
   const measured = account.windows.map(window => window.captured_at).filter((value): value is string => value !== null).sort().at(-1);
-  return <article aria-label={`Cuotas de ${account.label}`} className="grid content-start gap-3 rounded-xl border border-line bg-surface p-4">
+  return <article aria-label={`Cuotas de ${account.label}`} className="grid min-w-0 grid-cols-1 content-start gap-3 wrap-anywhere rounded-xl border border-line bg-surface p-4">
     <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2"><div className="min-w-0"><h3 className="m-0 text-base">{account.label}</h3>
       <p className="m-0 text-xs text-muted">{PROVIDER_LABEL[account.provider] ?? account.provider}</p></div><Pill tone={tone}>{FATIGUE_LABEL[fatigue]}</Pill></header>
     <QuotaRefreshNotice status={account.refresh_status} />
