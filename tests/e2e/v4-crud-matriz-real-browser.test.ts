@@ -442,7 +442,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await page.getByRole('button', { name: `Retirar o rotar «${accountId}»`, exact: true }).click();
       const dialog = page.getByRole('dialog');
       await dialog.getByLabel(`Confirmar borrado de ${accountId}`).fill('zz-canary-equivocado');
-      await dialog.getByText(`Escribí exactamente «${accountId}» para confirmar el borrado.`, { exact: true }).waitFor({ timeout: 15_000 });
+      await dialog.getByText(`Escribe exactamente «${accountId}» para confirmar el borrado.`, { exact: true }).waitFor({ timeout: 15_000 });
       expect(await dialog.getByRole('group', { name: 'Acciones de retiro o rotación de cuenta', exact: true })
         .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
       expect(await storedAccount()).toHaveLength(1);

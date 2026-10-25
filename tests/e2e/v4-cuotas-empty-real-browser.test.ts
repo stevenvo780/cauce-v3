@@ -79,7 +79,7 @@ async function snapshot() {
   };
 }
 
-describe('matriz sin agentes ante metadatos degradados sólo en PostgreSQL desechable', () => {
+describe('matriz sin agentes ante metadatos degradados solo en PostgreSQL desechable', () => {
   it('muestra los dos avisos vacíos sin escrituras, conserva la autoridad y restaura exactamente los principales', async () => {
     const before = await facts();
     const initial = await snapshot();

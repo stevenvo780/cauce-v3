@@ -97,7 +97,7 @@ describe('invitaciones, cancelaciones y conflictos de personas con Chromium y Po
     expect((await active().database.pool.query('SELECT 1 FROM console_users WHERE email=$1', [invited.email])).rowCount).toBe(0);
     await form.getByLabel('Nombre de persona', { exact: true }).fill(invited.name);
     await form.getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
-    expect(await form.getByRole('alert').innerText()).toContain('Elegí un espacio');
+    expect(await form.getByRole('alert').innerText()).toContain('Elige un espacio');
     await form.getByRole('combobox', { name: /^Espacio de la persona/u }).selectOption(tenantId);
     expect(await form.getByRole('combobox', { name: /^Identidad de la persona/u }).inputValue()).toBe('');
     await form.getByLabel('Contraseña inicial', { exact: true }).fill(invited.password);

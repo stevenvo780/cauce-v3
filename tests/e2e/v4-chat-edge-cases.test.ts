@@ -183,7 +183,7 @@ describe('Chat V4: bordes reales del compositor', () => {
     }
   }, 180_000);
 
-  it('rechaza nombres y MIME inseguros, exceso de cantidad y bytes, conservando sólo los adjuntos válidos', async () => {
+  it('rechaza nombres y MIME inseguros, exceso de cantidad y bytes, conservando solo los adjuntos válidos', async () => {
     for (const [index, tenant] of functionalTenants.entries()) {
       const width = index === 0 ? 1440 : 390;
       const { page, errors } = await conversation(tenant, width);
@@ -193,7 +193,7 @@ describe('Chat V4: bordes reales del compositor', () => {
         { files: [{ name: 'unsafe\u202etxt', size: 1 }], error: 'El nombre del archivo no es seguro.' },
         { files: [{ name: 'invalid-mime.txt', size: 1, type: 'invalid' }], error: '“invalid-mime.txt” no tiene un tipo MIME válido.' },
         { files: Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, (_, item) => ({ name: `extra-${String(item)}.txt`, size: 1 })),
-          error: `Podés adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.` },
+          error: `Puedes adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.` },
         { files: [{ name: 'oversize.bin', size: MAX_ATTACHMENT_BYTES + 1 }],
           error: `“oversize.bin” supera el límite de ${MAX_ATTACHMENT_BYTES.toLocaleString('es-CO')} bytes.` },
         { files: [{ name: 'aggregate-a.bin', size: 6_000_000 }, { name: 'aggregate-b.bin', size: 4_000_001 }],
@@ -213,7 +213,7 @@ describe('Chat V4: bordes reales del compositor', () => {
       expect(await selection.locator('li').count()).toBe(MAX_ATTACHMENTS_PER_MESSAGE);
       expect(await page.getByRole('button', { name: 'Adjuntar archivos', exact: true }).isDisabled()).toBe(true);
       await drop(page, [{ name: 'fifth.txt', size: 1 }]);
-      await page.getByRole('alert').getByText(`Podés adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.`, { exact: true }).waitFor();
+      await page.getByRole('alert').getByText(`Puedes adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.`, { exact: true }).waitFor();
       expect(await selection.locator('li').count()).toBe(MAX_ATTACHMENTS_PER_MESSAGE);
       const publication = await send(page, tenant, `${prefix}-four-files-${randomUUID()}`);
       const files = await active().database.pool.query<{ files: { name: string; file_size: number }[] }>(
@@ -266,7 +266,7 @@ describe('Chat V4: bordes reales del compositor', () => {
         await choose.waitFor({ timeout: 20_000 });
         expect(await choose.inputValue()).toBe('');
         expect(await editor.isDisabled()).toBe(true);
-        await page.getByText('Elegí una sala de origen antes de enviar.', { exact: true }).waitFor();
+        await page.getByText('Elige una sala de origen antes de enviar.', { exact: true }).waitFor();
         await choose.selectOption(room);
         const draft = `${prefix}-room-draft-${randomUUID()}`;
         await editor.fill(draft);
@@ -277,7 +277,7 @@ describe('Chat V4: bordes reales del compositor', () => {
         await page.screenshot({ path: join(receipts, `room-restored-${String(width)}.png`) });
         await active().database.pool.query('UPDATE memberships SET enabled=false WHERE tenant_id=$1 AND room_id=$2', [tenant.tenant, room]);
         await page.reload({ waitUntil: 'domcontentloaded' });
-        await page.getByText('La sala elegida ya no está disponible. Elegí otra sala antes de enviar; el borrador se conserva.', { exact: true })
+        await page.getByText('La sala elegida ya no está disponible. Elige otra sala antes de enviar; el borrador se conserva.', { exact: true })
           .waitFor({ timeout: 20_000 });
         expect(await editor.inputValue()).toBe(draft);
         expect(await choose.inputValue()).toBe(room);

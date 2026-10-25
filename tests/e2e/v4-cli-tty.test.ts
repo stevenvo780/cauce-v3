@@ -54,7 +54,7 @@ describe.sequential('platform company confirmation through a real PTY', () => {
       const before = await state(); const priorEvents = await events(); const priorApi = await apiState();
       const terminal = await runPlatformTty(active(), ['empresa', 'estado', '--empresa', company, '--estado', target], 'zz-canary-wrong-company');
       expect(terminal.code).toBe(2);
-      expect(terminal.output).toContain(`La empresa ${company} quedará ${target}. Escribí su id para confirmar:`);
+      expect(terminal.output).toContain(`La empresa ${company} quedará ${target}. Escribe su id para confirmar:`);
       expect(terminal.output).toContain('Confirmación rechazada; no se cambió nada.');
       expect(await state()).toEqual(before); expect(await events()).toEqual(priorEvents); expect(await apiState()).toBe(priorApi);
       await receipt(`${target}-rejected`, terminal, { rejected: true, sql_unchanged: true, api_unchanged: true, audit_unchanged: true });
@@ -65,7 +65,7 @@ describe.sequential('platform company confirmation through a real PTY', () => {
       const previousState = before.retired ? 'retired' : before.enabled ? 'enabled' : 'disabled';
       const terminal = await runPlatformTty(active(), ['empresa', 'estado', '--empresa', company, '--estado', target], company);
       expect(terminal.code).toBe(0);
-      expect(terminal.output).toContain(`La empresa ${company} quedará ${target}. Escribí su id para confirmar:`);
+      expect(terminal.output).toContain(`La empresa ${company} quedará ${target}. Escribe su id para confirmar:`);
       expect(terminal.output).toContain('1 operación(es) confirmada(s); auditoría de plataforma registrada.');
       expect(await state()).toEqual({ enabled: false, retired: target === 'retired', version: before.version + 1 });
       expect(await apiState()).toBe(target);

@@ -302,7 +302,7 @@ describe.sequential('Agentes en Ajustes con Chromium, gateway y PostgreSQL reale
       const registry = sheet().getByRole('region', { name: `Registro de ${ref()}`, exact: true });
       await registry.getByLabel('Nombre visible', { exact: true }).fill(`${name} pendiente`);
       await sheet().getByRole('button', { name: 'Cerrar', exact: true }).click();
-      await sheet().getByText('Tenés cambios sin guardar.', { exact: true }).waitFor();
+      await sheet().getByText('Tienes cambios sin guardar.', { exact: true }).waitFor();
       await capture('08-ficha-cierre-borrador');
       await sheet().getByRole('button', { name: 'Seguir editando', exact: true }).click();
       expect(await registry.getByLabel('Nombre visible', { exact: true }).inputValue()).toBe(`${name} pendiente`);

@@ -28,7 +28,7 @@ const VISTAS: { href: string; espera: string }[] = [
   { href: '/queues', espera: 'Colas y DLQ operativo' },
   { href: '/observability', espera: 'Señales y auditoría' },
   { href: '/config', espera: 'Ajustes' },
-  { href: '/terminal', espera: 'Elegí un agente en la barra lateral' },
+  { href: '/terminal', espera: 'Elige un agente en la barra lateral' },
   { href: '/ayuda', espera: 'Ayuda y documentación' },
 ];
 
@@ -366,7 +366,7 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
       );
       await operator.goto(`${active.baseUrl}/queues`, { waitUntil: 'domcontentloaded' });
       await operator.getByRole('tab', { name: 'DLQ operativo', exact: true }).click();
-      await operator.getByRole('checkbox', { name: 'Sólo abiertos', exact: true }).waitFor({ timeout: 20_000 });
+      await operator.getByRole('checkbox', { name: 'Solo abiertos', exact: true }).waitFor({ timeout: 20_000 });
       const disposition = operator.locator('label').filter({ hasText: 'Disposición' }).locator('select');
       await disposition.waitFor({ timeout: 20_000 });
       await disposition.selectOption('auth');
@@ -596,7 +596,7 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
         if (vista.href === '/messages') {
           await page.locator('[aria-label="Sin conversación abierta"]').waitFor({ timeout: 20_000 });
         } else if (vista.href === '/terminal') {
-          await page.getByText(/Elegí un agente en la barra lateral|Leyendo la flota del servidor/u).waitFor({ timeout: 20_000 });
+          await page.getByText(/Elige un agente en la barra lateral|Leyendo la flota del servidor/u).waitFor({ timeout: 20_000 });
         } else {
           await page.getByRole('heading', { name: vista.espera, exact: true }).waitFor({ timeout: 20_000 });
         }

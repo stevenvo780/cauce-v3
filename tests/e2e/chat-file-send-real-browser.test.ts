@@ -198,12 +198,12 @@ async function switchAccount(page: BrowserPage, tenant: FunctionalTenant): Promi
 }
 
 describe('Archivos de chat mediante UI, PostgreSQL y SDK reales con harness sintético', () => {
-  it('envía archivo y texto en escritorio, materializa los bytes y conserva sólo metadata al recargar', async () => {
+  it('envía archivo y texto en escritorio, materializa los bytes y conserva solo metadata al recargar', async () => {
     const id = randomUUID();
     await publishFile(isaTenant, { name: `isa-${id}.txt`, mimeType: 'text/plain', buffer: Buffer.from(`Contenido sintético Isa ${id}\n`, 'utf8') }, `Archivo y texto ${id}`);
   }, 180_000);
 
-  it('envía sólo archivo a360px sin duplicarlo y niega el detalle del otro tenant', async () => {
+  it('envía solo archivo a360px sin duplicarlo y niega el detalle del otro tenant', async () => {
     const id = randomUUID();
     await publishFile(jhonTenant, { name: `jhon-${id}.bin`, mimeType: 'application/octet-stream', buffer: Buffer.from([0, 1, 255, 13, 10, 88, 99]) }, '');
     const own = state(jhonTenant);

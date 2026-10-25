@@ -377,7 +377,7 @@ describe('V1 tipada de edición del registro de agentes', () => {
     }));
     await hubPage.getByRole('button', { name: 'Preview / dry-run', exact: true }).click();
     await jsonEditor.getByRole('alert').waitFor({ timeout: 20_000 });
-    expect(await jsonEditor.getByRole('alert').innerText()).toMatch(/sólo lectura/u);
+    expect(await jsonEditor.getByRole('alert').innerText()).toMatch(/solo lectura/u);
     expect(diagnosticPosts).toBe(0);
     await assertNoMutation(hubPage, identity.tenant, identity.alias, durableAfter, revisionBefore + 1);
     await hubPage.getByLabel('Mutación JSON', { exact: true }).fill(JSON.stringify({

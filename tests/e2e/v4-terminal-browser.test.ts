@@ -88,7 +88,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       const page = await openPage(width, height);
       try {
         await page.goto(`${fixture.baseUrl}/terminal`, { waitUntil: 'domcontentloaded' });
-        await page.getByRole('heading', { name: width < 500 ? 'Elegí un agente para abrir su terminal' : 'Elegí un agente en la barra lateral' })
+        await page.getByRole('heading', { name: width < 500 ? 'Elige un agente para abrir su terminal' : 'Elige un agente en la barra lateral' })
           .waitFor({ timeout: 30_000 }).catch(async (cause: unknown) => {
             await screenshot(page, `${String(width)}-inicio-error`);
             throw new Error(`terminal home did not become ready: ${await bodySnippet(page)}`, { cause });
@@ -298,7 +298,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       expect(await page.locator('[data-pty-shell]').count()).toBe(0);
       await screenshot(page, '390-destino-inexistente');
       await page.getByRole('link', { name: 'Elegir otro agente', exact: true }).click();
-      await page.getByRole('heading', { name: 'Elegí un agente para abrir su terminal' }).waitFor();
+      await page.getByRole('heading', { name: 'Elige un agente para abrir su terminal' }).waitFor();
     } finally { await closePage(page); }
   }, 60_000);
 });

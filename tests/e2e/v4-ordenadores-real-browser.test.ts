@@ -445,7 +445,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await wizard.getByRole('button', { name: 'Siguiente', exact: true }).click();
       await wizard.getByRole('checkbox', { name: /Crear la membresía/u }).uncheck();
       await wizard.getByRole('button', { name: 'Siguiente', exact: true }).click();
-      await wizard.getByText('El plan quedó vacío: volvé a los pasos e incluí al menos un recurso.', { exact: true }).waitFor({ timeout: 15_000 });
+      await wizard.getByText('El plan quedó vacío: vuelve a los pasos e incluye al menos un recurso.', { exact: true }).waitFor({ timeout: 15_000 });
       expect(await wizard.getByRole('button', { name: 'Previsualizar paso', exact: true }).isDisabled()).toBe(true);
       await page.getByRole('button', { name: 'Un solo recurso', exact: true }).click();
       await alta.getByLabel('Recurso a crear', { exact: true }).selectOption('room');

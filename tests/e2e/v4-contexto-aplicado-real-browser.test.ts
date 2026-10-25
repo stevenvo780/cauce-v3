@@ -94,7 +94,7 @@ describe('contexto aplicado V4 en navegador real contra gateway y PostgreSQL rea
       [isaTenant.tenant, isaTenant.target],
     );
     expect(Number(expectation.rows[0]?.revision ?? 0)).toBe(desired);
-    await page.getByText(/pendiente|sólo tiene acreditada/i).first().waitFor({ timeout: 20_000 }).catch(() => undefined);
+    await page.getByText(/pendiente|solo tiene acreditada/i).first().waitFor({ timeout: 20_000 }).catch(() => undefined);
     const pending = await apiGet(page, perfilPath());
     expect(pending.body.runtime_state).toBe('pending');
     expect(pending.body.applied_revision).toBeNull();

@@ -37,7 +37,7 @@ try:
             if not data:
                 break
             output.extend(data)
-            if not sent and 'Escribí su id para confirmar: '.encode() in output:
+            if not sent and 'Escribe su id para confirmar: '.encode() in output:
                 os.write(master,answer)
                 sent=True
         if status is None:
@@ -48,7 +48,7 @@ try:
         _,status=os.waitpid(pid,0)
     text=output.decode('utf-8','replace')
     print(json.dumps({'code':os.waitstatus_to_exitcode(status),'output':text,
-        'prompt_seen':'Escribí su id para confirmar: ' in text,'answer_sent':sent,
+        'prompt_seen':'Escribe su id para confirmar: ' in text,'answer_sent':sent,
         'tty_verified':marker in output}))
 finally:
     if status is None:

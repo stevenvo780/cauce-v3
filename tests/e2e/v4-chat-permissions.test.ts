@@ -101,7 +101,7 @@ describe('Chat V4: autoridad y retorno desde contexto con servicios reales', () 
     }
   }, 180_000);
 
-  it('retira sólo la ruta por membership y conserva el borrador bloqueado hasta su recuperación sin publicar', async () => {
+  it('retira solo la ruta por membership y conserva el borrador bloqueado hasta su recuperación sin publicar', async () => {
     for (const width of [1440, 390]) {
       const page = await conversation(width);
       const text = `${prefix}-withdrawn-${randomUUID()}`;

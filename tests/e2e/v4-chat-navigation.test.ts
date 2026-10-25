@@ -120,7 +120,7 @@ describe('V4 chat navigation with real Chromium, gateway and PostgreSQL', () => 
       const editor = page.getByLabel(`Mensaje para ${tenant.target}`, { exact: true });
       await editor.waitFor({ timeout: 20_000 });
       expect(new URL(page.url()).pathname).toBe(`/messages/${tenant.tenant}/${tenant.target}`);
-      await page.getByRole('heading', { name: `Empezá la conversación con ${tenant.target}`, exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('heading', { name: `Empieza la conversación con ${tenant.target}`, exact: true }).waitFor({ timeout: 20_000 });
       await page.getByRole('button', { name: '¿Qué te bloquea?', exact: true }).click();
       expect(await editor.inputValue()).toBe('¿Qué te bloquea?');
       expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);

@@ -279,7 +279,7 @@ describe('Chat V4: compositor real y recuperación', () => {
     const context = page.context() as unknown as { clearPermissions(): Promise<void> };
     await context.clearPermissions();
     await page.getByRole('button', { name: 'Grabar nota de voz', exact: true }).click();
-    await page.getByRole('alert').getByText('No se pudo acceder al micrófono. Revisá el permiso del navegador.', { exact: true })
+    await page.getByRole('alert').getByText('No se pudo acceder al micrófono. Revisa el permiso del navegador.', { exact: true })
       .waitFor({ timeout: 20_000 });
     expect(await page.getByRole('list', { name: 'Archivos adjuntos', exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(receipts, 'voice-permission-denied-390.png') });

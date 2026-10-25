@@ -246,7 +246,7 @@ describe('cuotas desde la ficha con Chromium, canal firmado, Docker y PostgreSQL
     await page.goto(`${active().baseUrl}/my-quotas`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
     const cards = () => page.getByRole('region', { name: 'Tarjetas de Mis cuotas', exact: true });
-    await page.getByRole('button', { name: 'Ver sólo cuentas fijadas', exact: true }).click();
+    await page.getByRole('button', { name: 'Ver solo cuentas fijadas', exact: true }).click();
     await page.getByText('No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.', { exact: true }).waitFor({ timeout: 15_000 });
     await screenshot('pinned-empty-1440');
     await page.getByRole('button', { name: 'Ver todas las cuentas', exact: true }).click();
@@ -384,7 +384,7 @@ describe('cuotas desde la ficha con Chromium, canal firmado, Docker y PostgreSQL
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'Releer tarjetas fijadas', exact: true }).waitFor({ timeout: 20_000 });
       await expect.poll(async () => page.getByRole('button', { name: 'Releer tarjetas fijadas', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
-      expect(await page.getByRole('button', { name: 'Ver sólo cuentas fijadas', exact: true }).isDisabled()).toBe(true);
+      expect(await page.getByRole('button', { name: 'Ver solo cuentas fijadas', exact: true }).isDisabled()).toBe(true);
       expect(errors.ignored.get('owned-preferences-relation-unavailable') ?? 0).toBeGreaterThan(0);
       await screenshot('preferences-read-failed-1440');
     } finally {
@@ -398,7 +398,7 @@ describe('cuotas desde la ficha con Chromium, canal firmado, Docker y PostgreSQL
       }
     }
     await page.getByRole('button', { name: 'Releer tarjetas fijadas', exact: true }).click();
-    await expect.poll(async () => page.getByRole('button', { name: 'Ver sólo cuentas fijadas', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
+    await expect.poll(async () => page.getByRole('button', { name: 'Ver solo cuentas fijadas', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
     expect((await apiGet(page, '/v3/console/preferences')).status).toBe(200);
     await screenshot('preferences-read-recovered-1440');
   }, 90_000);
