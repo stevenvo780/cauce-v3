@@ -244,7 +244,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
           'Environment=CAUCE_CONTAINER_' + name + '_ROOT=' + managerRoot + '/' + path), 'Environment=CAUCE_CONTAINER_CONTROL_ROOT=' + control,
         'ExecStart=' + managerRoot + '/baseline-ops/scripts/container-adapter-supervisor.sh start ' + actor.alias,
         'ExecStop=' + managerRoot + '/baseline-ops/scripts/container-adapter-supervisor.sh stop ' + actor.alias,
-        'KillMode=process', 'TimeoutStopSec=45', ''].join('\n');
+        'KillMode=control-group', 'TimeoutStopSec=45', ''].join('\n');
       const stagedUnit = join(directory, actor.unit); await writeFile(stagedUnit, unit, { mode: 0o600 });
       const unitPath = '/home/cauce/.config/systemd/user/' + actor.unit;
       await docker(['cp', stagedUnit, manager.container + ':' + unitPath]); await docker(['exec', manager.container, 'chown', '1500:1500', unitPath]);
