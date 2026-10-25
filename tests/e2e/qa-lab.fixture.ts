@@ -126,8 +126,8 @@ async function main(): Promise<void> {
   await mkdir(workRoot, { mode: 0o755 });
   const stop = new AbortController();
   const stopNow = () => { stop.abort(); };
-  process.once('SIGTERM', stopNow); process.once('SIGINT', stopNow);
-  const stopFile = waitForFile(directory, 'stop', stop.signal).then(stopNow, stopNow);
+  process.on('SIGTERM', stopNow); process.on('SIGINT', stopNow);
+  const stopped = new Promise<void>(resolve => { stop.signal.addEventListener('abort', () => { resolve(); }, { once: true }); });
   const ports = await reserveNamedLoopbackPorts(['gateway', 'browser', 'agent', 'health'] as const);
   let proxy: Awaited<ReturnType<typeof startQaDocker>> | undefined;
   let computer: ComputerHarness | undefined, application: QaLabApplication | undefined;
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
     stage = 'up_confirmation';
     const confirmation = await waitForFile(directory, 'confirmed', stop.signal, 60_000);
     if (confirmation !== 'file') throw new Error(`QA laboratory startup ${confirmation === 'timeout' ? 'was not confirmed' : 'was interrupted'}`);
-    await stopFile;
+    await stopped;
   } catch (error) {
     failed = !stop.signal.aborted;
     const detail = failureDetail(error);
@@ -181,8 +181,7 @@ async function main(): Promise<void> {
     if (failed) process.stderr.write('QA laboratory failed; inspect startup-failure.json for the redacted causes.\n');
   } finally {
     stop.abort();
-    await stopFile;
-    process.removeListener('SIGTERM', stopNow); process.removeListener('SIGINT', stopNow);
+    await stopped;
     const cleanup: unknown[] = [];
     for (const action of [async () => application?.close(), async () => computer?.close(), async () => proxy?.close(),
       async () => ports.releaseAll(), async () => rm(privateDirectory, { recursive: true, force: true }),
@@ -191,6 +190,7 @@ async function main(): Promise<void> {
     }
     await receipt(directory, { ...current, status: cleanup.length ? 'cleanup_failed' : 'down', cleanupScope: 'fixture_handles',
       cleanupErrors: cleanup.length, cleanupErrorDetails: cleanup.map(failureDetail) });
+    process.removeListener('SIGTERM', stopNow); process.removeListener('SIGINT', stopNow);
     if (failed || cleanup.length) process.exitCode = 1;
   }
 }

@@ -41,7 +41,7 @@ assert_vm() {
 stop_and_reclaim() {
   local running
   running=$(lab ps -q --filter "name=^/$prefix-runner$" --filter "label=cauce.e2e.owner=$OWNER" --filter "label=cauce.qa.name=$name") || return 1
-  [[ -z $running ]] || lab stop -t 90 "$running" >/dev/null || return 1
+  [[ -z $running ]] || lab stop --signal SIGINT -t 90 "$running" >/dev/null || return 1
   running=$(lab ps -q --filter "name=^/$prefix-daemon$" --filter "label=cauce.e2e.owner=$OWNER" --filter "label=cauce.qa.name=$name") || return 1
   if [[ -n $running ]] && lab exec "$running" test -d "/datos/$prefix-work"; then
     lab exec "$running" chown -R "$(id -u):$(id -g)" "/datos/$prefix-work" || return 1
@@ -208,7 +208,7 @@ supervise() {
   lab exec "$daemon" docker --host unix:///run/qa-docker/docker.sock info >/dev/null
   local socket_group
   socket_group=$(lab exec "$daemon" stat -c %g /run/qa-docker/docker.sock)
-  lab run -d --init --name "$runner" "${labels[@]}" --network "container:$daemon" \
+  lab run -d --init --stop-signal SIGINT --name "$runner" "${labels[@]}" --network "container:$daemon" \
     --user "$(id -u):$(id -g)" --group-add "$socket_group" --group-add 65432 \
     --mount type=bind,src=/datos,dst=/datos --mount type=bind,src=/tmp,dst=/tmp \
     -e HOME="$vmdir/private/home" -e NODE_ENV=test -e CI=1 -e DOCKER_BUILDKIT=0 -e QA_LAB_NAME="$name" \
@@ -225,7 +225,7 @@ supervise() {
 }
 
 case $action in
-  __supervise) supervise ;;
+  __supervise) supervise; exit ;;
   up)
     exec 9>"$receipt/command.lock"
     flock -n 9 || { printf 'Otra orden usa este nombre\n' >&2; exit 75; }
@@ -234,7 +234,7 @@ case $action in
     if read_context && [[ -n $(lab ps -q --filter "name=^/$prefix-runner$" --filter "label=cauce.e2e.owner=$OWNER") ]]; then
       printf 'El laboratorio ya existe; usa status o down\n' >&2; exit 1
     fi
-    rm -f "$receipt/ready.json" "$receipt/confirmed" "$receipt/stop" "$receipt/supervisor.exit" "$receipt/runner.exit"
+    rm -f "$receipt/ready.json" "$receipt/confirmed" "$receipt/supervisor.exit" "$receipt/runner.exit"
     setsid bash "$ROOT/scripts/qa-lab.sh" __supervise "$name" > "$receipt/supervisor.log" 2>&1 < /dev/null 9>&- &
     supervisor=$!
     abort_up() { kill -TERM "$supervisor" 2>/dev/null || true; }
@@ -276,10 +276,8 @@ case $action in
     read_context || { printf 'No hay contexto registrado para %s\n' "$name"; exit 1; }
     assert_vm
     vmroot=$ROOT; [[ $ctx == lab ]] || vmroot=/tmp/$prefix-checkout
-    touch "$receipt/stop"
-    [[ $ctx == lab ]] || remote touch "$vmroot/.delegados/v4/recibos/$OWNER/$name/stop"
     if [[ -n $(lab ps -aq --filter "name=^/$prefix-runner$" --filter "label=cauce.e2e.owner=$OWNER" --filter "label=cauce.qa.name=$name") ]]; then
-      lab stop -t 90 "$prefix-runner" >/dev/null
+      lab stop --signal SIGINT -t 90 "$prefix-runner" >/dev/null
     fi
     for ((attempt=0; attempt<120; attempt++)); do
       [[ ! -f $receipt/supervisor.exit ]] || break
