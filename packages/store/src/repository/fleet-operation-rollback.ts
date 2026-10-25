@@ -56,3 +56,29 @@ export async function recordFleetFailure(client: DatabaseClient, claim: FleetOpe
   return saveFleetState(client, row, claim, 'failed', { code: error.code, ...(compensation ? { compensation: true } : {}),
     ...(requestsRollback ? { rollback_requested: { original_error: error, snapshot_sha256: snapshot.snapshot_sha256 } } : {}) }, true);
 }
+
+/**
+ * Whether a settled create or update describes exactly the configuration that a pending compensation of the same agent will
+ * restore. The original runtime is restarted before the durable rows return to it, so its own settled operation no longer
+ * matches the agent row; only a sealed rollback (or an explicit cancellation over a sealed snapshot) lets it keep waiting.
+ */
+export async function describesFleetCompensationTarget(client: DatabaseClient, settled: FleetOperationRow): Promise<boolean> {
+  const request = settled.request;
+  if (settled.status !== 'succeeded' || (request.kind !== 'create' && request.kind !== 'update')) return false;
+  const pending = (await client.query<FleetOperationRow>(`SELECT * FROM fleet_operations WHERE company_id=$1 AND target=$2::jsonb
+    AND kind='update' AND status='cancelling' AND id<>$3 FOR SHARE`, [settled.company_id, JSON.stringify(settled.target), settled.id])).rows;
+  for (const row of pending) {
+    const prepared = await preparedState(client, row.id);
+    try { await assertFleetCompensationIntent(client, row, prepared); }
+    catch (error) { if (error instanceof FleetOperationError) continue; throw error; }
+    const previous = prepared.previous_agents[0];
+    if (previous === undefined || prepared.compensation_snapshot === undefined
+        || !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
+          row.request, prepared.previous_agents, prepared.compensation_snapshot)) continue;
+    const desired = request.parameters;
+    if (desired.runtime_key === previous.runtime_key && desired.harness_id === previous.harness_id
+        && desired.primary_account_id === previous.primary_account_id && (desired.model_id ?? null) === (previous.model_id ?? null)
+        && (desired.reasoning_effort ?? null) === (previous.reasoning_effort ?? null)) return true;
+  }
+  return false;
+}

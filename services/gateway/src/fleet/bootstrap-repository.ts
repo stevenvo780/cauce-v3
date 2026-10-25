@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
+import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, describesFleetCompensationTarget, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
   providerAccountConsentSql, withTransaction, isMaintenanceOperation, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
@@ -52,7 +52,10 @@ export class BootstrapRepository {
       const desired = operation.request.parameters;
       if (!('runtime_key' in desired) || desired.runtime_key !== agent.runtime_key || desired.harness_id !== agent.harness_id
           || desired.primary_account_id !== agent.primary_account_id || (desired.model_id ?? null) !== agent.model_id
-          || (desired.reasoning_effort ?? null) !== (agent.reasoning_effort ?? null)) throw conflict();
+          || (desired.reasoning_effort ?? null) !== (agent.reasoning_effort ?? null)) {
+        // The original runtime restarted by a pending compensation keeps waiting for its rows: its operation matches the sealed snapshot.
+        if (!(state && await describesFleetCompensationTarget(client, operation))) throw conflict();
+      }
     }
     await client.query('SELECT 1 FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR SHARE', [identity.tenant_id, identity.alias]);
     const profile = await this.profiles.readContextWithPresence(identity.tenant_id, identity.alias, client);

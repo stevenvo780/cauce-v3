@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256Hex, type FleetError, type FleetEvidence, type FleetOperationRequest, type FleetStepName } from '@cauce/protocol';
-import { FleetOperationsRepository, canRestoreFleetUpdate, fleetReplacementRuntimeDigest, parseFleetCompensationSnapshot,
-  validateFleetCompensationSnapshot, type DatabasePool, type FleetCompensationSnapshot, type FleetOperationClaim } from '../src/index.js';
+import { FleetOperationsRepository, canRestoreFleetUpdate, describesFleetCompensationTarget, withTransaction, fleetReplacementRuntimeDigest, parseFleetCompensationSnapshot,
+  validateFleetCompensationSnapshot, type DatabasePool, type FleetCompensationSnapshot, type FleetOperationClaim, type FleetOperationRow } from '../src/index.js';
 import { aggregateHostEvidence } from '../src/repository/fleet-operation-hosts.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
@@ -64,7 +64,7 @@ async function rows(): Promise<{ agent: unknown; memberships: unknown[] }> {
       WHERE alias='restored_agent' ORDER BY room_id`)).rows.map(({ member }) => member),
   };
 }
-async function replacement(options: { sameContainer?: boolean; through?: FleetStepName; cancel?: boolean } = {}): Promise<{
+async function replacement(options: { sameContainer?: boolean; through?: FleetStepName; cancel?: boolean; effort?: 'high' } = {}): Promise<{
   repo: FleetOperationsRepository; value: FleetOperationClaim; snapshot: FleetCompensationSnapshot;
   before: Awaited<ReturnType<typeof rows>> }> {
   const repo = new FleetOperationsRepository(pool);
@@ -78,6 +78,7 @@ async function replacement(options: { sameContainer?: boolean; through?: FleetSt
   const before = await rows();
   await repo.enqueue('Steven', 'restore_operator', { ...input, kind: 'update', expected_revision: 2, idempotency_key: 'replacement-agent',
     parameters: { ...input.parameters, display_name: 'Replacement', primary_room_id: 'restore-added', extensions: [],
+      ...(options.effort === undefined ? {} : { reasoning_effort: options.effort }),
       placement: options.sameContainer ? input.parameters.placement
         : { ...input.parameters.placement, container_name: 'replacement-container', state_directory: '/home/dev/.cauce/replacement' },
       memberships: [{ room_id: 'restore-added', role: 'agent' }, { room_id: 'restore-primary', role: 'operator' },
@@ -115,6 +116,24 @@ describe('replacement cancellation snapshot and atomic restoration', () => {
       .toEqual([{ epoch: '8', expired: true }]);
     await expect(repo.compensate(value, aggregate)).rejects.toMatchObject({ code: 'conflict' });
     expect(await rows()).toEqual(before);
+  });
+  it('recognizes the settled original while its compensation is pending, even if the update changed its model effort', async () => {
+    const { repo, value, snapshot } = await replacement({ sameContainer: true, through: 'credentials', effort: 'high' });
+    const original = (await pool.query<FleetOperationRow>("SELECT * FROM fleet_operations WHERE kind='create'")).rows[0];
+    if (!original) throw new Error('original operation absent');
+    const describes = (row: FleetOperationRow) => withTransaction(pool, client => describesFleetCompensationTarget(client, row));
+    expect((await pool.query("SELECT reasoning_effort FROM agents WHERE alias='restored_agent'")).rows).toEqual([{ reasoning_effort: 'high' }]);
+    expect(await describes(original)).toBe(true);
+    if (original.request.kind !== 'create') throw new Error('unexpected original request');
+    expect(await describes({ ...original, request: { ...original.request,
+      parameters: { ...original.request.parameters, reasoning_effort: 'low' } } })).toBe(false);
+    expect(await describes({ ...original, request: { ...original.request,
+      parameters: { ...original.request.parameters, runtime_key: 'other-runtime' } } })).toBe(false);
+    const slice = (await repo.hostSlices(value))[0]; if (!slice) throw new Error('scope absent');
+    const receipt = proof(snapshot);
+    await repo.completeHostStep(value, 'compensate', slice.host_id, slice.target_sha256, receipt);
+    await repo.compensate(value, receipt);
+    expect(await describes(original)).toBe(false);
   });
   it('keeps cancelling and the prepared rows intact without exact runtime and authority proof', async () => {
     const { repo, value, snapshot } = await replacement(); const prepared = await rows();
