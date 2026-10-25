@@ -1,0 +1,2 @@
+Abajo; verificado: 0 contenedores, redes, volúmenes e imágenes con owner/instancia.
+0
