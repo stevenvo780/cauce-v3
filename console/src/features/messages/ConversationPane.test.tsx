@@ -50,7 +50,7 @@ function setup() {
 }
 
 describe('publicación visible antes de la respuesta de red', () => {
-  it('muestra la fila y reloj al submit; el recibo pone enviado aun sin feed', async () => {
+  it('muestra la fila y reloj al submit; el recibo confirma la publicación en cola sin feed', async () => {
     const test = setup();
     test.submit();
     const log = screen.getByRole('log');
@@ -59,7 +59,7 @@ describe('publicación visible antes de la respuesta de red', () => {
     expect(test.getMessage).not.toHaveBeenCalled();
     expect(test.input).toHaveValue('mensaje inmediato');
     await act(async () => { test.publish.resolve(receipt); });
-    expect(within(log).getByRole('status', { name: /Entrega: Enviado/ })).toHaveTextContent('✓');
+    expect(within(log).getByRole('status', { name: 'Entrega: En cola: el agente aún no está listo' })).toHaveTextContent('✓');
     expect(test.input).toHaveValue('');
     expect(test.getMessage).toHaveBeenCalledWith(receipt.message_id);
     test.rendered.rerender(test.view({ ...test.props, page: { items: [] } }));

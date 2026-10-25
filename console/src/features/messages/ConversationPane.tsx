@@ -87,7 +87,8 @@ function ConversationPaneContent({
   }, [contextOpen]);
   const replySubject = publisherHumanSubject ?? publisherSubject;
   const draftKey = conversationDraftKey(api, replySubject, JSON.stringify([agent.id, agent.tenantId, agent.alias]), publisherSubject);
-  const [form, updateForm] = useConversationDraft(draftKey);
+  const [form, updateForm] = useConversationDraft(draftKey, publisherHumanSubject
+    ? JSON.stringify([publisherHumanSubject, agent.tenantId, agent.alias, publisherSubject]) : undefined);
   const { text: draft, files: archivos, roomId: roomElegido, lane, sending: enviando, notice: aviso } = form;
   const setDraft = (text: string) => { updateForm((current) => ({ ...current, text })); };
   const setAviso = (notice: typeof aviso) => { updateForm((current) => ({ ...current, notice })); };

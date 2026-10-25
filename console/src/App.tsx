@@ -193,7 +193,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
   const { id: routeId, params, aliasedFrom, notFoundPath } = matchRoute(segments);
   const route = routes.find((candidate) => candidate.id === routeId);
   const search = useRouteSearch();
-  const [drafts] = useState(() => new ConversationDraftStore());
+  const [drafts] = useState(() => new ConversationDraftStore(true));
   const mainRef = useRef<HTMLElement>(null);
   const focusedRoute = useRef<string | null>(null);
 
