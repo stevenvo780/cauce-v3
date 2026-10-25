@@ -104,5 +104,7 @@ if __name__ == '__main__':
         print('fleet effect failed: ' + str(error), file=sys.stderr)
         raise SystemExit(2) from None
     except Exception:
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         print('fleet effect failed: unverified operational effect', file=sys.stderr)
         raise SystemExit(2) from None
