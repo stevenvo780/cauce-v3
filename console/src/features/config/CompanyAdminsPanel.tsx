@@ -74,7 +74,7 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
   // Only an active operator can hold company authority; the console cannot see the control
   // permission itself, so operators stay selectable and the server still decides on control.
   const eligiblePeople = people.data?.items.filter(person => person.active && person.role === 'operator') ?? [];
-  return <section aria-label="Autoridad de empresa" className="grid gap-3 rounded-xl border border-line bg-subtle p-4">
+  return <section aria-label="Autoridad de empresa" className="grid min-w-0 gap-3 rounded-xl border border-line bg-subtle p-4">
     <div className="flex flex-wrap justify-between gap-2"><h3 className="m-0 text-base">Dueños y administradores</h3><ActionButton size="sm" label="Releer autoridad" disabled={busy} busy={admins.loading || people.loading} announceError={false} action={async () => {
       const [adminResult, peopleResult] = await Promise.all([admins.reload(), canAssignPeople ? people.reload() : Promise.resolve(undefined)]);
       const error = adminResult.error ?? peopleResult?.error;
@@ -95,22 +95,22 @@ export function CompanyAdminsPanel({ companyId, canAssignPeople }: { companyId: 
         if (fresh) { setPersonId(fresh.user_id); setRole(fresh.role); } else setPersonId('');
       }} /> : null}
     {admins.data?.items.length === 0 && !admins.error ? <p className="m-0 text-sm text-muted">Todavía no hay dueños ni administradores asignados a esta empresa.</p> : null}
-    <ul className="m-0 grid list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex flex-wrap justify-between gap-2 border-b border-line py-2">
-      <span>{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>
-      <Button size="sm" variant="danger" disabled={!ready || !admins.data?.capabilities.revoke || admin.role === 'owner' && !admins.data.capabilities.grant_owner}
+    <ul className="m-0 grid min-w-0 list-none gap-2 p-0">{admins.data?.items.map(admin => <li key={admin.user_id} className="flex min-w-0 flex-wrap justify-between gap-2 border-b border-line py-2">
+      <span className="min-w-0 [overflow-wrap:anywhere]">{admin.display_name} · {admin.email} · {admin.role === 'owner' ? 'Dueño' : 'Administrador'}</span>
+      <Button size="sm" variant="danger" className="h-auto min-h-7 max-w-full whitespace-normal [overflow-wrap:anywhere]" disabled={!ready || !admins.data?.capabilities.revoke || admin.role === 'owner' && !admins.data.capabilities.grant_owner}
         onClick={() => { setConfirmation(admin); }}>Revocar autoridad de {admin.display_name}</Button>
     </li>)}</ul>
     {canAssignPeople && !people.loading && !people.error && people.data && eligiblePeople.length === 0 ? <p className="m-0 text-sm text-muted">No hay personas activas elegibles para asignar en esta empresa.</p> : null}
-    <form aria-label="Asignar autoridad de empresa" className="grid items-end gap-3 sm:grid-cols-3" onSubmit={event => { event.preventDefault();
+    <form aria-label="Asignar autoridad de empresa" className="grid min-w-0 items-end gap-3 sm:grid-cols-3" onSubmit={event => { event.preventDefault();
       if (!canAssignPeople || people.loading || people.error) return;
       const current = admins.data?.items.find(admin => admin.user_id === personId); void write(personId, role, current?.version ?? 0); }}>
-      <label>Persona<select required value={personId} disabled={!ready || !canAssignPeople || !admins.data?.capabilities.grant_admin || people.loading || !!people.error} onChange={event => { setPersonId(event.target.value); }}>
+      <label className="min-w-0">Persona<select className="w-full min-w-0" required value={personId} disabled={!ready || !canAssignPeople || !admins.data?.capabilities.grant_admin || people.loading || !!people.error} onChange={event => { setPersonId(event.target.value); }}>
         <option value="">Elige persona</option>{people.data?.items.map(person => {
           const blocked = !person.active ? 'cuenta retirada: no puede recibir autoridad'
             : person.role !== 'operator' ? 'lectora: no puede recibir autoridad' : undefined;
           return <option key={person.id} value={person.id} disabled={blocked !== undefined}>{person.display_name} · {person.email}{blocked ? ` — ${blocked}` : ''}</option>;
         })}</select></label>
-      <label>Autoridad<select value={role} disabled={!ready || !admins.data?.capabilities.grant_admin} onChange={event => { setRole(event.target.value as 'owner' | 'admin'); }}>
+      <label className="min-w-0">Autoridad<select className="w-full min-w-0" value={role} disabled={!ready || !admins.data?.capabilities.grant_admin} onChange={event => { setRole(event.target.value as 'owner' | 'admin'); }}>
         <option value="admin">Administrador de empresa</option>{admins.data?.capabilities.grant_owner ? <option value="owner">Dueño de empresa</option> : null}</select></label>
       <Button type="submit" disabled={!ready || !canAssignPeople || !personId || !admins.data?.capabilities.grant_admin || people.loading || !!people.error}>Guardar autoridad</Button>
     </form>

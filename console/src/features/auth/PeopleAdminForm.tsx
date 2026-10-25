@@ -64,7 +64,7 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     }
     await save({ ...values, email, display_name: values.display_name.trim(), alias });
   }
-  return <form ref={formRef} className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Invitar persona'}
+  return <form ref={formRef} noValidate className="people-admin-form" aria-label={person ? `Editar persona ${person.email}` : 'Invitar persona'}
     onSubmit={event => { event.preventDefault(); if (!busy) void submit(); }}>
     <h3>{person ? 'Editar persona' : 'Invitar persona'}</h3>
     {person ? <p>Revisión visible: <code>{person.revision}</code>. Cambiar identidad, rol o contraseña revoca las sesiones y accesos anteriores.</p> : null}

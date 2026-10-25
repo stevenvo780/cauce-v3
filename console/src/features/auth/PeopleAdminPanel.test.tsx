@@ -47,7 +47,10 @@ it('updates with exact CAS, omits an empty password and keeps the draft after a 
   const submitted: Record<string, unknown>[] = [];
   server.use(http.patch(`http://localhost/v3/console/people/${id}`, async ({ request }) => {
     const body = await request.json() as Record<string, unknown>; submitted.push(body);
-    if (submitted.length === 1) return HttpResponse.json({ message: 'private-error-secret' }, { status: 409 });
+    if (submitted.length === 1) {
+      row = { ...row, revision: '1791321600123457' };
+      return HttpResponse.json({ message: 'private-error-secret' }, { status: 409 });
+    }
     row = { ...row, display_name: String(body.display_name), revision: '1791321600123458' }; return HttpResponse.json(row);
   }));
   const user = userEvent.setup(); renderWithApi(<PeopleAdminPanel />);

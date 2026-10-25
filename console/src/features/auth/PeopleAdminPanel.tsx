@@ -25,6 +25,7 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
   const session = useContext(CompanySession);
   const authority = sessionAuthority(session);
   const actingCompany = authority?.acting_company;
+  const canReadCompanyAuthority = authority?.role === 'platform_admin' || authority?.role === 'company_owner' || authority?.role === 'company_admin';
   const [companyAdmins, setCompanyAdmins] = useState<readonly CompanyAdmin[]>();
   const ownEmail = session?.authenticated === true && session.login_mode === 'password' ? session.subject?.trim().toLowerCase() : undefined;
   const isOwnPerson = (person: ManagedPerson) => !!ownEmail && person.email.trim().toLowerCase() === ownEmail;
@@ -55,13 +56,13 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
   }, [api]);
   useEffect(() => { void reload(); return () => { generation.current += 1; }; }, [reload]);
   useEffect(() => {
-    if (!actingCompany) return undefined;
+    if (!actingCompany || !canReadCompanyAuthority) return undefined;
     let live = true;
     void api.getCompanyAdmins(actingCompany).then(page => {
       if (live) setCompanyAdmins(page.items);
     }).catch(() => { if (live) setCompanyAdmins(undefined); });
     return () => { live = false; };
-  }, [api, actingCompany]);
+  }, [api, actingCompany, canReadCompanyAuthority]);
   const askedToCreate = useRef(false);
   useEffect(() => {
     if (!startCreating) { askedToCreate.current = false; return; }
@@ -140,7 +141,10 @@ export function PeopleAdminPanel({ startCreating = false }: { startCreating?: bo
           if (current !== generation.current) return;
           setInventory(freshInventory);
           const fresh = freshInventory.items.find((item) => item.id === personId);
-          if (fresh) {
+          if (fresh?.revision === person.revision) {
+            setConflictDiffs(undefined); setStale(true); setEditing(undefined);
+            setError(cause instanceof Error ? cause.message : 'No se confirmó el cambio. Relee antes de reintentar.');
+          } else if (fresh) {
             setEditing({ person: fresh });
             setConflictDiffs(diffConflictFields(
               { email: values.email, display_name: values.display_name, role: values.role, tenant_id: values.tenant_id, alias: values.alias },

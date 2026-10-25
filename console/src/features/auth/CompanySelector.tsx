@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { ApiError } from '../../api/client/core';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
@@ -18,6 +18,7 @@ function selectorErrorText(cause: unknown, request: 'read' | 'switch'): string {
 }
 
 export function CompanySelector() {
+  const id = useId();
   const api = useApi();
   const authority = useCompanyAuthority();
   const companies = useResource('session-companies', () => api.getCompanies());
@@ -31,11 +32,12 @@ export function CompanySelector() {
     finally { setBusy(false); }
   }
   return <section aria-label="Empresa de la sesión" className="grid gap-2 border-t border-line pt-3">
-    <label>Empresa<select value={authority?.acting_company ?? ''} disabled={busy || companies.loading || authority?.role !== 'platform_admin'}
+    <div className="grid gap-1">
+    <label htmlFor={id}>Empresa</label><select id={id} value={authority?.acting_company ?? ''} disabled={busy || companies.loading || authority?.role !== 'platform_admin'}
       onChange={event => { void choose(event.target.value); }}>
       {!companies.data ? <option value={authority?.acting_company ?? ''}>{authority?.acting_company ?? 'Verificando empresa…'}</option> : null}
       {companies.data?.companies.map(company => <option key={company.id} value={company.id} disabled={company.state !== 'enabled'}>{company.name}</option>)}
-    </select></label>
+    </select></div>
     <p className="m-0 text-xs text-muted">{authority ? COMPANY_ROLE_LABEL[authority.role] : 'Autoridad no informada por el servidor.'}</p>
     {authority?.platform_override ? <Notice tone="warn">Estás operando otra empresa con autoridad de plataforma.</Notice> : null}
     {companies.error || error ? <Notice tone="danger" role="alert">{error || selectorErrorText(companies.error, 'read')}
