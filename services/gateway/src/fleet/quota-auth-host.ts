@@ -9,7 +9,7 @@ import type { ProviderAuthLogin } from '../console/provider-auth.types.js';
 import type { HostCommandConfig } from './host-command.js';
 import { assertLoginPins, createProviderLogin, type ProviderLoginConfig } from './provider-login.js';
 import type { QuotaAuthenticationHandle, QuotaExecutionRepository, QuotaHostChannel } from './quota-executor.js';
-import { QuotaAuthExchangeSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
+import { QUOTA_AUTH_CLEANUP_GRACE_MS, QuotaAuthExchangeSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
 import type { QuotaEffect } from './quota-host-command.js';
 
 type LoginPlan = NonNullable<QuotaEffect['login_plan']>;
@@ -69,6 +69,7 @@ export class QuotaHostAuthentication {
         `/v3/fleet/hosts/${this.options.host}/quota-auth`, { action: 'register', claim, expires_at: session.expiresAt, method: login.method }));
       kickoffSignal.throwIfAborted();
       session.unsubscribe = login.subscribeOutput(bytes => {
+        if (Date.now() >= Date.parse(session.expiresAt)) return;
         if (bytes.byteLength > 65_536 || session.events.length >= 16) { abort.abort(); return; }
         for (let offset = 0; offset < bytes.byteLength; offset += 4096) {
           if (session.events.length >= 16) { abort.abort(); return; }
@@ -86,7 +87,9 @@ export class QuotaHostAuthentication {
     if (previous !== undefined) return previous;
     let ok = false;
     try {
-      if (session.abort.signal.aborted || Date.now() >= Date.parse(session.expiresAt)) throw new Error('Quota session expired');
+      const cleanup = command.type === 'close' || command.type === 'cancel';
+      const deadline = Date.parse(session.expiresAt) + (cleanup ? QUOTA_AUTH_CLEANUP_GRACE_MS : 0);
+      if (session.abort.signal.aborted || Date.now() >= deadline) throw new Error('Quota session expired');
       switch (command.type) {
         case 'start': await session.login.start(); break;
         case 'input': await session.login.write(Buffer.from(command.data, 'base64')); break;
@@ -124,6 +127,7 @@ export class QuotaHostAuthentication {
           break;
         }
       }
+      if (!cleanup && Date.now() >= Date.parse(session.expiresAt)) throw new Error('Quota session expired');
       ok = true;
     } catch { ok = false; }
     session.completed.set(command.id, ok);
@@ -132,7 +136,7 @@ export class QuotaHostAuthentication {
   }
   private async poll(session: Session): Promise<void> {
     try {
-      while (!session.abort.signal.aborted && Date.now() < Date.parse(session.expiresAt)) {
+      while (!session.abort.signal.aborted && Date.now() < Date.parse(session.expiresAt) + QUOTA_AUTH_CLEANUP_GRACE_MS) {
         const sent = session.events.splice(0, 32);
         let response: z.infer<typeof QuotaAuthExchangeSchema>;
         try {

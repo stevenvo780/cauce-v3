@@ -7,7 +7,7 @@ import { HostEnrollmentRepository, QuotaOperationsRepository, StoreError, assert
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import { ProviderAuthManager } from '../console/provider-auth.sessions.js';
 import type { ProviderAuthActor, ProviderAuthLogin, ProviderAuthRequest, ProviderAuthService } from '../console/provider-auth.types.js';
-import { QuotaAuthPacketSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
+import { QUOTA_AUTH_CLEANUP_GRACE_MS, QuotaAuthPacketSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
 
 interface AuthScope {
   operation_id: string; environment_id: string; company_id: string; requested_by: string; host_id: string; account_id: string;
@@ -49,29 +49,35 @@ function sameFence(entry: Entry, scope: AuthScope): boolean {
 
 export class QuotaAuthBroker {
   private readonly entries = new Map<string, Entry>();
+  private readonly manager: ProviderAuthManager;
   readonly service: ProviderAuthService;
   constructor(private readonly pool: DatabasePool) {
     const manager = new ProviderAuthManager({
-      authorize: async (actor, request) => { await this.authorize(actor, request); },
+      authorize: async (actor, request) => { await this.current(actor, request); },
+      authorizeTerminal: async (actor, request) => { await this.authorize(actor, request); },
       expiration: async (actor, request, maximum) => {
-        const entry = await this.authorize(actor, request);
+        const entry = await this.current(actor, request);
         return new Date(Math.min(Date.parse(maximum), Date.parse(entry.expiresAt))).toISOString();
       },
       reserve: async (actor, request, _sessionId, expiresAt) => {
-        const entry = await this.authorize(actor, request);
+        const entry = await this.current(actor, request);
         if (Date.parse(expiresAt) > Date.parse(entry.expiresAt)) throw new ProviderAuthError('SESSION_EXPIRED');
         return {
           stopAdapter: async () => ({ stopped: true }),
           openLogin: async () => this.login(entry),
           verify: async signal => {
             signal.throwIfAborted();
-            await this.authorize(actor, request);
+            await this.current(actor, request);
             if (!await this.command(entry, { id: randomUUID(), type: 'verify' })) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED');
             const scope = await withTransaction(this.pool, client => readScope(client, entry.claim.id));
             const verified = sameFence(entry, scope) && scope.status === 'done';
             return { identity_matches: verified, functional_call_verified: verified };
           },
-          release: async () => { entry.finished = true; },
+          release: async () => {
+            entry.finished = true; clearTimeout(entry.timer);
+            entry.timer = setTimeout(() => { this.dispose(entry); }, 900_000);
+            entry.timer.unref();
+          },
         };
       },
       audit: async metadata => {
@@ -83,14 +89,15 @@ export class QuotaAuthBroker {
           environment_id: entry.claim.environment_id, host_id: entry.scope.host_id, provider: entry.scope.provider })]);
       },
     }, { ttlMs: 600_000 });
+    this.manager = manager;
     this.service = Object.assign(manager, { resolve: (actor: ProviderAuthActor, id: string) => this.resolve(actor, id) });
   }
   async ownsOperation(id: string): Promise<boolean> {
     return (await this.pool.query('SELECT 1 FROM quota_environment_operations WHERE id=$1 AND action=\'authenticate\'', [z.uuid().parse(id)])).rowCount === 1;
   }
-  private async authorize(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<Entry> {
+  private async authorize(actor: ProviderAuthActor, request: ProviderAuthRequest, requiresActive = false): Promise<Entry> {
     const entry = this.entries.get(request.operation_id);
-    if (!entry || Date.now() >= Date.parse(entry.expiresAt)) throw new ProviderAuthError('SESSION_EXPIRED');
+    if (!entry) throw new ProviderAuthError('SESSION_EXPIRED');
     const humanId = /^console:([0-9a-f-]{36})$/u.exec(actor.subject)?.[1];
     if (!humanId) throw denied();
     await withTransaction(this.pool, async client => {
@@ -99,11 +106,16 @@ export class QuotaAuthBroker {
         humanId, ...(actor.requestedCompany === undefined ? {} : { requestedCompany: actor.requestedCompany }) });
       assertQuotaAuthority(authority, true);
       if (!sameFence(entry, scope) || scope.requested_by !== humanId || authority.actingCompany !== scope.company_id
-          || scope.status === 'failed' || request.expected_operation_version !== entry.claim.claim_epoch
+          || requiresActive && scope.status === 'failed' || request.expected_operation_version !== entry.claim.claim_epoch
           || request.host_id !== entry.scope.host_id || request.account_id !== entry.scope.account_id
           || request.profile_id !== entry.scope.account_id || request.provider_id !== entry.scope.provider
           || request.harness_id !== entry.scope.provider || request.runtime_user !== 'node') throw denied();
     });
+    return entry;
+  }
+  private async current(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<Entry> {
+    const entry = await this.authorize(actor, request, true);
+    if (entry.finished || Date.now() >= Date.parse(entry.expiresAt)) throw new ProviderAuthError('SESSION_EXPIRED');
     return entry;
   }
   private async resolve(actor: ProviderAuthActor, id: string): Promise<ProviderAuthRequest> {
@@ -112,7 +124,7 @@ export class QuotaAuthBroker {
     const request: ProviderAuthRequest = { operation_id: id, expected_operation_version: entry.claim.claim_epoch,
       request_id: `quota_${id.replaceAll('-', '')}`, provider_id: entry.scope.provider, account_id: entry.scope.account_id,
       harness_id: entry.scope.provider, host_id: entry.scope.host_id, runtime_user: 'node', profile_id: entry.scope.account_id };
-    await this.authorize(actor, request);
+    await this.current(actor, request);
     return request;
   }
   register(scope: AuthScope, claim: QuotaOperationClaim, expiresAt: string, method: 'device' | 'terminal'): void {
@@ -127,7 +139,7 @@ export class QuotaAuthBroker {
     if (this.entries.size >= 1000) throw new ProviderAuthError('SESSION_CONFLICT');
     const timer = setTimeout(() => {
       const entry = this.entries.get(claim.id);
-      if (entry) { void this.service.revokeOperation(claim.id).catch(() => undefined).finally(() => { this.dispose(entry); }); }
+      if (entry) void this.manager.expireOperation(claim.id).then(found => { if (!found) this.dispose(entry); }).catch(() => undefined);
     }, expires - Date.now());
     timer.unref();
     this.entries.set(claim.id, { scope, claim, expiresAt, method, commands: new Map(), listeners: new Set(),
@@ -143,17 +155,21 @@ export class QuotaAuthBroker {
         entry.commands.delete(event.id); clearTimeout(pending.timer); pending.resolve(event.ok);
       } else {
         if (event.sequence <= entry.outputSequence) continue;
-        if (event.sequence !== entry.outputSequence + 1 || entry.finished) throw denied();
-        const bytes = Buffer.from(event.data, 'base64');
-        for (const listener of entry.listeners) listener(bytes);
+        if (event.sequence !== entry.outputSequence + 1) throw denied();
+        if (!entry.finished && Date.now() < Date.parse(entry.expiresAt)) {
+          const bytes = Buffer.from(event.data, 'base64');
+          for (const listener of entry.listeners) listener(bytes);
+        }
         entry.outputSequence = event.sequence;
       }
     }
     return { commands: [...entry.commands.values()].map(value => value.command), output_sequence: entry.outputSequence,
-      finished: entry.finished || Date.now() >= Date.parse(entry.expiresAt) };
+      finished: entry.finished || Date.now() >= Date.parse(entry.expiresAt) + QUOTA_AUTH_CLEANUP_GRACE_MS };
   }
   private command(entry: Entry, command: QuotaAuthCommand): Promise<boolean> {
-    if (entry.commands.size >= 32 || entry.finished && command.type !== 'close' && command.type !== 'cancel') return Promise.reject(unavailable());
+    const cleanup = command.type === 'close' || command.type === 'cancel';
+    if (entry.commands.size >= 32 || !cleanup && (entry.finished || Date.now() >= Date.parse(entry.expiresAt))
+        || cleanup && Date.now() >= Date.parse(entry.expiresAt) + QUOTA_AUTH_CLEANUP_GRACE_MS) return Promise.reject(unavailable());
     return new Promise(resolve => {
       // start waits for the helper's started event (60s on a cold container) and must not resolve first.
       const budget = command.type === 'verify' ? 120_000 : command.type === 'start' ? 90_000 : 15_000;

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const QUOTA_AUTH_CLEANUP_GRACE_MS = 330_000;
+
 export const QuotaAuthFenceSchema = z.object({ id: z.uuid(), environment_id: z.uuid(), claim_token: z.uuid(),
   claim_epoch: z.number().int().positive(), worker_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u) }).strict();
 const Base64 = z.string().max(87_384).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u);

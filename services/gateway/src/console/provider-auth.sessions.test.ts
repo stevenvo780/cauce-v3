@@ -176,6 +176,41 @@ describe('sensitive provider bootstrap', () => {
     await expect(channel.input(new Uint8Array([1]))).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
     expect(f.state()).toMatchObject({ closeCount: 1, released: true });
   });
+  it('preserves expiry and its confirmed stop when an earlier verification rejects late', async () => {
+    const f = fixture(); const reserve = f.deps.reserve.bind(f.deps);
+    let rejectVerification: ((error: Error) => void) | undefined;
+    let markVerifying: (() => void) | undefined;
+    const verifyingStarted = new Promise<void>(resolve => { markVerifying = resolve; });
+    const verification = new Promise<never>((_resolve, reject) => { rejectVerification = reject; });
+    f.deps.reserve = async (...args) => ({ ...await reserve(...args), verify: () => { markVerifying?.(); return verification; } });
+    const session = await f.manager.start(actor, input);
+    await f.manager.attach(actor, session.session_id, () => undefined);
+    const verified = f.manager.verify(actor, session.session_id);
+    await verifyingStarted;
+    await expect.poll(async () => (await f.manager.get(actor, session.session_id)).status, { timeout: 3000 }).toBe('expired');
+    expect(f.state()).toMatchObject({ closeCount: 1, released: true });
+    rejectVerification?.(new ProviderAuthError('FUNCTIONAL_CHECK_FAILED'));
+    expect(await verified).toMatchObject({ status: 'expired', error: 'SESSION_EXPIRED', cleanup_pending: false });
+    expect(f.state().closeCount).toBe(1);
+    const retried = await f.manager.start(actor, { ...input, request_id: 'after-expired-verification' });
+    expect(retried.status).toBe('awaiting_login');
+    await f.manager.cancel(actor, retried.session_id);
+  });
+  it.each([true, false])('rechecks the deadline when authorization crosses it, retaining terminal authority=%s', async allowed => {
+    vi.useFakeTimers(); const f = fixture();
+    const dependencies = { ...f.deps, authorizeTerminal: async () => { if (!allowed) throw new Error('authority revoked'); } };
+    const manager = new ProviderAuthManager(dependencies, { ttlMs: 1000 });
+    const session = await manager.start(actor, input);
+    const channel = await manager.attach(actor, session.session_id, () => undefined);
+    const deadline = Date.parse(session.expires_at);
+    vi.setSystemTime(deadline - 1);
+    dependencies.authorize = async () => { vi.setSystemTime(deadline + 1); throw new Error('authentication deadline crossed'); };
+    const reading = manager.get(actor, session.session_id);
+    if (allowed) await expect(reading).resolves.toMatchObject({ status: 'expired', error: 'SESSION_EXPIRED', cleanup_pending: false });
+    else await expect(reading).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    expect(f.state()).toMatchObject({ closeCount: 1, released: true, written: '' });
+    await expect(channel.input(new Uint8Array([1]))).rejects.toMatchObject({ code: allowed ? 'SESSION_EXPIRED' : 'AUTHORITY_REVOKED' });
+  });
   it('revalidates authority on sensitive input and closes revoked sessions', async () => {
     const f = fixture(); const session = await f.manager.start(actor, input);
     const channel = await f.manager.attach(actor, session.session_id, () => undefined);

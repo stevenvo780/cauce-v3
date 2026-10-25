@@ -278,7 +278,13 @@ class HostProviderLogin implements ProviderAuthLogin {
     if (!Number.isSafeInteger(cols) || !Number.isSafeInteger(rows) || cols < 20 || cols > 400 || rows < 5 || rows > 200) throw new ProviderAuthError('INVALID_REQUEST');
     if (this.closed || !this.started) throw unavailable(); await this.send({ type: 'resize', cols, rows });
   }
-  close(): Promise<{ stopped: boolean }> { this.closing ??= this.closeNow(); return this.closing; }
+  close(): Promise<{ stopped: boolean }> {
+    if (this.closing) return this.closing;
+    const closing = this.closeNow(); this.closing = closing;
+    const retryable = () => { if (this.closing === closing) this.closing = undefined; };
+    void closing.then(result => { if (!result.stopped) retryable(); }, retryable);
+    return closing;
+  }
   private async closeNow(): Promise<{ stopped: boolean }> {
     this.closed = true; this.listeners.clear();
     const child = this.child; if (!child) return { stopped: true };

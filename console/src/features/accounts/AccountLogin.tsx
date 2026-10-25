@@ -14,9 +14,10 @@ import { quotaHostSupports } from './quota-environment-capabilities';
 import { describeQuotaEnvironmentError, describeQuotaOperationFailure } from './quota-messages';
 
 const BUSY = ['pending', 'running', 'awaiting_auth'];
+const verifiedReadFailureMessage = 'La sesión quedó verificada, pero no se pudo releer la cuenta. Pulsa «Actualizar cuotas y entornos».';
 
-export function AccountLogin({ account, snapshot, allowed, reload }: {
-  account: QuotaAccount; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>;
+export function AccountLogin({ account, snapshot, allowed, reload, readReady }: {
+  account: QuotaAccount; snapshot?: QuotaEnvironmentsSnapshot; allowed: boolean; reload: () => Promise<void>; readReady: boolean;
 }) {
   const api = useApi();
   const [requested, setRequested] = useState(false);
@@ -25,6 +26,9 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [verified, setVerified] = useState(false);
+  useEffect(() => {
+    if (verified && account.enabled && readReady) setError(current => current === verifiedReadFailureMessage ? '' : current);
+  }, [account, verified, readReady]);
   const [launched, setLaunched] = useState<string>();
   const [scope, setScope] = useState<{ operation: string; request?: ProviderAuthRequest; error?: string }>();
   const keys = useRef(new Map<string, string>());
@@ -124,7 +128,7 @@ export function AccountLogin({ account, snapshot, allowed, reload }: {
   const authenticated = useCallback(() => {
     setChoice(target?.environmentId ?? '');
     setVerified(true); setRequested(false); setTarget(undefined);
-    void reload().catch(() => { setError('La sesión quedó verificada, pero no se pudo releer la cuenta. Pulsa «Actualizar cuotas y entornos».'); });
+    void reload().catch(() => { setError(verifiedReadFailureMessage); });
   }, [reload, target?.environmentId]);
   // The page polls slowly: start from a fresh read so an expired login is not resumed.
   const begin = async () => {

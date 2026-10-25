@@ -24,6 +24,9 @@ interface Session {
 const aborted = (session: Session) => session.abort.signal.aborted;
 const verifying = (session: Session) => session.snapshot.status === 'verifying';
 const ACTIVE = new Set<ProviderAuthStatus>(['opening', 'awaiting_login', 'verifying']);
+interface ManagerDependencies extends ProviderAuthDependencies {
+  authorizeTerminal?(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<void>;
+}
 function bounded(work: Promise<void>, ms: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { reject(new ProviderAuthError('STOP_UNCONFIRMED')); }, ms);
@@ -40,7 +43,7 @@ export class ProviderAuthManager {
   private readonly tickets = new Map<string, { actor: ProviderAuthActor; sessionId: string; expires: number }>();
   private readonly ttlMs: number;
   private readonly releaseTimeoutMs: number;
-  constructor(private readonly dependencies: ProviderAuthDependencies, options: { ttlMs?: number; releaseTimeoutMs?: number } = {}) {
+  constructor(private readonly dependencies: ManagerDependencies, options: { ttlMs?: number; releaseTimeoutMs?: number } = {}) {
     // A person must open the provider page, sign in and type the device code: 15 minutes, the device-code lifetime.
     this.ttlMs = options.ttlMs ?? 900_000;
     // Past the 360-second release claim of the reservation, a release that never answers leaves the profile reserved.
@@ -172,7 +175,7 @@ export class ProviderAuthManager {
       if (!verifying(session)) return this.snapshot(session);
       await this.finish(session, 'authenticated', null);
     } catch (error) {
-      await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'LOGIN_FAILED',
+      if (verifying(session)) await this.finish(session, 'failed', error instanceof ProviderAuthError ? error.code : 'LOGIN_FAILED',
         error instanceof ProviderAuthError ? error.reason : undefined);
     }
     return this.snapshot(session);
@@ -189,6 +192,13 @@ export class ProviderAuthManager {
     await Promise.all([...this.sessions.values()].filter((session) => session.request.operation_id === operationId
       && (ACTIVE.has(session.snapshot.status) || session.snapshot.cleanup_pending))
       .map((session) => this.finish(session, 'failed', 'AUTHORITY_REVOKED')));
+  }
+
+  async expireOperation(operationId: string): Promise<boolean> {
+    const sessions = [...this.sessions.values()].filter(session => session.request.operation_id === operationId);
+    await Promise.all(sessions.filter(session => ACTIVE.has(session.snapshot.status))
+      .map(session => this.finish(session, 'expired', 'SESSION_EXPIRED')));
+    return sessions.length > 0;
   }
 
   async issueSocketTicket(actor: ProviderAuthActor, id: string): Promise<{ ticket: string; expires_at: string }> {
@@ -229,12 +239,21 @@ export class ProviderAuthManager {
     if (!session || !this.sameActor(session.actor, actor)) throw new ProviderAuthError('AUTHORITY_REVOKED');
     return session;
   }
-  private async authorize(actor: ProviderAuthActor, request: ProviderAuthRequest): Promise<void> {
-    try { await this.dependencies.authorize(actor, request); } catch { throw new ProviderAuthError('AUTHORITY_REVOKED'); }
+  private async authorize(actor: ProviderAuthActor, request: ProviderAuthRequest, terminal = false): Promise<void> {
+    try {
+      if (terminal && this.dependencies.authorizeTerminal) await this.dependencies.authorizeTerminal(actor, request);
+      else await this.dependencies.authorize(actor, request);
+    } catch { throw new ProviderAuthError('AUTHORITY_REVOKED'); }
   }
   private async access(actor: ProviderAuthActor, session: Session): Promise<void> {
     if (ACTIVE.has(session.snapshot.status) && Date.now() >= Date.parse(session.snapshot.expires_at)) await this.finish(session, 'expired', 'SESSION_EXPIRED');
-    try { await this.authorize(actor, session.request); } catch (error) {
+    const terminal = !ACTIVE.has(session.snapshot.status);
+    try { await this.authorize(actor, session.request, terminal); } catch (error) {
+      if (ACTIVE.has(session.snapshot.status) && Date.now() >= Date.parse(session.snapshot.expires_at)) await this.finish(session, 'expired', 'SESSION_EXPIRED');
+      if (!terminal && !ACTIVE.has(session.snapshot.status)) {
+        await this.authorize(actor, session.request, true);
+        return;
+      }
       if (ACTIVE.has(session.snapshot.status)) await this.finish(session, 'failed', 'AUTHORITY_REVOKED');
       throw error;
     }

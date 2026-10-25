@@ -4,6 +4,7 @@ import type { ProviderAuthLogin } from '../console/provider-auth.types.js';
 import type { QuotaExecutionRepository } from './quota-executor.js';
 import type { QuotaEffect } from './quota-host-command.js';
 import { QuotaHostAuthentication } from './quota-auth-host.js';
+import { QuotaAuthExchangeSchema, type QuotaAuthCommand, type QuotaAuthEvent } from './quota-auth-contracts.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -23,7 +24,7 @@ const plan: NonNullable<QuotaEffect['login_plan']> = { operation_id: claim.id, a
     python: '/usr/bin/python3', helper: '/cauce/executor/provider-login.py' } };
 function fixture(verify: (input: QuotaOperationExecution, signal: AbortSignal) => Promise<{
   authenticated_verified: true; account_identity: string;
-}>) {
+}>, exchange?: (payload: Record<string, unknown>) => unknown) {
   const repository = { claim: vi.fn(async () => null), renew: vi.fn(async () => true),
     resumeAuthentication: vi.fn(async () => true), execution: vi.fn(async () => execution),
     finish: vi.fn(async () => ({})), fail: vi.fn(async () => ({})) } satisfies QuotaExecutionRepository;
@@ -31,6 +32,7 @@ function fixture(verify: (input: QuotaOperationExecution, signal: AbortSignal) =
     write: vi.fn(async () => undefined), resize: vi.fn(async () => undefined), subscribeOutput: () => () => undefined } satisfies ProviderAuthLogin;
   const runtime = new QuotaHostAuthentication({ request: async (_method, _path, payload) => {
     if (payload.action === 'register') return { registered: true };
+    if (exchange) return exchange(payload);
     return { commands: [{ id: '23000000-0000-4000-8000-000000000004', type: 'verify' }], output_sequence: 0, finished: true };
   } }, repository, { host: 'fixture-host', command: { python: '/usr/bin/python3', executable: '/fixture/fleet-executor.py', policyFile: '/fixture/policy.json' },
     projectRoot: '/fixture', createLogin: async () => login, loginConfiguration: async packet => ({ python: '/usr/bin/python3',
@@ -39,6 +41,39 @@ function fixture(verify: (input: QuotaOperationExecution, signal: AbortSignal) =
 }
 const proof = { authenticated_verified: true as const, account_identity: 'SYNTHETIC_UNIT_IDENTITY' };
 describe('quota authentication host cancellation', () => {
+  it('acknowledges only cleanup commands after the provider deadline without forwarding input or verification', async () => {
+    vi.useFakeTimers();
+    try {
+      const verify = vi.fn(async () => proof);
+      let exchanges = 0;
+      const commands: QuotaAuthCommand[] = [
+        { id: '23000000-0000-4000-8000-000000000010', type: 'start' },
+        { id: '23000000-0000-4000-8000-000000000011', type: 'input', data: Buffer.from('SYNTHETIC_INPUT').toString('base64') },
+        { id: '23000000-0000-4000-8000-000000000012', type: 'resize', cols: 80, rows: 24 },
+        { id: '23000000-0000-4000-8000-000000000013', type: 'verify' },
+        { id: '23000000-0000-4000-8000-000000000014', type: 'close' },
+      ];
+      let results: QuotaAuthEvent[] = [];
+      const f = fixture(verify, payload => {
+        exchanges += 1;
+        if (exchanges === 1) {
+          vi.setSystemTime(Date.now() + 600_001);
+          return { commands, output_sequence: 0, finished: false };
+        }
+        results = payload.events as QuotaAuthEvent[];
+        return QuotaAuthExchangeSchema.parse({ commands: [], output_sequence: 0, finished: true });
+      });
+      const handle = await f.runtime.begin(execution, plan, claim, new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(250);
+      await handle.close();
+      expect(f.login.start).not.toHaveBeenCalled();
+      expect(f.login.write).not.toHaveBeenCalled();
+      expect(f.login.resize).not.toHaveBeenCalled();
+      expect(verify).not.toHaveBeenCalled();
+      expect(results).toEqual(commands.map(command => ({ type: 'result', id: command.id, ok: command.type === 'close' })));
+      expect(f.repository.finish).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
   it('never commits a verified receipt when shutdown starts during the final execution read', async () => {
     const readStarted = deferred<undefined>(); const finalRead = deferred<QuotaOperationExecution>();
     const f = fixture(async () => proof);

@@ -149,7 +149,8 @@ export function MyQuotasPage() {
     <section aria-label="Tarjetas de Mis cuotas" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(account => <QuotaAccountCard key={account.id} account={accounts.error ? failedQuotaRead(account) : account}
       pinned={pinned.includes(account.id)} canPin={!!preferences.data && !preferences.error && !preferences.loading && !busy} onPin={() => { void pin(account); }}
       canEdit={canWriteAccounts} onEdit={() => { setEditing(account); setAccountConflict(undefined); }} onRemove={() => { setRemoving(account); }}
-      login={<AccountLogin account={account} snapshot={environments.error ? undefined : environments.data} allowed={canManageCompany(authority?.role)} reload={reload} />} />)}</section>
+      login={<AccountLogin account={account} snapshot={environments.error ? undefined : environments.data} allowed={canManageCompany(authority?.role)}
+        readReady={!!accounts.data && !!environments.data && !accounts.loading && !environments.loading && !accounts.error && !environments.error} reload={reload} />} />)}</section>
     {accounts.data && !visible.length ? <Notice tone="info">{filterPinned ? 'No has fijado ninguna cuenta. Muestra todas y elige las que quieras seguir.' : 'Aún no hay cuentas. Registra una suscripción para empezar.'}</Notice> : null}
     <QuotaEnvironmentPanel snapshot={environments.error ? undefined : environments.data} loading={environments.loading && !environments.data} accounts={accounts.data?.accounts ?? []} canWrite={canWrite}
       reload={reload} />
