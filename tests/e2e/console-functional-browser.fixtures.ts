@@ -251,10 +251,11 @@ export interface TrustedBrowser {
   close(): Promise<void>;
 }
 
-export async function startTrustedBrowser(caCertPath: string, directory: string, ports: readonly number[]): Promise<TrustedBrowser> {
+export async function startTrustedBrowser(caCertPath: string, directory: string, ports: readonly number[], lifetimeSeconds?: number): Promise<TrustedBrowser> {
+  const lifetime = browserLifetimeSeconds(lifetimeSeconds);
   const runtime = await prepareBrowserRuntime(directory);
   try {
-    const isolated = await startIsolatedBrowser(caCertPath, runtime, ports);
+    const isolated = await startIsolatedBrowser(caCertPath, runtime, ports, lifetime);
     return {
       browser: isolated.browser,
       container: isolated.container,

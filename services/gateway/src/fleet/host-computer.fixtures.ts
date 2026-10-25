@@ -263,12 +263,12 @@ await bootstrapOnStartup({tenant_id:process.env.CAUCE_TENANT_ID!,alias:process.e
 setInterval(()=>{},60000);
 `);
   await execute(join(ROOT, 'node_modules/.bin/esbuild'), [runtime, '--bundle', '--platform=node', '--format=esm', '--target=node22',
-    '--log-level=error', `--outfile=${join(stage, 'adapter/bootstrap-runtime.mjs')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`]);
+    '--log-level=error', `--outfile=${join(stage, 'adapter/bootstrap-runtime.mjs')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src')}`]);
   const argv = runtimeBundle === undefined ? ['@release@/adapter/bootstrap-runtime.mjs'] : await runtimeBundle.stage(join(stage, 'adapter'));
   await mkdir(join(stage, 'services/gateway/dist/fleet'), { recursive: true });
   await execute(join(ROOT, 'node_modules/.bin/esbuild'), [join(tree, 'services/gateway/src/fleet/main.ts'), '--bundle', '--platform=node',
     '--format=esm', '--target=node22', '--external:pg-native', '--log-level=error', `--outfile=${join(stage, 'services/gateway/dist/fleet/main.js')}`,
-    `--alias:@cauce/store=${join(tree, 'packages/store/src/index.ts')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src/index.ts')}`,
+    `--alias:@cauce/store=${join(tree, 'packages/store/src/index.ts')}`, `--alias:@cauce/protocol=${join(tree, 'packages/protocol/src')}`,
     '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
   { env: { ...process.env, NODE_PATH: ['services/gateway', 'packages/store', 'packages/protocol', ''].map(part => join(ROOT, part, 'node_modules')).join(':') } });
   const revision = (await execute('git', ['-C', ROOT, 'rev-parse', 'HEAD'])).stdout.trim();

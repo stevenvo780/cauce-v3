@@ -1,9 +1,11 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import { expect } from 'vitest';
 import { docker, dockerInventory, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
   type ComputerHarness, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
@@ -15,20 +17,19 @@ import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration,
   PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 
-export const TASK = 'e2e-copias-restauracion-1025';
-export const RUN = randomUUID().replaceAll('-', '').slice(0, 8);
+export const TASK = 'c171b-copias-grandes-1025';
+export const RUN = randomUUID().replaceAll('-', '').slice(0, 6);
 export const PREFIX = `zz-canary-${TASK}-${RUN}`;
 export const ALIAS = `zz-canary-copy-${RUN}`;
-export const RUNTIME_KEY = `zz-canary-copy-${RUN}`;
 export const EVIDENCE = resolve('.delegados/v4/recibos', TASK, RUN);
-export const OVERSIZED_BYTES = 1_000_000_000;
-export const SUPPORTED_BYTES = 33 * 1024 * 1024 + 4097;
+export const LARGE_BYTES = 1_000_000_000;
+export const SMALL_FILES = 2048;
 const root = process.cwd();
 const consoleRequire = createRequire(join(root, 'console/package.json'));
 
 // The provider is synthetic; its response must come from an actual read of the restored file.
-const readerRuntime: ComputerRuntimeBundle = { ...cancelDeployRuntime, providerCli: `#!/usr/local/bin/python3
-import base64,hashlib,json,os,pathlib,re,sys,uuid
+const readerRuntime = (runtimeKey: string): ComputerRuntimeBundle => ({ ...cancelDeployRuntime, providerCli: `#!/usr/local/bin/python3
+import hashlib,json,os,pathlib,re,resource,sys,uuid
 if 'app-server' in sys.argv:
  for line in sys.stdin:
   packet=json.loads(line)
@@ -44,16 +45,14 @@ else:
  match=re.search(r'RESTORED_READ_PATH=([A-Za-z0-9_./-]+)',prompt)
  if match is None: sys.exit('restored file path is absent')
  requested=pathlib.Path(match.group(1))
- allowed=pathlib.Path('/home/cauce/.cauce/${RUNTIME_KEY}/restored-${RUN}')
+ allowed=pathlib.Path('/home/cauce/.cauce/${runtimeKey}/restored-${RUN}')
  if not requested.is_absolute() or requested.is_symlink() or not requested.resolve().is_relative_to(allowed):
   sys.exit('restored file is outside the owned restoration')
- with requested.open('rb') as stream: data=stream.read(4097)
- if len(data)>4096: sys.exit('reader output exceeds its bound')
- if data.decode('utf8').strip() in prompt or base64.b64encode(data).decode() in prompt:
-  sys.exit('restored file contents were present in the prompt')
- reply={'reader':'synthetic-provider-real-filesystem','path':str(requested),'bytes':len(data),
-  'sha256':hashlib.sha256(data).hexdigest(),'content_base64':base64.b64encode(data).decode(), 'pid':os.getpid(),
-  'expected_contents_in_native_prompt':False}
+ digest=hashlib.sha256();size=0
+ with requested.open('rb') as stream:
+  while chunk:=stream.read(1024*1024): digest.update(chunk);size+=len(chunk)
+ reply={'reader':'synthetic-provider-real-filesystem','bytes':size,'sha256':digest.hexdigest(),
+  'pid':os.getpid(),'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}
  output={'reply':json.dumps(reply,separators=(',',':')),'messages':[],'notify':[],'status':'done','retryable':False,'artifacts':[]}
  correlation=re.search(r'"cauce_correlation_id":"([a-f0-9]{64})"',prompt)
  if correlation: output['cauce_correlation_id']=correlation.group(1)
@@ -61,13 +60,14 @@ else:
 native=sys.argv[sys.argv.index('resume')+2] if 'resume' in sys.argv and '--json' in sys.argv else str(uuid.uuid4())
 print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)
 print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':answer}}),flush=True)
-` };
+` });
 
 export interface CopyAgent {
   tenant_id: string; alias: string; runtime_key: string; container_name: string;
   runtime_user: string; state_directory: string; home_directory: string;
 }
 export interface CopyRestorationFixture {
+  scenario: 'large' | 'many'; alias: string; runtimeKey: string;
   computer: ComputerHarness; browser: TrustedBrowser; page: V4Page; baseUrl: string; directory: string;
   storage: string; tenant: string; room: string; company: string; host: string; agent: CopyAgent;
   errors: BrowserErrorLog;
@@ -94,34 +94,36 @@ export async function agentPython(fixture: CopyRestorationFixture, program: stri
   return docker(['exec', '--user', fixture.agent.runtime_user, fixture.agent.container_name, 'python3', '-I', '-B', '-c', program, ...args]);
 }
 
-async function verifyOwnedResources(computer: ComputerHarness, tenant: string, host: string, containerId?: string) {
-  const inventory = await dockerInventory(PREFIX);
-  const agentName = `${PREFIX}-${RUNTIME_KEY}`;
+async function verifyOwnedResources(computer: ComputerHarness, tenant: string, host: string, alias: string, containerId?: string) {
+  const prefix = `${PREFIX}-${alias.endsWith('-large') ? 'large' : 'many'}`;
+  const inventory = await dockerInventory(prefix);
+  const agentName = `${prefix}-${alias}`;
   for (const name of inventory.containers.split('\n').filter(Boolean)) {
-    expect([PREFIX, agentName]).toContain(name);
+    expect([prefix, agentName]).toContain(name);
     const info = JSON.parse(await docker(['inspect', '--format', '{{json .}}', name])) as {
       Id: string; Config: { Labels: Record<string, string> };
     };
-    if (name === PREFIX) expect(info.Config.Labels['cauce.e2e.owner']).toBe(TASK);
+    if (name === prefix) expect(info.Config.Labels['cauce.e2e.owner']).toBe(TASK);
     else {
       if (containerId !== undefined) expect(info.Id).toBe(containerId);
-      expect(info.Config.Labels).toMatchObject({ 'cauce.fleet.tenant': tenant, 'cauce.fleet.alias': ALIAS,
-        'cauce.fleet.runtime_key': RUNTIME_KEY, 'cauce.fleet.host': host, 'cauce.fleet.owner': 'cauce' });
+      expect(info.Config.Labels).toMatchObject({ 'cauce.fleet.tenant': tenant, 'cauce.fleet.alias': alias,
+        'cauce.fleet.runtime_key': alias, 'cauce.fleet.host': host, 'cauce.fleet.owner': 'cauce' });
     }
   }
   for (const name of inventory.volumes.split('\n').filter(Boolean)) {
     expect([`${agentName}-state`, `${agentName}-provider-profiles`]).toContain(name);
     const labels = JSON.parse(await docker(['volume', 'inspect', '--format', '{{json .Labels}}', name])) as Record<string, string>;
-    expect(labels).toMatchObject({ 'cauce.fleet.tenant': tenant, 'cauce.fleet.alias': ALIAS,
-      'cauce.fleet.runtime_key': RUNTIME_KEY, 'cauce.fleet.host': host, 'cauce.fleet.owner': 'cauce' });
+    expect(labels).toMatchObject({ 'cauce.fleet.tenant': tenant, 'cauce.fleet.alias': alias,
+      'cauce.fleet.runtime_key': alias, 'cauce.fleet.host': host, 'cauce.fleet.owner': 'cauce' });
   }
-  for (const image of inventory.images.split('\n').filter(Boolean)) expect([`${PREFIX}:computer`, `${PREFIX}:agent`]).toContain(image);
-  expect(computer.prefix).toBe(PREFIX);
-  return { prefix: PREFIX, tenant, host, containerId, inventory, browser: 'separate-owned-browser-lifecycle' };
+  for (const image of inventory.images.split('\n').filter(Boolean)) expect([`${prefix}:computer`, `${prefix}:agent`]).toContain(image);
+  expect(computer.prefix).toBe(prefix);
+  return { prefix, tenant, host, containerId, inventory, browser: 'separate-owned-browser-lifecycle' };
 }
 
 async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: string, tenant: string, room: string,
-  host: string, account: string): Promise<CopyAgent> {
+  host: string, account: string, scenario: 'large' | 'many'): Promise<CopyAgent> {
+  const alias = `${ALIAS}-${scenario}`;
   const waitUntil = async (condition: () => Promise<boolean | undefined>, timeout: number, label: string, interval = 250) => {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -136,16 +138,16 @@ async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: str
   await dialog.getByText('Solo preparar, sin desplegar', { exact: true }).click();
   const form = dialog.getByRole('region', { name: 'Alta operativa de agente', exact: true });
   await form.getByLabel('Espacio de trabajo operativo').selectOption(tenant);
-  await form.getByLabel('Alias operativo').fill(ALIAS);
+  await form.getByLabel('Alias operativo').fill(alias);
   await form.getByLabel('Nombre visible operativo').fill(`Canario copias ${RUN}`);
-  await form.getByLabel('Clave física de ejecución').fill(RUNTIME_KEY);
+  await form.getByLabel('Clave física de ejecución').fill(alias);
   await form.getByRole('checkbox', { name: new RegExp(`· "${room}"$`, 'u') }).check();
   await form.getByLabel('Grupo primario').selectOption(room);
   await form.getByLabel('Host operativo').locator(`option[value="${host}"]`).waitFor({ state: 'attached', timeout: 30_000 });
   await form.getByLabel('Host operativo').selectOption(host);
   await form.getByLabel('Plantilla de ejecución').selectOption('0');
   await form.getByLabel('Cuenta principal de ejecución').selectOption(account);
-  expect(await form.getByLabel('Contenedor operativo').inputValue()).toBe(`${PREFIX}-${RUNTIME_KEY}`);
+  expect(await form.getByLabel('Contenedor operativo').inputValue()).toBe(`${PREFIX}-${scenario}-${alias}`);
   const preview = form.getByRole('button', { name: 'Previsualizar operación', exact: true });
   await waitUntil(async () => !await preview.isDisabled(), 30_000, 'preview button');
   expect(await preview.isDisabled()).toBe(false);
@@ -154,7 +156,7 @@ async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: str
   await waitUntil(async () => !await confirm.isDisabled(), 30_000, 'confirmation button');
   expect(await confirm.isDisabled()).toBe(false);
   await confirm.click();
-  const operationPath = `/v3/console/fleet/operations?resource=agent&tenant_id=${tenant}&alias=${ALIAS}`;
+  const operationPath = `/v3/console/fleet/operations?resource=agent&tenant_id=${tenant}&alias=${alias}`;
   let operation: { id: string; status: string; error: unknown } | undefined;
   await waitUntil(async () => {
     const response = await apiGet(page, operationPath);
@@ -164,16 +166,19 @@ async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: str
   }, 240_000, 'terminal create operation', 1_000);
   expect(operation, JSON.stringify(operation)).toMatchObject({ status: 'succeeded' });
   const agent = (await computer.pool.query<CopyAgent>(`SELECT tenant_id,alias,runtime_key,container_name,runtime_user,state_directory,home_directory
-    FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, ALIAS])).rows[0];
+    FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, alias])).rows[0];
   if (!agent) throw new Error('copy canary agent is absent');
-  await receipt('agent-created', { operation, agent, synthetic_provider: true, commercial_provider: false });
+  await receipt(`${scenario}-agent-created`, { operation, agent, synthetic_provider: true, commercial_provider: false });
   return agent;
 }
 
-export async function startCopyRestorationFixture(): Promise<CopyRestorationFixture> {
+export async function startCopyRestorationFixture(scenario: 'large' | 'many'): Promise<CopyRestorationFixture> {
+  const prefix = `${PREFIX}-${scenario}`;
+  if (prefix.length > 48) throw new Error('copy fixture prefix exceeds the approved container-prefix contract');
+  const alias = `${ALIAS}-${scenario}`;
   if (process.env.CAUCE_TEST_DATABASE_URL || process.env.VITE_USE_MOCKS === 'true') throw new Error('owned PostgreSQL and mocks=false required');
   await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
-  const directory = await mkdtemp(join(tmpdir(), `${PREFIX}-`));
+  const directory = await mkdtemp(join(tmpdir(), `${prefix}-`));
   await chmod(directory, 0o700);
   const storage = join(directory, 'copies');
   const tls = createSelfSignedCert({ directory });
@@ -194,7 +199,7 @@ export async function startCopyRestorationFixture(): Promise<CopyRestorationFixt
       ['browser', async () => { await browser?.close(); }], ['frontend', async () => { await vite?.close(); }],
       ['computer', async () => {
         if (computer) {
-          cleanup.ownership = await verifyOwnedResources(computer, tenant, host, agentId);
+          cleanup.ownership = await verifyOwnedResources(computer, tenant, host, alias, agentId);
           cleanup.inventory = await computer.close();
           expect(cleanup.inventory).toEqual({ containers: '', volumes: '', images: '' });
         }
@@ -211,16 +216,19 @@ export async function startCopyRestorationFixture(): Promise<CopyRestorationFixt
       try { await rm(directory, { recursive: true, force: true }); cleanup.temporary_directory = 'removed'; }
       catch (error) { failures.push(error); cleanup.temporary_directory = error instanceof Error ? error.message : String(error); }
     }
-    try { await receipt('cleanup', { run: RUN, prefix: PREFIX, ...cleanup, complete: failures.length === 0 }); }
+    try { await receipt(`${scenario}-cleanup`, { run: RUN, prefix, ...cleanup, complete: failures.length === 0 }); }
     catch (error) { failures.push(error); }
     if (failures.length) throw new AggregateError(failures, 'copy restoration fixture cleanup incomplete');
   };
   try {
+    const untracked = await promisify(execFile)('git', ['ls-files', '--others', '--exclude-standard', '-z', '--',
+      'packages/protocol/src', 'packages/store/src', 'services/gateway/src', 'ops/cli']);
+    const extraSourceFiles = untracked.stdout.split('\0').filter(path => /\.(?:ts|py)$/u.test(path) && !path.includes('.test.'));
     const previous = { directory: process.env.CAUCE_SPACE_BACKUP_DIRECTORY, root: process.env.CAUCE_PROJECT_ROOT };
     process.env.CAUCE_SPACE_BACKUP_DIRECTORY = storage;
     process.env.CAUCE_PROJECT_ROOT = root;
-    try { computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [baseUrl], workRoot: '/datos',
-      resourceOwner: TASK, runtimeBundle: readerRuntime }); }
+    try { computer = await startComputerHarness({ prefix, consoleOrigins: [baseUrl], workRoot: '/datos',
+      resourceOwner: TASK, runtimeBundle: readerRuntime(alias), extraSourceFiles }); }
     finally {
       if (previous.directory === undefined) delete process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
       else process.env.CAUCE_SPACE_BACKUP_DIRECTORY = previous.directory;
@@ -235,11 +243,11 @@ export async function startCopyRestorationFixture(): Promise<CopyRestorationFixt
     });
     await reserved.releaseAll();
     await vite.listen();
-    browser = await startTrustedBrowser(tls.cert_path, directory, [reserved.ports.frontend, Number(new URL(computer.gatewayUrl).port)]);
+    browser = await startTrustedBrowser(tls.cert_path, directory, [reserved.ports.frontend, Number(new URL(computer.gatewayUrl).port)], 1800);
     const context = await browser.browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
     const page = asV4Page(await context.newPage()); errors.watch(page, 'copy-restoration-owner');
     const owner = syntheticPerson('copyrestore', RUN);
-    owner.company = { name: `zz-canary copias ${RUN}`, slug: `zz-canary-copy-${RUN}` };
+    owner.company = { name: `zz-canary copias ${RUN} ${scenario}`, slug: `zz-canary-copy-${RUN}-${scenario}` };
     const registration = await openRegistration(page, baseUrl); await fillRegistration(registration, owner);
     await registration.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
     await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
@@ -259,14 +267,14 @@ export async function startCopyRestorationFixture(): Promise<CopyRestorationFixt
     const account = `zz-canary-copy-${RUN}`;
     await computer.pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
       VALUES($1,'codex',$2,$3,'env_path','CAUCE_COPY_RESTORATION_SYNTHETIC_PROFILE_PATH',true)`, [account, FIXTURE_PROVIDER_IDENTITY, tenant]);
-    errors.expectHttpError(`/v3/console/tenants/${tenant}/agents/${ALIAS}/native/skill`, 501);
-    const agent = await createAgent(page, computer, baseUrl, tenant, room, host, account);
+    const agent = await createAgent(page, computer, baseUrl, tenant, room, host, account, scenario);
     agentId = await docker(['inspect', '--format', '{{.Id}}', agent.container_name]);
-    await receipt('resources', { run: RUN, prefix: PREFIX, postgres_environment: 'owned-testcontainers', agent_container: agent.container_name,
+    await receipt(`${scenario}-resources`, { run: RUN, prefix, postgres_environment: 'owned-testcontainers', agent_container: agent.container_name,
       agent_container_id: agentId, browser_container: browser.container, browser_container_id: browser.containerId,
       browser_image: browser.runtime.image, browser_image_id: browser.runtime.imageId, tls_verified: true,
-      synthetic_provider: true, commercial_provider: false, native_administration: false });
-    return { computer, browser, page, baseUrl, directory, storage, tenant, room, company: owner.company.slug, host, agent, errors, close };
+      extra_source_files: extraSourceFiles, synthetic_provider: true, commercial_provider: false, native_administration: false });
+    return { scenario, alias, runtimeKey: alias, computer, browser, page, baseUrl, directory, storage, tenant, room,
+      company: owner.company.slug, host, agent, errors, close };
   } catch (error) {
     try { await close(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'copy fixture startup and cleanup failed'); }
     throw error;

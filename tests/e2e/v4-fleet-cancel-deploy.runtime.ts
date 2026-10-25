@@ -41,7 +41,7 @@ export const cancelDeployRuntime: ComputerRuntimeBundle = {
     await mkdir(bin, { recursive: true });
     await execute(join(root, 'node_modules/.bin/esbuild'), [join(root, 'packages/adapter-sdk/src/bin/codex.ts'),
       '--bundle', '--platform=node', '--format=esm', '--target=node22', '--log-level=error', `--outfile=${join(bin, 'codex.js')}`,
-      `--alias:@cauce/protocol=${join(root, 'packages/protocol/src/index.ts')}`,
+      `--alias:@cauce/protocol=${join(root, 'packages/protocol/src')}`,
       '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
     { maxBuffer: 1024 * 1024 });
     return ['@release@/adapter/src/bin/codex.js'];
