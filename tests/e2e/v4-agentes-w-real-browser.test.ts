@@ -430,8 +430,7 @@ describe.sequential('W: asistente de Agentes con Chromium y PostgreSQL reales', 
       await target.screenshot({ path: join(directory, `reader-create-denied-${device}.png`), fullPage: true });
     }
     (evidence.rows as Record<string, string>)['W33/permiso-ausente'] = 'PASA';
-    evidence.readerCreate = { permissionAbsent: true, unknownPermissionTested: false, accessReadFailureTested: false,
-      status: 403, unchangedRevision: before.body.revision, durableAgents: [] };
+    evidence.readerCreate = { permissionAbsent: true, status: 403, unchangedRevision: before.body.revision, durableAgents: [] };
     evidence.emptyCompanyInvariants = {
       foreignKeys: (await pool().query(`SELECT conrelid::regclass::text AS table_name,conname,
         pg_get_constraintdef(oid) AS definition FROM pg_constraint

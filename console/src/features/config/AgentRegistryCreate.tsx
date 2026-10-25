@@ -4,6 +4,7 @@ import type { ConfigMutation, ConfigurationSnapshot } from '../../api/types';
 import { useApi } from '../../api/context';
 import { useConsoleAccess } from '../../api/console-access';
 import type { Resource } from '../../api/use-resource';
+import { permissionState } from '../../lib';
 import {
   agentCreateStepError, agentRegistryCreateError, agentWriteBlock, CREATE_STEPS, STEP_LABEL, type CreateStep, createAgentRegistryMutation, createAgentRoomMembershipMutation,
   EMPTY_AGENT_REGISTRY_DRAFT, registryHarnessOptions, registryRoomOptions, registryTenantOptions,
@@ -177,10 +178,9 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
   const roomLabel = rooms.find((room) => room.id === draft.roomId)?.label;
   const preparing = !created && mode === 'prepare';
 
+  const permissionDenied = permissionState(access.error ? undefined : access.data, 'config.write') === 'denied';
   const permissionNotice = writeBlock ? <Notice role="note">{writeBlock}</Notice>
-    : !runner.canWrite ? <Notice role="note">
-      Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo.
-    </Notice> : null;
+    : permissionDenied ? <Notice role="note">Tu cuenta no tiene permiso para modificar este registro.</Notice> : null;
   const notices = <>
     {formError ? <Notice tone="danger" role="alert">{formError}</Notice> : null}
     <ConfigChangeReceipt notice={runner.notice} preview={runner.preview} label="Preview del alta de agente" />

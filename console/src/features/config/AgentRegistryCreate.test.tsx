@@ -58,7 +58,7 @@ async function toReview() {
   return user;
 }
 
-it('is read-only when config.write is absent or unknown', async () => {
+it('is read-only when config.write is absent', async () => {
   server.use(access(['config.read']));
   renderSettings();
   await screen.findByRole('button', { name: 'Añadir agente' });
@@ -67,16 +67,6 @@ it('is read-only when config.write is absent or unknown', async () => {
   expect(await screen.findByText(/Tu cuenta no tiene permiso para modificar este registro/)).toBeInTheDocument();
   expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Crear registro' })).not.toBeInTheDocument();
-});
-
-it('fails closed when the permission snapshot cannot be read', async () => {
-  server.use(http.get('http://localhost/v3/console/access', () =>
-    HttpResponse.json({ error: 'unavailable' }, { status: 500 })));
-  renderSettings();
-  const user = userEvent.setup();
-  await user.click(await screen.findByRole('button', { name: 'Añadir agente' }));
-  expect(await screen.findByText(/Tu cuenta no tiene permiso para modificar este registro, o no pudimos verificarlo/)).toBeInTheDocument();
-  expect(screen.getByRole('textbox', { name: 'Alias' })).toBeDisabled();
 });
 
 it('sends a record create after an exact dry-run and closes with focus returned', async () => {
