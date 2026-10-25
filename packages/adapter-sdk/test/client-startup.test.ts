@@ -74,7 +74,7 @@ test("connect retries then sends the real harness capabilities in hello", async 
   await running;
 });
 
-test("la siembra de reconnect es default-on y sólo acepta un lote completo o comprobado", () => {
+test("la siembra de reconnect es default-on y solo acepta un lote completo o comprobado", () => {
   assert.equal(siembraHabilitada({}), true);
   assert.equal(siembraHabilitada({ CAUCE_SEMBRAR_PERFIL: "1" }), true);
   assert.equal(siembraHabilitada({ CAUCE_SEMBRAR_PERFIL: "0" }), false);
@@ -180,7 +180,7 @@ test("heartbeat uses the established consumer instead of an ephemeral socket", a
  * the initial delay forever: 7570 epochs in 99 minutes on one alias. Pacing is now credited only
  * by evidence the connection carries traffic — a drained outbox entry or a heartbeat round trip.
  */
-test("el saludo ya no reinicia el backoff: sólo un heartbeat_ack lo devuelve al arranque", async () => {
+test("el saludo ya no reinicia el backoff: solo un heartbeat_ack lo devuelve al arranque", async () => {
   const heartbeatMs = 60_000;
   const clock = new ReconnectDelayClock(heartbeatMs);
   const acknowledgedCall = 4;

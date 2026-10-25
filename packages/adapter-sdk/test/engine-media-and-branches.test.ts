@@ -31,7 +31,7 @@ test("un mensaje con solo adjuntos llega al harness en vez de morir sin respuest
 
   const enviado = context.runner.requests[0]?.stdin ?? "";
   assert.match(enviado, /2 adjuntos de tipo photo/u);
-  assert.match(enviado, /No podés ver ni abrir el contenido/u);
+  assert.match(enviado, /No puedes ver ni abrir el contenido/u);
 });
 
 test("materializa attachments_v1 para el harness, verifica contenido y limpia el temporal", async () => {

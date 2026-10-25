@@ -59,7 +59,7 @@ export function renglonDeContextoFijo(): string {
   return (
     "Tu contrato de identidad, deber y protocolo NO se repite en esta entrega: ya está cargado " +
     `desde el fichero de instrucciones de tu arnés (contexto Cauce v${VERSION_CONTEXTO_FIJO}). ` +
-    "Rige igual. Si no lo tenés delante, decilo en tu \"reply\" y seguí con lo que puedas."
+    "Rige igual. Si no lo tienes delante, dilo en tu \"reply\" y sigue con lo que puedas."
   );
 }
 

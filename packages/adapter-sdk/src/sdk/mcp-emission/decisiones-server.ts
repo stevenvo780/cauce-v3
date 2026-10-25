@@ -6,7 +6,7 @@ import { socketExchange, type EmissionToolResult } from "./runtime.js";
 
 function unavailable(operacion: string, argumentos: unknown): EmissionToolResult {
   const respaldo = respaldoSinServicio(operacion, argumentos);
-  const body = { error: "adaptador_no_responde", mensaje: "El adaptador de Cauce no responde: aplicá el respaldo", ...(respaldo === undefined ? {} : { respaldo }) };
+  const body = { error: "adaptador_no_responde", mensaje: "El adaptador de Cauce no responde: aplica el respaldo", ...(respaldo === undefined ? {} : { respaldo }) };
   return { isError: true, content: [{ type: "text", text: JSON.stringify(body) }] };
 }
 

@@ -149,7 +149,7 @@ test("OpenClaw incomplete turn after tools is failed without replay", () => {
   const salida = validateDeliveryOutput(parsed.output);
   assert.equal(salida.status, "failed");
   assert.equal(salida.retryable, false);
-  assert.match(salida.reply ?? "", /verificá los cambios/u);
+  assert.match(salida.reply ?? "", /verifica los cambios/u);
   for (const wrapper of ["result", "output"]) {
     const wrapped = parseOpenClawOutput(JSON.stringify({ [wrapper]: notice }));
     assert.equal(wrapped.output.status, "failed");
@@ -231,7 +231,7 @@ test("OpenCode: un evento de error después del texto termina fallido", () => {
 test("un turno fallido nunca arrastra delegaciones que no se van a materializar", () => {
   const conDelegacion = {
     reply: "delego el resto",
-    messages: [{ to: "kant", body: "seguí vos desde acá" }],
+    messages: [{ to: "kant", body: "sigue tú desde acá" }],
     status: "done",
     retryable: false,
     artifacts: [],

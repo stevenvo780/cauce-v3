@@ -49,9 +49,9 @@ export async function sendOutsideDelivery(
 ): Promise<Record<string, unknown>> {
   const to = visible(args, "to").trim();
   const text = visible(args, "body");
-  if (to === "@all" || to === "@human") throw new Error(`Fuera de una entrega no se puede mandar a ${to}; nombrá un solo alias`);
+  if (to === "@all" || to === "@human") throw new Error(`Fuera de una entrega no se puede mandar a ${to}; nombra un solo alias`);
   if (!isAlias(to)) throw new Error("'to' tiene que ser UN alias válido de tu tenant (sin listas)");
-  if (to === identity.alias) throw new Error("No podés mandarte un mensaje a vos mismo");
+  if (to === identity.alias) throw new Error("No puedes mandarte un mensaje a ti mismo");
   let receipt: Record<string, unknown>;
   try {
     receipt = record(await gateway("POST", "/v3/messages", {
@@ -61,7 +61,7 @@ export async function sendOutsideDelivery(
   } catch (error) {
     if (error instanceof EmissionGatewayError && error.status === 409 && record(error.body).error === "agent_root_limit") {
       const limit = record(error.body).limit;
-      throw new Error(`Ya tenés ${typeof limit === "number" ? String(limit) : "varios"} mensajes abiertos; esperá a que`
+      throw new Error(`Ya tienes ${typeof limit === "number" ? String(limit) : "varios"} mensajes abiertos; espera a que`
         + ` terminen (cauce_result). Abiertos: ${openRootsText(error.body)}`);
     }
     throw error;
@@ -69,7 +69,7 @@ export async function sendOutsideDelivery(
   return {
     message_id: receipt.message_id, delivery_ids: receipt.delivery_ids, duplicate: receipt.duplicate,
     nota: receipt.duplicate === true
-      ? "Este mismo envío ya se había hecho (la misma llamada, reintentada): no se mandó de nuevo. Mirá su estado con"
+      ? "Este mismo envío ya se había hecho (la misma llamada, reintentada): no se mandó de nuevo. Mira su estado con"
         + " cauce_result(message_id)."
       : "Encolado como mensaje nuevo fuera de una entrega; no acredita lectura ni ejecución. La respuesta no vuelve sola a esta"
         + " conversación: consultala con cauce_result(message_id).",

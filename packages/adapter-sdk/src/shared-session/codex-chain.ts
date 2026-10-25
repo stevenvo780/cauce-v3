@@ -15,8 +15,8 @@ import type { TurnOutcome } from "./types.js";
 /** What the adapter pastes to wake the root; the chain recognizes its turn by this prefix. */
 export const CODEX_WAKE_PREFIX = "[cauce] Cerraste el turno sin respuesta final";
 export const CODEX_WAKE_TEXT = `${CODEX_WAKE_PREFIX} y tus subagentes pueden seguir trabajando. No cierres el turno`
-  + " todavía: repetí wait_agent (aunque devuelva «Wait completed», porque vuelve con el primer mensaje de cualquiera)"
-  + " y mirá list_agents hasta que NINGUNO siga trabajando; después da la respuesta final del pedido del bus: el sobre"
+  + " todavía: repite wait_agent (aunque devuelva «Wait completed», porque vuelve con el primer mensaje de cualquiera)"
+  + " y mira list_agents hasta que NINGUNO siga trabajando; después da la respuesta final del pedido del bus: el sobre"
   + " JSON completo, con el mismo cauce_correlation_id de ese pedido. No delegues más.";
 /** Wakes per delivery: a root that closes silent twice after being woken is failing, not waiting. */
 export const MAX_CODEX_WAKES = 2;

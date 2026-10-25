@@ -23,7 +23,7 @@ async function fixture(forwarder: DecisionesForwarder | undefined) {
   return { client, close: async () => { await client.close(); await runtime.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
-const RESPALDO_LLM_ESPERADO = { decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resolvelo con tu propio razonamiento" };
+const RESPALDO_LLM_ESPERADO = { decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resuélvelo con tu propio razonamiento" };
 
 function payload(result: Awaited<ReturnType<Client["callTool"]>>): Record<string, unknown> {
   const [first] = result.content as { text: string }[];

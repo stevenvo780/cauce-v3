@@ -70,7 +70,7 @@ export class EmissionRuntime {
   private assertOutsideDeliveryAvailable(): void {
     if (this.closing) throw new Error("Emission runtime is closing; nothing was sent");
     const inFlight = this.deliveriesInFlight?.();
-    if (this.turns.size > 0 || (inFlight ?? 0) > 0) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintentá cauce_send cuando termine.");
+    if (this.turns.size > 0 || (inFlight ?? 0) > 0) throw new Error("Hay una entrega de Cauce en curso en este adaptador; no se envió nada. Reintenta cauce_send cuando termine.");
     if (inFlight === undefined) throw new Error("Este adaptador no tiene una terminal compartida con un humano: fuera de una entrega no se envía nada.");
   }
 
@@ -85,7 +85,7 @@ export class EmissionRuntime {
     this.assertOutsideDeliveryAvailable();
     if (origin === "cauce") {
       throw new Error("Lo último que entró en esta terminal fue un pedido de Cauce, no de tu humano: fuera de una entrega"
-        + " sólo se envía lo que pide una persona en la TUI. No se envió nada.");
+        + " solo se envía lo que pide una persona en la TUI. No se envió nada.");
     }
     if (origin !== "human") {
       throw new Error("No pude confirmar en el registro de la terminal que el último pedido lo tecleó una persona; no se envió nada.");

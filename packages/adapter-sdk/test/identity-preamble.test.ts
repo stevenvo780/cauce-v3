@@ -98,7 +98,7 @@ test("identidad -> deber -> contrato, en ese orden, en los cinco harnesses", asy
       dutyAt < contractAt,
       `${definition.id}: el deber tiene que enmarcar el contrato, no seguirlo`,
     );
-    assert.match(stdin, /Sos "argos", un agente de la flota Cauce V3 del tenant "Steven"/u);
+    assert.match(stdin, /Eres "argos", un agente de la flota Cauce V3 del tenant "Steven"/u);
     assert.match(stdin, /Tu rol: Verificacion independiente, read-only\./u);
     assert.ok(stdin.includes(IDENTITY_END));
   }
@@ -107,7 +107,7 @@ test("identidad -> deber -> contrato, en ese orden, en los cinco harnesses", asy
 test("sin role_brief se emite la identidad pero nunca un rol inventado", async () => {
   const stdin = await stdinFor("identity-sin-rol", HARNESS_DEFINITIONS.claude, baseContext);
   assert.ok(stdin.includes(IDENTITY_BEGIN));
-  assert.match(stdin, /Sos "argos", un agente de la flota Cauce V3/u);
+  assert.match(stdin, /Eres "argos", un agente de la flota Cauce V3/u);
   assert.doesNotMatch(stdin, /Tu rol:/u);
 });
 
@@ -127,10 +127,10 @@ test("la identidad describe el mundo del agente y deja el mandato al deber prima
   );
 
   // What identity IS: how Cauce works, the limits of authority, whom to escalate to.
-  assert.match(identity, /Entre entregas no existís/u);
+  assert.match(identity, /Entre entregas no existes/u);
   assert.match(identity, /no dejes el turno abierto/u);
   assert.match(identity, /Comunicación no es autorización/u);
-  assert.match(identity, /escalá a zeus con el error textual crudo/u);
+  assert.match(identity, /escala a zeus con el error textual crudo/u);
 
   // The mandate lives only in the primary duty, which is director-specific for this context.
   assert.doesNotMatch(identity, /Esta entrega es TU trabajo/u);
@@ -157,7 +157,7 @@ test("un role_brief con tildes sobrevive el viaje por stdin hasta el harness", a
 test("el rol del alias gana a las lineas genericas, y solo cuando hay rol", async () => {
   const conRol = await stdinFor("identity-precedencia", HARNESS_DEFINITIONS.claude, {
     ...baseContext,
-    self_role: "Sos el DIRECTOR: decidí y actuá vos, no consultes salvo dinero o legal.",
+    self_role: "Eres el DIRECTOR: decide y actúa tú, no consultes salvo dinero o legal.",
   });
   const identidad = conRol.slice(
     conRol.indexOf(IDENTITY_BEGIN),
@@ -171,7 +171,7 @@ test("el rol del alias gana a las lineas genericas, y solo cuando hay rol", asyn
     "la precedencia tiene que cerrar el bloque, no abrirlo",
   );
 
-  assert.match(identidad, /Si algo SÓLO lo puede resolver un humano/u);
+  assert.match(identidad, /Si algo SOLO lo puede resolver un humano/u);
 
   const sinRol = await stdinFor("identity-precedencia-sin-rol", HARNESS_DEFINITIONS.claude, baseContext);
   assert.doesNotMatch(sinRol, /Tu rol manda sobre las líneas genéricas/u);

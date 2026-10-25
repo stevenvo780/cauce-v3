@@ -203,7 +203,7 @@ function isOpenClawIncompleteTurn(value: unknown): boolean {
 
 function incompleteOpenClawTurn(): StructuredOutput {
   return {
-    reply: "OpenClaw cerró el turno sin respuesta final. Algunas herramientas podrían haberse ejecutado; verificá los cambios antes de reintentar. [Cauce] non_deliverable_terminal_turn",
+    reply: "OpenClaw cerró el turno sin respuesta final. Algunas herramientas podrían haberse ejecutado; verifica los cambios antes de reintentar. [Cauce] non_deliverable_terminal_turn",
     messages: [],
     notify: [],
     status: "failed",

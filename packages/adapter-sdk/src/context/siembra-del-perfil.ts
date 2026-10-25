@@ -550,7 +550,7 @@ export function sembrarPerfilDelArnes(
       ficheros: generados.map((fichero) => ({
         nombre: fichero.nombre,
         estado: "no-se-pudo-escribir" as const,
-        motivo: `lote revisionado incompleto (falta ${faltan.join(", ")}); sólo el publicador durable puede completarlo`,
+        motivo: `lote revisionado incompleto (falta ${faltan.join(", ")}); solo el publicador durable puede completarlo`,
       })),
     };
   }
@@ -643,7 +643,7 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   const motivos = [...new Set(resultado.ficheros.flatMap((fichero) => (
     fichero.estado === "no-se-pudo-escribir" ? [`${fichero.nombre}: ${fichero.motivo}`]
       : fichero.estado === "delegado-al-publicador"
-        ? [`${fichero.nombre}: la proyección gestionada difiere; sólo el publicador durable puede cambiarla`]
+        ? [`${fichero.nombre}: la proyección gestionada difiere; solo el publicador durable puede cambiarla`]
         : []
   )))];
   return motivos.length === 0

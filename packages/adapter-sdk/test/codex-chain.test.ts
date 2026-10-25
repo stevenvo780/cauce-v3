@@ -117,7 +117,7 @@ test("codex: el turno que codex abre solo en modo goal continúa la cadena y su 
 
 test("codex: un mensaje del dueño que empieza con una etiqueta es del dueño, no un preámbulo de codex", () => {
   const silent = turnWith("t", [call("spawn_agent", { task_name: "w" }, "c1"), output("c1", '{"task_name":"/root/w"}')], null);
-  const owner: CodexLine[] = [{ type: "event_msg", payload: { type: "task_started", turn_id: "o" } }, userLine("o", "<b>hola</b> revisá esto")];
+  const owner: CodexLine[] = [{ type: "event_msg", payload: { type: "task_started", turn_id: "o" } }, userLine("o", "<b>hola</b> revisa esto")];
   assert.equal(port.wakePrompt?.([...silent, ...owner], "t"), undefined, "despertó encima del turno del dueño");
   assert.match(failure(port.findAnswer([...silent, ...owner], "t")), /alguien escribió/u);
 });
@@ -130,6 +130,6 @@ test("codex: un turno respondido no queda retenido por otro turno que todavía n
 test("codex: un spawn exitoso cuyo nombre contiene «error» no se toma por rechazado, y send_message también delega", () => {
   const spawned = turnWith("t", [call("spawn_agent", { task_name: "fix-error-x" }, "c1"), output("c1", '{"task_name":"/root/fix-error-x"}')], null);
   assert.equal(port.wakePrompt?.(spawned, "t")?.wakes, 0);
-  const messaged = turnWith("m", [call("send_message", { target: "w", message: "seguí" }, "c1"), output("c1", "")], null);
+  const messaged = turnWith("m", [call("send_message", { target: "w", message: "sigue" }, "c1"), output("c1", "")], null);
   assert.equal(port.wakePrompt(messaged, "m")?.wakes, 0);
 });

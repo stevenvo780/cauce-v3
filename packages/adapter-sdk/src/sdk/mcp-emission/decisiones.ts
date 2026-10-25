@@ -19,7 +19,7 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const PLANTILLA_ID = /^[a-z][a-z0-9_]{1,63}$/u;
 
 const RESPALDO_LLM: DecisionesRespaldo = {
-  decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resolvelo con tu propio razonamiento",
+  decision: "llm", valor: null, caer_a_llm: true, motivo: "No hubo decisión de Jev: resuélvelo con tu propio razonamiento",
 };
 
 /**
@@ -28,7 +28,7 @@ const RESPALDO_LLM: DecisionesRespaldo = {
  * tests compare them against the catalog).
  */
 export const RESPALDO_SIN_SERVICIO: Readonly<Record<string, DecisionesRespaldo>> = {
-  aprobacion_humana: { decision: "exige_aprobacion", valor: null, caer_a_llm: false, motivo: "Sin respuesta del servicio de decisiones: falla cerrado, pedí aprobación." },
+  aprobacion_humana: { decision: "exige_aprobacion", valor: null, caer_a_llm: false, motivo: "Sin respuesta del servicio de decisiones: falla cerrado, pide aprobación." },
   guardia_privacidad_jarvis: { decision: "bloquear", valor: null, caer_a_llm: false, motivo: "Sin respuesta del servicio de decisiones: falla cerrado, no lo compartas." },
 };
 
@@ -52,7 +52,7 @@ export const DECISIONES_TOOLS: Tool[] = [
   },
   {
     name: "decidir_plantilla",
-    description: "Decide con una plantilla del catálogo (mirá listar_plantillas) en segundos y por una fracción de centavo, sin gastar tokens de LLM. Devuelve decision, valor, confianza, senales y caer_a_llm: si caer_a_llm es true, decidí vos usando las senales como pista. Si devuelve error, aplicá su respaldo (siempre viene; en aprobacion_humana y guardia_privacidad_jarvis falla cerrado). Nunca pongas secretos en state; la identidad la pone el adaptador.",
+    description: "Decide con una plantilla del catálogo (mira listar_plantillas) en segundos y por una fracción de centavo, sin gastar tokens de LLM. Devuelve decision, valor, confianza, senales y caer_a_llm: si caer_a_llm es true, decide tú usando las senales como pista. Si devuelve error, aplica su respaldo (siempre viene; en aprobacion_humana y guardia_privacidad_jarvis falla cerrado). Nunca pongas secretos en state; la identidad la pone el adaptador.",
     inputSchema: {
       type: "object",
       properties: { plantilla: { type: "string" }, state: object, restringir: object },
@@ -142,7 +142,7 @@ export function decisionesForwarder(url: string | undefined, tls: DecisionesTls 
 export async function answerDecisiones(forwarder: DecisionesForwarder | undefined, operacion: unknown, argumentos: unknown): Promise<DecisionesRespuesta> {
   const respaldo = respaldoSinServicio(operacion, argumentos);
   if (forwarder === undefined) {
-    return withRespaldo(503, { error: "decisiones_no_configurado", mensaje: "Este adaptador no tiene servicio de decisiones: aplicá el respaldo" }, respaldo);
+    return withRespaldo(503, { error: "decisiones_no_configurado", mensaje: "Este adaptador no tiene servicio de decisiones: aplica el respaldo" }, respaldo);
   }
   let route: DecisionesRoute;
   try { route = decisionesRoute(operacion, argumentos); }
@@ -151,6 +151,6 @@ export async function answerDecisiones(forwarder: DecisionesForwarder | undefine
     const answer = await forwarder(route.method, route.path, route.body);
     return withRespaldo(answer.status, answer.body, respaldo);
   } catch {
-    return withRespaldo(503, { error: "decisiones_inalcanzable", mensaje: "No se pudo llegar al servicio de decisiones: aplicá el respaldo" }, respaldo);
+    return withRespaldo(503, { error: "decisiones_inalcanzable", mensaje: "No se pudo llegar al servicio de decisiones: aplica el respaldo" }, respaldo);
   }
 }

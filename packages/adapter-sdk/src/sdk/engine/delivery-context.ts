@@ -40,8 +40,8 @@ export function secretsPromptBlock(secrets: readonly MaterializedSecret[]): stri
   if (secrets.length === 0) return undefined;
   return [
     "Cauce te entregó credenciales selladas para este turno. Cada fichero contiene el valor en "
-    + "claro, es válido sólo para este turno, y su contenido NUNCA debe aparecer en tu respuesta, "
-    + "en un mensaje delegado, en un notify, en un commit ni en un log: nombrá el secreto por su "
+    + "claro, es válido solo para este turno, y su contenido NUNCA debe aparecer en tu respuesta, "
+    + "en un mensaje delegado, en un notify, en un commit ni en un log: nombra el secreto por su "
     + "id o su etiqueta, jamás por su valor.",
     ...secrets.map((secret, index) => `Secreto ${String(index + 1)}: ${JSON.stringify({
       id: secret.id, label: secret.label, path: secret.path,
@@ -76,11 +76,11 @@ function describeMedia(body: Record<string, unknown>, actorAlias: string): strin
   const sender = senderPhrase(body, actorAlias);
   const downloadable = Array.isArray(verified) && verified.length > 0;
   if (downloadable) {
-    return `${sender} ${detalle}, sin texto acompañante. Inspeccioná el adjunto local indicado abajo antes de responder.`;
+    return `${sender} ${detalle}, sin texto acompañante. Inspecciona el adjunto local indicado abajo antes de responder.`;
   }
-  return `${sender} ${detalle}, sin texto acompañante. No podés ver ni abrir el contenido del `
-    + `adjunto: sólo sabés que llegó y de qué tipo es. Respondé reconociendo lo que envió y pedile `
-    + `que describa en palabras lo que necesita, o explicale que todavía no podés procesar ese tipo `
+  return `${sender} ${detalle}, sin texto acompañante. No puedes ver ni abrir el contenido del `
+    + `adjunto: solo sabes que llegó y de qué tipo es. Responde reconociendo lo que envió y pídele `
+    + `que describa en palabras lo que necesita, o explicale que todavía no puedes procesar ese tipo `
     + `de archivo. No inventes lo que el adjunto pueda contener.`;
 }
 

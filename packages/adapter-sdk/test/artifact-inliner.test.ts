@@ -125,7 +125,7 @@ test("una ruta local dentro de messages[].artifacts se inlinea igual que la del 
   const path = await fileWith("delegado.png", PNG_BYTES);
   const entrada: StructuredOutput = {
     ...envelope([]),
-    messages: [{ to: "socrates", body: "seguí vos", artifacts: [{ name: "delegado.png", uri: path }] }],
+    messages: [{ to: "socrates", body: "sigue tú", artifacts: [{ name: "delegado.png", uri: path }] }],
   };
 
   const output = await inlineLocalArtifacts(entrada);
@@ -135,7 +135,7 @@ test("una ruta local dentro de messages[].artifacts se inlinea igual que la del 
   assert.match(enviado.uri, /^data:image\/png;base64,/u);
   assert.deepEqual(decodeDataUri(enviado.uri), PNG_BYTES);
   assert.equal(enviado.sha256, createHash("sha256").update(PNG_BYTES).digest("hex"));
-  assert.equal(output.messages[0]?.body, "seguí vos");
+  assert.equal(output.messages[0]?.body, "sigue tú");
 });
 
 test("el presupuesto agregado es UNO para el origen y la delegación juntos", async () => {

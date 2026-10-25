@@ -198,7 +198,7 @@ export function loadSharedSessionConfig(
   }
   if (!isSharedSessionHarness(harnessId)) {
     throw new Error(
-      `${SHARED_SESSION_ENV} sólo existe para claude, codex, grok y muse; '${harnessId}' no tiene sesión compartida`,
+      `${SHARED_SESSION_ENV} solo existe para claude, codex, grok y muse; '${harnessId}' no tiene sesión compartida`,
     );
   }
   alias = physicalAlias(alias, environment);

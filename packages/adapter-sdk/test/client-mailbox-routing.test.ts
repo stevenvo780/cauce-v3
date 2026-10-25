@@ -39,7 +39,7 @@ function code(expected: string): (error: unknown) => boolean {
 }
 
 test("parser accepts a direct message to an offline available client mailbox", () => {
-  const output = check([{ to: MAILBOX_ALIAS, body: "dejá esto para cuando vuelvas" }]);
+  const output = check([{ to: MAILBOX_ALIAS, body: "deja esto para cuando vuelvas" }]);
   assert.equal(output.messages[0]?.to, MAILBOX_ALIAS);
 });
 
@@ -165,7 +165,7 @@ test("mailbox authorization uses the exact marker schema and requires offline st
 test("mailbox metadata fits the existing fleet envelope budget", () => {
   const targets = ["argos", "atlas", "gaia", "hegel", "heraclito", "iza", "janus", "jarvis", "kant", "kratos", "salva", "socrates"]
     .map(alias => ({ tenant_id: "Steven", alias, online: true }));
-  const prompt = protocolPrompt("Revisa el estado del gateway y decime si hay entregas muertas.", undefined, {
+  const prompt = protocolPrompt("Revisa el estado del gateway y dime si hay entregas muertas.", undefined, {
     self_alias: "zeus", sender_alias: "argos", tenant_id: "Steven", room_id: "grp.steven", channel: "telegram",
     agent_message: true, message_type: "agent.message", self_role: "R".repeat(1200),
     routing_targets: [...targets, { tenant_id: "Steven", alias: MAILBOX_ALIAS, online: false,
