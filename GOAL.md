@@ -266,6 +266,7 @@ Verificado por contenido (Haiku/Sonnet + revisión Opus 5.5): trabajo valioso qu
     - Al reabrir la salida se publicó sola en 4 s, en el intento 7. GitHub tiene el commit con el contenido exacto.
     - Durante el reinicio del gateway, la consola tampoco dio por guardada una operación sin confirmar ni la repitió a ciegas.
     - Defecto encontrado: el historial y el commit atribuyen el cambio al alias principal de la sesión (`kant`), no a la persona (c6, grok-2).
+  - **25-oct [local real]:** espacio estándar para los diez agentes V3 (`.delegados/v4/espacio-estandar.sh`, 5dcb70e7). Simula por defecto, aplica a un alias con recibo y revierte con ese recibo, conservando datos y enlaces. Dos ensayos completos seguidos en verde en docker-lab, con una unidad de contenedor y otra nativa: aplicar, turno y revertir (8/8). `--simular` contra producción termina sin escrituras para los diez. Falta la ventana nocturna en producción, alias por alias; la prepara s2c (codex-4). Astra espera el drop-in `KillMode=process` (t3b) y Kant va el último.
 
 - [x] **7. Copias, recuperación y diagnóstico comprobados.** Se puede descargar una copia del contenido de un espacio y restaurarla en un entorno de prueba. Los fallos relevantes dejan un rastro útil para encontrar su causa. La eliminación de componentes de auditoría innecesarios no ha roto funciones ni suprimido controles necesarios.
   - [x] [local real] Restauración en entorno de prueba con datos sintéticos.
