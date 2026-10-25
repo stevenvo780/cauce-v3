@@ -379,7 +379,7 @@ export async function startComputerHarness(options: {
     const work = await mkdtemp(join(options.workRoot ?? '/tmp', `${prefix}-`)); owned.work = work;
     await chmod(work, 0o755); await mkdir(join(work, 'install'));
     const tree = join(work, 'tree'); await mkdir(tree);
-    const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-c', '-o', '--exclude-standard', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
+    const tracked = (await execute('git', ['-C', ROOT, 'ls-files', '-z', '--', ...TREE])).stdout.split('\0').filter(Boolean);
     const deleted = new Set((await execute('git', ['-C', ROOT, 'ls-files', '--deleted', '-z', '--', ...TREE])).stdout.split('\0'));
     const extra = options.extraSourceFiles ?? [];
     if (extra.some(part => part.includes('..') || !TREE.some(root => part.startsWith(`${root}/`)))) {
