@@ -256,8 +256,11 @@ def fleet_harnesses(policy: dict) -> dict:
 
 
 def runtime_candidates(policy: dict) -> list[dict]:
+    from fleet_executor_probe_cache import executor_code_sha256, measured_capability
+
     runtimes = []
     measured = {}
+    code_sha256 = executor_code_sha256()
     eligible = fleet_harnesses(policy)
     fields = ('runtime_user', 'systemd_user', 'home_directory', 'state_root')
     for mode, name, candidate in ([('native', None, row) for row in policy['native']] +
@@ -300,8 +303,8 @@ def runtime_candidates(policy: dict) -> list[dict]:
                     for row in templates + profiles:
                         key = json.dumps([row, candidate if mode == 'container' else None], sort_keys=True)
                         if key not in measured:
-                            measure_container = getattr(module, 'measured_container_definition', None) if mode == 'container' else None
-                            measured[key] = measure_container(row, candidate) if measure_container else module.measured_definition(row)
+                            measured[key] = measured_capability(policy, row, candidate if mode == 'container' else None,
+                                                               harness, module, code_sha256)
                         approved = approved or measured[key]
                     if not approved:
                         continue

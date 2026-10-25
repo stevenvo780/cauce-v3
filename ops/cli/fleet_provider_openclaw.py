@@ -378,7 +378,7 @@ def pinned_packet(packet: dict) -> dict:
     return {**packet, 'profile_binding': {**binding, 'command_files': pins}}
 
 
-def measured_definition(binding: dict) -> bool:
+def measured_definition(binding: dict, *, strict: bool = False) -> bool:
     import tempfile
 
     from fleet_provider_identity import command_output, provider_command
@@ -391,13 +391,15 @@ def measured_definition(binding: dict) -> bool:
             version = command_output([binding['openclaw']['node_command'], command, '--version'], packet, timeout=5).decode().strip()
             return version in {VERSION, 'OpenClaw ' + VERSION, 'OpenClaw ' + VERSION + ' (0790d9f)'}
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        if strict:
+            raise
         return False
 
 
-def measured_container_definition(binding: dict, placement: dict) -> bool:
+def measured_container_definition(binding: dict, placement: dict, *, strict: bool = False) -> bool:
+    from fleet_provider_capability_probe import container_probe
     from fleet_provider_identity import provider_command
 
-    name = 'cauce-openclaw-probe-' + uuid.uuid4().hex
     try:
         validate_definition(binding.get('openclaw'), binding.get('provider'))
         if re.fullmatch(r'sha256:[a-f0-9]{64}', placement.get('image', '')) is None:
@@ -406,24 +408,11 @@ def measured_container_definition(binding: dict, placement: dict) -> bool:
         bridge = provider_command({'profile_binding': {'command': driver['bridge'], 'command_sha256': driver['bridge_sha256']}})
         if ':' in bridge or ':' in str(pathlib.Path(__file__).resolve().parent):
             return False
-        program = ('import json,sys;sys.path.insert(0,"/cauce/executor");'
-                   'from fleet_provider_openclaw import measured_definition;'
-                   'sys.exit(0 if measured_definition(json.load(sys.stdin)) else 1)')
-        result = subprocess.run(['/usr/bin/docker', 'run', '--rm', '--pull=never', '--name', name, '-i',
-            '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-            '--tmpfs', '/tmp:rw,nosuid,nodev,size=32m', '--user', placement['runtime_user'],
-            '--volume', f'{pathlib.Path(__file__).resolve().parent}:/cauce/executor:ro,z',
-            '--volume', f'{bridge}:{bridge}:ro,z',
-            '--entrypoint', placement['python'], placement['image'], '-I', '-B', '-c', program],
-            input=json.dumps(binding).encode(), capture_output=True, timeout=15, check=False)
-        return result.returncode == 0
+        return container_probe(binding, placement, 'openclaw', tmpfs_size='32m', volumes=(f'{bridge}:{bridge}:ro,z',))
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        if strict:
+            raise
         return False
-    finally:
-        try:
-            subprocess.run(['/usr/bin/docker', 'rm', '-f', name], capture_output=True, timeout=5, check=False)
-        except (OSError, subprocess.SubprocessError):
-            pass
 
 
 def claude_identity(packet: dict) -> str | None:

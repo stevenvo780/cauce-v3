@@ -6,7 +6,6 @@ import pathlib
 import re
 import subprocess
 import urllib.request
-import uuid
 
 from fleet_provider_identity import (
     matching_identity,
@@ -63,7 +62,7 @@ def direct_login(binding: dict) -> bool:
         and login.get('sha256') == binding.get('command_sha256')
 
 
-def measured_definition(binding: dict) -> bool:
+def measured_definition(binding: dict, *, strict: bool = False) -> bool:
     import tempfile
 
     from fleet_provider_identity import command_output, provider_command
@@ -80,33 +79,22 @@ def measured_definition(binding: dict) -> bool:
             version = command_output([provider_command(packet), '--version'], packet, timeout=20).decode().strip()
             return version == 'grok ' + VERSION or version.startswith('grok ' + VERSION + ' ')
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, UnicodeError):
+        if strict:
+            raise
         return False
 
 
-def measured_container_definition(binding: dict, placement: dict) -> bool:
-    name = 'cauce-grok-probe-' + uuid.uuid4().hex
+def measured_container_definition(binding: dict, placement: dict, *, strict: bool = False) -> bool:
+    from fleet_provider_capability_probe import container_probe
+
     try:
         if not direct_login(binding) or re.fullmatch(r'sha256:[a-f0-9]{64}', placement.get('image', '')) is None:
             return False
-        if ':' in str(pathlib.Path(__file__).resolve().parent):
-            return False
-        program = ('import json,sys;sys.path.insert(0,"/cauce/executor");'
-                   'from fleet_provider_grok import measured_definition;'
-                   'sys.exit(0 if measured_definition(json.load(sys.stdin)) else 1)')
-        result = subprocess.run(['/usr/bin/docker', 'run', '--rm', '--pull=never', '--name', name, '-i',
-            '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-            '--tmpfs', '/tmp:rw,nosuid,nodev,size=64m', '--user', placement['runtime_user'],
-            '--volume', f'{pathlib.Path(__file__).resolve().parent}:/cauce/executor:ro,z',
-            '--entrypoint', placement['python'], placement['image'], '-I', '-B', '-c', program],
-            input=json.dumps(binding).encode(), capture_output=True, timeout=40, check=False)
-        return result.returncode == 0
+        return container_probe(binding, placement, 'grok', tmpfs_size='64m')
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        if strict:
+            raise
         return False
-    finally:
-        try:
-            subprocess.run(['/usr/bin/docker', 'rm', '-f', name], capture_output=True, timeout=5, check=False)
-        except (OSError, subprocess.SubprocessError):
-            pass
 
 
 def fetch_userinfo(access_token: str) -> dict:
