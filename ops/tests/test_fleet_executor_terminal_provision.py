@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -14,6 +15,7 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import fleet_executor_terminal as terminal
+import fleet_executor_terminal_files as terminal_files
 import fleet_executor_terminal_inventory as terminal_inventory
 import fleet_executor_terminal_manager as manager
 import fleet_executor_terminal_provision as provision
@@ -28,6 +30,51 @@ from test_export_fleet_snapshot import membership, source
 
 
 class TerminalProvisionFilesTest(unittest.TestCase):
+    def test_existing_executor_owned_shared_parents_lose_only_group_write_through_their_descriptor(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-terminal-shared-', dir='/var/tmp') as temporary:
+            root = pathlib.Path(temporary)
+            config = root / '.config'
+            config.mkdir(mode=0o700)
+            config.chmod(0o2775)
+            for relative in ('.config/cauce-v3', '.config/systemd/user'):
+                with mock.patch.object(terminal_files.os, 'fchmod', wraps=os.fchmod) as chmod:
+                    leaf = directory(root, relative, private=False)
+                self.assertEqual(config.stat().st_mode & 0o7777, 0o2755)
+                self.assertEqual(leaf.stat().st_mode & 0o777, 0o700)
+                if relative == '.config/cauce-v3':
+                    chmod.assert_called_once()
+                    self.assertEqual(chmod.call_args.args[1] & 0o7777, 0o2755)
+            leaf.chmod(0o750)
+            with self.assertRaises(SafeFailure):
+                directory(root, '.config/systemd/user')
+
+    def test_unsafe_existing_parents_are_never_repaired(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-terminal-unsafe-', dir='/var/tmp') as temporary:
+            root = pathlib.Path(temporary)
+            unsafe = root / '.config'
+            unsafe.mkdir(mode=0o700)
+            unsafe.chmod(0o777)
+            with mock.patch.object(terminal_files.os, 'fchmod') as chmod, self.assertRaises(SafeFailure):
+                directory(root, '.config/cauce-v3', private=False)
+            chmod.assert_not_called()
+            self.assertEqual(unsafe.stat().st_mode & 0o777, 0o777)
+            unsafe.chmod(0o775)
+            original_fstat = os.fstat
+
+            def foreign_owner(descriptor):
+                details = original_fstat(descriptor)
+                return mock.Mock(st_uid=os.geteuid() + 1, st_mode=details.st_mode) if details.st_ino == unsafe.stat().st_ino else details
+
+            with mock.patch.object(terminal_files.os, 'fstat', side_effect=foreign_owner), \
+                    mock.patch.object(terminal_files.os, 'fchmod') as chmod, self.assertRaises(SafeFailure):
+                directory(root, '.config/cauce-v3', private=False)
+            chmod.assert_not_called()
+            (root / 'link').symlink_to(unsafe, target_is_directory=True)
+            with mock.patch.object(terminal_files.os, 'fchmod') as chmod, self.assertRaises(OSError):
+                directory(root, 'link/child', private=False)
+            chmod.assert_not_called()
+            self.assertEqual(unsafe.stat().st_mode & 0o777, 0o775)
+
     def test_private_hierarchy_and_atomic_modes_ignore_a_group_writable_umask(self):
         with tempfile.TemporaryDirectory(prefix='cauce-terminal-files-', dir='/var/tmp') as temporary:
             root = pathlib.Path(temporary)
@@ -48,6 +95,47 @@ class TerminalProvisionFilesTest(unittest.TestCase):
             (root / 'link').symlink_to(leaf, target_is_directory=True)
             with self.assertRaises(OSError):
                 directory(root, 'link/child')
+
+
+class TerminalPublicationTest(unittest.TestCase):
+    def test_removal_is_saved_before_effect_and_replays_only_absence_or_the_backed_up_contents(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-terminal-removal-', dir='/var/tmp') as temporary:
+            root = pathlib.Path(temporary)
+            work = directory(root, 'work')
+            filename = root / '20-cauce-release.conf'
+            raw = b'[Service]\nExecStart=/approved/launcher %i\n'
+            write_file(filename, raw, 0o644)
+            entry = {'files': {}}
+            observed = []
+
+            def save():
+                observed.append(filename.exists())
+
+            provision.publication(entry, filename, None, 0o644, work, save)
+            self.assertEqual(observed, [True])
+            self.assertFalse(filename.exists())
+            pin = entry['files'][str(filename)]
+            self.assertIsNone(pin['sha256'])
+            self.assertEqual(pin['owned'], [None])
+            self.assertEqual(pin['previous'], hashlib.sha256(raw).hexdigest())
+            self.assertEqual(read_file(pathlib.Path(pin['backup']), 0o600), raw)
+            provision.publication(entry, filename, None, 0o644, work, save)
+            write_file(filename, raw, 0o644)
+            provision.publication(entry, filename, None, 0o644, work, save)
+            self.assertFalse(filename.exists())
+            foreign = b'[Service]\nExecStart=/foreign/launcher\n'
+            write_file(filename, foreign, 0o644)
+            with self.assertRaises(SafeFailure):
+                provision.publication(entry, filename, None, 0o644, work, save)
+            self.assertEqual(read_file(filename, 0o644), foreign)
+
+    def test_removing_an_already_absent_file_does_not_claim_ownership(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-terminal-absent-', dir='/var/tmp') as temporary:
+            root = pathlib.Path(temporary)
+            entry, save = {'files': {}}, mock.Mock()
+            provision.publication(entry, root / 'absent.conf', None, 0o644, root, save)
+            self.assertEqual(entry, {'files': {}})
+            save.assert_not_called()
 
 
 class TerminalVerifiedInventoryTest(unittest.TestCase):
@@ -239,6 +327,78 @@ class TerminalPresenceTest(unittest.TestCase):
                 manager.pin_unit(unit, root, b'canonical', agent=agent)
 
 
+class TerminalLegacyUnitTest(unittest.TestCase):
+    def pin_legacy(self, *, raw=None, published_template=None, identity=None, filename='20-cauce-release.conf',
+                   shared=False, fragment=None, validated=True):
+        root = pathlib.Path('/fixture/systemd')
+        unit = 'cauce-v3-pty@logical.service'
+        release = pathlib.Path('/fixture/pty-releases') / ('d' * 64)
+        template = b'[Service]\nExecStart=/legacy/generic-launcher %i\n'
+        dropin = root / (('cauce-v3-pty@.service' if shared else unit) + '.d') / filename
+        selector = ('[Service]\nEnvironment=CAUCE_PTY_OPS_ROOT=' + str(release) + '\n'
+                    'Environment=CAUCE_PTY_AGENT_VERSION=' + 'd' * 64 + '\nExecStart=\nExecStart=' +
+                    str(release / 'pty-agent/cauce-pty-launcher.sh') + ' %i\n').encode()
+        raw = selector if raw is None else raw(selector, release)
+        row = {'LoadState': 'loaded', 'FragmentPath': str(root / 'cauce-v3-pty@.service') if fragment is None else str(fragment),
+               'DropInPaths': str(dropin)}
+        files = {pathlib.Path(row['FragmentPath']): template, dropin: raw,
+                 release / 'pty-agent/systemd/cauce-v3-pty@.service': template if published_template is None else published_template}
+        rollout = mock.Mock()
+        rollout.RolloutError = RuntimeError
+        worker = rollout.ManagerWorker.return_value
+
+        def validate(version):
+            if not validated or version != 'd' * 64:
+                raise RuntimeError('fixture release rejected')
+            selected = {'tenant': 'Steven', 'alias': 'logical', 'container': 'physical-container', **(identity or {})}
+            return release, mock.Mock(aliases={'logical': selected})
+
+        worker.validate_release.side_effect = validate
+        with mock.patch.object(manager, 'properties', return_value=row), \
+                mock.patch.object(manager, 'checked_file', side_effect=lambda path, **_options: files[path]), \
+                mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_mode=0o100644)), \
+                mock.patch.dict(sys.modules, {'rollout_pty_lib': rollout}):
+            result = manager.pin_unit(unit, root, b'[Service]\nExecStart=/new/launcher %i\n',
+                                      agent={'tenant_id': 'Steven', 'alias': 'logical', 'runtime_key': 'physical',
+                                             'container_name': 'physical-container'})
+        worker.validate_release.assert_called_once_with('d' * 64)
+        self.assertEqual(result, {**row, 'legacy_dropins': [{'path': str(dropin), 'sha256': hashlib.sha256(raw).hexdigest(), 'mode': 0o644}]})
+        return result
+
+    def test_generic_template_and_instance_execution_selector_are_adopted_only_from_the_validated_release(self):
+        self.pin_legacy()
+        self.pin_legacy(raw=lambda raw, _release: raw.split(b'ExecStart=')[0])
+
+    def test_foreign_commands_extra_arguments_and_unapproved_fields_are_rejected(self):
+        for change in (lambda raw, release: raw.replace(str(release / 'pty-agent/cauce-pty-launcher.sh').encode(), b'/foreign/launcher'),
+                       lambda raw, _release: raw.replace(b' %i', b' %i --foreign'),
+                       lambda raw, _release: raw + b'Environment=OTHER=1\n',
+                       lambda raw, _release: raw + b'Environment=CAUCE_PTY_AGENT_VERSION=' + b'd' * 64 + b'\n',
+                       lambda raw, _release: b'\n'.join(line for line in raw.splitlines() if not line.startswith(b'Environment=CAUCE_PTY_OPS_ROOT=')),
+                       lambda raw, _release: raw + b'User=foreign\n',
+                       lambda raw, _release: raw + b'ExecStart=/foreign/launcher\n',
+                       lambda raw, _release: raw.replace(b'ExecStart=\n', b'', 1),
+                       lambda raw, release: raw.replace(('CAUCE_PTY_OPS_ROOT=' + str(release)).encode(), b'CAUCE_PTY_OPS_ROOT=/foreign'),
+                       lambda raw, _release: raw.replace(b'CAUCE_PTY_AGENT_VERSION=' + b'd' * 64, b'CAUCE_PTY_AGENT_VERSION=' + b'e' * 64)):
+            with self.subTest(change=change), self.assertRaises(SafeFailure):
+                self.pin_legacy(raw=change)
+
+    def test_unverified_releases_templates_identity_and_shared_execution_overrides_are_rejected(self):
+        for options in ({'validated': False}, {'published_template': b'foreign template'},
+                        {'identity': {'tenant': 'Foreign'}}, {'identity': {'alias': 'foreign'}},
+                        {'identity': {'container': 'foreign-container'}}, {'shared': True},
+                        {'filename': '10-custom.conf'}, {'fragment': pathlib.Path('/fixture/systemd/cauce-v3-pty@logical.service')}):
+            with self.subTest(options=options), self.assertRaises(SafeFailure):
+                self.pin_legacy(**options)
+
+    def test_a_noncanonical_generic_template_without_a_release_selector_still_fails_closed(self):
+        row = {'LoadState': 'loaded', 'FragmentPath': '/fixture/systemd/cauce-v3-pty@.service', 'DropInPaths': ''}
+        with mock.patch.object(manager, 'properties', return_value=row), \
+                mock.patch.object(manager, 'checked_file', return_value=b'legacy template'), self.assertRaises(SafeFailure):
+            manager.pin_unit('cauce-v3-pty@logical.service', pathlib.Path('/fixture/systemd'), b'canonical',
+                             agent={'runtime_key': 'physical'})
+
+
 class TerminalProvisionTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -307,6 +467,111 @@ class TerminalProvisionTest(unittest.TestCase):
 
     def ensure(self):
         return provision.ensure_terminal(self.policy, self.context, self.agent, self.generation, self.journal, self.save)
+
+    def legacy_channel(self):
+        work = directory(self.root, 'legacy-csr')
+        request = provision.prepare_request(work, self.agent['runtime_key'], {}, self.save)
+        issued = self.issue(self.policy, self.context, self.agent, request.decode(), 'fixture')
+        selected = self.agent['alias']
+        pki = directory(self.home, '.config/cauce-v3/pty-pki/' + selected)
+        for name, raw, mode in [('client.key', read_file(work / 'client.key', 0o600), 0o600),
+                                ('client.crt', issued['certificate_pem'].encode(), 0o600),
+                                ('ca.crt', issued['ca_pem'].encode(), 0o600),
+                                ('alias-key.hex', (issued['alias_key_hex'] + '\n').encode(), 0o400)]:
+            write_file(pki / name, raw, mode)
+        env_root = directory(self.home, '.config/cauce-v3/pty')
+        values = {'RELAY_HOST': issued['relay_host'], 'RELAY_PORT': str(issued['relay_port']), 'PKI_DIR': str(pki),
+                  'ALIAS_KEY_FILE': str(pki / 'alias-key.hex'), 'CONTAINER_RUNTIME_DIR': '/run'}
+        write_file(env_root / (selected + '.env'), ''.join(name + '=' + value + '\n' for name, value in values.items()).encode(), 0o600)
+        unit = 'cauce-v3-pty@' + selected + '.service'
+        unit_root = directory(self.home, '.config/systemd/user', private=False)
+        generic = unit_root / 'cauce-v3-pty@.service'
+        write_file(generic, b'[Service]\nExecStart=/legacy/generic-launcher %i\n', 0o644)
+        dropins = directory(unit_root, unit + '.d', private=False)
+        legacy = dropins / '20-cauce-release.conf'
+        release = self.home / '.local/share/cauce-v3/pty-releases' / ('d' * 64)
+        raw = ('[Service]\nEnvironment=CAUCE_PTY_OPS_ROOT=' + str(release) + '\nEnvironment=CAUCE_PTY_AGENT_VERSION=' +
+               'd' * 64 + '\nExecStart=\nExecStart=' + str(release / 'pty-agent/cauce-pty-launcher.sh') + ' %i\n').encode()
+        write_file(legacy, raw, 0o644)
+        self.mocks[5].return_value = {'active': True, 'enabled': True}
+        self.mocks[4].side_effect = lambda *_args, **_options: {'LoadState': 'loaded', **({'legacy_dropins': [
+            {'path': str(legacy), 'sha256': hashlib.sha256(raw).hexdigest(), 'mode': 0o644}]} if legacy.exists() else {})}
+        return pki, generic, legacy, raw
+
+    def test_registered_legacy_channel_is_adopted_replayed_and_rolled_back_without_reissuing(self):
+        pki, generic, legacy, raw = self.legacy_channel()
+        private = pki / 'client.key'
+        before = private.read_bytes(), private.stat().st_ino
+        generic_before = generic.read_bytes()
+        metadata = self.home / '.config/cauce-v3/pty/same_alias.migration.json'
+        self.assertFalse(metadata.exists())
+        evidence = self.ensure()
+        self.assertTrue(evidence['reused'])
+        self.assertEqual(evidence['terminal_certificate_sha256'], self.issued['certificate_sha256'])
+        self.assertFalse(legacy.exists())
+        self.assertEqual((private.read_bytes(), private.stat().st_ino), before)
+        self.assertEqual(generic.read_bytes(), generic_before)
+        instance = generic.with_name(evidence['unit'])
+        self.assertEqual(instance.read_bytes(), self.template)
+        document = json.loads(read_file(metadata, 0o600))
+        self.assertEqual(document['runtime_key'], self.agent['runtime_key'])
+        self.assertEqual(document['client_cert_sha256'], self.issued['certificate_sha256'])
+        pin = self.journal['terminal_provision']['physical-one']['files'][str(legacy)]
+        self.assertIsNone(pin['sha256'])
+        self.assertIn(None, pin['owned'])
+        self.assertEqual(read_file(pathlib.Path(pin['backup']), 0o600), raw)
+        self.assertTrue(self.ensure()['terminal_verified'])
+        self.generation = self.generation.with_name('e' * 64)
+        self.assertTrue(self.ensure()['terminal_verified'])
+        self.issue_mock.assert_not_called()
+        provision.rollback_terminal(self.policy, self.context, self.agent, self.journal, self.save)
+        self.revoke_mock.assert_not_called()
+        self.assertEqual(read_file(legacy, 0o644), raw)
+        self.assertFalse(instance.exists())
+        self.assertFalse(metadata.exists())
+        self.assertEqual(generic.read_bytes(), generic_before)
+        self.assertEqual((private.read_bytes(), private.stat().st_ino), before)
+        self.assertIn(mock.call('start', evidence['unit']), self.systemctl.call_args_list)
+        self.assertEqual(provision.rollback_terminal(self.policy, self.context, self.agent, self.journal, self.save),
+                         {'terminal_rollback_verified': True})
+
+    def test_legacy_certificate_registry_identity_cannot_be_borrowed(self):
+        pki, _generic, _legacy, _raw = self.legacy_channel()
+        for field, value in [('tenant_id', 'Foreign'), ('alias', 'foreign'), ('fingerprint_sha256', 'f' * 64)]:
+            records = [{**self.records[0], field: value}]
+            with self.subTest(field=field), self.assertRaises(SafeFailure):
+                provision.existing_pair(pki, self.agent, records)
+
+    def test_rollback_never_replaces_a_removed_legacy_dropin_recreated_by_another_writer(self):
+        _pki, _generic, legacy, _raw = self.legacy_channel()
+        self.ensure()
+        foreign = b'[Service]\nExecStart=/foreign/launcher\n'
+
+        def change_after_observation(*arguments):
+            if arguments[0] == 'stop':
+                write_file(legacy, foreign, 0o644)
+            return ''
+
+        self.systemctl.side_effect = change_after_observation
+        with self.assertRaises(SafeFailure):
+            provision.rollback_terminal(self.policy, self.context, self.agent, self.journal, self.save)
+        self.assertEqual(read_file(legacy, 0o644), foreign)
+        self.assertFalse(self.journal['terminal_provision']['physical-one'].get('rolled_back', False))
+
+    def test_provision_failure_keeps_its_safe_cause_in_one_sanitized_journal_line(self):
+        cause = SafeFailure('terminal existing unit is not the canonical template')
+        with mock.patch.object(provision, '_ensure', side_effect=cause), mock.patch.object(sys, 'stderr', new_callable=io.StringIO) as stderr, \
+                self.assertRaisesRegex(SafeFailure, '^terminal provisioning failed$'):
+            self.ensure()
+        self.assertIn(str(cause), stderr.getvalue())
+        cause = SafeFailure('terminal invalid /fixture/private/profile token=FIXTURE_SECRET_VALUE\nforged\rjournal')
+        with mock.patch.object(provision, '_ensure', side_effect=cause), mock.patch.object(sys, 'stderr', new_callable=io.StringIO) as stderr, \
+                self.assertRaises(SafeFailure):
+            self.ensure()
+        self.assertIn('terminal invalid', stderr.getvalue())
+        for hidden in ('/fixture/private/profile', 'FIXTURE_SECRET_VALUE', '\r'):
+            self.assertNotIn(hidden, stderr.getvalue())
+        self.assertEqual(len(stderr.getvalue().splitlines()), 1)
 
     def test_new_channel_has_private_material_physical_storage_and_an_acknowledged_unit(self):
         previous = os.umask(0o002)

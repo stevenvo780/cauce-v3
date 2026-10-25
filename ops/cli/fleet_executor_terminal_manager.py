@@ -68,22 +68,49 @@ def unit_state(unit: str, root: pathlib.Path) -> dict:
     return {'active': row.get('ActiveState') == 'active', 'enabled': row.get('UnitFileState', '').startswith('enabled')}
 
 
+def legacy_selector(filename: pathlib.Path, values: dict, commands: list[str], unit: str, root: pathlib.Path,
+                    agent: dict) -> tuple[pathlib.Path, bytes]:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
+    try:
+        from rollout_pty_lib import ManagerWorker, RolloutError
+        try:
+            published, fleet = ManagerWorker('server').validate_release(values.get('CAUCE_PTY_AGENT_VERSION', ''))
+        except RolloutError:
+            raise SafeFailure('terminal legacy immutable release is unverified') from None
+        if set(values) != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION'} \
+                or pathlib.Path(values['CAUCE_PTY_OPS_ROOT']) != published or filename.name >= 'zz-fleet-terminal.conf':
+            raise SafeFailure('terminal legacy selector is outside its immutable published release')
+        if commands and (filename != root / (unit + '.d') / '20-cauce-release.conf'
+                         or len(commands) != 2 or commands[0] != ''
+                         or shlex.split(commands[1]) != [str(published / 'pty-agent/cauce-pty-launcher.sh'), '%i']):
+            raise SafeFailure('terminal legacy execution differs from its immutable published launcher')
+        selected = fleet.aliases.get(unit.split('@', 1)[1][:-len('.service')])
+        if selected is None or selected['tenant'] != agent['tenant_id'] \
+                or selected.get('alias', agent['alias']) != agent['alias'] or selected['container'] != agent['container_name']:
+            raise SafeFailure('terminal legacy unit belongs to another physical or wire identity')
+        return published, checked_file(published / 'pty-agent/systemd/cauce-v3-pty@.service')
+    finally:
+        del sys.path[0]
+
+
 def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: bytes | None = None, *, agent: dict) -> dict:
     row = properties(unit, root)
     if row.get('LoadState') == 'not-found':
         return row
     fragment = pathlib.Path(row['FragmentPath'])
-    if checked_file(fragment) != body:
-        raise SafeFailure('terminal existing unit is not the canonical template')
+    fragment_body = checked_file(fragment)
+    legacy_templates, legacy_dropins = [], []
     for name in row.get('DropInPaths', '').split():
         filename = pathlib.Path(name)
         raw = checked_file(filename)
         managed = filename.name == 'zz-fleet-terminal.conf'
-        if any(line and not line.startswith((b'#', b';', b'Environment=')) and line != b'[Service]'
+        if any(line and not line.startswith((b'#', b';', b'Environment=', b'ExecStart=')) and line != b'[Service]'
                for line in raw.splitlines()):
             raise SafeFailure('terminal unit drop-in changes more than its approved environment')
-        values = {}
+        values, commands = {}, []
         for line in raw.decode().splitlines():
+            if line.startswith('ExecStart='):
+                commands.append(line[len('ExecStart='):])
             if line.startswith('Environment='):
                 for assignment in shlex.split(line[len('Environment='):]):
                     key, separator, value = assignment.partition('=')
@@ -94,6 +121,8 @@ def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: byte
                     if not separator or key in values or key not in allowed:
                         raise SafeFailure('terminal legacy selector has unapproved environment fields')
                     values[key] = value
+        if commands and (managed or not values):
+            raise SafeFailure('terminal unit drop-in changes more than its approved environment')
         if managed and (set(values) - {'CAUCE_PTY_FLEET_SHARED_TUI'} != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION', 'CAUCE_PTY_FLEET_STATE',
                                       'CAUCE_PTY_FLEET_GENERATION', 'CAUCE_PTY_FLEET_RUNTIME_KEY',
                                       'CAUCE_PTY_FLEET_IDENTITY', 'CAUCE_PTY_FLEET_HOST'}
@@ -117,22 +146,16 @@ def pin_unit(unit: str, root: pathlib.Path, body: bytes, expected_selector: byte
                 if expected_selector is not None and raw != expected_selector:
                     raise SafeFailure('terminal unit selector differs from its approved placement')
                 continue
-            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
-            try:
-                from rollout_pty_lib import ManagerWorker, RolloutError
-                worker = ManagerWorker('server')
-                try:
-                    published, fleet = worker.validate_release(values.get('CAUCE_PTY_AGENT_VERSION', ''))
-                except RolloutError:
-                    raise SafeFailure('terminal legacy immutable release is unverified') from None
-                if ops != published or filename.name >= 'zz-fleet-terminal.conf':
-                    raise SafeFailure('terminal legacy selector is outside its immutable published release')
-                selected = fleet.aliases.get(unit.split('@', 1)[1][:-len('.service')])
-                if selected is None or selected['tenant'] != agent['tenant_id'] \
-                        or selected.get('alias', agent['alias']) != agent['alias'] or selected['container'] != agent['container_name']:
-                    raise SafeFailure('terminal legacy unit belongs to another physical or wire identity')
-            finally:
-                del sys.path[0]
+            _, legacy_body = legacy_selector(filename, values, commands, unit, root, agent)
+            legacy_templates.append(legacy_body)
+            if filename.parent == root / (unit + '.d'):
+                legacy_dropins.append({'path': str(filename), 'sha256': hashlib.sha256(raw).hexdigest(),
+                                       'mode': stat.S_IMODE(filename.stat(follow_symlinks=False).st_mode)})
+    template = root / (unit.split('@', 1)[0] + '@.service')
+    if fragment_body != body and (expected_selector is not None or fragment != template or fragment_body not in legacy_templates):
+        raise SafeFailure('terminal existing unit is not the canonical template')
+    if legacy_dropins:
+        row = {**row, 'legacy_dropins': legacy_dropins}
     return row
 
 

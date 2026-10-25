@@ -9,6 +9,7 @@ import pwd
 import re
 import ssl
 import subprocess
+import sys
 import uuid
 
 from fleet_executor_authority import call, inventory, scope_for, validate_authority
@@ -71,9 +72,9 @@ def read_environment(filename: pathlib.Path) -> dict:
     return values
 
 
-def publication(entry: dict, filename: pathlib.Path, raw: bytes, mode: int, work: pathlib.Path, save, *, advance: bool = False) -> None:
+def publication(entry: dict, filename: pathlib.Path, raw: bytes | None, mode: int, work: pathlib.Path, save, *, advance: bool = False) -> None:
     key = str(filename)
-    expected = hashlib.sha256(raw).hexdigest()
+    expected = hashlib.sha256(raw).hexdigest() if raw is not None else None
     previous = entry['files'].get(key)
     if previous is None:
         current = read_file(filename, mode) if os.path.lexists(filename) else None
@@ -95,12 +96,15 @@ def publication(entry: dict, filename: pathlib.Path, raw: bytes, mode: int, work
         save()
     if previous['sha256'] != expected or previous['mode'] != mode:
         raise SafeFailure('terminal publication replay changed its approved contents')
-    if os.path.lexists(filename) and hashlib.sha256(read_file(filename, mode)).hexdigest() == expected:
-        return
     current = hashlib.sha256(read_file(filename, mode)).hexdigest() if os.path.lexists(filename) else None
+    if current == expected:
+        return
     if current not in {*previous.get('owned', [expected]), previous['previous']}:
         raise SafeFailure('terminal publication changed outside its own replay')
-    write_file(filename, raw, mode, previous=current)
+    if raw is None:
+        remove_file(filename, current, mode)
+    else:
+        write_file(filename, raw, mode, previous=current)
 
 
 def prepare_request(work: pathlib.Path, key: str, entry: dict, save) -> bytes:
@@ -188,8 +192,9 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
     unit = 'cauce-v3-pty@' + selected + '.service'
     dropins = directory(unit_root, unit + '.d', private=False)
     if 'unit_before' not in entry:
-        pin_unit(unit, unit_root, template, agent=agent)
+        pinned = pin_unit(unit, unit_root, template, agent=agent)
         entry['unit_before'] = unit_state(unit, unit_root)
+        entry['legacy_dropins'] = pinned.get('legacy_dropins', [])
         save()
     if entry['new_credentials'] and not (entry.get('credentials_published') or was_verified):
         from fleet_executor_authority import issue_terminal
@@ -234,6 +239,14 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
                                  agent['runtime_key'], identity, policy['host_id'],
                                  shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
     publication(entry, dropins / 'zz-fleet-terminal.conf', approved_selector, 0o600, work, save, advance=True)
+    for previous in entry.get('legacy_dropins', []):
+        filename = pathlib.Path(previous['path'])
+        if filename.parent != dropins or filename.name >= 'zz-fleet-terminal.conf':
+            raise SafeFailure('terminal legacy publication escapes its approved instance')
+        if str(filename) not in entry['files'] \
+                and hashlib.sha256(read_file(filename, previous['mode'])).hexdigest() != previous['sha256']:
+            raise SafeFailure('terminal legacy drop-in changed before adoption')
+        publication(entry, filename, None, previous['mode'], work, save)
     entry.update(stage='published', unit=unit, source_sha256=version, credentials_published=True)
     save()
     systemctl('daemon-reload')
@@ -259,7 +272,11 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
 def ensure_terminal(policy: dict, context: dict, agent: dict, generation: pathlib.Path, journal: dict, save) -> dict:
     try:
         return _ensure(policy, context, agent, generation, journal, save)
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError, SafeFailure):
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError, SafeFailure) as error:
+        from fleet_executor_image import failure_details
+        details = failure_details(error) if isinstance(error, SafeFailure) else type(error).__name__
+        details = re.sub(r'(?:~?/)[^\s\x00-\x1f\x7f\"\'<>;,]+', '[path]', details)
+        print('terminal provisioning failed: ' + details, file=sys.stderr)
         raise SafeFailure('terminal provisioning failed') from None
 
 
@@ -280,14 +297,18 @@ def rollback_terminal(policy: dict, context: dict, agent: dict, journal: dict, s
     permitted = {str(config / 'pty' / (selected + suffix)) for suffix in ('.env', '.migration.json')}
     permitted.update(str(config / 'pty-pki' / selected / name) for name in ('client.crt', 'client.key', 'ca.crt', 'alias-key.hex'))
     permitted.update((str(unit_root / unit), str(unit_root / (unit + '.d') / 'zz-fleet-terminal.conf')))
+    for previous in entry.get('legacy_dropins', []):
+        filename = pathlib.Path(previous['path'])
+        if filename.parent != unit_root / (unit + '.d') or filename.name >= 'zz-fleet-terminal.conf':
+            raise SafeFailure('terminal provisioning failed')
+        permitted.add(str(filename))
     work = pathlib.Path(policy['roots']['state']) / 'terminal-provision' / agent['runtime_key'] / context['operation_id']
     if entry.get('work') != str(work) or set(entry['files']) - permitted:
         raise SafeFailure('terminal provisioning failed')
     for name, pin in entry['files'].items():
-        if os.path.lexists(name):
-            current = hashlib.sha256(read_file(pathlib.Path(name), pin['mode'])).hexdigest()
-            if current not in {*pin.get('owned', [pin['sha256']]), pin['previous']}:
-                raise SafeFailure('terminal provisioning failed')
+        current = hashlib.sha256(read_file(pathlib.Path(name), pin['mode'])).hexdigest() if os.path.lexists(name) else None
+        if current not in {*pin.get('owned', [pin['sha256']]), pin['previous']}:
+            raise SafeFailure('terminal provisioning failed')
     if entry.get('activation_changed'):
         _, _, template = approved_release(policy, agent)
         if pin_unit(unit, unit_root, template, agent=agent).get('LoadState') != 'not-found':
@@ -313,7 +334,7 @@ def rollback_terminal(policy: dict, context: dict, agent: dict, journal: dict, s
             raw = read_file(pathlib.Path(pin['backup']), 0o600)
             if hashlib.sha256(raw).hexdigest() != pin['previous']:
                 raise SafeFailure('terminal provisioning failed')
-            current = hashlib.sha256(read_file(filename, pin['mode'])).hexdigest()
+            current = hashlib.sha256(read_file(filename, pin['mode'])).hexdigest() if os.path.lexists(filename) else None
             if current not in {*pin.get('owned', [pin['sha256']]), pin['previous']}:
                 raise SafeFailure('terminal rollback file changed during authority revocation')
             write_file(filename, raw, pin['mode'], previous=current)

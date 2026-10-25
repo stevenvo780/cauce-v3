@@ -27,8 +27,11 @@ def directory(base: pathlib.Path, relative: str = '', *, private: bool = True) -
             parent = child
             target /= name
             details = os.fstat(parent)
-            if details.st_uid != os.geteuid() or details.st_mode & 0o022:
+            if details.st_uid != os.geteuid() or details.st_mode & 0o002:
                 raise SafeFailure('terminal directory has an unsafe owner or mode')
+            if details.st_mode & 0o020 and (private is False or target != base / relative):
+                os.fchmod(parent, stat.S_IMODE(details.st_mode) & ~0o020)
+                os.fsync(parent)
         details = os.fstat(parent)
         if details.st_uid != os.geteuid() or details.st_mode & (0o077 if private else 0o022):
             raise SafeFailure('terminal directory is not private and executor-owned')
