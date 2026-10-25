@@ -5,7 +5,7 @@ export const STATUS = { queued: 'En cola', running: 'En ejecución', awaiting_au
   cancelling: 'Cancelación en curso', cancelled: 'Cancelada', failed: 'Fallida', succeeded: 'Completada' };
 export const STEPS = { prepare: 'Preparar el cambio', artifacts: 'Archivos', credentials: 'Cuenta', runtime: 'Entorno',
   authenticate: 'Inicio de sesión', profile: 'Aplicar el perfil', verify: 'Comprobación', admission: 'Activar mensajes', fence: 'Cerrar mensajes anteriores',
-  stop: 'Detener el contenedor', revoke: 'Retirar accesos', purge: 'Borrado final' };
+  stop: 'Detener el agente', revoke: 'Retirar accesos', purge: 'Borrado final' };
 export const STEP_STATUS = { pending: 'Pendiente', running: 'En ejecución', waiting: 'En espera', succeeded: 'Acreditado', failed: 'Fallido', compensated: 'Compensado' };
 export const ERRORS: Record<NonNullable<FleetOperation['error']>['code'], string> = {
   AUTHORITY_REVOKED: 'La autoridad que respaldaba la operación fue revocada.',

@@ -36,7 +36,7 @@ describe('fleet operation step labels', () => {
     expect(Object.values(STEPS)).not.toContain('Cierre de entregas');
     expect(STEPS.prepare).toBe('Preparar el cambio');
     expect(STEPS.profile).toBe('Aplicar el perfil');
-    expect(STEPS.stop).toBe('Detener el contenedor');
+    expect(STEPS.stop).toBe('Detener el agente');
   });
 
   it('reports done and current step in user words for the headline', () => {
