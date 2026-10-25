@@ -67,12 +67,18 @@ export async function authorityRuntimeImage(directory: string, image: string, ow
 
 export async function authorityAdapterBundle(directory: string, receipts: string, revision: string): Promise<string> {
   const source = join(directory, 'adapter-source'), bundle = join(directory, 'adapter-bundle');
+  const env = { ...process.env, PNPM_CONFIG_STORE_DIR: join(directory, 'pnpm-store'), PNPM_CONFIG_PACKAGE_IMPORT_METHOD: 'copy' };
   await execute('git', ['clone', '--quiet', '--no-hardlinks', '--no-checkout', root, source]);
   await execute('git', ['-C', source, 'checkout', '--quiet', '--detach', revision]);
-  await execute('pnpm', ['install', '--offline', '--frozen-lockfile', '--ignore-scripts', '--package-import-method', 'copy', '--store-dir', '/datos/.pnpm-store'],
-    { cwd: source, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 });
+  const installed = await execute('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts', '--package-import-method', 'copy'],
+    { cwd: source, env, timeout: 300_000, maxBuffer: 16 * 1024 * 1024 }).catch(async (error: unknown) => {
+    const failed = error as { stdout?: string; stderr?: string };
+    await writeFile(join(receipts, 'adapter-install.log'), (failed.stdout ?? '') + (failed.stderr ?? ''), { mode: 0o600 });
+    throw new Error('canonical adapter dependency install failed; see adapter-install.log');
+  });
+  await writeFile(join(receipts, 'adapter-install.log'), installed.stdout + installed.stderr, { mode: 0o600 });
   const built = await execute('bash', [join(source, 'ops/scripts/build-adapter-release.sh'), bundle],
-    { cwd: source, timeout: 600_000, maxBuffer: 16 * 1024 * 1024 });
+    { cwd: source, env, timeout: 600_000, maxBuffer: 16 * 1024 * 1024 });
   await writeFile(join(receipts, 'adapter-build.log'), built.stdout + built.stderr, { mode: 0o600 });
   await writeFile(join(receipts, 'adapter-build.json'), JSON.stringify({ revision, builder: 'ops/scripts/build-adapter-release.sh',
     digest: (await execute('python3', [join(root, 'ops/container-runtime/cauce-container-runtime.py'), 'bundle-digest', bundle])).stdout.trim() }, null, 2), { mode: 0o600 });
