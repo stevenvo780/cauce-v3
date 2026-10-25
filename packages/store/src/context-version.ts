@@ -11,9 +11,10 @@ import { ContextNativeIngestSchema, ContextRejectedError, ContextRestoreSchema, 
 
 type ContextVersionEntry = Omit<ContextVersion, 'files'>;
 interface VersionEntryRow extends Omit<ContextVersionEntry, 'version' | 'created_at' | 'restored_from'> {
-  version: string; restored_from: string | null; created_at: Date;
+  version: string; restored_from: string | null; created_at: Date; actor_name: string | null;
 }
-const VERSION_ENTRY_COLUMNS = 'company_id,tenant_id,alias,version,digest,source,restored_from,actor_human_id,actor_alias,created_at';
+const VERSION_ENTRY_COLUMNS = `v.company_id,v.tenant_id,v.alias,v.version,v.digest,v.source,v.restored_from,v.actor_human_id,v.actor_alias,person.display_name AS actor_name,v.created_at`;
+const VERSION_ENTRY_FROM = 'agent_context_versions v LEFT JOIN console_users person ON person.id=v.actor_human_id';
 function versionEntryFromRow(row: VersionEntryRow): ContextVersionEntry {
   return { ...row, version: Number(row.version), restored_from: row.restored_from === null ? null : Number(row.restored_from),
     created_at: row.created_at.toISOString() };
@@ -25,8 +26,8 @@ async function harnessMaxBytes(client: DatabaseClient, target: ContextTarget): P
 }
 /** Throws a ContextRejectedError `context_version_unreadable` when the stored files no longer match their shape or digest. */
 export async function readContextVersion(client: DatabaseClient, target: ContextTarget, version: number): Promise<ContextVersion> {
-  const row = (await client.query<VersionEntryRow & { files: unknown }>(`SELECT ${VERSION_ENTRY_COLUMNS},files
-    FROM agent_context_versions WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND version=$4`,
+  const row = (await client.query<VersionEntryRow & { files: unknown }>(`SELECT ${VERSION_ENTRY_COLUMNS},v.files
+    FROM ${VERSION_ENTRY_FROM} WHERE v.company_id=$1 AND v.tenant_id=$2 AND v.alias=$3 AND v.version=$4`,
   [target.company_id, target.tenant_id, target.alias, version])).rows[0];
   if (!row) throw new StoreError('not_found', 'context version not found');
   const { files, ...entry } = row;
@@ -272,9 +273,9 @@ export class ContextVersionStore {
     entries: ContextVersionEntry[]; next_cursor: number | null;
   }> {
     return this.scoped(source, tenant, alias, false, async (client, target) => {
-      const rows = (await client.query<VersionEntryRow>(`SELECT ${VERSION_ENTRY_COLUMNS} FROM agent_context_versions
-        WHERE company_id=$1 AND tenant_id=$2 AND alias=$3 AND ($4::bigint IS NULL OR version<$4)
-        ORDER BY version DESC LIMIT 51`, [target.company_id, tenant, alias, before ?? null])).rows;
+      const rows = (await client.query<VersionEntryRow>(`SELECT ${VERSION_ENTRY_COLUMNS} FROM ${VERSION_ENTRY_FROM}
+        WHERE v.company_id=$1 AND v.tenant_id=$2 AND v.alias=$3 AND ($4::bigint IS NULL OR v.version<$4)
+        ORDER BY v.version DESC LIMIT 51`, [target.company_id, tenant, alias, before ?? null])).rows;
       const entries = rows.slice(0, 50).map(versionEntryFromRow);
       return { entries, next_cursor: rows.length > 50 ? entries.at(-1)?.version ?? null : null };
     });

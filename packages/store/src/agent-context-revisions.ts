@@ -1,4 +1,5 @@
 import type { DatabasePool } from './db.js';
+import { contextHumanId } from './context-version-model.js';
 import { StoreError } from './repository/errors.js';
 
 /**
@@ -23,12 +24,21 @@ export function isJournalCursor(value: unknown): value is string {
 
 const MAX_JOURNAL_ID = 9223372036854775807n;
 
-const profileColumns =
-  'id,tenant_id,alias,revision,operation,purpose,role_summary,human_brief,'
-  + 'responsibilities,restrictions,tools,operating_rules,actor_tenant,actor_alias,changed_at';
-
-const documentColumns =
-  'id,tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias,written_at';
+const profileSelect =
+  'journal.id,journal.tenant_id,journal.alias,journal.revision,journal.operation,journal.purpose,'
+  + 'journal.role_summary,journal.human_brief,journal.responsibilities,journal.restrictions,journal.tools,'
+  + 'journal.operating_rules,journal.actor_tenant,journal.actor_alias,journal.actor_human_id,'
+  + 'person.display_name AS actor_name,journal.changed_at';
+const profileFrom =
+  'agent_profile_revisions journal LEFT JOIN console_users person ON person.id=journal.actor_human_id';
+const documentSelect =
+  'journal.id,journal.tenant_id,journal.alias,journal.kind,journal.path,journal.sha256,journal.bytes,'
+  + 'journal.actor_tenant,journal.actor_alias,journal.actor_human_id,person.display_name AS actor_name,journal.written_at';
+const documentFrom =
+  'agent_document_revisions journal LEFT JOIN console_users person ON person.id=journal.actor_human_id';
+const documentReturning =
+  'id,tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias,actor_human_id,'
+  + '(SELECT display_name FROM console_users WHERE id=agent_document_revisions.actor_human_id) AS actor_name,written_at';
 
 export type ProfileRevisionOperation = 'insert' | 'update' | 'delete';
 
@@ -53,6 +63,8 @@ export interface ProfileRevisionEntry {
   /** NULL means "not recorded", never "nobody". */
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
+  readonly actor_human_id?: string | null;
+  readonly actor_name?: string | null;
   readonly changed_at: string;
 }
 
@@ -67,6 +79,8 @@ export interface DocumentRevisionEntry {
   readonly bytes: number;
   readonly actor_tenant: string | null;
   readonly actor_alias: string | null;
+  readonly actor_human_id?: string | null;
+  readonly actor_name?: string | null;
   readonly written_at: string;
 }
 
@@ -80,6 +94,7 @@ export interface DocumentRevisionInput {
   readonly bytes: number;
   readonly actorTenant: string | null;
   readonly actorAlias: string | null;
+  readonly actorHumanId?: string | null;
 }
 
 interface ProfileRevisionRow {
@@ -97,6 +112,8 @@ interface ProfileRevisionRow {
   operating_rules: string[] | null;
   actor_tenant: string | null;
   actor_alias: string | null;
+  actor_human_id: string | null;
+  actor_name: string | null;
   changed_at: Date;
 }
 
@@ -110,6 +127,8 @@ interface DocumentRevisionRow {
   bytes: string | number;
   actor_tenant: string | null;
   actor_alias: string | null;
+  actor_human_id: string | null;
+  actor_name: string | null;
   written_at: Date;
 }
 
@@ -209,6 +228,8 @@ function toProfileEntry(row: ProfileRevisionRow): ProfileRevisionEntry {
     operating_rules: row.operating_rules ?? [],
     actor_tenant: row.actor_tenant,
     actor_alias: row.actor_alias,
+    actor_human_id: row.actor_human_id,
+    actor_name: row.actor_name,
     changed_at: row.changed_at.toISOString(),
   };
 }
@@ -224,6 +245,8 @@ function toDocumentEntry(row: DocumentRevisionRow): DocumentRevisionEntry {
     bytes: countOf(row.bytes, 'byte count'),
     actor_tenant: row.actor_tenant,
     actor_alias: row.actor_alias,
+    actor_human_id: row.actor_human_id,
+    actor_name: row.actor_name,
     written_at: row.written_at.toISOString(),
   };
 }
@@ -242,9 +265,9 @@ export class AgentContextRevisionsStore {
     const page = boundedPage(limit);
     const desde = boundedCursor(cursor);
     const result = await this.pool.query<ProfileRevisionRow>(
-      `SELECT ${profileColumns} FROM agent_profile_revisions
-        WHERE tenant_id=$1 AND alias=$2 AND ($4::bigint IS NULL OR id < $4::bigint)
-        ORDER BY id DESC LIMIT $3`,
+      `SELECT ${profileSelect} FROM ${profileFrom}
+        WHERE journal.tenant_id=$1 AND journal.alias=$2 AND ($4::bigint IS NULL OR journal.id < $4::bigint)
+        ORDER BY journal.id DESC LIMIT $3`,
       [tenantId, alias, page + 1, desde],
     );
     return toPage(result.rows, page, toProfileEntry);
@@ -258,8 +281,8 @@ export class AgentContextRevisionsStore {
     tenantId: string, alias: string, revision: number,
   ): Promise<ProfileRevisionEntry | undefined> {
     const result = await this.pool.query<ProfileRevisionRow>(
-      `SELECT ${profileColumns} FROM agent_profile_revisions
-        WHERE tenant_id=$1 AND alias=$2 AND revision=$3 ORDER BY id DESC LIMIT 1`,
+      `SELECT ${profileSelect} FROM ${profileFrom}
+        WHERE journal.tenant_id=$1 AND journal.alias=$2 AND journal.revision=$3 ORDER BY journal.id DESC LIMIT 1`,
       [tenantId, alias, boundedRevision(revision)],
     );
     const row = result.rows[0];
@@ -272,9 +295,9 @@ export class AgentContextRevisionsStore {
     const page = boundedPage(limit);
     const desde = boundedCursor(cursor);
     const result = await this.pool.query<DocumentRevisionRow>(
-      `SELECT ${documentColumns} FROM agent_document_revisions
-        WHERE tenant_id=$1 AND alias=$2 AND kind=$3 AND ($5::bigint IS NULL OR id < $5::bigint)
-        ORDER BY id DESC LIMIT $4`,
+      `SELECT ${documentSelect} FROM ${documentFrom}
+        WHERE journal.tenant_id=$1 AND journal.alias=$2 AND journal.kind=$3 AND ($5::bigint IS NULL OR journal.id < $5::bigint)
+        ORDER BY journal.id DESC LIMIT $4`,
       [tenantId, alias, kind, page + 1, desde],
     );
     return toPage(result.rows, page, toDocumentEntry);
@@ -287,11 +310,12 @@ export class AgentContextRevisionsStore {
   async recordDocumentRevision(input: DocumentRevisionInput): Promise<DocumentRevisionEntry> {
     const result = await this.pool.query<DocumentRevisionRow>(
       `INSERT INTO agent_document_revisions(
-         tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias
-       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${documentColumns}`,
+         tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias,actor_human_id
+       ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${documentReturning}`,
       [
         input.tenantId, input.alias, input.kind, boundedPath(input.path), input.sha256,
         countOf(input.bytes, 'byte count'), input.actorTenant, input.actorAlias,
+        contextHumanId(input.actorHumanId) ?? null,
       ],
     );
     const row = result.rows[0];

@@ -9,7 +9,7 @@ import { lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '..
 import { ContextGitBroker } from '../src/context-git.js';
 import { ContextVersionStore, ingestNativeContextVersion } from '../src/context-version.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
-import { contextRepositoryPrefix } from '../src/context-version-model.js';
+import { contextCommitIdentity, contextRepositoryPrefix } from '../src/context-version-model.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -82,8 +82,11 @@ describe('context broker reconciliation with a remote that advanced', () => {
     expect(await parents(human.git_commit)).toEqual([outside]);
     expect(await remoteFile('notes/outsider.md')).toBe('Outsider note.');
     const [entry] = (await store.history(source, target().tenant_id, target().alias)).entries;
+    const identity = contextCommitIdentity({ company_id: target().company_id, actor_alias: 'owner',
+      actor_human_id: target().human_id, actor_name: 'Synthetic owner' });
     expect(await git(remote, ['log', '-1', '--format=%an|%ae|%cn|%ce|%at', human.git_commit])).toBe(
-      `owner|owner@context_alpha.cauce.invalid|Cauce context broker|context-broker@cauce.invalid|${String(Math.floor(Date.parse(entry?.created_at ?? '') / 1000))}`);
+      `${identity.name}|${identity.email}|Cauce context broker|context-broker@cauce.invalid|${String(Math.floor(Date.parse(entry?.created_at ?? '') / 1000))}`);
+    expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Actor-Alias,valueonly)', human.git_commit])).toBe('owner');
 
     const space = (await store.read(source, target().tenant_id, target().alias)).files;
     expect(await ingestNativeContextVersion(pool, target().tenant_id, target().alias,
@@ -95,6 +98,7 @@ describe('context broker reconciliation with a remote that advanced', () => {
     expect(await parents(native.git_commit)).toEqual([human.git_commit]);
     expect(await git(remote, ['log', '-1', '--format=%an <%ae>|%cn', native.git_commit]))
       .toBe(`${target().alias} <${target().alias}@context_alpha.cauce.invalid>|Cauce context broker`);
+    expect(await git(remote, ['log', '-1', '--format=%B', native.git_commit])).not.toContain('Cauce-Actor-Alias:');
   });
 
   it.each([

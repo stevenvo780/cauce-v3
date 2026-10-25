@@ -10,7 +10,7 @@ import { CauceRepository, lockCompanyAuthority, type DatabaseClient, type Databa
 import { ContextGitBroker } from '../src/context-git.js';
 import { ContextVersionStore } from '../src/context-version.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
-import { contextRepositoryPrefix } from '../src/context-version-model.js';
+import { contextCommitIdentity, contextRepositoryPrefix } from '../src/context-version-model.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -77,8 +77,11 @@ describe('a human edit reaches the agent through Git, the native document and th
     const commit = await synced(2);
     expect(edited).toMatchObject({ desired_version: 2 });
     expect(await git(remote, ['rev-parse', 'refs/heads/main'])).toBe(commit);
+    const identity = contextCommitIdentity({ company_id: target().company_id, actor_alias: 'owner',
+      actor_human_id: target().human_id, actor_name: 'Synthetic owner' });
     expect(await git(remote, ['log', '-1', '--format=%an|%ae|%cn', commit]))
-      .toBe('owner|owner@context_alpha.cauce.invalid|Cauce context broker');
+      .toBe(`${identity.name}|${identity.email}|Cauce context broker`);
+    expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Actor-Alias,valueonly)', commit])).toBe('owner');
     const prefix = contextRepositoryPrefix(target());
     expect(JSON.parse(await git(remote, ['show', `${commit}:${prefix}/.cauce-version.json`]))).toMatchObject({
       version: 2, digest: edited.digest, actor_alias: 'owner', actor_human_id: target().human_id, source: 'ui' });

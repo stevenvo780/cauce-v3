@@ -4,23 +4,27 @@ import { lstat, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { AliasSchema } from '@cauce/protocol';
-import { assertContextTarget, canonicalContextFiles, contextDigest, contextRepositoryPrefix, type ContextGitSink,
-  type ContextVersion } from './context-version-model.js';
+import { assertContextTarget, canonicalContextFiles, contextCommitIdentity, contextDigest, contextRepositoryPrefix,
+  type ContextGitSink, type ContextVersion } from './context-version-model.js';
 
 const execute = promisify(execFile);
 const BROKER = { name: 'Cauce context broker', email: 'context-broker@cauce.invalid' };
 const COMMIT = /^[a-f0-9]{40,64}$/u;
 const MAIN = 'refs/heads/main';
 const REMOTE_MAIN = 'refs/remotes/origin/main';
-interface ContextAuthor { readonly name: string; readonly email: string; readonly date: string }
+interface ContextAuthor { readonly name: string; readonly email: string; readonly date: string; readonly trailer: string | null }
 interface GitOptions { readonly input?: string; readonly index?: string; readonly author?: ContextAuthor }
 
-/** The alias that wrote the version authors its commit and the broker commits it, under a non-deliverable address. */
+/** A person authors by visible name; an agent keeps the alias. The broker remains the committer. */
 function contextAuthor(version: ContextVersion): ContextAuthor {
   assertContextTarget(version);
   const seconds = Math.floor(Date.parse(version.created_at) / 1000);
-  if (!AliasSchema.safeParse(version.actor_alias).success || !Number.isSafeInteger(seconds)) throw new Error('context author is invalid');
-  return { name: version.actor_alias, email: `${version.actor_alias}@${version.company_id}.cauce.invalid`, date: `${String(seconds)} +0000` };
+  const identity = contextCommitIdentity(version);
+  if (!AliasSchema.safeParse(version.actor_alias).success || !Number.isSafeInteger(seconds)
+    || identity.name.includes('\n') || identity.email.includes('\n') || identity.trailer?.includes('\n') === true) {
+    throw new Error('context author is invalid');
+  }
+  return { ...identity, date: `${String(seconds)} +0000` };
 }
 export class ContextGitBroker implements ContextGitSink {
   constructor(protected readonly repositoryRoot: string) {
@@ -99,8 +103,9 @@ export class ContextGitBroker implements ContextGitSink {
         await this.git(['update-index', '--add', '--cacheinfo', `100644,${blob},${prefix}/${file.path}`], { index });
       }
       const tree = await this.git(['write-tree'], { index });
+      const trailer = author.trailer === null ? '' : `${author.trailer}\n`;
       const commit = await this.git(['commit-tree', tree, ...(parent === '' ? [] : ['-p', parent])], { author,
-        input: `Context ${String(version.version)} ${createHash('sha256').update(prefix).digest('hex').slice(0, 16)}\n\n${marker}\n` });
+        input: `Context ${String(version.version)} ${createHash('sha256').update(prefix).digest('hex').slice(0, 16)}\n\n${marker}\n${trailer}` });
       await this.git(['update-ref', MAIN, commit, local === '' ? '0'.repeat(commit.length) : local]);
       return commit;
     } finally { await rm(directory, { recursive: true, force: true }); }

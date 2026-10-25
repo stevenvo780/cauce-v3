@@ -6,6 +6,7 @@ import {
 import type { DatabaseClient, DatabasePool } from './db.js';
 import { withTransaction } from './db.js';
 import { recordProfileContextVersionInTransaction } from './context-version-legacy.js';
+import { contextHumanId } from './context-version-model.js';
 import { hubStarRouteSql } from './repository/acl-edges.js';
 import { agentContextReconcileLockKey } from './repository/agent-context-lock.js';
 import { assertAgentContextAdmissionAllowed } from './repository/agent-context-quarantine.js';
@@ -65,6 +66,7 @@ export type AgentProfileMutationErrorCode = 'not_found' | 'disabled' | 'conflict
 export interface AgentProfileAuditActor {
   readonly tenant_id: string;
   readonly alias: string;
+  readonly humanId?: string | null;
 }
 
 /** Domain failure for concurrent or invalid profile mutations. */
@@ -211,8 +213,9 @@ export class AgentProfileRepository {
     ];
     // The journal trigger attributes the row from these transaction-local settings; without
     // them the history reads «no consta quién» while the context version names the same actor.
-    await client.query("SELECT set_config('cauce.actor_tenant',$1,true), set_config('cauce.actor_alias',$2,true)",
-      [actor.tenant_id, actor.alias]);
+    const humanId = contextHumanId(actor.humanId);
+    await client.query(`SELECT set_config('cauce.actor_tenant',$1,true), set_config('cauce.actor_alias',$2,true),
+      set_config('cauce.actor_human_id',$3,true)`, [actor.tenant_id, actor.alias, humanId ?? '']);
     const result = expectedRevision === null
       ? await client.query<ProfileRow>(
           `INSERT INTO agent_profiles
@@ -240,7 +243,7 @@ export class AgentProfileRepository {
       );
     }
     const state = stored(row);
-    await recordProfileContextVersionInTransaction(client, state.perfil, actor);
+    await recordProfileContextVersionInTransaction(client, state.perfil, actor, humanId);
     await this.audit(client, actor, 'agent_profile.desired', {
       target_tenant: profile.tenant_id,
       target_alias: profile.alias,

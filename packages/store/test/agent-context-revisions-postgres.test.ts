@@ -79,10 +79,33 @@ describe('agent context revisions store', () => {
       restrictions: [],
       tools: ['bash'],
       operating_rules: ['no romper la flota'],
-      actor_tenant: null,
-      actor_alias: null,
+      actor_tenant: 'Steven',
+      actor_alias: 'kant',
     });
     expect(Date.parse(entries[0]?.changed_at ?? '')).toBeGreaterThan(0);
+  });
+
+  it('names the person on a profile revision and a document revision, and leaves an agent unnamed', async () => {
+    const human = (await pool.query<{ id: string }>(
+      `INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,company_id)
+       SELECT 'steven-c6@example.test','steven-c6@example.test',$1,'Steven','operator','Steven','kant',company_id
+       FROM tenants WHERE id='Steven' RETURNING id::text`,
+      [`$scrypt$${'x'.repeat(48)}`],
+    )).rows[0];
+    if (human === undefined) throw new Error('person absent');
+    await profiles.replace(profileOf('argos', 'de steven', ['bash']), null, { ...actor, humanId: human.id });
+    const profile = (await journal.listProfileRevisions('Steven', 'argos', 10)).entries[0];
+    expect(profile).toMatchObject({ actor_human_id: human.id, actor_name: 'Steven' });
+    const written = await journal.recordDocumentRevision({
+      tenantId: 'Steven', alias: 'argos', kind: 'directive', path: '/home/dev/CLAUDE.md',
+      sha256: 'c'.repeat(64), bytes: 12, actorTenant: 'Steven', actorAlias: 'kant', actorHumanId: human.id,
+    });
+    expect(written).toMatchObject({ actor_human_id: human.id, actor_name: 'Steven' });
+    const agentOnly = await journal.recordDocumentRevision({
+      tenantId: 'Steven', alias: 'argos', kind: 'tools', path: '/home/dev/TOOLS.md',
+      sha256: 'd'.repeat(64), bytes: 4, actorTenant: null, actorAlias: 'argos',
+    });
+    expect(agentOnly).toMatchObject({ actor_human_id: null, actor_name: null, actor_alias: 'argos' });
   });
 
   it('never mixes the journal of two aliases of the same tenant', async () => {

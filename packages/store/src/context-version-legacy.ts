@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { normalizeAgentProfile, type AgentProfile } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
 import type { DocumentRevisionInput } from './agent-context-revisions.js';
-import { ContextRejectedError, nativeDocumentContextPath, type ContextFile, type ContextTarget,
+import { ContextRejectedError, contextHumanId, nativeDocumentContextPath, type ContextFile, type ContextTarget,
   type ContextVersion } from './context-version-model.js';
 import { contextSnapshot, lockContextTarget, persistContextVersionInTransaction } from './context-version.js';
 import { CONTEXT_PROFILE_PATH } from './context-version-profile.js';
@@ -61,5 +61,6 @@ export async function recordNativeContextVersionInTransaction(client: DatabaseCl
   const target = await legacyTarget(client, entry.tenantId, entry.alias);
   if (!target) return undefined;
   return recordLegacyFile(client, target, { path: nativeDocumentContextPath(entry.kind), content },
-    entry.kind === 'directive' ? 'directive' : 'native', { tenant_id: entry.actorTenant, alias: entry.actorAlias }, humanId);
+    entry.kind === 'directive' ? 'directive' : 'native', { tenant_id: entry.actorTenant, alias: entry.actorAlias },
+    contextHumanId(humanId ?? entry.actorHumanId));
 }

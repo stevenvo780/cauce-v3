@@ -142,7 +142,41 @@ export interface ContextVersion extends ContextTarget {
   readonly version: number; readonly files: readonly ContextFile[]; readonly digest: string;
   readonly source: 'ui' | 'cli' | 'native' | 'restore' | 'profile' | 'directive';
   readonly restored_from: number | null; readonly actor_human_id: string | null;
-  readonly actor_alias: string; readonly created_at: string;
+  readonly actor_alias: string; readonly actor_name?: string | null; readonly created_at: string;
+}
+const CONTEXT_HUMAN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+/** A stored uuid, or undefined. An empty or foreign token must not reach a uuid cast. */
+export function contextHumanId(value: string | null | undefined): string | undefined {
+  return typeof value === 'string' && CONTEXT_HUMAN_ID.test(value) ? value : undefined;
+}
+function visibleAuthorName(value: string | null | undefined): string {
+  const source = value ?? '';
+  let cleaned = '';
+  for (let index = 0; index < source.length;) {
+    const code = source.codePointAt(index) ?? 0;
+    index += code > 0xffff ? 2 : 1;
+    cleaned += code <= 0x1f || code === 0x7f || code === 0x3c || code === 0x3e ? ' ' : String.fromCodePoint(code);
+  }
+  const name = cleaned.replace(/ {2,}/gu, ' ').trim().slice(0, 120);
+  return name.length > 0 ? name : 'persona';
+}
+/**
+ * A person signs with the visible name and a non-routable address derived from the id.
+ * Without a person the alias stays the author and no alias trailer is added.
+ */
+export function contextCommitIdentity(version: Pick<ContextVersion, 'company_id' | 'actor_alias' | 'actor_human_id'> & {
+  actor_name?: string | null;
+}): { name: string; email: string; trailer: string | null } {
+  const humanId = contextHumanId(version.actor_human_id);
+  if (humanId === undefined) {
+    return { name: version.actor_alias, email: `${version.actor_alias}@${version.company_id}.cauce.invalid`, trailer: null };
+  }
+  const hash = createHash('sha256').update(humanId).digest('hex').slice(0, 12);
+  return {
+    name: visibleAuthorName(version.actor_name),
+    email: `persona-${hash}@${version.company_id}.cauce.invalid`,
+    trailer: `Cauce-Actor-Alias: ${version.actor_alias}`,
+  };
 }
 export interface ContextSync {
   readonly state: 'pending' | 'synced' | 'error'; readonly git_commit: string | null;

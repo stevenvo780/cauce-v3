@@ -8,7 +8,7 @@ import { lockCompanyAuthority, type DatabaseClient, type DatabasePool } from '..
 import { ContextGitBroker } from '../src/context-git.js';
 import { ContextVersionStore } from '../src/context-version.js';
 import { processContextOutbox } from '../src/context-version-worker.js';
-import { contextRepositoryPrefix, type ContextTarget } from '../src/context-version-model.js';
+import { contextCommitIdentity, contextRepositoryPrefix, type ContextTarget } from '../src/context-version-model.js';
 import { seedSyntheticCompanyContexts } from '../src/seed-dev-cli.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -140,8 +140,14 @@ describe('shared context broker with concurrent agents', () => {
         company_id: version.company_id, tenant_id: version.tenant_id, alias: version.alias,
         version: version.version, digest: version.digest, actor_alias: version.actor_alias,
       });
+      const owner = fixtures.find(item => item.company_id === version.company_id);
+      if (!owner) throw new Error('owner absent');
+      const identity = contextCommitIdentity({ company_id: version.company_id, actor_alias: version.actor_alias,
+        actor_human_id: owner.human_id, actor_name: 'Synthetic owner' });
       expect(await git(remote, ['log', '-1', '--format=%an|%ae|%cn', version.git_commit]))
-        .toBe(`${version.actor_alias}|${version.actor_alias}@${version.company_id}.cauce.invalid|Cauce context broker`);
+        .toBe(`${identity.name}|${identity.email}|Cauce context broker`);
+      expect(await git(remote, ['log', '-1', '--format=%(trailers:key=Cauce-Actor-Alias,valueonly)', version.git_commit]))
+        .toBe(version.actor_alias);
     }
   });
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ZodError } from 'zod';
-import { ContextFilesSchema, ContextRejectedError, ContextUpdateSchema, canonicalContextFiles, contextDigest, contextProjectionBytes,
-  contextRepositoryPrefix, contextVersionDiff, harnessContextMaxBytes, storedContextFiles, versionableContextFiles } from './context-version-model.js';
+import { createHash } from 'node:crypto';
+import { ContextFilesSchema, ContextRejectedError, ContextUpdateSchema, canonicalContextFiles, contextCommitIdentity, contextDigest,
+  contextProjectionBytes, contextRepositoryPrefix, contextVersionDiff, harnessContextMaxBytes, storedContextFiles,
+  versionableContextFiles } from './context-version-model.js';
 import { StoreError } from './repository/errors.js';
 
 function rejection(value: unknown, maxBytes = 65_536): ContextRejectedError {
@@ -102,5 +104,26 @@ describe('versionable context boundary', () => {
     const one = contextRepositoryPrefix({ company_id: 'alpha', tenant_id: 'Alpha', alias: 'director' });
     const two = contextRepositoryPrefix({ company_id: 'beta', tenant_id: 'Beta', alias: 'director' });
     expect(one).not.toEqual(two);
+  });
+});
+
+describe('context commit identity', () => {
+  const human = '11111111-1111-4111-8111-111111111111';
+  const email = `persona-${createHash('sha256').update(human).digest('hex').slice(0, 12)}@acme.cauce.invalid`;
+  it('keeps the alias when no person wrote the version', () => {
+    expect(contextCommitIdentity({ company_id: 'acme', actor_alias: 'kant', actor_human_id: null, actor_name: 'Steven' }))
+      .toEqual({ name: 'kant', email: 'kant@acme.cauce.invalid', trailer: null });
+    expect(contextCommitIdentity({ company_id: 'acme', actor_alias: 'kant', actor_human_id: '', actor_name: null }).trailer)
+      .toBeNull();
+  });
+  it('signs a person with the visible name, a non-routable hash and the alias trailer', () => {
+    const identity = contextCommitIdentity({
+      company_id: 'acme', actor_alias: 'kant', actor_human_id: human, actor_name: 'Steven\n<admin>',
+    });
+    expect(identity).toEqual({ name: 'Steven admin', email, trailer: 'Cauce-Actor-Alias: kant' });
+    expect(identity.email).not.toContain(human);
+    expect(identity.email).not.toContain('@example');
+    expect(contextCommitIdentity({ company_id: 'acme', actor_alias: 'kant', actor_human_id: human, actor_name: ' < > ' }).name)
+      .toBe('persona');
   });
 });

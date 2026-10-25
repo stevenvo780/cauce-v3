@@ -4,6 +4,7 @@ import { withTransaction } from '../db.js';
 import { canonicallyEqual } from './config.js';
 import { StoreError } from './errors.js';
 import { agentContextReconcileLockKey } from './agent-context-lock.js';
+import { contextHumanId } from '../context-version-model.js';
 import { assertAgentContextAdmissionAllowed, canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
 export { canonicalProfileRuntimeContract } from './agent-context-quarantine.js';
 
@@ -13,6 +14,7 @@ export interface AgentContextReconcileDocumentRevision {
   readonly bytes: number;
   readonly actorTenant: string;
   readonly actorAlias: string;
+  readonly actorHumanId?: string | null;
   readonly kind?: string;
 }
 
@@ -154,11 +156,12 @@ export async function persistAgentContextReconcileInTransaction<Value>(
   for (const document of effect.documentRevisions) {
     await client.query(
       `INSERT INTO agent_document_revisions(
-         tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias
-       ) VALUES($1,$2,$8,$3,$4,$5,$6,$7)`,
+         tenant_id,alias,kind,path,sha256,bytes,actor_tenant,actor_alias,actor_human_id
+       ) VALUES($1,$2,$8,$3,$4,$5,$6,$7,$9)`,
       [
         input.tenantId, input.alias, document.path, document.sha256, document.bytes,
         document.actorTenant, document.actorAlias, input.mode === 'reload' ? document.kind ?? 'directive' : 'directive',
+        contextHumanId(document.actorHumanId) ?? null,
       ],
     );
   }
