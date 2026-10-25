@@ -13,7 +13,7 @@ import { randomUuid } from '../../random-id';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { QUOTA_FAILURE_ACTION, quotaTargetUnavailableReason } from './quota-availability';
 import { describeOperationError } from './quota-messages';
-import { formatPercent } from './quotas';
+import { formatPercent, quotaWindowName } from './quotas';
 import { agentQuotaFailure } from './agent-quota-client';
 import type { AgentQuotaQuery, AgentQuotaReading, AgentQuotaStatus } from './agent-quota-client';
 
@@ -128,7 +128,7 @@ function QuotaMeasurement({ data }: { data: AgentQuotaReading }) {
     <p className="m-0 text-sm">{sample.ok && sample.effective_remaining_percent != null
       ? `Último saldo medido: ${formatPercent(sample.effective_remaining_percent)}.` : 'Saldo no acreditado en la última medición.'}</p>
     {sample.windows.map(window => <div className="grid gap-1 border-t border-line pt-2" key={`${window.group_key}:${window.window_key}:${window.model ?? ''}`}>
-      <p className="m-0 text-xs">{window.label ?? window.window_key}{window.model ? ` · ${window.model}` : ''}: {' '}
+      <p className="m-0 text-xs">{quotaWindowName(window)}{window.model ? ` · ${window.model}` : ''}: {' '}
         {sample.ok && window.remaining_percent != null && !['unknown', 'error', 'rate-limited'].includes(window.status ?? '')
           ? `${formatPercent(window.remaining_percent)} medido` : 'sin saldo acreditado'}</p>
       <p className="m-0 text-xs text-muted">{window.observed_at ? <>Medida <Time value={window.observed_at} />. </> : null}

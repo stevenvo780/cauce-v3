@@ -87,7 +87,7 @@ describe('cuotas desde la ficha con Chromium, canal firmado, Docker y PostgreSQL
       expect(await runtime().executor.runOnce()).toBe(true);
       await reader.getByRole('button', { name: 'Releer cuota', exact: true }).click();
       await reader.getByText('Último saldo medido: 75%.', { exact: true }).waitFor({ timeout: 20_000 });
-      await reader.getByText('5h: 75% medido', { exact: true }).waitFor({ timeout: 20_000 });
+      await reader.getByText('5 h: 75% medido', { exact: true }).waitFor({ timeout: 20_000 });
       await reader.getByText('Reinicio no informado.', { exact: true }).waitFor({ timeout: 20_000 });
       const reading = await apiGet(page, quotaPath(agent));
       expect(reading.status).toBe(200);

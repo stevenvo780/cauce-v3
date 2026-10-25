@@ -89,3 +89,11 @@ it('con lector y sin cuenta vinculada se conserva el aviso de cuenta, sin invent
   expect(await screen.findByText(/No hay una cuenta vinculada/u)).toBeVisible();
   expect(screen.queryByText(/Sin lector de cuota/u)).not.toBeInTheDocument();
 });
+
+it('pauseReasonText traduce la clave automática de agotamiento y respeta el motivo escrito por una persona', async () => {
+  const { pauseReasonText } = await import('./quotas');
+  expect(pauseReasonText('quota_exhausted:claude/default/five-hour')).toBe('cuota agotada en la ventana 5 h');
+  expect(pauseReasonText('quota_exhausted:codex/default/seven-day')).toBe('cuota agotada en la ventana semanal');
+  expect(pauseReasonText('quota_exhausted:codex/default/otra')).toBe('cuota agotada');
+  expect(pauseReasonText('Revisión de facturación')).toBe('Revisión de facturación');
+});

@@ -29,3 +29,21 @@ function humanDuration(totalSeconds: number): string {
   if (hours > 0) return `${String(hours)}h ${String(minutes)}m`;
   return `${String(minutes)}m`;
 }
+
+/** The person reads «5 h» or «Semanal», never the provider's window key («five-hour», «seven-day»). */
+export function quotaWindowName(window: { window_key: string; window_minutes?: number | null }): string {
+  const minutes = window.window_minutes ?? { '5h': 300, '7d': 10_080, 'five-hour': 300, 'seven-day': 10_080 }[window.window_key];
+  if (minutes === 300) return '5 h';
+  if (minutes === 10_080) return 'Semanal';
+  if (minutes === 1440) return 'Diaria';
+  return minutes ? `${String(minutes)} min` : window.window_key;
+}
+
+/** The automatic pause reason is a machine key ("quota_exhausted:<provider>/<group>/<window>"); the person reads Spanish. */
+export function pauseReasonText(reason: string): string {
+  const automatic = /^quota_exhausted:[a-z0-9_-]+\/[^/]+\/([^/]+)$/u.exec(reason);
+  if (!automatic) return reason;
+  const label: Record<string, string> = { 'five-hour': '5 h', '5h': '5 h', 'seven-day': 'semanal', '7d': 'semanal', daily: 'diaria' };
+  const name = label[automatic[1]];
+  return name ? `cuota agotada en la ventana ${name}` : 'cuota agotada';
+}

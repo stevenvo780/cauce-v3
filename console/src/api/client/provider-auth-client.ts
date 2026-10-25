@@ -69,6 +69,8 @@ export function assertProviderAuthTarget(value: ProviderAuthSnapshot, expected: 
     if (value[key] !== expected[key]) invalid();
   }
 }
+/** The ticket's expiry is the server's clock: the browser's may differ, so the window is judged with this tolerance. */
+export const TICKET_CLOCK_SKEW_MS = 30_000;
 export function providerAuthStreamUrl(sessionId: string, origin = globalThis.location.origin): string {
   const url = new URL(`/v3/console/provider-auth/sessions/${id(sessionId)}/stream`, origin);
   if (!['http:', 'https:'].includes(url.protocol) || url.origin !== globalThis.location.origin) invalid();
@@ -105,7 +107,8 @@ export function providerAuthClient(request: RequestFn): ProviderAuthClient {
       const result = record(await post(`${path}/${id(value)}/ticket`, {}));
       if (Object.keys(result).length !== 2 || typeof result.ticket !== 'string' || !UUID.test(result.ticket)
           || typeof result.expires_at !== 'string' || !Number.isFinite(Date.parse(result.expires_at))
-          || Date.parse(result.expires_at) <= Date.now() || Date.parse(result.expires_at) > Date.now() + 10_000) invalid();
+          || Date.parse(result.expires_at) <= Date.now() - TICKET_CLOCK_SKEW_MS
+          || Date.parse(result.expires_at) > Date.now() + 10_000 + TICKET_CLOCK_SKEW_MS) invalid();
       return { ticket: result.ticket, expires_at: result.expires_at };
     },
   };

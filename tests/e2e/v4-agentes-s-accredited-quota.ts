@@ -114,7 +114,7 @@ export async function verifyAccreditedQuota(context: Coverage): Promise<void> {
   await context.capture('S06-accredited-pending', reader);
   expect(await context.runtime.executor.runOnce()).toBe(true);
   await reread(reader, 'Último saldo medido: 75%.');
-  await reader.getByText('5h: 75% medido', { exact: true }).waitFor();
+  await reader.getByText('5 h: 75% medido', { exact: true }).waitFor();
   await reader.getByText('Reinicio no informado.', { exact: true }).waitFor();
   const result = await apiGet(context.page, path);
   expect(result.body).toMatchObject({ status: 'ok', operation: { status: 'done' },

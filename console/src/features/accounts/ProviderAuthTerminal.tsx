@@ -5,7 +5,7 @@ import '@xterm/xterm/css/xterm.css';
 import '../terminal/xterm-csp.css';
 import 'virtual:cauce/xterm-ansi.css';
 import { documentoQueNiegaLosEstilos, FUENTE_TERMINAL, TEMA_TERMINAL } from '../terminal/pty-theme';
-import { providerAuthStreamUrl, type ProviderAuthClient, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
+import { providerAuthStreamUrl, TICKET_CLOCK_SKEW_MS, type ProviderAuthClient, type ProviderAuthSnapshot } from '../../api/client/provider-auth-client';
 import './ProviderAuthTerminal.css';
 
 interface Props { session: ProviderAuthSnapshot; client: ProviderAuthClient; onDisconnect: () => void }
@@ -92,7 +92,7 @@ export function ProviderAuthTerminal({ session, client, onDisconnect }: Props) {
       const retry = () => { if (!attached && retries > 0 && !disposed && !ended) { socket = undefined; connect(retries - 1); } else fail(); };
       void client.ticket(session.session_id).then(ticket => {
         if (disposed || ended) return;
-        if (Date.parse(ticket.expires_at) <= Date.now()) { retry(); return; }
+        if (Date.parse(ticket.expires_at) <= Date.now() - TICKET_CLOCK_SKEW_MS) { retry(); return; }
         const current = new WebSocket(providerAuthStreamUrl(session.session_id)); current.binaryType = 'arraybuffer'; socket = current;
         current.onopen = () => { if (disposed) { current.close(); return; } current.send(JSON.stringify({ type: 'auth', ticket: ticket.ticket })); };
         current.onmessage = event => {

@@ -4,7 +4,7 @@ import type { AccountQuotaWindow, QuotaAccount, QuotaRefreshStatus } from '../..
 import { Button, Notice, Pill } from '../../components/kit';
 import { Time } from '../../components/ui';
 import { accountFatigue, FATIGUE_LABEL, OBSERVATION_LABEL, quotaFailureReason } from './quota-availability';
-import { formatPercent, formatResetIn, PROVIDER_LABEL } from './quotas';
+import { formatPercent, formatResetIn, PROVIDER_LABEL, pauseReasonText, quotaWindowName } from './quotas';
 
 const REFRESH_LABEL: Partial<Record<QuotaRefreshStatus, string>> = {
   not_authenticated: 'Cuenta sin sesión iniciada: pulsa «Iniciar sesión».',
@@ -22,13 +22,7 @@ export function QuotaRefreshNotice({ status }: { status?: QuotaRefreshStatus }) 
   return message ? <Notice tone={status === 'failed' ? 'danger' : 'warn'}>{message}</Notice> : null;
 }
 
-function windowName(window: AccountQuotaWindow): string {
-  const minutes = window.window_minutes ?? { '5h': 300, '7d': 10_080 }[window.window_key];
-  if (minutes === 300) return '5 h';
-  if (minutes === 10_080) return 'Semanal';
-  if (minutes === 1440) return 'Diaria';
-  return minutes ? `${String(minutes)} min` : window.window_key;
-}
+function windowName(window: AccountQuotaWindow): string { return quotaWindowName(window); }
 
 const sameDay = (left: Date, right: Date) => left.toDateString() === right.toDateString();
 const clock = new Intl.DateTimeFormat('es', { hour: '2-digit', minute: '2-digit' });
@@ -85,7 +79,7 @@ export function QuotaAccountCard({ account, pinned, canPin, onPin, canEdit, onEd
       {account.agent_count > account.agents.length ? ` y ${String(account.agent_count - account.agents.length)} más` : ''}</p> : null}
     {failure ? <Notice tone={account.note?.trim() === 'rate_limited' ? 'warn' : 'danger'}>{failure}</Notice>
       : account.note ? <Notice tone={account.observation_status === 'error' ? 'danger' : 'info'}>{account.note}</Notice> : null}
-    {account.paused_until ? <p className="m-0 text-xs">Pausa hasta <Time value={account.paused_until} />{account.paused_reason ? `: ${account.paused_reason}` : ''}</p> : null}
+    {account.paused_until ? <p className="m-0 text-xs">Pausa hasta <Time value={account.paused_until} />{account.paused_reason ? `: ${pauseReasonText(account.paused_reason)}` : ''}</p> : null}
     <div aria-label={`Ventanas de ${account.label}`} className="grid gap-3">{orderedWindows(account.windows).map(window =>
       <WindowRow key={`${window.group_key}:${window.window_key}:${window.model ?? ''}:${window.host}`} window={window} now={now} />)}</div>
     {!account.windows.length ? <Notice tone="info">{OBSERVATION_LABEL[account.observation_status]}. No hay ventanas informadas para esta cuenta.</Notice> : null}
