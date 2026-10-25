@@ -37,6 +37,14 @@ export interface ConsoleAuthState {
   authority?: ConsoleAuthority | null;
 }
 
+export interface PendingDeviceAuthorization {
+  client_name: string;
+  created_at: string;
+  masked_ip: string;
+  expires_at: string;
+  status: 'pending';
+}
+
 /** Server-derived RBAC snapshot. Missing permissions are UNKNOWN, never implicitly allowed. */
 export interface ConsoleAccess {
   subject?: string | null;

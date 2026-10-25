@@ -87,6 +87,7 @@ Si el primer argumento no es `diagnose`, `platform`, `hosts`, `login`, `context`
 
 ```sh
 cauce login --gateway https://cauce.example.invalid --email usuario@example.invalid
+cauce login --dispositivo --gateway https://cauce.example.invalid
 cauce login --status
 cauce AGENT_ALIAS
 cauce TENANT_ID/AGENT_ALIAS
@@ -95,6 +96,8 @@ cauce AGENT_ALIAS --tenant TENANT_ID --mode harness
 ```
 
 La contraseña se pide sin eco; para automatización, `cauce login --password-stdin` la recibe por stdin. `--renew` renueva la sesión guardada. El archivo queda privado (`0600`), ligado al gateway y al origen. Su ruta predeterminada es `$XDG_STATE_HOME/cauce-v3/console-session.json`, o `$HOME/.local/state/cauce-v3/console-session.json` si no existe esa variable. `CAUCE_CONSOLE_SESSION_FILE` y `--session-file` permiten elegir otro archivo; no hace falta copiar cookies del navegador.
+
+En un servidor sin navegador, `--dispositivo` (alias `--device`) muestra una dirección de la consola y un código que caduca en diez minutos. Abre esa dirección en tu navegador habitual, inicia sesión si hace falta y comprueba el cliente, la hora, la IP enmascarada y la persona y empresa activa antes de pulsar «Autorizar». Autoriza solo solicitudes que tú hayas iniciado: el dispositivo obtiene una sesión de esa persona en esa empresa. «Rechazar» termina el intento sin conceder acceso. `--client-name "Mi terminal"` permite reconocer la solicitud. El CLI espera la aprobación y guarda la misma sesión privada que el login por contraseña; respeta el intervalo indicado por el gateway y lo amplía cuando este pide ralentizar. La caducidad o el rechazo requieren iniciar otra solicitud. `cauce login --status` comprueba también estas sesiones. Si el navegador usa un origen distinto del gateway, indícalo con `--origin`.
 
 Después del login, `cauce <alias>` consulta `/v3/console/terminal/targets`, solicita la sesión y su ticket de un solo uso en `/v3/console/terminal/sessions` y conecta al WebSocket publicado por el gateway. El relay llega al agente PTY del ordenador o contenedor; el cliente no necesita inventario local, acceso Docker ni SSH al destino. Un alias repetido exige `--tenant` o `tenant/alias`. El gateway decide visibilidad, permisos, modos y disponibilidad. Una sesión caducada, un destino sin autorización o un agente PTY desconectado producen un error.
 

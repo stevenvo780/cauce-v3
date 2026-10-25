@@ -197,6 +197,7 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce ver [alias...]${c_reset}     mirar varios a la vez
   ${c_b}cauce hosts enroll${c_reset} --gateway <URL> --invitation-stdin   registrar este ordenador
   ${c_b}cauce login${c_reset} --gateway <URL> --email <correo>           sesión nominal de consola
+  ${c_b}cauce login --dispositivo${c_reset} --gateway <URL>              autorizar desde el navegador (--device)
   ${c_b}cauce login --status|--renew${c_reset}                            consultar o renovar la sesión
   ${c_b}cauce context${c_reset} --help                  historial y edición de contextos
   ${c_b}cauce context-native${c_reset} --help           registrar cambios de archivos nativos

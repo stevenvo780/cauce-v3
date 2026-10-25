@@ -1,7 +1,7 @@
 import { nativeAdminClient, type NativeAdminClient } from '../features/live/native-admin/client';
 import { nativeContextRepositoryClient, type NativeContextRepositoryClient } from './client/native-context-repository-client';
 import { contextRepositoryClient, type ContextRepositoryClient } from './client/context-repository-client';
-import type { ConsoleAuthState } from './types';
+import type { ConsoleAuthState, PendingDeviceAuthorization } from './types';
 import {
   ApiError,
   corteAlVencer,
@@ -332,6 +332,16 @@ export class CauceApi {
 
   async register(input: RegistrationInput): Promise<RegistrationResult> {
     return registrationReceipt(await this.request('/v3/auth/register', { method: 'POST', body: JSON.stringify(input) }, { requireCsrf: false }));
+  }
+
+  async getDeviceAuthorization(userCode: string): Promise<PendingDeviceAuthorization> {
+    return this.request<PendingDeviceAuthorization>(`/v3/auth/device/${encodeURIComponent(userCode)}`);
+  }
+
+  async decideDeviceAuthorization(userCode: string, decision: 'approve' | 'deny'): Promise<{ status: 'approved' | 'denied' }> {
+    return this.request<{ status: 'approved' | 'denied' }>('/v3/auth/device/approve', {
+      method: 'POST', body: JSON.stringify({ user_code: userCode, decision }),
+    });
   }
 
   async switchCompany(companyId: string | null): Promise<ConsoleAuthState> {

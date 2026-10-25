@@ -4,12 +4,15 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import math
 import os
 import pathlib
 import re
 import secrets
 import stat
 import sys
+import time
+import urllib.parse
 import warnings
 from http.cookies import CookieError, SimpleCookie
 
@@ -101,19 +104,86 @@ def login(gateway: str, origin: str | None, email: str, password: str, session_f
         result, cookies = request_json(gateway, origin, ca_file, 'POST', '/v3/auth/login', {'email': email, 'password': password})
         if not isinstance(result, dict) or result.get('authenticated') is not True:
             raise ContextFailure('El login por contraseña no está disponible o fue rechazado; revisa el acceso en la consola y vuelve a ejecutar cauce login.')
-        csrf = result.get('csrf_token')
-        cookie_values = SimpleCookie()
-        try:
-            for header in cookies:
-                cookie_values.load(header)
-        except CookieError:
-            raise ContextFailure('El gateway devolvió una cookie de sesión inválida; vuelve a ejecutar cauce login y consulta al operador si se repite.') from None
-        cookie = '; '.join(morsel.key + '=' + morsel.coded_value for morsel in cookie_values.values())
-        if not cookie or len(cookie) > 12000 or any(ord(char) < 32 or ord(char) == 127 for char in cookie) \
-                or not isinstance(csrf, str) or not CSRF.fullmatch(csrf):
-            raise ContextFailure('El gateway no entregó una sesión utilizable; vuelve a ejecutar cauce login y consulta al operador si se repite.')
-        write_session(parent, name, {'version': 1, 'gateway': gateway, 'origin': origin, 'cookie': cookie, 'csrf_token': csrf, 'email': email})
+        save_login_session(parent, name, result, cookies, gateway, origin, email)
         return result
+    finally:
+        os.close(parent)
+
+
+def save_login_session(parent: int, name: str, result: dict, cookies: list[str], gateway: str, origin: str,
+                       email: str | None = None) -> None:
+    csrf = result.get('csrf_token')
+    cookie_values = SimpleCookie()
+    try:
+        for header in cookies:
+            cookie_values.load(header)
+    except CookieError:
+        raise ContextFailure('El gateway devolvió una cookie de sesión inválida; vuelve a ejecutar cauce login y consulta al operador si se repite.') from None
+    cookie = '; '.join(morsel.key + '=' + morsel.coded_value for morsel in cookie_values.values())
+    if not cookie or len(cookie) > 12000 or any(ord(char) < 32 or ord(char) == 127 for char in cookie) \
+            or not isinstance(csrf, str) or not CSRF.fullmatch(csrf):
+        raise ContextFailure('El gateway no entregó una sesión utilizable; vuelve a ejecutar cauce login y consulta al operador si se repite.')
+    session = {'version': 1, 'gateway': gateway, 'origin': origin, 'cookie': cookie, 'csrf_token': csrf}
+    if email:
+        session['email'] = email
+    write_session(parent, name, session)
+
+
+def device_login(gateway: str, origin: str, session_file: str, ca_file: str | None = None,
+                 client_name: str = 'Cauce CLI') -> dict:
+    gateway, origin = trusted_origin(gateway), trusted_origin(origin)
+    if not client_name or len(client_name) > 80 or any(ord(char) < 32 or ord(char) == 127 for char in client_name):
+        raise ContextFailure('El nombre del cliente debe tener entre 1 y 80 caracteres sin controles; revisa --client-name.')
+    parent, name = open_session_parent(session_file)
+    try:
+        started = time.monotonic()
+        grant, _ = request_json(gateway, origin, ca_file, 'POST', '/v3/auth/device', {'client_name': client_name})
+        if not isinstance(grant, dict) or not isinstance(grant.get('device_code'), str) \
+                or not re.fullmatch(r'[A-Za-z0-9_-]{43,128}', grant['device_code']) \
+                or not isinstance(grant.get('user_code'), str) or not re.fullmatch(r'[A-Z2-9]{4}-[A-Z2-9]{4}', grant['user_code']) \
+                or type(grant.get('expires_in')) is not int or not 1 <= grant['expires_in'] <= 600 \
+                or type(grant.get('interval')) is not int or not 1 <= grant['interval'] <= 60:
+            raise ContextFailure('El gateway devolvió una solicitud de dispositivo inválida; vuelve a ejecutar cauce login --dispositivo.')
+        url = grant.get('verification_uri_complete')
+        parsed = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+        if not parsed or trusted_origin(urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, '', '', ''))) != origin \
+                or parsed.path != '/dispositivo' or parsed.fragment \
+                or urllib.parse.parse_qs(parsed.query) != {'code': [grant['user_code']]} \
+                or any(ord(char) < 33 or ord(char) == 127 for char in url):
+            raise ContextFailure('La dirección de autorización no coincide con el origen elegido; revisa --gateway y --origin.')
+        print('Abre esta dirección en tu navegador de confianza e inicia sesión en la consola:', file=sys.stderr, flush=True)
+        print(url, file=sys.stderr, flush=True)
+        print('Código: ' + grant['user_code'], file=sys.stderr, flush=True)
+        print('Autoriza solo si reconoces esta solicitud. El código caduca en ' + str(grant['expires_in']) + ' segundos.',
+              file=sys.stderr, flush=True)
+        deadline = started + grant['expires_in']
+        interval = grant['interval']
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            time.sleep(min(interval, max(0, remaining)))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            result, cookies = request_json(gateway, origin, ca_file, 'POST', '/v3/auth/device/token',
+                {'device_code': grant['device_code']}, timeout=max(1, min(30, math.ceil(remaining))),
+                accepted_error_statuses=(400,))
+            if not isinstance(result, dict):
+                raise ContextFailure('El gateway devolvió una respuesta de autorización inválida; vuelve a iniciar el login.')
+            if result.get('authenticated') is True:
+                save_login_session(parent, name, result, cookies, gateway, origin)
+                return result
+            error = result.get('error')
+            if error == 'authorization_pending':
+                continue
+            if error == 'slow_down':
+                interval += 5
+                continue
+            if error == 'access_denied':
+                raise ContextFailure('La solicitud de dispositivo fue rechazada. Si necesitas acceso, inicia otra con cauce login --dispositivo.')
+            if error == 'expired_token':
+                break
+            raise ContextFailure('No se pudo autorizar el dispositivo; vuelve a ejecutar cauce login --dispositivo.')
+        raise ContextFailure('El código de dispositivo caducó. Inicia otra solicitud con cauce login --dispositivo.')
     finally:
         os.close(parent)
 
@@ -139,6 +209,9 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--renew', action='store_true')
     mode.add_argument('--status', action='store_true')
+    mode.add_argument('--dispositivo', '--device', dest='device', action='store_true',
+        help='Autorizar desde la consola web sin teclear la contraseña en este equipo')
+    parser.add_argument('--client-name', default='Cauce CLI', help='Nombre del equipo que mostrará la consola al autorizar')
     args = parser.parse_args()
     try:
         if args.status:
@@ -158,6 +231,13 @@ def main() -> int:
         if existing and (trusted_origin(gateway) != trusted_origin(existing.get('gateway'))
                          or trusted_origin(origin) != trusted_origin(existing.get('origin'))):
             raise ContextFailure('La renovación debe usar el gateway y origen guardados; ejecuta cauce login sin --renew para otro destino.')
+        if args.device:
+            if args.email or args.password_stdin:
+                raise ContextFailure('--dispositivo no necesita correo ni contraseña; quita --email y --password-stdin.')
+            result = device_login(gateway, origin, args.session_file, args.ca_file, args.client_name)
+            print(json.dumps({**safe_status(result), 'state': 'authenticated', 'gateway': trusted_origin(gateway),
+                              'session_file': str(pathlib.Path(args.session_file).absolute())}, ensure_ascii=False))
+            return 0
         email = args.email or existing.get('email')
         if not email and sys.stdin.isatty():
             email = input('Correo: ').strip()
@@ -177,6 +257,8 @@ def main() -> int:
         print(console_failure_message(error), file=sys.stderr)
     except getpass.GetPassWarning:
         print('No hay una terminal privada; usa --password-stdin.', file=sys.stderr)
+    except KeyboardInterrupt:
+        print('\nInicio de sesión cancelado.', file=sys.stderr)
     except (OSError, ValueError, TypeError):
         print('No se pudo completar el login; revisa destino, permisos y sesión.', file=sys.stderr)
     return 1

@@ -159,7 +159,8 @@ def trusted_origin(value: str) -> str:
 
 
 def request_json(gateway: str, origin: str, ca_file: str | None, method: str, path: str, body=None, headers=None,
-                 timeout: int = 30, rejected: str = 'console request rejected', unavailable: str = 'console gateway is unavailable'):
+                 timeout: int = 30, rejected: str = 'console request rejected', unavailable: str = 'console gateway is unavailable',
+                 accepted_error_statuses: tuple[int, ...] = ()):
     gateway = trusted_origin(gateway)
     parsed = urllib.parse.urlsplit(path)
     if not path.startswith('/') or path.startswith('//') or parsed.scheme or parsed.netloc or parsed.fragment \
@@ -182,7 +183,14 @@ def request_json(gateway: str, origin: str, ca_file: str | None, method: str, pa
             return result, response.headers.get_all('Set-Cookie', [])
     except urllib.error.HTTPError as error:
         code = error.code
-        error.close()
+        try:
+            if code in accepted_error_statuses:
+                raw = error.read(2097153)
+                if len(raw) > 2097152:
+                    raise ContextFailure('console response exceeds limit')
+                return json.loads(raw) if raw else None, []
+        finally:
+            error.close()
         raise ContextFailure(rejected + ' with HTTP ' + str(code) + '; redirects are disabled') from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise ContextFailure(unavailable) from None

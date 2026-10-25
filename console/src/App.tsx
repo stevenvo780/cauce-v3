@@ -10,6 +10,7 @@ import { StateCard } from './components/kit';
 import { ConversationDrafts, ConversationDraftStore } from './features/messages/conversation-drafts';
 import { AuthGate, UnmanagedAuthBanner } from './features/auth/AuthGate';
 import { AccountMenu } from './features/auth/AccountMenu';
+import { DeviceAuthorization } from './features/auth/DeviceAuthorization';
 import type { AuthGateState } from './features/auth/auth-session';
 import { NAV_ENTRIES } from './nav';
 import { onNavClick, redirect, useRouteSearch, useRouteSegments } from './router';
@@ -172,9 +173,13 @@ const CONSOLE_TITLE = 'Cauce';
 const NOT_FOUND_TITLE = 'Ruta no encontrada';
 
 export function App() {
+  const segments = useRouteSegments();
+  const search = useRouteSearch();
+  const devicePage = segments.length === 1 && segments[0] === 'dispositivo';
   return (
     <AuthGate>{(gate) => (
       <CompanySessionProvider state={gate.state}>
+      {devicePage ? <DeviceAuthorization gate={gate} key={search} initialCode={new URLSearchParams(search).get('code') ?? ''} /> : (
       <ConsoleAccessProvider>
         <TerminalRelayProvider>
           <CSPProvider disableStyleElements>
@@ -182,6 +187,7 @@ export function App() {
           </CSPProvider>
         </TerminalRelayProvider>
       </ConsoleAccessProvider>
+      )}
       </CompanySessionProvider>
     )}</AuthGate>
   );
