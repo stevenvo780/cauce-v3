@@ -9,6 +9,7 @@ import { StoreError, type AckResult, type AgentProfileRepository, type LeaseResu
 import { requirePermission, validatePrincipal } from '../auth.js';
 import type { DeliveryClaimRecord, GatewayRepository } from '../app.js';
 import { registerCoreRuntimeHttpRoutes } from './core/http.js';
+import { runtimeLeaseIdentity } from './core/lease-identity.js';
 import { createCoreOutboxRuntime, recordChatLatency, type WakeLatencyContext } from './core/outbox.js';
 import { registerCorePublishRoutes } from './core/publish.js';
 import type {
@@ -390,6 +391,7 @@ export function createCoreRoutePhases(
               }
               const renewableDeliveryClaims = hello.capabilities.includes('renewable_delivery_claims_v1');
               const delegationFeedback = hello.capabilities.includes('delegation_feedback_v1');
+              const leaseIdentity = await runtimeLeaseIdentity(request, actor, options);
               let lease: LeaseResult;
               try {
                 lease = await repository.acquireLease(
@@ -404,8 +406,9 @@ export function createCoreRoutePhases(
                         resumeWindowMs: ackDeadlineMs,
                         requireDeclaredCapacity: true,
                         requireEnabledAgent: true,
+                        identity: leaseIdentity,
                       }
-                    : { requireDeclaredCapacity: true, requireEnabledAgent: true }
+                    : { requireDeclaredCapacity: true, requireEnabledAgent: true, identity: leaseIdentity }
                 );
               } catch (error) {
                 if (error instanceof StoreError && error.code === 'conflict'
@@ -457,6 +460,11 @@ export function createCoreRoutePhases(
               };
               const rejectHeartbeat = async (error: unknown, releaseEvent: string): Promise<void> => {
                 await releaseHelloLease(releaseEvent);
+                if (error instanceof StoreError && error.recoveryReason === 'consumer_placement_mismatch') {
+                  send(socket, { type: 'error', code: error.recoveryReason, message: error.message });
+                  socket.close(4403, 'consumer placement mismatch');
+                  return;
+                }
                 if (error instanceof StoreError && error.code === 'fenced') {
                   send(socket, {
                     type: 'error', code: 'fenced',
@@ -480,6 +488,7 @@ export function createCoreRoutePhases(
                   leaseEpoch,
                   leaseTtlMs,
                   leaseConnectionToken,
+                  undefined, leaseIdentity,
                 );
               } catch (error) {
                 await rejectHeartbeat(error, 'initial_hello_fence_release_failed');
@@ -550,6 +559,7 @@ export function createCoreRoutePhases(
                   leaseEpoch,
                   leaseTtlMs,
                   leaseConnectionToken,
+                  undefined, leaseIdentity,
                 );
               } catch (error) {
                 if (helloAdmissions.get(key) === helloAdmission) helloAdmissions.delete(key);
@@ -568,6 +578,7 @@ export function createCoreRoutePhases(
                 instanceId: hello.instance_id,
                 epoch: leaseEpoch,
                 connectionToken: leaseConnectionToken,
+                leaseIdentity,
                 abort: new AbortController(),
                 drainAgain: false,
                 drainPromise: undefined,
@@ -610,6 +621,7 @@ export function createCoreRoutePhases(
                 current.tenantId, current.alias, current.instanceId, current.epoch, leaseTtlMs,
                 current.connectionToken,
                 current.abort.signal,
+                current.leaseIdentity,
               );
               send(socket, { type: 'heartbeat_ack', lease_expires_at: leaseExpiresAt });
               return;
@@ -618,7 +630,9 @@ export function createCoreRoutePhases(
             await handleAckFrame(current, frame);
           } catch (error) {
             const code = error instanceof StoreError ? error.code : 'invalid_frame';
-            send(socket, { type: 'error', code, message: error instanceof Error ? error.message : 'unknown frame error' });
+            send(socket, { type: 'error', code: error instanceof StoreError && error.recoveryReason === 'consumer_placement_mismatch'
+              ? error.recoveryReason : code, message: error instanceof Error ? error.message : 'unknown frame error' });
+            if (error instanceof StoreError && error.recoveryReason === 'consumer_placement_mismatch') socket.close(4403, 'consumer placement mismatch');
             if (code === 'fenced') socket.close(4401, 'fenced');
           }
         }).catch((error: unknown) => { app.log.error(error); });

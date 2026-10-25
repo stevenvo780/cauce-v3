@@ -7,9 +7,9 @@ import { z } from 'zod';
 import { HostEnrollmentRepository, StoreError, migrationSourcesForApply, type DatabasePool } from '@cauce/store';
 import { assertAuthBridgeParent, prepareAuthBridgeSocket } from '../auth-bridge-socket.js';
 import { SignedAuthorityEnvelopeSchema, assertSignedAuthoritySocket, type SignedFleetAuthoritySocketPolicy } from './signed-client.js';
-import { AuthorityRequestSchema, FleetAuthorityError } from './schemas.js';
+import { AuthorityRequestSchema, FleetAuthorityError, RuntimeAuthorityRequestSchema, RuntimeAuthoritySchema } from './schemas.js';
 import { createFleetAuthorityService } from './service.js';
-import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
+import { runAuthorityCommand, runAuthorityReadiness, type AuthorityCommand } from './command.js';
 
 const Ready = z.object({ action: z.literal('ready') }).strict();
 let bundledSchema: Promise<string | undefined> | undefined;
@@ -52,6 +52,13 @@ export async function startSignedFleetAuthorityBridge(filename: string, pool: Da
     } catch { return reply.code(403).send({ error: 'AUTHORITY_REVOKED' }); }
   });
   app.setErrorHandler((_error, _request, reply) => reply.code(400).send({ error: 'INVALID_REQUEST' }));
+  app.post('/runtime-authority', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    const input = RuntimeAuthorityRequestSchema.safeParse(request.body);
+    if (!input.success) return reply.code(400).send({ error: 'INVALID_REQUEST' });
+    try { return RuntimeAuthoritySchema.parse(await runAuthorityCommand(options.command, input.data)); }
+    catch { return reply.code(503).send({ error: 'AUTHORITY_UNAVAILABLE' }); }
+  });
   app.post('/signed-authority', async (request, reply) => {
     reply.header('cache-control', 'no-store');
     try {
