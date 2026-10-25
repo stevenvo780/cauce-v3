@@ -3,6 +3,10 @@ import { lockCompanyAuthority } from './company-authority.js';
 import { StoreError } from './repository/errors.js';
 import type { DatabaseClient } from './db.js';
 import { SpaceBackupAgentSchema,type SpaceBackupAgent,type SpaceBackupRow } from './space-backup-contracts.js';
+function legacyRuntimeMode(row:Record<string,unknown>):string {
+  const container=row.container_name;
+  return typeof container==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u.test(container)?'legacy-container':'invalid';
+}
 export async function assertSpaceBackupPolicy(client:DatabaseClient,row:SpaceBackupRow):Promise<void> {
   const capability=(await client.query<{policy_sha256:string}>(`SELECT capabilities->>'policy_sha256' AS policy_sha256 FROM fleet_host_identities
     WHERE host_id=$1 AND company_id=$2 AND enabled AND capabilities->>'fleet_executor'='true'
@@ -19,7 +23,10 @@ export async function readSpaceBackupAgent(client:DatabaseClient,company:string,
     FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id AND tenant.company_id=agent.company_id
     WHERE agent.company_id=$1 AND agent.tenant_id=$2 AND agent.alias=$3 AND agent.purged_at IS NULL
       AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL FOR SHARE OF agent,tenant`,[company,tenant,alias])).rows[0];
-  const parsed=SpaceBackupAgentSchema.safeParse(row);
+  const candidate=row!==null&&typeof row==='object'&&!Array.isArray(row)
+    &&(row as {runtime_mode?:unknown}).runtime_mode===null
+    ?{...(row as Record<string,unknown>),runtime_mode:legacyRuntimeMode(row as Record<string,unknown>)}:row;
+  const parsed=SpaceBackupAgentSchema.safeParse(candidate);
   if (!parsed.success) throw new StoreError('not_found','a placed space backup target is required');
   return parsed.data;
 }
