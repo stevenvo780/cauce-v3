@@ -79,6 +79,9 @@ export async function assertStoppedCurrentRuntimeSkipped(): Promise<void> {
     failures.push(error);
     evidence.failure = error instanceof Error ? error.message : String(error);
     if (scans) evidence.scans = { ...scans.counts };
+    if (actorForFailure) evidence.operationsAtFailure = (await automaticOperations(actorForFailure).catch(() => [])).map(row => ({
+      id: row.id.slice(0, 8), status: row.status, desired: row.desired_revision, steps: row.steps.map(step => step.name + ':' + step.status),
+      events: row.events.map(event => event.event + ':' + JSON.stringify(event.metadata).slice(0, 200)) }));
     if (fixture) await collectSessionFailure(fixture, actorForFailure, 'stopped').catch(() => undefined);
   } finally {
     scans?.close();
