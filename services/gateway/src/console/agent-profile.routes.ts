@@ -1,13 +1,14 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction, type DatabaseClient } from '@cauce/store';
 import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import type { AgentProfileSourceGuard, AgentProfileSourceReceipt } from '@cauce/store';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AGENT_PROFILE_LIMITS, AliasSchema, TenantSchema, agentProfileUnits, canonicallyEqual,
-  clampToRoleBriefLimit, ficherosDelArnes, nombresDelArnes,
+  clampToRoleBriefLimit, esFicheroDelAgente, ficherosDelArnes, harnessDocumentPaths, nombresDelArnes,
   measureStrictestUnits,
-  type AgentProfile, type ContextoDeAlias, type FicheroGenerado, type PresupuestoDeContexto
+  type AgentProfile, type ContextoDeAlias, type FicheroGenerado, type PresupuestoDeContexto,
+  type ProfileRuntimeContract
 } from '@cauce/protocol';
 import type { DocumentOperator } from './agent-documents.routes.js';
 import {
@@ -83,6 +84,22 @@ export interface AgentProfileDeps extends Partial<AgentProfileDraftBinding> {
     revision: number,
     verification: ProfileRuntimeVerification,
   ): Promise<void>;
+  /**
+   * Records the desired contract when no governance probe can measure the runtime (V4 fleet
+   * agents). The adapter accredits it on a later delivery by measuring its own files; without
+   * this row the claim never carries a contract and `applied_revision` can never advance.
+   */
+  recordDesiredExpectation?(
+    tenantId: string,
+    alias: string,
+    contract: ProfileRuntimeContract,
+  ): Promise<void>;
+  /** Reads the durable adapter adoption for an exact desired contract, without a live probe. */
+  readDesiredAdoption?(
+    tenantId: string,
+    alias: string,
+    contract: ProfileRuntimeContract,
+  ): Promise<ProfileRuntimeAdoptionAck | undefined>;
   /**
    * ACK emitted by the adapter AFTER delivering the profile to the shared TUI. A file-write
    * ACK does not replace this evidence: the process could have loaded it hours earlier.
@@ -264,6 +281,33 @@ function adoptionMatches(
   return expected.size === 0;
 }
 
+/**
+ * Desired contract for runtimes no governance probe can measure. Documents are the deterministic
+ * projection of the desired profile over an empty base, which is exactly what the adapter seeds
+ * on a fresh home; the adapter later proves adoption by measuring those same bytes on a delivery.
+ */
+function desiredProfileContract(
+  harness: string,
+  contexto: ContextoDeAlias,
+  revision: number,
+): ProfileRuntimeContract | undefined {
+  const generated = ficherosDelArnes(harness, contexto, new Map());
+  const paths = harnessDocumentPaths(harness, { home: contexto.hechos.arnes.home });
+  const pathByName = new Map(paths.map((path) => [path.slice(path.lastIndexOf('/') + 1), path]));
+  const documents: { name: string; path: string; sha: string }[] = [];
+  for (const file of generated) {
+    if (file.politica !== 'bloque-gestionado' || esFicheroDelAgente(file.nombre)) continue;
+    const path = pathByName.get(file.nombre);
+    if (path === undefined) return undefined;
+    documents.push({
+      name: file.nombre, path,
+      sha: createHash('sha256').update(file.texto, 'utf8').digest('hex'),
+    });
+  }
+  if (documents.length === 0) return undefined;
+  return { revision, generation: 'adapter-delivery', documents };
+}
+
 export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProfileDeps): void {
   interface CanonicalParams { tenantId: string; alias: string }
   interface LegacyParams { alias: string }
@@ -358,9 +402,37 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           runtimeReason = runtimeErrorMessage(error, 'no se pudo verificar la adopción por la sesión');
         }
       }
-      const validAdoption = adoptionMatches(adoption, lectura.revision, prepared?.verification)
+      let validAdoption = adoptionMatches(adoption, lectura.revision, prepared?.verification)
         ? adoption
         : undefined;
+      let effectiveVerification = prepared?.verification;
+      if (validAdoption === undefined && lectura.revision !== null
+        && lectura.applied_revision === lectura.revision
+        && deps.readDesiredAdoption !== undefined && deps.readRuntimeExpectation !== undefined) {
+        try {
+          const recorded = await deps.readRuntimeExpectation(tenantId, alias);
+          if (recorded !== undefined) {
+            const contract: ProfileRuntimeContract = {
+              revision: lectura.revision, generation: recorded.generation,
+              documents: recorded.documents.map((document) => ({ name: document.name, path: document.path, sha: document.sha })),
+            };
+            const ack = await deps.readDesiredAdoption(tenantId, alias, contract);
+            if (ack?.revision === lectura.revision) {
+              validAdoption = ack;
+              effectiveVerification = {
+                state: 'current', generation: contract.generation, container_id: null,
+                observed_at: ack.adopted_at,
+                documents: contract.documents.map((document) => ({
+                  name: document.name, path: document.path, expected_sha: document.sha,
+                  observed_sha: document.sha, expected_bytes: 0, observed_bytes: 0, current: true,
+                })),
+              };
+            }
+          }
+        } catch {
+          // Without a durable adoption row the presentation stays unverified, never invented.
+        }
+      }
       const adopted = validAdoption !== undefined;
       const runtimeState: RespuestaDelPerfil['runtime_state'] = target.enabled !== true
         ? 'disabled'
@@ -376,7 +448,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
               ? 'pending'
               : prepared?.verification.state === 'drifted'
                 ? 'drifted'
-                : 'runtime_unverified';
+                : lectura.applied_revision !== null
+                  ? 'applied'
+                  : 'runtime_unverified';
 
       const normalizedRole = contexto.perfil.role_summary === null
         ? ''
@@ -424,7 +498,7 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
         revision: lectura.revision,
         applied_revision: lectura.applied_revision,
         runtime_state: runtimeState,
-        runtime_verification: prepared?.verification
+        runtime_verification: effectiveVerification
           ?? (motivoDelTope === undefined ? null : verificacionSinProyeccion(motivoDelTope)),
         runtime_adoption: validAdoption ?? null,
         ...(runtimeReason === undefined ? {} : { runtime_reason: runtimeReason }),
@@ -574,6 +648,25 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
           tope: tope.tope,
           message: runtimeErrorMessage(error, tope.message),
         });
+      }
+      if (runtimeErrorCode(error) === 'unavailable'
+        && deps.recordDesiredExpectation !== undefined && deps.replaceProfile !== undefined) {
+        const harness = current.contexto.hechos.arnes.harness;
+        const newRevision = expectedRevision === null ? 1
+          : canonicallyEqual(profile, current.contexto.perfil) ? expectedRevision : expectedRevision + 1;
+        const contract = desiredProfileContract(harness, { perfil: profile, hechos: current.contexto.hechos }, newRevision);
+        if (contract !== undefined) {
+          const desired = await deps.replaceProfile(profile, expectedRevision, actor);
+          if (desired.revision === newRevision) {
+            await deps.recordDesiredExpectation(tenantId, alias, contract);
+            return reply.code(202).send({
+              ok: true, state: 'pending_session_refresh', tenant_id: tenantId, alias,
+              message: 'el perfil quedó como desired; sin sonda de gobierno, el runtime lo acreditará en su próximo turno',
+              revision: newRevision, applied_revision: current.applied_revision,
+              acknowledgements: [], runtime_verification: null, runtime_adoption: null,
+            });
+          }
+        }
       }
       return denegar(runtimeErrorStatus(error), {
         error: runtimeErrorCode(error) ?? 'runtime_preflight_failed',

@@ -4,7 +4,7 @@ import { phaseEmitter } from "../../sdk/openclaw-phases.js";
 import { createHash, randomUUID } from "node:crypto"; /* eslint @typescript-eslint/no-unnecessary-condition: "error" */
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente } from "@cauce/protocol";
+import { FICHEROS_OPENCLAW, bloqueDePerfil, esFicheroDelAgente, harnessDocumentPaths } from "@cauce/protocol";
 import {
   NativeProfileContext,
   nativeProfileContextEnabled,
@@ -309,7 +309,19 @@ export class HarnessAdapter {
       if (!workspace?.startsWith("/")) return undefined;
       paths.push(`${workspace}/AGENTS.md`);
     } else {
-      return undefined;
+      // Single-document harnesses without a fixed seal file (grok) measure their one
+      // instruction document from the shared path table, like claude and codex do.
+      const single = harnessDocumentPaths(this.definition.id, {
+        home,
+        codexHome: process.env.CODEX_HOME,
+        claudeConfigDir: process.env.CLAUDE_CONFIG_DIR,
+        grokWorkspace: process.env.CAUCE_GROK_WORKSPACE,
+        museWorkspace: process.env.CAUCE_MUSE_WORKSPACE,
+        openclawWorkspace: process.env.CAUCE_OPENCLAW_WORKSPACE,
+      });
+      const only = single.length === 1 ? single[0] : undefined;
+      if (only === undefined) return undefined;
+      paths.push(only);
     }
 
     const owner = `<!-- alias: ${context.tenant_id}/${context.self_alias} -->`;

@@ -361,6 +361,10 @@ function registerConsoleAgentRoutes(
         recordRuntimeExpectation(
           tenantId, alias, runtimeContractFromVerification(revision, verification),
         ),
+      recordDesiredExpectation: (tenantId, alias, contract) =>
+        recordRuntimeExpectation(tenantId, alias, contract),
+      readDesiredAdoption: (tenantId, alias, contract) =>
+        repository.readProfileRuntimeAdoption(tenantId, alias, contract),
       readRuntimeAdoption: (tenantId, alias, revision, verification) =>
         readRuntimeAdoption(
           tenantId, alias, runtimeContractFromVerification(revision, verification),
