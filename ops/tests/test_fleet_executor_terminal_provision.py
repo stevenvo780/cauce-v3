@@ -96,7 +96,8 @@ class TerminalVerifiedInventoryTest(unittest.TestCase):
 
 class TerminalPresenceTest(unittest.TestCase):
     def check_presence(self, invocation, *, process_uid=None, wire='logical', record_fields=None,
-                       missing_fields=(), environment=None, process_starttimes=(77, 77), after_invocation=None):
+                       missing_fields=(), environment=None, environments=None, process_starttimes=(77, 77),
+                       after_invocation=None, attempts=1, observations=None):
         current = 'a' * 32
         unit = 'cauce-v3-pty@physical.service'
         state = 'ActiveState=active\nMainPID=101\nExecMainStartTimestampMonotonic=100\nInvocationID=' + current
@@ -118,13 +119,23 @@ class TerminalPresenceTest(unittest.TestCase):
 
         raw = environment if environment is not None else [
             'CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + invocation]
-        with mock.patch.object(manager, 'systemctl', side_effect=[
-                state, 'MainPID=101\nInvocationID=' + (after_invocation or current)]), \
-                mock.patch.object(manager.pathlib.Path, 'read_bytes', return_value='\0'.join(raw).encode() + b'\0'), \
+        observed_environments = iter(environments) if environments is not None else None
+
+        def process_environment(_filename):
+            values = next(observed_environments) if observed_environments is not None else raw
+            return '\0'.join(values).encode() + b'\0'
+
+        def unit_properties(*arguments):
+            return state if 'ActiveState' in arguments[-1] else 'MainPID=101\nInvocationID=' + (after_invocation or current)
+
+        with mock.patch.object(manager, 'systemctl', side_effect=unit_properties), \
+                mock.patch.object(manager.pathlib.Path, 'read_bytes', autospec=True, side_effect=process_environment), \
                 mock.patch.object(manager.pathlib.Path, 'read_text', autospec=True, side_effect=process_text), \
                 mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_uid=os.geteuid() if process_uid is None else process_uid)), \
                 mock.patch.object(manager.subprocess, 'run', return_value=result) as journal:
-            observed = manager.presence(unit, wire, 'b' * 64, attempts=1)
+            observed = manager.presence(unit, wire, 'b' * 64, attempts=attempts)
+        if observations is not None:
+            observations['journal_queries'] = journal.call_count
         command = journal.call_args.args[0]
         for field in ('_SYSTEMD_USER_UNIT=' + unit, '_UID=' + str(os.geteuid()), '_PID=101', '_BOOT_ID=' + 'd' * 32):
             self.assertIn(field, command)
@@ -161,6 +172,30 @@ class TerminalPresenceTest(unittest.TestCase):
         for options in ({'process_starttimes': (77, 78)}, {'after_invocation': 'c' * 32}):
             with self.subTest(options=options), self.assertRaises(SafeFailure):
                 self.check_presence('a' * 32, **options)
+
+    def test_an_active_unit_waits_for_its_initial_exec_environment_before_accepting_its_ack(self):
+        approved = ['CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + 'a' * 32]
+        with mock.patch.object(manager.time, 'sleep') as sleep:
+            observed = self.check_presence('a' * 32, attempts=2, environments=[[], approved, approved],
+                                           process_starttimes=(77, 77, 77))
+        self.assertTrue(observed['relay_acknowledged'])
+        self.assertEqual(sleep.call_args_list, [mock.call(0.5)])
+
+    def test_a_permanently_invalid_process_exhausts_the_bounded_observation_budget(self):
+        with mock.patch.object(manager.time, 'sleep') as sleep, self.assertRaisesRegex(
+                SafeFailure, 'terminal relay acknowledgement was not observed for the current unit invocation'):
+            self.check_presence('a' * 32, attempts=3, environment=[], process_starttimes=(77, 77, 77))
+        self.assertEqual(sleep.call_args_list, [mock.call(0.5), mock.call(0.5)])
+
+    def test_a_transient_process_repin_requires_another_complete_ack_observation(self):
+        approved = ['CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + 'a' * 32]
+        observations = {}
+        with mock.patch.object(manager.time, 'sleep') as sleep:
+            observed = self.check_presence('a' * 32, attempts=2, environments=[approved, [], approved, approved],
+                                           process_starttimes=(77, 77, 77, 77), observations=observations)
+        self.assertTrue(observed['relay_acknowledged'])
+        self.assertEqual(observations['journal_queries'], 2)
+        self.assertEqual(sleep.call_args_list, [mock.call(0.5)])
 
     def test_a_managed_selector_cannot_hide_an_execution_override_or_missing_identity(self):
         unit = 'cauce-v3-pty@physical.service'

@@ -30,6 +30,7 @@ const consoleRequire = createRequire(join(process.cwd(), 'console/package.json')
 export interface PtyFleetFixture {
   computer: ComputerHarness; page: V4Page; errors: BrowserErrorLog; baseUrl: string; directory: string; caFile: string;
   owner: V4Person; tenantId: string; hostId: string; room: string; accountId: string; registryFile: string; runtimeState: string;
+  retryDiagnostic?: { operation_id: string; since: string | null };
   registry: AgentRegistry; pauseRelay(): Promise<PtyFleetRelayIdentity>; resumeRelay(): Promise<PtyFleetRelayIdentity>; close(): Promise<void>;
 }
 

@@ -31,19 +31,30 @@ async function sourceReceipt(phase: string): Promise<void> {
   await ptyFleetReceipt('source-' + phase, { head, hashes, aggregate: createHash('sha256').update(JSON.stringify(hashes)).digest('hex') });
 }
 
-async function journalDiagnostics(active: PtyFleetFixture): Promise<unknown> {
-  const result = await active.computer.onComputer(['journalctl', '--user', '--user-unit=cauce-v3-pty@' + ptyFleetRuntimeKey + '.service',
-    '--no-pager', '-o', 'json', '-n', '12']);
-  if (result.code !== 0 || result.stdout.length > 128 * 1024) return { code: result.code, observation_unavailable: true };
+async function journalDiagnostics(active: PtyFleetFixture, executor = false): Promise<unknown> {
+  const unit = executor ? 'cauce-v3-host-executor-' + active.owner.company.slug + '-' + active.hostId + '.service'
+    : 'cauce-v3-pty@' + ptyFleetRuntimeKey + '.service';
+  const since = active.retryDiagnostic?.since;
+  const result = await active.computer.onComputer(['journalctl', '--user', '--user-unit=' + unit,
+    '--no-pager', '-o', 'json', '-n', '100', ...(since ? ['--since', since] : [])]);
+  if (result.code !== 0 || result.stdout.length > 1024 * 1024) return { code: result.code, observation_unavailable: true };
   const fields = new Set(['_PID', '_UID', '_BOOT_ID', '__MONOTONIC_TIMESTAMP', '_SYSTEMD_USER_UNIT']);
+  const publicSources = ['fleet-executor.py', 'fleet_executor_terminal_manager.py', 'fleet_executor_terminal_provision.py',
+    'fleet_executor_terminal_files.py', 'fleet_executor_terminal_inventory.py', 'fleet_executor_steps.py'];
+  const publicFailures = executor ? (await Promise.all(publicSources.map(name => readFile(join('ops/cli', name), 'utf8'))))
+    .flatMap(source => [...source.matchAll(/raise SafeFailure\('([A-Za-z0-9 ,;:._-]+)'\)/gu)].map(match => match[1] ?? '')) : [];
   const rows = result.stdout.split('\n').filter(Boolean).map(line => {
     const row = JSON.parse(line) as Record<string, unknown>, message = typeof row.MESSAGE === 'string' ? row.MESSAGE : '';
     const identifiers = Object.fromEntries(Object.entries(row).filter(([name, value]) => typeof value === 'string'
       && (fields.has(name) || /^[A-Z_]*INVOCATION_ID$/u.test(name))));
     return { ...identifiers, start: /\bstarting alias=/u.test(message), ack: /\brelay accepted alias=/u.test(message),
-      disconnect: message.includes('relay connect failed:') || message.includes('relay session ended:') };
+      disconnect: message.includes('relay connect failed:') || message.includes('relay session ended:'),
+      ...(executor ? { safe_failures: [...new Set(publicFailures.filter(value => value && message.includes('fleet effect failed: ' + value)))],
+        command_failed: message.startsWith('fleet host command failed '),
+        step_failed: message.startsWith('fleet step failed '),
+        terminal_provision_failed: message.includes('CAUCE_FLEET_FAILURE=terminal_provision_failed') } : {}) };
   });
-  return { code: result.code, rows };
+  return { code: result.code, since: since ?? null, rows };
 }
 
 async function failureDiagnostics(active: PtyFleetFixture): Promise<void> {
@@ -59,12 +70,14 @@ async function failureDiagnostics(active: PtyFleetFixture): Promise<void> {
       '--property=LoadState,ActiveState,Result,ExecMainStatus,MainPID,InvocationID,ExecMainStartTimestampMonotonic', '--no-pager'])
       .then(result => ({ code: result.code, properties: result.stdout })),
     journalDiagnostics(active),
+    journalDiagnostics(active, true),
   ]);
   const values = observed.map(result => result.status === 'fulfilled' ? result.value : { observation_unavailable: true });
   let pathname = '';
   try { pathname = new URL(active.page.url()).pathname; } catch { /* A closed browser has no safe current pathname. */ }
   await ptyFleetReceipt('failure-diagnostics', { operations: values[0], agents: values[1], physical: values[2], unit: values[3],
-    journal: values[4], pathname, browser_error_count: active.errors.unexpected.length });
+    journal: values[4], executor_journal: values[5], retry: active.retryDiagnostic,
+    pathname, browser_error_count: active.errors.unexpected.length });
   if (pathname === '/config' || pathname.startsWith('/terminal')) {
     await capturePtyFleet(active.page, 'failure').catch(async () => ptyFleetReceipt('failure-capture-unavailable', { unavailable: true }));
   }

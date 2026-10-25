@@ -104,6 +104,10 @@ export async function retryPtyFleet(fixture: PtyFleetFixture, failed: PtyFleetOp
         () => replies.push({ status: response.status(), request: response.request().postDataJSON(), response: null }));
     }
   });
+  const clock = await fixture.computer.onComputer(['date', '+%s.%N']).catch(() => undefined);
+  fixture.retryDiagnostic = { operation_id: failed.id,
+    since: clock?.code === 0 && /^\d+\.\d+$/u.test(clock.stdout.trim()) ? '@' + clock.stdout.trim() : null };
+  await ptyFleetReceipt('before-retry-clock', fixture.retryDiagnostic);
   await card.getByRole('button', { name: 'Reintentar', exact: true }).click();
   await expect.poll(() => replies.length, { timeout: 30_000 }).toBe(1);
   expect(replies[0]).toMatchObject({ status: 200, request: { expected_version: failed.version }, response: { id: failed.id, status: 'queued' } });
@@ -124,7 +128,7 @@ export async function retryPtyFleet(fixture: PtyFleetFixture, failed: PtyFleetOp
 export async function observePtyFleet(fixture: PtyFleetFixture): Promise<PtyFleetObservation> {
   const code = await readFile(join(process.cwd(), 'tests/e2e/v4-pty-flota-dinamica.observe.py'), 'utf8');
   const result = await fixture.computer.onComputer(['python3', '-I', '-B', '-c', code, ptyFleetAlias,
-    ptyFleetRuntimeKey, ptyFleetPrefix + '-' + ptyFleetRuntimeKey, fixture.runtimeState]);
+    ptyFleetRuntimeKey, ptyFleetPrefix + '-' + ptyFleetRuntimeKey, fixture.runtimeState, fixture.retryDiagnostic?.operation_id ?? '']);
   if (result.code !== 0) throw new Error('owned PTY observation failed: ' + result.stderr);
   return JSON.parse(result.stdout) as PtyFleetObservation;
 }

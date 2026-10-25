@@ -160,6 +160,8 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
     if re.fullmatch(r'[a-f0-9]{32}', boot) is None:
         raise SafeFailure('terminal current boot identity is invalid')
     for attempt in range(attempts):
+        if attempt:
+            time.sleep(0.5)
         details = dict(line.split('=', 1) for line in systemctl('show', unit,
             '--property=ActiveState,MainPID,InvocationID,ExecMainStartTimestampMonotonic').splitlines())
         pid = details.get('MainPID', '')
@@ -168,7 +170,10 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
         if details.get('ActiveState') == 'active' and re.fullmatch(r'[0-9]+', pid) and int(pid) > 1 \
                 and re.fullmatch(r'[0-9]+', started) and int(started) > 0 \
                 and re.fullmatch(r'[a-f0-9]{32}', invocation or ''):
-            pinned_starttime = process_identity(pid, version, invocation)
+            try:
+                pinned_starttime = process_identity(pid, version, invocation)
+            except SafeFailure:
+                continue
             journal_fields = {'_SYSTEMD_USER_UNIT': unit, '_UID': str(os.geteuid()), '_PID': pid, '_BOOT_ID': boot}
             result = subprocess.run(['/usr/bin/journalctl', '--user', '--user-unit=' + unit,
                 *(name + '=' + value for name, value in journal_fields.items()),
@@ -193,9 +198,10 @@ def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
                                    for row in messages[accepted[-1] + 1:]) if accepted else True
                 if start and accepted and not disconnected:
                     after = systemctl('show', unit, '--property=MainPID,InvocationID')
-                    if dict(line.split('=', 1) for line in after.splitlines()) == {'MainPID': pid, 'InvocationID': invocation} \
-                            and process_identity(pid, version, invocation) == pinned_starttime:
-                        return {'main_pid': int(pid), 'invocation_id': invocation, 'relay_acknowledged': True}
-        if attempt + 1 < attempts:
-            time.sleep(0.5)
+                    if dict(line.split('=', 1) for line in after.splitlines()) == {'MainPID': pid, 'InvocationID': invocation}:
+                        try:
+                            if process_identity(pid, version, invocation) == pinned_starttime:
+                                return {'main_pid': int(pid), 'invocation_id': invocation, 'relay_acknowledged': True}
+                        except SafeFailure:
+                            continue
     raise SafeFailure('terminal relay acknowledgement was not observed for the current unit invocation')
