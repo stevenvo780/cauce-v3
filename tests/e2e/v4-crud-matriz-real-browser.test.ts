@@ -374,10 +374,24 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
         .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).isDisabled()).toBe(true);
       expect(await storedAccount()).toHaveLength(1);
       await dialog.getByLabel(`Confirmar borrado de ${accountId}`).fill(accountId);
-      await previewAndApply(page, dialog, 'retiro o rotación de cuenta');
+      const revision = (await apiGet(page, '/v3/console/config')).body.revision;
+      errors.expectHttpError('/v3/console/config/changes', 409);
+      await dialog.getByRole('group', { name: 'Acciones de retiro o rotación de cuenta', exact: true })
+        .getByRole('button', { name: 'Previsualizar (dry-run)', exact: true }).click();
+      await dialog.getByRole('alert').filter({ hasText: 'Esta cuenta se administra en «Mis cuotas».' }).waitFor({ timeout: 20_000 });
+      expect(await storedAccount()).toHaveLength(1);
+      expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(revision);
+      expect((await pool().query('SELECT quota_registration_key IS NOT NULL AS registered FROM provider_accounts WHERE id=$1', [accountId])).rows)
+        .toEqual([{ registered: true }]);
+      await dialog.getByRole('link', { name: 'Eliminar en Mis cuotas', exact: true }).click();
+      const card = page.getByRole('article').filter({ hasText: accountEditedLabel });
+      await card.getByRole('button', { name: 'Eliminar cuenta', exact: true }).click();
+      await page.getByRole('region', { name: 'Confirmar eliminación de cuenta', exact: true })
+        .getByRole('button', { name: 'Confirmar eliminación de cuenta', exact: true }).click();
+      await page.getByText('Cuenta eliminada.', { exact: true }).waitFor({ timeout: 20_000 });
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
-      expect(await page.getByRole('row', { name: new RegExp(accountId, 'u') }).count()).toBe(0);
+      await page.getByRole('heading', { name: 'Mis cuotas', exact: true }).waitFor({ timeout: 20_000 });
+      expect(await page.getByRole('article').filter({ hasText: accountEditedLabel }).count()).toBe(0);
     });
     expect(await storedAccount()).toEqual([]);
     const afterDelete = (await apiGet(page, '/v3/console/config')).body as { provider_accounts?: Record<string, unknown>[] };
@@ -441,7 +455,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
       const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
       await form.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
-      await sheet.getByRole('status').filter({ hasText: 'Dry-run aceptado:' }).waitFor({ timeout: 20_000 });
+      await sheet.getByRole('status').filter({ hasText: 'Vista previa lista.' }).waitFor({ timeout: 20_000 });
       await expect.poll(async () => form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
       expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(before);
       expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);

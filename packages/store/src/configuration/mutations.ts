@@ -511,9 +511,11 @@ export abstract class ConfigurationMutations {
       credential_ref_kind: 'env_path' | 'file' | 'secret_manager'; credential_ref: string;
       shared_with_pool: boolean; enabled: boolean;
       quota_registration_key: string | null; quota_identity_hash: string | null;
+      canonical_account_id: string | null; paused_until: unknown; paused_reason: string | null; quota_version: string;
     }>(
       `SELECT provider,external_account_id,payer_tenant_id,label,credential_ref_kind,credential_ref,
-              shared_with_pool,enabled,quota_registration_key,quota_identity_hash
+              shared_with_pool,enabled,quota_registration_key,quota_identity_hash,
+              canonical_account_id,paused_until,paused_reason,quota_version
        FROM provider_accounts WHERE id=$1 FOR UPDATE`, [mutation.id]
     );
     const old = selected.rows[0];
@@ -543,8 +545,16 @@ export abstract class ConfigurationMutations {
       };
     }
     if (!old) throw new ConfigurationError('not_found', 'provider account was not found');
-    const oldValue = { ...old };
+    const oldValue = {
+      provider: old.provider, external_account_id: old.external_account_id, payer_tenant_id: old.payer_tenant_id,
+      label: old.label, credential_ref_kind: old.credential_ref_kind, credential_ref: old.credential_ref,
+      shared_with_pool: old.shared_with_pool, enabled: old.enabled,
+    };
     if (mutation.action === 'delete') {
+      if (old.quota_registration_key != null || old.quota_identity_hash != null || old.canonical_account_id != null
+        || old.paused_until != null || old.paused_reason != null || Number(old.quota_version) > 1) {
+        throw new ConfigurationError('conflict', 'quota accounts must be deleted from My quotas');
+      }
       await assertConfigurationDeleteAllowed(client, mutation);
       // No explicit guard: alias_routing_ceiling holds a plain foreign key into this table, so
       // Postgres already refuses (23503) to delete an account any alias may still be routed to.

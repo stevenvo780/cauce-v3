@@ -520,6 +520,10 @@ export function describeRegistryError(
   context: RegistryContext,
 ): { message: string; conflict: boolean } {
   if (error instanceof ApiError && error.status === 409
+    && error.message === 'quota accounts must be deleted from My quotas') {
+    return { conflict: false, message: 'Esta cuenta se administra en «Mis cuotas». Usa «Eliminar en Mis cuotas» para comprobar sus dependencias y eliminarla con su historial de cuotas.' };
+  }
+  if (error instanceof ApiError && error.status === 409
     && error.message === 'quota account must be authenticated before it can be enabled') {
     return {
       conflict: false,
