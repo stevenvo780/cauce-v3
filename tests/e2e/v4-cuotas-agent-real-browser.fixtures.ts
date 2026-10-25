@@ -16,9 +16,12 @@ import type { startConsoleFunctionalFixture } from './console-functional-browser
 
 type Fixture = Awaited<ReturnType<typeof startConsoleFunctionalFixture>>;
 const execute = promisify(execFile);
+/** Identity hash the synthetic reader of ops/tests/test_fleet_executor_agent_quota.py reports. */
+const SYNTHETIC_READER_IDENTITY_HASH = 'cdec757647de138bf5c817110c408b6c8d7e995789a328b37527fb058416cf18';
 export interface QuotaAgentPlacement {
   tenant_id: string; alias: string; host_id: string; harness_id: string; runtime_mode: string; container_name: string;
   runtime_key: string; runtime_user: string; home_directory: string; state_directory: string; systemd_user: string;
+  primary_account_id?: string | null;
 }
 
 async function bounded<T>(work: Promise<T>, milliseconds: number, label: string): Promise<T> {
@@ -35,7 +38,7 @@ function isRunning(child: ChildProcessWithoutNullStreams | undefined): child is 
 }
 
 export async function startAgentQuotaDocker(fixture: Fixture, email: string, evidenceDirectory: string,
-  reader?: { email: string; name: string; password: string }) {
+  reader?: { email: string; name: string; password: string }, options?: { dynamicAccount?: string }) {
   await mkdir(evidenceDirectory, { recursive: true });
   const pool = fixture.database.pool;
   const person = (await pool.query<{ id: string; company_id: string; tenant_id: string; alias: string }>(
@@ -119,7 +122,8 @@ export async function startAgentQuotaDocker(fixture: Fixture, email: string, evi
         catch { reject(new Error('invalid quota Docker fixture setup')); }
         finally { lines.close(); }
       });
-      child.stdin.write(JSON.stringify({ host_id: host.host_id, tenant_id: person.tenant_id }) + '\n');
+      child.stdin.write(JSON.stringify({ host_id: host.host_id, tenant_id: person.tenant_id,
+        dynamic_account: options?.dynamicAccount }) + '\n');
     }), 240_000, 'quota Docker setup');
     const policy = JSON.parse(await readFile(physical.policy_file, 'utf8')) as { bundles: { codex: { directory: string } } };
     await writeFile(join(evidenceDirectory, 'docker-resources.json'), JSON.stringify(physical.agents.map(agent => ({
@@ -131,12 +135,18 @@ export async function startAgentQuotaDocker(fixture: Fixture, email: string, evi
       .update(await readFile(join(descriptors, `${harness}.json`))).digest('hex');
     const approvalsFile = join(fixture.directory, 'agent-quota-approvals.json');
     await writeFile(approvalsFile, JSON.stringify(approvals), { mode: 0o600 });
+    if (options?.dynamicAccount) {
+      await pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,
+        enabled,shared_with_pool,company_id,quota_identity_hash)
+        VALUES($1,'codex',$1,$2,'env_path','CAUCE_TEST_DYNAMIC_ACCOUNT_PROFILE_PATH',true,false,$3,$4)`,
+      [options.dynamicAccount, person.tenant_id, person.company_id, SYNTHETIC_READER_IDENTITY_HASH]);
+    }
     for (const agent of physical.agents) {
       await pool.query(`INSERT INTO agents(tenant_id,alias,company_id,harness_id,host_id,runtime_mode,container_name,
-        runtime_key,runtime_user,home_directory,state_directory,systemd_user,enabled,lifecycle_state)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,'ready')`,
+        runtime_key,runtime_user,home_directory,state_directory,systemd_user,enabled,lifecycle_state,primary_account_id)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,'ready',$13)`,
       [agent.tenant_id, agent.alias, person.company_id, agent.harness_id, agent.host_id, agent.runtime_mode, agent.container_name,
-        agent.runtime_key, agent.runtime_user, agent.home_directory, agent.state_directory, agent.systemd_user]);
+        agent.runtime_key, agent.runtime_user, agent.home_directory, agent.state_directory, agent.systemd_user, agent.primary_account_id ?? null]);
       await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [agent.tenant_id, agent.alias]);
     }
     let executionGate: Promise<void> | undefined;
