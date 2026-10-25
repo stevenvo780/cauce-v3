@@ -683,14 +683,18 @@ publish_bundle() {
   openclaw_tui=null
   tmux_state=''
   read_adapter_generation || adapter_generation=''
-  if [[ ${ADAPTER_V4_MANAGED:-0} == 1 && ( $harness != openclaw || -v CAUCE_PTY_FLEET_SHARED_TUI ) ]]; then
+  if [[ ${ADAPTER_V4_MANAGED:-0} == 1 ]]; then
     [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} =~ ^[01]$ ]] || die 'approved shared TUI flag is invalid'
-    harness_command=null
-    if [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} == 1 ]]; then
-      [[ $harness == codex || $harness == claude || $harness == muse || $harness == grok ]] \
-        || die 'approved shared TUI harness is unavailable'
-      harness_command=''
-      tmux_state=$state_directory
+    if [[ $harness == openclaw ]]; then
+      [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} == 0 ]] || die 'approved shared TUI harness is unavailable'
+    else
+      harness_command=null
+      if [[ ${CAUCE_PTY_FLEET_SHARED_TUI:-0} == 1 ]]; then
+        [[ $harness == codex || $harness == claude || $harness == muse || $harness == grok ]] \
+          || die 'approved shared TUI harness is unavailable'
+        harness_command=''
+        tmux_state=$state_directory
+      fi
     fi
   fi
   TMUX_PANE_CWD_FOUND=''

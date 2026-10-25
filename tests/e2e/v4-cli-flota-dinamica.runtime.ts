@@ -3,6 +3,7 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { FIXTURE_PROVIDER_IDENTITY, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { IDLE_PLACEHOLDER } from './s2d-provider.js';
 
 const execute = promisify(execFile);
 const workspace = process.cwd();
@@ -62,11 +63,35 @@ while True:
  sys.stdout.write('\\r\\n'+answer+'\\r\\n› ');sys.stdout.flush()
 `;
 
-export function createFleetCliRuntimeBundle(candidateSource: string): ComputerRuntimeBundle {
+function canonicalComposerProvider(): string {
+  const render = String.raw`pending='';pasting=False
+def render_idle():
+ if pending: raise RuntimeError('a draft cannot be rendered as an idle composer')
+ sys.stdout.write('\r\n› \x1b[2m'+${JSON.stringify(IDLE_PLACEHOLDER)}+'\x1b[22m\r\x1b[2C');sys.stdout.flush()
+render_idle()`;
+  const replacements = [
+    [String.raw`sys.stdout.write(chr(27)+'[?2004h'+'\r\n› ');sys.stdout.flush()`, "sys.stdout.write(chr(27)+'[?2004h');sys.stdout.flush()"],
+    ["pending='';pasting=False", render],
+    [' pending+=chunk', String.raw` if not pending: sys.stdout.write('\r\x1b[2K› ');sys.stdout.flush()
+ pending+=chunk`],
+    [String.raw` sys.stdout.write('\r\n'+answer+'\r\n› ');sys.stdout.flush()`,
+      String.raw` sys.stdout.write('\r\n'+answer+'\r\n');sys.stdout.flush();render_idle()`],
+  ];
+  let result = provider;
+  for (const [before, after] of replacements) {
+    if (!before || after === undefined || !result.includes(before) || result.indexOf(before) !== result.lastIndexOf(before)) {
+      throw new Error('the canonical composer source anchor is not unique');
+    }
+    result = result.replace(before, after);
+  }
+  return result;
+}
+
+export function createFleetCliRuntimeBundle(candidateSource: string, options: { canonicalComposer?: boolean } = {}): ComputerRuntimeBundle {
   if (!isAbsolute(candidateSource)) throw new Error('the candidate source archive must have an absolute path');
   const source = resolve(candidateSource);
   return {
-    providerCli: provider,
+    providerCli: options.canonicalComposer ? canonicalComposerProvider() : provider,
     sharedTui: true,
     async stage(directory) {
       const stage = dirname(directory);

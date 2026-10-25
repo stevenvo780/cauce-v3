@@ -10,7 +10,7 @@ import { observePtyFleet, ptyFleetAlias, ptyFleetRuntimeKey } from './v4-pty-flo
 import { capturePtyFleet, ptyFleetReceipt, type PtyFleetFixture } from './v4-pty-flota-dinamica.helpers.js';
 
 export const ptyFleetTuiRuntime: ComputerRuntimeBundle = { ...cancelDeployRuntime, sharedTui: true,
-  providerCli: createFleetCliRuntimeBundle(process.cwd()).providerCli };
+  providerCli: createFleetCliRuntimeBundle(process.cwd(), { canonicalComposer: true }).providerCli };
 
 export async function capturePtyFleetTuiDiagnostics(fixture: PtyFleetFixture, phase: string): Promise<void> {
   try {

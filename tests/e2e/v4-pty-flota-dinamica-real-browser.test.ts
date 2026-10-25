@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { buildInstalledCli } from './v4-cli-flota-dinamica.install.js';
+import { capturePtyFleetComposer } from './v4-pty-flota-dinamica.composer.js';
 import { discardPtyFleetInstallation, loginPtyFleetCli, usePtyFleetShells, type PtyFleetCli } from './v4-pty-flota-dinamica.client.js';
 import { assertPtyFleetOnline, createPtyFleetAgent, enqueuePtyFleet, observePtyFleet, openPtyFleetPanel, purgePtyFleet,
   ptyFleetAlias, ptyFleetRuntimeKey, retryPtyFleet, type PtyFleetOperation } from './v4-pty-flota-dinamica.flow.js';
@@ -37,9 +38,11 @@ const sources = ['ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_poli
   'ops/pty-agent/tests/test_tmux_dynamic.py', 'tests/e2e/v4-pty-flota-dinamica.tui.ts',
   'ops/pty-agent/cauce_pty_agent/agent.py', 'ops/pty-agent/cauce_pty_agent/session.py',
   'ops/pty-agent/tests/test_native_tmux_presence.py',
-  'ops/pty-agent/systemd/cauce-v3-pty@.service'];
-const dependencies = ['tests/e2e/v4-cli-flota-dinamica.runtime.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts',
-  'packages/adapter-sdk/src/bin/shared.ts', 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts'];
+  'ops/pty-agent/systemd/cauce-v3-pty@.service', 'tests/e2e/v4-cli-flota-dinamica.runtime.ts',
+  'tests/e2e/v4-pty-flota-dinamica.composer.ts', 'tests/e2e/v4-pty-flota-dinamica.composer.py'];
+const dependencies = ['tests/e2e/s2d-provider.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts',
+  'packages/adapter-sdk/src/bin/shared.ts', 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts',
+  'ops/container-runtime/cauce_container_base.py', 'ops/container-runtime/cauce_container_proc.py', 'ops/container-runtime/cauce_container_restart.py'];
 
 async function sourceReceipt(phase: string): Promise<void> {
   const hashes: Record<string, string> = {};
@@ -63,6 +66,15 @@ async function journalDiagnostics(active: PtyFleetFixture, executor = false): Pr
     'fleet_executor_terminal_files.py', 'fleet_executor_terminal_inventory.py', 'fleet_executor_steps.py'];
   const publicFailures = executor ? (await Promise.all(publicSources.map(name => readFile(join('ops/cli', name), 'utf8'))))
     .flatMap(source => [...source.matchAll(/raise SafeFailure\('([A-Za-z0-9 ,;:._-]+)'\)/gu)].map(match => match[1] ?? '')) : [];
+  const guardPaths = ['ops/cli/fleet_executor_container.py', 'ops/cli/fleet_executor_runtime.py',
+    'ops/cli/fleet_executor_lifecycle.py', 'ops/cli/fleet_executor_container_tui.py', 'ops/cli/fleet_executor_tui.py',
+    ...['base', 'proc', 'restart', 'tree', 'adoption'].map(name => 'ops/container-runtime/cauce_container_' + name + '.py')];
+  const guardSources = executor ? await Promise.all(guardPaths.map(async path => ({ path, source: await readFile(path, 'utf8') }))) : [];
+  const guardFailures = guardSources.flatMap(({ source }) => [
+    ...[...source.matchAll(/\bhold\("([A-Z][A-Z0-9_]*)"\)/gu)].map(match => 'RESTART_HOLD_' + (match[1] ?? '')),
+    ...[...source.matchAll(/\b(?:SafeFailure|PermanentError|RuntimeError)\((['"])([A-Za-z0-9 ,;:._-]+)\1\)/gu)]
+      .map(match => match[2] ?? ''),
+  ]);
   const launcherFailures = [...(await readFile('ops/pty-agent/cauce-pty-launcher.sh', 'utf8'))
     .matchAll(/die(?:_transient)? '([A-Za-z0-9 ,;:._-]+)'/gu)].map(match => match[1] ?? '');
   const rows = result.stdout.split('\n').filter(Boolean).map(line => {
@@ -73,11 +85,14 @@ async function journalDiagnostics(active: PtyFleetFixture, executor = false): Pr
       disconnect: message.includes('relay connect failed:') || message.includes('relay session ended:'),
       launcher_failures: [...new Set(launcherFailures.filter(value => value && message.includes(value)))],
       ...(executor ? { safe_failures: [...new Set(publicFailures.filter(value => value && message.includes('fleet effect failed: ' + value)))],
+        runtime_guard_failures: [...new Set(guardFailures.filter(value => value && message.includes(value)))],
         command_failed: message.startsWith('fleet host command failed '),
         step_failed: message.startsWith('fleet step failed '),
         terminal_provision_failed: message.includes('CAUCE_FLEET_FAILURE=terminal_provision_failed') } : {}) };
   });
-  return { code: result.code, since: since ?? null, rows };
+  return { code: result.code, since: since ?? null, rows,
+    ...(executor ? { runtime_guard_sources: Object.fromEntries(guardSources.map(({ path, source }) =>
+      [path, createHash('sha256').update(source).digest('hex')])) } : {}) };
 }
 
 async function failureDiagnostics(active: PtyFleetFixture): Promise<void> {
@@ -189,6 +204,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   console.info('H12_FLOW created online; web and installed CLI');
   await usePtyFleetShells(fixture, cli, first.uid, 'created');
   const shared = await usePtyFleetTui(fixture, cli, 'created');
+  await capturePtyFleetComposer(fixture);
   let panel = await openPtyFleetPanel(fixture);
   await panel.getByLabel('¿Qué quieres hacer?').selectOption('stop');
   const stopped = await enqueuePtyFleet(fixture, panel, 'stop');
