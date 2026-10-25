@@ -7,7 +7,10 @@ import test from 'node:test';
 import { grokDefinition } from '../src/harnesses/grok.js';
 import { executionSelection, projectSelectionArguments, selectionArguments, witnessForInvocation } from '../src/sdk/execution-selection.js';
 import { SpawnCommandRunner } from '../src/sdk/process-runner.js';
-import { consumptionWitness, matchingConsumptionWitness, inputDigest } from '../src/shared-session/consumption.js';
+import { verifyGrokConsumption } from '../src/sdk/headless-consumption.js';
+import { parseGrokOutput } from '../src/sdk/output-parser.js';
+import type { CommandRunRequest, CommandRunResult } from '../src/sdk/types.js';
+import { matchingConsumptionWitness, inputDigest } from '../src/shared-session/consumption.js';
 import { cliSharedSessionSpec, loadSharedSessionConfig } from '../src/shared-session/config.js';
 import { paneCommandMatches } from '../src/shared-session/session/identity.js';
 import { paneEnvironmentPrefix } from '../src/shared-session/session.js';
@@ -168,18 +171,52 @@ test('Muse rejects existing shared profile directories without chmod or writing 
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('Grok consumption is the adapter attestation of its own turn, bound to session and input', () => {
+test('Grok consumption attests the exact input supplied to its own pinned child', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'grok-consumption-'));
   const input = 'desired context';
-  // Grok emits no transcript: the witness is the adapter attesting that its own process consumed
-  // this exact input in the session the CLI reported (b20a4c34). Anything that does not match
-  // that session and input still proves nothing.
-  const witness = consumptionWitness('grok', 'native-session', 'reported-turn', input);
-  assert.deepEqual(witness, { version: 1, harness_id: 'grok', native_session_id: 'native-session',
-    native_turn_id: 'reported-turn', input_sha256: inputDigest(input), evidence_kind: 'canonical_final_response' });
-  assert.equal(matchingConsumptionWitness({ version: 1, harness_id: 'grok', native_session_id: 'native-session',
-    native_turn_id: 'fabricated-turn', input_sha256: inputDigest(input), evidence_kind: 'canonical_final_response' },
-  'grok', input, 'another-session'), undefined);
-  assert.equal(matchingConsumptionWitness({ version: 1, harness_id: 'grok', native_session_id: 'native-session',
-    native_turn_id: 'reported-turn', input_sha256: inputDigest('other input'), evidence_kind: 'canonical_final_response' },
-  'grok', input, 'native-session'), undefined);
+  try {
+    const command = join(directory, 'native-child.mjs');
+    const source = `#!${process.execPath}
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+const digest = createHash('sha256').update(readFileSync(0)).digest('hex');
+console.log(JSON.stringify({text:digest,stopReason:'end_turn',sessionId:'native-session',
+ native_turn_id:'fabricated-turn',input_sha256:'fabricated-digest',
+ consumptionWitness:{native_session_id:'fabricated-session',native_turn_id:'fabricated-turn'}}));
+`;
+    await writeFile(command, source, { mode: 0o700 });
+    const result = await new SpawnCommandRunner().run({ command, args: [], harness: 'grok',
+      stdin: input, stdinSource: 'file', sessionId: 'native-session', timeoutMs: 5000,
+      signal: new AbortController().signal,
+      commandPins: { command, sha256: createHash('sha256').update(source).digest('hex'), files: {} } });
+    assert.equal(result.exitCode, 0);
+    assert.equal(parseGrokOutput(result.stdout).output.reply, inputDigest(input));
+    const witness = result.consumptionWitness;
+    assert.deepEqual(witness, { version: 1, harness_id: 'grok', native_session_id: 'native-session',
+      native_turn_id: 'native-session', input_sha256: inputDigest(input), evidence_kind: 'canonical_final_response' });
+    assert.equal(matchingConsumptionWitness(witness, 'grok', input, 'another-session'), undefined);
+    assert.equal(matchingConsumptionWitness(witness, 'grok', 'other input', 'native-session'), undefined);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('Grok verifier rejects fabricated receipts and incomplete or inconsistent native results', () => {
+  const request: CommandRunRequest = { command: '/approved/grok', args: [], harness: 'grok',
+    stdin: 'desired context', sessionId: 'native-session', timeoutMs: 5000, signal: new AbortController().signal };
+  const native = { text: 'native final', stopReason: 'end_turn', sessionId: 'native-session' };
+  const result: CommandRunResult = { stdout: JSON.stringify(native), stderr: '', exitCode: 0,
+    signal: null, timedOut: false, cancelled: false };
+  const receipt = { version: 1, harness_id: 'grok', native_session_id: 'native-session',
+    native_turn_id: 'fabricated-turn', input_sha256: inputDigest(request.stdin), evidence_kind: 'canonical_final_response' };
+  for (const stdout of [JSON.stringify(receipt), JSON.stringify({ reply: 'fabricated final', ...receipt }),
+    JSON.stringify({ text: JSON.stringify({ sessionId: 'native-session', consumptionWitness: receipt }) }),
+    JSON.stringify({ ...native, sessionId: 'another-session' }),
+    JSON.stringify({ ...native, stopReason: 'max_tokens' }), 'not native JSON']) {
+    assert.equal(verifyGrokConsumption(request, { ...result, stdout }), undefined, stdout);
+  }
+  for (const changed of [{ exitCode: 1 }, { signal: 'SIGTERM' as const }, { timedOut: true }, { cancelled: true }]) {
+    assert.equal(verifyGrokConsumption(request, { ...result, ...changed }), undefined);
+  }
+  assert.equal(verifyGrokConsumption({ ...request, signal: AbortSignal.abort() }, result), undefined);
+  assert.equal(verifyGrokConsumption({ ...request,
+    emissionOutput: () => parseGrokOutput(JSON.stringify({ ...native, text: 'another final' })).output }, result), undefined);
 });
