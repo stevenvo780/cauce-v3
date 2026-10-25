@@ -17,7 +17,8 @@ describe('refresco de imagen con Docker y helper de ciclo de vida reales', () =>
     const result = await scenario('broken-image', 'bad');
     expect(result).toMatchObject({ original_id: true, original_image: true, running: true,
       adapter_running: true, receipt: 'rolled_back' });
-    expect(result.failure).toMatchObject({ type: 'SafeFailure', message: expect.stringContaining('cause=SafeFailure:') });
+    expect(result.failure).toMatchObject({ type: 'SafeFailure' });
+    expect(result.failure).toHaveProperty('message', expect.stringContaining('cause=SafeFailure:'));
     expect(result.failure_cause).toEqual(expect.stringContaining('runtime effect or observation failed'));
   });
 
