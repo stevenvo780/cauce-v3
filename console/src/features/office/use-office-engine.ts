@@ -84,6 +84,14 @@ export function useOfficeEngine({ canvasRef, map, inputs, reducedMotion, night, 
       engine.tick(now, dt);
       const ctx = canvas.getContext('2d');
       if (ctx) engine.draw(ctx, now / 1000);
+      const host = canvas.closest('[data-nivel]');
+      if (host instanceof HTMLElement) {
+        host.dataset.camX = engine.cam.x.toFixed(2);
+        host.dataset.camY = engine.cam.y.toFixed(2);
+        host.dataset.camZoom = engine.cam.zoom.toFixed(2);
+        host.dataset.avatarX = engine.avatar.x.toFixed(2);
+        host.dataset.avatarY = engine.avatar.y.toFixed(2);
+      }
     };
     const loop = (now: number) => {
       render(now, (now - last) / 1000);
