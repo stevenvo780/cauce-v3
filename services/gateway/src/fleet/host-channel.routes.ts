@@ -7,6 +7,7 @@ import { replyError } from '../routes/shared.js';
 import { HostChannelCommandSchema, type HostAgentQuotaCommand, type HostFleetCommand, type HostQuotaCommand } from './host-channel.contracts.js';
 import { hostFleetExecution } from './host-channel.execution.js';
 import { recordHostCapabilities } from './host-channel.capabilities.js';
+import { readFleetProviderAccounts } from './accounts.js';
 
 const Params = z.object({host_id:HostId}).strict();
 interface HostIdentity {host_id:string;company_id:string}
@@ -101,7 +102,11 @@ async function agentQuotaCommand(repository:AgentQuotaOperationsRepository,clien
   await quota.assertHostScopeInTransaction(client,command.claim,{...identity,allowTerminal:command.action==='finish'||command.action==='fail'});
   switch(command.action) {
     case 'renew':return {renewed:await quota.renew(command.claim,command.lease_ms)};
-    case 'execution':return quota.execution(command.claim);
+    case 'execution': {
+      const execution = await quota.execution(command.claim);
+      const trusted_accounts = await readFleetProviderAccounts(client, [execution.agent]);
+      return { ...execution, trusted_accounts };
+    }
     case 'finish':return quota.finish(command.claim,command.receipt);
     case 'fail':await quota.fail(command.claim,command.code);return {operation_id:command.claim.id,status:'failed'};
   }

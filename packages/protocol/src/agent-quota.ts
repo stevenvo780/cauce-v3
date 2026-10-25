@@ -12,6 +12,11 @@ export const AgentQuotaClaimSchema = z.object({
   claim_epoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), worker_id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/u),
 }).strict();
 const identifier = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u);
+export const AgentQuotaTrustedAccountSchema = z.object({
+  id: identifier, provider: z.string().min(1).max(64), external_account_id: z.string().min(1).max(4096),
+  payer_tenant_id: z.string().min(1).max(64), shared_with_pool: z.boolean(), enabled: z.boolean(),
+}).strict();
+export const AgentQuotaTrustedAccountsSchema = z.array(AgentQuotaTrustedAccountSchema).max(1000);
 export const AgentQuotaAgentSnapshotSchema = z.object({
   operation_id: z.uuid(), expected_revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   company_id: identifier, tenant_id: TenantSchema, alias: AliasSchema, harness_id: identifier, host_id: identifier,
@@ -22,6 +27,7 @@ export const AgentQuotaAgentSnapshotSchema = z.object({
 }).strict();
 export const AgentQuotaExecutionSchema = z.object({
   operation_id: z.uuid(), action: z.literal('query'), agent: AgentQuotaAgentSnapshotSchema,
+  trusted_accounts: AgentQuotaTrustedAccountsSchema.optional(),
 }).strict().refine(value => value.operation_id === value.agent.operation_id, 'operation identity differs');
 const envelope = {
   operation_id: z.uuid(), tenant: TenantSchema, alias: AliasSchema, host_id: identifier,
@@ -36,5 +42,6 @@ export const AgentQuotaReceiptSchema = z.discriminatedUnion('status', [
 ]);
 export type AgentQuotaClaim = z.infer<typeof AgentQuotaClaimSchema>;
 export type AgentQuotaExecution = z.infer<typeof AgentQuotaExecutionSchema>;
+export type AgentQuotaTrustedAccounts = z.infer<typeof AgentQuotaTrustedAccountsSchema>;
 export type AgentQuotaReceipt = z.infer<typeof AgentQuotaReceiptSchema>;
 export type AgentQuotaFailureCode = z.infer<typeof AgentQuotaFailureCodeSchema>;

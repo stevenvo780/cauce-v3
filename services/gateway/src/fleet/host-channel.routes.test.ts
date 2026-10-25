@@ -1,7 +1,13 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FleetOperationsRepository, QuotaEnvironmentRepository, type DatabasePool, type FleetOperationClaim,
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AgentQuotaOperationsRepository, FleetOperationsRepository, QuotaEnvironmentRepository, type DatabasePool, type FleetOperationClaim,
   type QuotaOperationClaim, type RegisteredCompany } from '@cauce/store';
+import type { AgentQuotaClaim, AgentQuotaExecution } from '@cauce/protocol';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { registerHostChannelRoutes } from './host-channel.routes.js';
@@ -144,5 +150,41 @@ describe('signed company host channel',()=>{
     await expect(binding.preview(north.hub.id,'owner',{...request,parameters:{...request.parameters,
       placement:{...request.parameters.placement,state_directory:'/tmp/arbitrary/fresh-worker'}}},subject)).rejects.toMatchObject({code:'forbidden'});
     expect(await binding.enqueue(north.hub.id,'owner',request,subject)).toMatchObject({status:'queued'});
+  });
+  it('provides agent quota execution with trusted accounts and blocks foreign host', async () => {
+    const descriptorsDir = fileURLToPath(new URL('../../../../packages/adapter-sdk/descriptors', import.meta.url));
+    const approvalsFile = join(tmpdir(), `approvals-${randomUUID()}.json`);
+    const codexContent = await readFile(join(descriptorsDir, 'codex.json'));
+    await writeFile(approvalsFile, JSON.stringify({
+      codex: createHash('sha256').update(codexContent).digest('hex'),
+    }));
+    vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE', approvalsFile);
+    vi.stubEnv('CAUCE_HARNESS_DESCRIPTOR_DIRECTORY', descriptorsDir);
+    try {
+      expect((await channelPost(app, host, channelCapabilities())).statusCode).toBe(200);
+      await pool.query(`INSERT INTO agents(tenant_id,alias,company_id,harness_id,host_id,runtime_mode,container_name,
+        runtime_key,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,enabled,lifecycle_state)
+        VALUES($1,'agent-one','north','codex',$2,'container','cauce-agent-one','agent-key','dev','/home/dev','/home/dev/.cauce/agent-one',null,'north-account',true,'ready')`,
+      [north.hub.id, host.host_id]);
+      await pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office','agent-one','agent')", [north.hub.id]);
+      const agentQuotaRepo = new AgentQuotaOperationsRepository(pool);
+      const card = await agentQuotaRepo.snapshot(companySource(north), { tenant_id: north.hub.id, alias: 'agent-one' });
+      await agentQuotaRepo.enqueue(companySource(north), { tenant_id: north.hub.id, alias: 'agent-one', expected_revision: card.revision, idempotency_key: 'agent-quota-channel-test' });
+      expect((await channelPost(app, other, { resource: 'agent_quota', action: 'claim', lease_ms: 30_000 })).json()).toEqual({ claim: null });
+      const claimRes = await channelPost(app, host, { resource: 'agent_quota', action: 'claim', lease_ms: 30_000 });
+      expect(claimRes.statusCode).toBe(200);
+      const claim = claimRes.json<{ claim: AgentQuotaClaim }>().claim;
+      expect(claim).toBeDefined();
+      expect((await channelPost(app, other, { resource: 'agent_quota', action: 'execution', claim })).statusCode).toBe(403);
+      const execRes = await channelPost(app, host, { resource: 'agent_quota', action: 'execution', claim });
+      expect(execRes.statusCode).toBe(200);
+      const execution = execRes.json<AgentQuotaExecution>();
+      expect(execution.action).toBe('query');
+      expect(execution.agent.alias).toBe('agent-one');
+      expect(execution.trusted_accounts).toMatchObject([{ id: 'north-account', provider: 'codex' }]);
+    } finally {
+      vi.unstubAllEnvs();
+      await unlink(approvalsFile).catch(() => undefined);
+    }
   });
 });

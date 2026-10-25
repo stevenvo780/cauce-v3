@@ -11,10 +11,13 @@ export async function performAgentQuotaHostCommand(config: HostCommandConfig, va
   [config.python, config.executable, config.policyFile].forEach(path => LoginPathSchema.parse(path));
   const { tenant_id, alias, runtime_key, harness_id, host_id, runtime_mode, container_name, runtime_user,
     home_directory, state_directory, systemd_user, primary_account_id } = execution.agent;
-  const packet = { operation_id: execution.operation_id, action: 'query_agent', agent: {
+  const packet: Record<string, unknown> = { operation_id: execution.operation_id, action: 'query_agent', agent: {
     tenant_id, alias, runtime_key, harness_id, host_id, runtime_mode, container_name, runtime_user,
     home_directory, state_directory, systemd_user, primary_account_id,
   } };
+  if (execution.trusted_accounts !== undefined) {
+    packet.trusted_accounts = execution.trusted_accounts;
+  }
   const args = ['-B', config.executable, '--policy', config.policyFile, '--quota'];
   const command = config.transport === undefined ? { executable: config.python, args }
     : { executable: config.transport.executable, args: [...await fleetSshArguments(config.transport), config.transport.destination,
