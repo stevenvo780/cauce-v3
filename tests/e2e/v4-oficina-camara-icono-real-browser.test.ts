@@ -328,10 +328,13 @@ describe('Oficina: cámara observable y previsualización sin persistir', () => 
       expect(await pressed(follow)).toBe('false');
       const stopped = await settled(page);
       await refreshAgent(page, true);
-      await expect.poll(() => card.locator('header p').innerText(), { timeout: 45_000 }).not.toMatch(/en (?:Taller|el campus)/u);
+      await expect.poll(() => card.locator('header p').innerText(), { timeout: 60_000 }).not.toMatch(/en (?:taller|el campus)/iu);
       const unfollowed = await settled(page);
       expect(unfollowed.level).toBe('taller');
-      observations.push({ viewport, action: 'follow-disabled', before: stopped, after: unfollowed, agent_header: await card.locator('header p').innerText() });
+      const returnedHeader = await card.locator('header p').innerText();
+      expect(returnedHeader).toMatch(/office/iu);
+      expect(returnedHeader).not.toMatch(/en (?:taller|el campus)/iu);
+      observations.push({ viewport, action: 'follow-disabled', before: stopped, after: unfollowed, agent_header: returnedHeader });
       await shot(page, 'follow-stopped');
       expect(writes).toEqual([]);
       errors.assertClean();
