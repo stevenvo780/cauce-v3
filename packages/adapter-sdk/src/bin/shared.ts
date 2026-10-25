@@ -470,7 +470,6 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
             error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
       }
-      if (shared !== undefined) await ensureSharedSessionStartup(shared, logger, undefined, shutdown.signal);
     },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,
