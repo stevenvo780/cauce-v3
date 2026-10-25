@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { StoreError,SpaceBackupRepository,SpaceBackupTargetSchema,type DatabasePool } from '@cauce/store';
+import { StoreError,SpaceBackupRepository,SpaceBackupTargetSchema,spaceBackupReceipt,type DatabasePool } from '@cauce/store';
 import { AuthError,AuthorizationError,type AuthProvider } from '../auth.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
 import { PasswordAuthProvider } from '../password-auth.js';
 import { replyError } from '../routes/shared.js';
 import { expireSpaceBackupCopies,openSpaceBackupDownload,type SpaceBackupStorage } from '../fleet/space-backup.files.js';
+import { readBackupFailure } from '../fleet/space-backup.failure.js';
 export function registerSpaceBackupConsoleRoutes(app:FastifyInstance,provider:AuthProvider,pool:DatabasePool,storage:SpaceBackupStorage):void {
   const repository=new SpaceBackupRepository(pool,storage);
   const base='/v3/console/spaces/:tenant_id/:alias/backups';
@@ -20,10 +21,16 @@ export function registerSpaceBackupConsoleRoutes(app:FastifyInstance,provider:Au
           const access=await consoleHumanAccess(provider,request,reply,'read');if (!access) throw new AuthorizationError('a console session is required');
           try {
             const source=access.companyAuthority.bind(access);
-            if (action==='create') return await reply.code(202).send(await repository.enqueue(source,params.tenant_id,params.alias,request.body));
-            if (action==='list') return {backups:await repository.list(source,params.tenant_id,params.alias)};
+            const enrich=async(receipt:Awaited<ReturnType<typeof repository.get>>)=>{
+              if(receipt.status!=='failed'||!['EXPORT_FAILED','LIMIT_EXCEEDED'].includes(receipt.error??'')) return receipt;
+              return repository.scoped(source,params.tenant_id,params.alias,receipt.id,async(row,client)=>{
+                const current=spaceBackupReceipt(row);const failure=await readBackupFailure(client,row);return failure?{...current,failure}:current;
+              });
+            };
+            if (action==='create') return await reply.code(202).send(await enrich(await repository.enqueue(source,params.tenant_id,params.alias,request.body)));
+            if (action==='list') return {backups:await Promise.all((await repository.list(source,params.tenant_id,params.alias)).map(enrich))};
             const id=z.object({id:z.uuid()}).parse(request.params).id;
-            if (action==='read') return await repository.get(source,params.tenant_id,params.alias,id);
+            if (action==='read') return await enrich(await repository.get(source,params.tenant_id,params.alias,id));
             if (action==='delete') {
               await repository.remove(source,params.tenant_id,params.alias,id,async row=>expireSpaceBackupCopies(storage,[row]));
               return await reply.code(204).send();

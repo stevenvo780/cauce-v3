@@ -2,10 +2,12 @@ import type { RequestFn } from './system-client';
 
 export const MAX_SPACE_BACKUP_BYTES = 1024 * 1024 * 1024;
 export interface SpaceBackupTarget { company_id: string; tenant_id: string; alias: string }
+export interface SpaceBackupFailure { type: string; message: string; stage: 'runtime' | 'local' | 'worker' }
 export interface SpaceBackup extends SpaceBackupTarget {
   id: string; status: 'pending' | 'running' | 'ready' | 'failed'; sha256: string | null; manifest_sha256: string | null;
   created_at: string; expires_at: string;
   bytes: number | null; error: 'HOST_UNAVAILABLE' | 'SCOPE_CHANGED' | 'EXPORT_FAILED' | 'LIMIT_EXCEEDED' | 'EXPIRED' | null; download_url: string | null;
+  failure?: SpaceBackupFailure;
 }
 export interface SpaceBackupsClient {
   createSpaceBackup(target: SpaceBackupTarget, idempotencyKey: string, signal?: AbortSignal): Promise<SpaceBackup>;
@@ -26,17 +28,27 @@ function path(target: SpaceBackupTarget): string {
   return `/v3/console/spaces/${encodeURIComponent(target.tenant_id)}/${encodeURIComponent(target.alias)}/backups`;
 }
 function backupId(id: string): string { if (!UUID.test(id)) invalid(); return id; }
+function validFailure(value: unknown): value is SpaceBackupFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const failure = value as Record<string, unknown>;
+  return Object.keys(failure).length === 3 && Object.keys(failure).every(key => ['type', 'message', 'stage'].includes(key))
+    && typeof failure.type === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(failure.type)
+    && typeof failure.message === 'string' && failure.message.length > 0 && failure.message.length <= 384
+    && !/[\p{Cc}\p{Cf}]/u.test(failure.message)
+    && typeof failure.stage === 'string' && ['runtime', 'local', 'worker'].includes(failure.stage);
+}
 export function spaceBackupReceipt(value: unknown, target: SpaceBackupTarget, expectedId?: string): SpaceBackup {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid();
   const row = value as Record<string, unknown>; const base = path(target);
-  if (Object.keys(row).length !== KEYS.length || Object.keys(row).some(key => !KEYS.includes(key))
+  if (Object.keys(row).filter(key => key !== 'failure').length !== KEYS.length || Object.keys(row).some(key => !KEYS.includes(key) && key !== 'failure')
     || typeof row.id !== 'string' || !UUID.test(row.id) || expectedId !== undefined && row.id !== expectedId
     || row.company_id !== target.company_id || row.tenant_id !== target.tenant_id || row.alias !== target.alias
     || !timestamp(row.created_at) || !timestamp(row.expires_at) || Date.parse(row.expires_at) <= Date.parse(row.created_at)
     || typeof row.status !== 'string' || !['pending', 'running', 'ready', 'failed'].includes(row.status)
     || ![row.sha256, row.manifest_sha256].every(value => value === null || typeof value === 'string' && HASH.test(value))
     || row.bytes !== null && !(typeof row.bytes === 'number' && Number.isSafeInteger(row.bytes) && row.bytes > 0 && row.bytes <= MAX_SPACE_BACKUP_BYTES)
-    || row.error !== null && !(typeof row.error === 'string' && ['HOST_UNAVAILABLE', 'SCOPE_CHANGED', 'EXPORT_FAILED', 'LIMIT_EXCEEDED', 'EXPIRED'].includes(row.error))) invalid();
+    || row.error !== null && !(typeof row.error === 'string' && ['HOST_UNAVAILABLE', 'SCOPE_CHANGED', 'EXPORT_FAILED', 'LIMIT_EXCEEDED', 'EXPIRED'].includes(row.error))
+    || row.failure !== undefined && (row.status !== 'failed' || !['EXPORT_FAILED', 'LIMIT_EXCEEDED'].includes(String(row.error)) || !validFailure(row.failure))) invalid();
   if (row.status === 'ready') {
     if (row.error !== null || row.sha256 === null || row.manifest_sha256 === null || row.bytes === null || row.download_url !== `${base}/${row.id}/download`) invalid();
   } else {

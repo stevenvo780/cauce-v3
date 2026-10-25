@@ -4,6 +4,7 @@ import { HostEnrollmentRepository,StoreError,assertSpaceBackupByteCapacity,claim
 import { SpaceBackupHostCommandSchema } from './space-backup.contracts.js';
 import { appendSpaceBackup,expireSpaceBackupCopies,verifySpaceBackup,type SpaceBackupStorage } from './space-backup.files.js';
 import { replyError } from '../routes/shared.js';
+import { safeBackupFailure } from './space-backup.failure.js';
 export function registerSpaceBackupHostRoutes(app:FastifyInstance,pool:DatabasePool,storage:SpaceBackupStorage):void {
   const identity=new HostEnrollmentRepository(pool);
   app.post('/v3/fleet/hosts/:host_id/space-backups',{bodyLimit:262_144},async(request,reply)=>{
@@ -20,7 +21,14 @@ export function registerSpaceBackupHostRoutes(app:FastifyInstance,pool:DatabaseP
         }
         if (command.action==='begin') await assertSpaceBackupByteCapacity(client,host.company_id,storage);
         const row=await lockedSpaceBackup(client,host,command.claim,command.action==='finish');
-        if (command.action==='fail') {await client.query("UPDATE space_backups SET status='failed',error=$2,lease_until=NULL WHERE id=$1",[row.id,command.error]);return {failed:true};}
+        if (command.action==='fail') {
+          await client.query("UPDATE space_backups SET status='failed',error=$2,lease_until=NULL WHERE id=$1",[row.id,command.error]);
+          if (command.failure) await client.query(`INSERT INTO audit_events(tenant_id,actor_alias,company_id,action,decision,metadata)
+            VALUES($1,$2,$3,'space.backup.failed','info',$4::jsonb)`,[row.tenant_id,row.alias,row.company_id,
+            JSON.stringify({id:row.id,tenant_id:row.tenant_id,alias:row.alias,host_id:row.host_id,
+              claim_epoch:row.claim_epoch,component:'backup',error:command.error,failure:safeBackupFailure(command.failure)})]);
+          return {failed:true};
+        }
         if (command.action==='begin') {
           if (row.bytes!==null&&(row.bytes!==command.bytes||row.sha256!==command.sha256||row.manifest_sha256!==command.manifest_sha256)) throw new StoreError('conflict','space backup upload receipt changed');
           await client.query('UPDATE space_backups SET bytes=$2,sha256=$3,manifest_sha256=$4 WHERE id=$1',[row.id,command.bytes,command.sha256,command.manifest_sha256]);return {offset:row.received_bytes};

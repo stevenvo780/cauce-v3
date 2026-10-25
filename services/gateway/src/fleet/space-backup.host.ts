@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SPACE_BACKUP_MAX_BYTES,SPACE_BACKUP_CHUNK_BYTES,SpaceBackupClaimSchema,SpaceBackupHash,type SpaceBackupClaim } from '@cauce/store';
 import type { SignedHostChannel } from './signed-source.js';
 import { invokeSpaceBackupHelper,type SpaceBackupHostConfig } from './space-backup.process.js';
+import { backupFailure } from './space-backup.failure.js';
 const Receipt=z.object({bytes:z.number().int().positive().max(SPACE_BACKUP_MAX_BYTES),sha256:SpaceBackupHash,manifest_sha256:SpaceBackupHash}).strict();
 const Chunk=z.object({offset:z.number().int().nonnegative(),data:z.string().min(4).max(87_384)
   .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u)}).strict();
@@ -39,7 +40,12 @@ export class SpaceBackupHost {
       z.object({ready:z.literal(true)}).strict().parse(await this.command('finish',{claim:fence}));completed=true;
     } catch(error) {
       await drain();abort.abort();
-      if (!parent.aborted) await this.command('fail',{claim:fence,error:error instanceof SpaceBackupLimitError?'LIMIT_EXCEEDED':'EXPORT_FAILED'}).catch(()=>undefined);
+      if (!parent.aborted) {
+        const failure=backupFailure(error);const code=error instanceof SpaceBackupLimitError?'LIMIT_EXCEEDED':'EXPORT_FAILED';
+        console.error(JSON.stringify({event:'space_backup_failure',component:'backup',id:claim.id,
+          host_id:claim.host_id,error:code,failure}));
+        await this.command('fail',{claim:fence,error:code,failure}).catch(()=>undefined);
+      }
     } finally {
       await drain();
       if (completed||!parent.aborted) await this.helper(this.config,{action:'remove',claim},new AbortController().signal).catch(()=>undefined);

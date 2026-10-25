@@ -5,9 +5,11 @@ import errno
 import json
 import os
 import pathlib
+import re
 import resource
 import signal
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -19,6 +21,40 @@ from space_backup_validate import CHUNK_BYTES, MAX_BYTES, verified_archive
 
 class LimitExceeded(ValueError):
     pass
+
+
+def failure_record(cause_type: str, message: str, stage: str) -> dict:
+    if stage not in {'runtime', 'local'}:
+        raise ValueError('invalid backup failure stage')
+    for pattern, replacement in (
+        (r'-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|$)', '[redacted]'),
+        (r'\bbearer\s+[^\s"\']+', 'Bearer [redacted]'),
+        (r'\b((?:pass(?:word|wd)?|secret|token|api[_-]?key)["\']?\s*[=:]\s*)(?:"[^"]*"|\'[^\']*\'|[^\s"\',;]+)', r'\1[redacted]'),
+        (r'\b[a-z][a-z0-9+.-]*://[^\s<>"\']+', '[url]'),
+        (r'[A-Z]:[\\/][^\s<>"\']*', '[path]'),
+        (r'\\\\[^\s<>"\']+', '[path]'),
+        (r'/[^\s<>"\']*', '[path]'),
+        (r'[A-Z0-9._%+-]+@[A-Z0-9.-]+', '[email]'),
+        (r'[A-Za-z0-9+_=-]{33,}', '[redacted]'),
+    ):
+        message = re.sub(pattern, replacement, message, flags=re.IGNORECASE)
+    message = re.sub(r'[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]', ' ', message)
+    message = re.sub(r'\s+', ' ', message).strip().encode('ascii', 'backslashreplace').decode()[:384]
+    return {'event': 'space_backup_failure', 'stage': stage,
+            'cause_type': cause_type if re.fullmatch('[A-Za-z][A-Za-z0-9_]{0,63}', cause_type) else 'Error',
+            'cause_message': message or 'backup effect could not be verified'}
+
+
+def exception_record(error: BaseException, stage: str) -> dict:
+    if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
+        message = 'space backup command exceeded its deadline'
+    elif isinstance(error, subprocess.CalledProcessError):
+        message = f'space backup command exited with status {error.returncode}'
+    elif isinstance(error, OSError):
+        message = error.strerror or 'space backup filesystem operation failed'
+    else:
+        message = str(error)
+    return failure_record(type(error).__name__, message, stage)
 
 
 def bounded_read_file(parent: int, name: str, limit: int = space_archive.MAX_FILE) -> tuple[bytes, int]:
@@ -120,7 +156,7 @@ def main() -> int:
                                    'space manifest exceeds its limit'}:
             print(json.dumps({'error': 'LIMIT_EXCEEDED'}))
             return 0
-        print('Space export could not be verified.', file=sys.stderr)
+        print(json.dumps(exception_record(error, 'local'), separators=(',', ':')), file=sys.stderr)
         return 1
     finally:
         signal.alarm(0)

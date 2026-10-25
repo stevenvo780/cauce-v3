@@ -11,11 +11,53 @@ import sys
 import uuid
 
 from fleet_executor_policy import SafeFailure, approve_agent, digest, load_policy, path
+from space_backup_local import exception_record, failure_record
 
 AGENT_FIELDS = {'company_id', 'tenant_id', 'alias', 'runtime_key', 'host_id', 'harness_id', 'runtime_mode',
                 'container_name', 'runtime_user', 'home_directory', 'state_directory', 'systemd_user'}
 CLAIM_FIELDS = {'id', 'claim_token', 'claim_epoch', 'company_id', 'tenant_id', 'alias', 'host_id',
                 'policy_sha256', 'agent_snapshot'}
+
+
+class BackupEffectFailure(SafeFailure):
+    def __init__(self, record: dict):
+        super().__init__(record['cause_message'])
+        self.record = record
+
+
+def local_failure(stderr: bytes) -> dict | None:
+    if len(stderr) > 1024:
+        return None
+    try:
+        value = json.loads(stderr)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(value, dict) or set(value) != {'event', 'stage', 'cause_type', 'cause_message'} \
+            or value['event'] != 'space_backup_failure' or value['stage'] != 'local' \
+            or not isinstance(value['cause_type'], str) or not re.fullmatch('[A-Za-z][A-Za-z0-9_]{0,63}', value['cause_type']) \
+            or not isinstance(value['cause_message'], str) or not 1 <= len(value['cause_message']) <= 384:
+        return None
+    return failure_record(value['cause_type'], value['cause_message'], 'local')
+
+
+def read_container_binding(policy: dict, agent: dict) -> tuple[dict, dict]:
+    from fleet_executor_container import identity_for, inspect_container, user_identity
+    from fleet_executor_hooks import container_binding
+    from fleet_executor_image import validate_previous
+    agent = approve_agent(policy, agent)
+    observed = inspect_container(agent['container_name'])
+    if observed is None or observed['State']['Running'] is not True:
+        raise SafeFailure('approved backup container is not observed running')
+    if agent['_placement'].get('ownership') == 'shared':
+        return container_binding(policy, agent)
+    image = observed.get('Image')
+    if not isinstance(image, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', image) is None \
+            or observed.get('Config', {}).get('Image') != image:
+        raise SafeFailure('backup container creation image is not an immutable matching digest')
+    validate_previous(policy, agent, observed)
+    identity = identity_for(agent, observed)
+    user_identity(agent, identity)
+    return agent, identity
 
 
 def validate_request(request: dict) -> dict:
@@ -53,8 +95,7 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
     binding = None
     if agent['runtime_mode'] == 'container':
         from fleet_executor_container import isolated_python
-        from fleet_executor_hooks import container_binding
-        agent, binding = container_binding(policy, agent)
+        agent, binding = read_container_binding(policy, agent)
         command = ['/usr/bin/docker', 'exec', '-i', '-w', '/', '--user', agent['runtime_user'], binding['container_id'],
                    *isolated_python(str(path(agent['_placement']['python'])), '/cauce/executor/space_backup_local.py')]
     else:
@@ -68,13 +109,19 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
             command = ['/usr/sbin/runuser', '-u', agent['runtime_user'], '--', *command]
     result = subprocess.run(command, input=json.dumps(local).encode(), capture_output=True, timeout=120,
                             env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
-    if result.returncode or len(result.stdout) > 131072 or digest(policy_file) != claim['policy_sha256']:
-        raise SafeFailure('space backup export effect is unverified')
     if binding is not None:
-        from fleet_executor_hooks import container_binding
-        _, after = container_binding(policy, agent)
+        _, after = read_container_binding(policy, agent)
         if after['container_id'] != binding['container_id'] or after['generation'] != binding['generation']:
             raise SafeFailure('space backup container was replaced')
+    if digest(policy_file) != claim['policy_sha256']:
+        raise SafeFailure('space backup policy changed before the receipt')
+    if result.returncode:
+        record = local_failure(result.stderr)
+        if record is not None:
+            raise BackupEffectFailure(record)
+        raise SafeFailure(f'space backup helper exited with status {result.returncode}')
+    if len(result.stdout) > 131072:
+        raise SafeFailure('space backup export receipt exceeds its limit')
     output = json.loads(result.stdout)
     if not isinstance(output, dict):
         raise SafeFailure('space backup export receipt is unavailable')
@@ -91,8 +138,11 @@ def main() -> int:
             raise SafeFailure('space backup request exceeds its limit')
         print(json.dumps(execute(path(args.policy), json.loads(raw)), separators=(',', ':')))
         return 0
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
-        print('Space backup runtime could not verify the requested effect.', file=sys.stderr)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
+        from fleet_executor_image import failure_details
+        record = error.record if isinstance(error, BackupEffectFailure) else exception_record(error, 'runtime')
+        details = failure_details(SafeFailure(record['cause_message'])).partition(': ')[2]
+        print(json.dumps(failure_record(record['cause_type'], details, record['stage']), separators=(',', ':')), file=sys.stderr)
         return 1
 
 

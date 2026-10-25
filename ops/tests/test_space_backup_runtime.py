@@ -12,9 +12,14 @@ import sys
 import unittest
 import uuid
 import zipfile
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
+import space_backup_local
+import space_backup_runtime
 import test_fleet_executor as fixtures
+import test_fleet_executor_rebind as container_fixtures
 
 CLI = fixtures.OPS / 'cli/space_backup_runtime.py'
 VALIDATE = fixtures.OPS / 'cli/space_backup_validate.py'
@@ -223,6 +228,30 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         self.policy_file.symlink_to(copy_path)
         self.assertNotEqual(self.invoke('export').returncode, 0)
 
+    def test_generation_and_policy_are_rechecked_after_each_container_action(self):
+        policy = {**self.policy, 'containers': {}}
+        agent = {**self.claim['agent_snapshot'], 'runtime_mode': 'container', '_placement': {'python': sys.executable}}
+        first = {'container_id': 'a' * 64, 'generation': 'b' * 64}
+        changed = {**first, 'generation': 'c' * 64}
+        response = subprocess.CompletedProcess([], 0, stdout=b'{}', stderr=b'')
+        for action in ('export', 'read', 'remove'):
+            request = {'action': action, 'claim': self.claim, **({'offset': 0} if action == 'read' else {})}
+            with self.subTest(action=action), mock.patch.object(space_backup_runtime, 'load_policy', return_value=policy), \
+                    mock.patch.object(space_backup_runtime, 'approve_agent', return_value=agent), \
+                    mock.patch.object(space_backup_runtime, 'read_container_binding', side_effect=[(agent, first), (agent, changed)]), \
+                    mock.patch.object(space_backup_runtime.subprocess, 'run', return_value=response):
+                with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'container was replaced'):
+                    space_backup_runtime.execute(self.policy_file, request)
+        def effect(*args, **kwargs):
+            self.policy_file.write_bytes(self.policy_file.read_bytes() + b'\n')
+            return response
+        with mock.patch.object(space_backup_runtime, 'load_policy', return_value=policy), \
+                mock.patch.object(space_backup_runtime, 'approve_agent', return_value=agent), \
+                mock.patch.object(space_backup_runtime, 'read_container_binding', return_value=(agent, first)), \
+                mock.patch.object(space_backup_runtime.subprocess, 'run', side_effect=effect):
+            with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'policy changed before the receipt'):
+                space_backup_runtime.execute(self.policy_file, {'action': 'export', 'claim': self.claim})
+
 
 class SpaceRootEnvironmentTest(unittest.TestCase):
     setUp = fixtures.PhysicalExecutorTest.setUp
@@ -238,6 +267,109 @@ class SpaceRootEnvironmentTest(unittest.TestCase):
         from fleet_executor_runtime import sdk_environment
         environment = sdk_environment(self.policy, self.agent, True, self.context['operation_id'])
         self.assertEqual(environment['CAUCE_SPACE_ROOT'], self.agent['state_directory'] + '/space')
+
+
+class SpaceBackupContainerTest(container_fixtures.ReleaseFixture):
+    def setUp(self):
+        super().setUp()
+        self.docker = container_fixtures.FakeDocker()
+        patch = mock.patch.object(container_fixtures.container, 'docker', self.docker)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.observed = self.docker.add(self.name, container_fixtures.container.expected_labels(self.policy, self.agent),
+            self.mounts(self.new), running=True)
+        self.observed['Image'] = 'sha256:' + 'e' * 64
+        self.observed['Config']['Image'] = self.observed['Image']
+
+    def test_previous_image_reads_current_or_trusted_previous_helpers_without_mutation(self):
+        for release in (self.new, self.old):
+            with self.subTest(release=release.name):
+                self.observed['Mounts'] = self.mounts(release)
+                approved, binding = space_backup_runtime.read_container_binding(self.policy, self.agent)
+                self.assertEqual(approved['_placement']['image'], container_fixtures.IMAGE)
+                self.assertEqual(binding['container_id'], self.observed['Id'])
+                self.assertEqual(binding['generation'], hashlib.sha256(
+                    (self.observed['Id'] + '\0' + self.observed['State']['StartedAt']).encode()).hexdigest())
+        self.assertEqual([call[0] for call in self.docker.calls], ['ps', 'inspect', 'exec', 'ps', 'inspect', 'exec'])
+        self.assertTrue(all('/usr/bin/getent' in call for call in self.docker.calls if call[0] == 'exec'))
+
+    def test_mutable_or_mismatched_creation_image_fails_before_user_or_export(self):
+        for image in ('cauce-agent:latest', 'sha256:' + 'f' * 64, None):
+            with self.subTest(image=image):
+                self.observed['Config']['Image'] = image
+                with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'immutable matching digest'):
+                    space_backup_runtime.read_container_binding(self.policy, self.agent)
+        self.assertTrue(all(call[0] in {'ps', 'inspect'} for call in self.docker.calls))
+
+    def test_foreign_ownership_isolation_and_mounts_still_fail(self):
+        original = copy.deepcopy(self.observed)
+        for key in original['Config']['Labels']:
+            with self.subTest(label=key):
+                self.observed['Config']['Labels'][key] = 'foreign'
+                with self.assertRaises(space_backup_runtime.SafeFailure):
+                    space_backup_runtime.read_container_binding(self.policy, self.agent)
+                self.observed['Config']['Labels'] = copy.deepcopy(original['Config']['Labels'])
+        for section, key, value in (('HostConfig', 'ReadonlyRootfs', False), ('HostConfig', 'Privileged', True)):
+            with self.subTest(field=key):
+                self.observed[section][key] = value
+                with self.assertRaises(space_backup_runtime.SafeFailure):
+                    space_backup_runtime.read_container_binding(self.policy, self.agent)
+                self.observed[section][key] = original[section][key]
+        for source in ('/var/tmp/foreign/ops/container-runtime', str(self.old / 'ops/container-runtime')):
+            with self.subTest(source=source):
+                next(row for row in self.observed['Mounts'] if row['Destination'] == '/cauce/lifecycle')['Source'] = source
+                with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'mounts differ'):
+                    space_backup_runtime.read_container_binding(self.policy, self.agent)
+        self.observed['Mounts'] = self.mounts(self.old)
+        (self.old / 'ops/container-runtime/cauce-container-runtime.py').chmod(0o666)
+        with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'trusted'):
+            space_backup_runtime.read_container_binding(self.policy, self.agent)
+
+    def test_runtime_owner_and_stopped_generation_are_required(self):
+        for row in (b'nobody:x:0:0:nobody:/nonexistent:/bin/false\n',
+                    b'nobody:x:65534:65534:nobody:/foreign:/bin/false\n'):
+            def docker(*arguments, passwd=row):
+                return passwd if '/usr/bin/getent' in arguments else self.docker(*arguments)
+            with self.subTest(passwd=row), mock.patch.object(container_fixtures.container, 'docker', side_effect=docker):
+                with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'execution user or home'):
+                    space_backup_runtime.read_container_binding(self.policy, self.agent)
+        self.observed['State']['Running'] = False
+        with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'not observed running'):
+            space_backup_runtime.read_container_binding(self.policy, self.agent)
+
+
+class SpaceBackupFailureTest(unittest.TestCase):
+    def test_failure_diagnostics_redact_before_truncation_and_keep_closed_bounded_schema(self):
+        private = ('-----BEGIN PRIVATE KEY-----\nprivate-value\n-----END PRIVATE KEY----- '
+            'Bearer synthetic-value password="private value" token=synthetic-token '
+            'https://private.invalid/credential?key=private C:\\private\\file /private/hidden '
+            'private@example.invalid ' + 'x' * 500 + '/private/very-long-path/' + 'y' * 500)
+        record = space_backup_local.failure_record('ValueError', 'useful reason\x00 ' + private, 'runtime')
+        self.assertEqual(set(record), {'event', 'stage', 'cause_type', 'cause_message'})
+        self.assertEqual(record['cause_type'], 'ValueError')
+        self.assertTrue(record['cause_message'].startswith('useful reason'))
+        for value in ('private-value', 'synthetic-value', 'private value', 'synthetic-token', 'private.invalid',
+                      'C:\\private', '/private', 'private@example', 'x' * 33, 'y' * 33):
+            self.assertNotIn(value, record['cause_message'])
+        self.assertLessEqual(len(record['cause_message']), 384)
+        self.assertLessEqual(len(json.dumps(record).encode()), 1024)
+        unicode_record = space_backup_local.failure_record('Error', '\U0001f512' * 500, 'runtime')
+        self.assertLessEqual(len(json.dumps(unicode_record).encode()), 1024)
+
+    def test_local_diagnostics_propagate_without_raw_stderr_or_command_arguments(self):
+        error = PermissionError(13, 'Permission denied', '/private/hidden')
+        record = space_backup_local.exception_record(error, 'local')
+        self.assertEqual(record['cause_message'], 'Permission denied')
+        self.assertEqual(space_backup_runtime.local_failure(json.dumps(record).encode()), record)
+        for raw in (b'raw stderr /private/hidden', json.dumps({**record, 'extra': 'private'}).encode(),
+                    json.dumps({**record, 'stage': 'foreign'}).encode(), b'x' * 1025):
+            self.assertIsNone(space_backup_runtime.local_failure(raw))
+        for error in (subprocess.CalledProcessError(1, ['private-command'], stderr='private-stderr'),
+                      subprocess.TimeoutExpired(['private-command'], 1), TimeoutError('private-timeout')):
+            diagnostic = space_backup_local.exception_record(error, 'runtime')
+            self.assertNotIn('private', diagnostic['cause_message'])
+        with self.assertRaises(ValueError):
+            space_backup_local.failure_record('Error', 'reason', 'foreign')
 
 
 if __name__ == '__main__':
