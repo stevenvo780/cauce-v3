@@ -10,7 +10,8 @@ import { expect } from 'vitest';
 import { docker, dockerInventory, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
   type ComputerHarness, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { createSelfSignedCert } from '../terminal-pty/certs.mjs';
-import { browserResourcesRetained } from './browser-owned-lifecycle.js';
+import { browserDocker, browserResourcesRetained } from './browser-owned-lifecycle.js';
+import { backupFailure } from '../../services/gateway/src/fleet/space-backup.failure.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
@@ -122,7 +123,7 @@ async function verifyOwnedResources(computer: ComputerHarness, tenant: string, h
 }
 
 async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: string, tenant: string, room: string,
-  host: string, account: string, scenario: 'large' | 'many'): Promise<CopyAgent> {
+  host: string, account: string, scenario: 'large' | 'many', company: string): Promise<CopyAgent> {
   const alias = `${ALIAS}-${scenario}`;
   const waitUntil = async (condition: () => Promise<boolean | undefined>, timeout: number, label: string, interval = 250) => {
     const deadline = Date.now() + timeout;
@@ -164,6 +165,19 @@ async function createAgent(page: V4Page, computer: ComputerHarness, baseUrl: str
     operation = (response.body.operations as { id: string; status: string; error: unknown }[])[0];
     return operation && ['succeeded', 'failed', 'cancelled', 'awaiting_auth'].includes(operation.status);
   }, 240_000, 'terminal create operation', 1_000);
+  if (operation?.status !== 'succeeded') {
+    const diagnostics: Record<string, unknown> = { id: operation?.id, status: operation?.status };
+    try {
+      const journal = await browserDocker(['exec', '--user', 'cauce', '-e', 'HOME=/home/cauce',
+        '-e', 'XDG_RUNTIME_DIR=/run/user/1500', computer.prefix, 'timeout', '15s', 'journalctl', '--user', '-u',
+        `cauce-v3-host-executor-${company}-${host}.service`, '--no-pager', '-o', 'cat', '-n', '1000'],
+      { timeout: 25_000, maxBuffer: 512 * 1024 });
+      diagnostics.journal = journal.stdout.split('\n').filter(line => operation?.id !== undefined
+        && line.includes(`operation_id=${operation.id}`) && line.includes('fleet host command failed'))
+        .map(line => backupFailure(new Error(line.split(' stderr=').at(-1) ?? 'unverified runtime failure')));
+    } catch (error) { diagnostics.journal_error = backupFailure(error); }
+    await receipt(`${scenario}-agent-startup-failure`, diagnostics);
+  }
   expect(operation, JSON.stringify(operation)).toMatchObject({ status: 'succeeded' });
   const agent = (await computer.pool.query<CopyAgent>(`SELECT tenant_id,alias,runtime_key,container_name,runtime_user,state_directory,home_directory
     FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, alias])).rows[0];
@@ -190,12 +204,38 @@ export async function startCopyRestorationFixture(scenario: 'large' | 'many'): P
   let tenant = '';
   let host = '';
   let agentId: string | undefined;
-  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+  const nativeCapability = {
+    native_administration: false, reason: 'fixture-native-facts-probe-not-installed',
+    path: '', probe_installed: undefined as boolean | undefined, facts_available: undefined as boolean | undefined,
+    contract_verified: false, checks: [] as { stage: string; status: number; body: unknown }[],
+    observations: [] as { caller: string; path: string; console: string; contract_verified: boolean }[],
+  };
+  const nativeRuleId = 'owned-copy-native-skill-unavailable';
+  let verifyNativeCapability: ((stage: string) => Promise<void>) | undefined;
+  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE, {
+    id: nativeRuleId, reason: nativeCapability.reason,
+    matches: (text, url) => {
+      if (nativeCapability.probe_installed !== false || nativeCapability.facts_available !== false
+        || computer?.app.sondaDeDocumentos?.instalada !== false
+        || !/^Failed to load resource: the server responded with a status of 501(?: \((?:Not Implemented)?\))?$/u.test(text)) return false;
+      let location: URL;
+      try { location = new URL(url); } catch { return false; }
+      if (location.origin !== baseUrl || location.pathname !== nativeCapability.path || location.search !== '') return false;
+      nativeCapability.observations.push({ caller: 'copy-restoration-owner', path: location.pathname, console: text,
+        contract_verified: nativeCapability.contract_verified });
+      return true;
+    },
+  }]);
   const close = async () => {
     const failures: unknown[] = [];
     const cleanup: Record<string, unknown> = {};
     let retainBrowserResources = false;
     for (const [name, action] of [
+      ['native-capability', async () => {
+        try { await verifyNativeCapability?.('cleanup'); }
+        finally { await receipt(`${scenario}-native-capability`, { ...nativeCapability,
+          ignored_console_count: errors.ignored.get(nativeRuleId) ?? 0 }); }
+      }],
       ['browser', async () => { await browser?.close(); }], ['frontend', async () => { await vite?.close(); }],
       ['computer', async () => {
         if (computer) {
@@ -267,7 +307,31 @@ export async function startCopyRestorationFixture(scenario: 'large' | 'many'): P
     const account = `zz-canary-copy-${RUN}`;
     await computer.pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
       VALUES($1,'codex',$2,$3,'env_path','CAUCE_COPY_RESTORATION_SYNTHETIC_PROFILE_PATH',true)`, [account, FIXTURE_PROVIDER_IDENTITY, tenant]);
-    const agent = await createAgent(page, computer, baseUrl, tenant, room, host, account, scenario);
+    const probe = computer.app.sondaDeDocumentos;
+    expect(probe, 'copy fixture must expose its actual native facts probe slot').toBeDefined();
+    const verifyMissingNativeProbe = async () => {
+      expect(probe?.instalada).toBe(false);
+      const facts = await probe?.actual().factsFor(tenant, alias);
+      expect(facts).toBeUndefined();
+      expect(typeof probe?.actual().nativeAdmin).toBe('undefined');
+      nativeCapability.probe_installed = false;
+      nativeCapability.facts_available = false;
+    };
+    await verifyMissingNativeProbe();
+    nativeCapability.path = `/v3/console/tenants/${tenant}/agents/${alias}/native/skill`;
+    const nativeGateway = computer;
+    verifyNativeCapability = async (stage) => {
+      await verifyMissingNativeProbe();
+      const response = await nativeGateway.app.inject({ method: 'GET', url: nativeCapability.path, headers: session });
+      expect(response.statusCode).toBe(501);
+      const body: unknown = response.json();
+      expect(body).toEqual({ error: 'unsupported', message: 'Este arnés no publica edición nativa para este tipo o esta cuenta.' });
+      nativeCapability.checks.push({ stage, status: response.statusCode, body });
+      nativeCapability.contract_verified = true;
+    };
+    const agent = await createAgent(page, computer, baseUrl, tenant, room, host, account, scenario, owner.company.slug);
+    await verifyNativeCapability('agent-created');
+    await receipt(`${scenario}-native-capability`, { ...nativeCapability, ignored_console_count: errors.ignored.get(nativeRuleId) ?? 0 });
     agentId = await docker(['inspect', '--format', '{{.Id}}', agent.container_name]);
     await receipt(`${scenario}-resources`, { run: RUN, prefix, postgres_environment: 'owned-testcontainers', agent_container: agent.container_name,
       agent_container_id: agentId, browser_container: browser.container, browser_container_id: browser.containerId,

@@ -4,6 +4,7 @@ import { chmod, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { backupFailure, safeBackupFailure, SpaceBackupFailureSchema } from '../../services/gateway/src/fleet/space-backup.failure.js';
 import { browserDocker } from './browser-owned-lifecycle.js';
 import type { V4Page } from './v4-console-real-browser.helpers.js';
 import { LARGE_BYTES, RUN, SMALL_FILES, TASK, agentPython, capture, receipt,
@@ -12,6 +13,7 @@ import { LARGE_BYTES, RUN, SMALL_FILES, TASK, agentPython, capture, receipt,
 interface BackupRow {
   id: string; status: string; error: string | null; bytes: string | null; received_bytes: string;
   sha256: string | null; manifest_sha256: string | null;
+  claim_epoch: number; lease_until: string | null; created_at: string; expires_at: string;
 }
 interface ManifestFile { path: string; bytes: number; sha256: string }
 interface ArchiveInspection {
@@ -20,6 +22,44 @@ interface ArchiveInspection {
 interface Download { path(): Promise<string | null>; failure(): Promise<string | null>; suggestedFilename(): string }
 interface DownloadPage extends V4Page { waitForEvent(event: 'download', options: { timeout: number }): Promise<Download> }
 interface Seed { files: number; bytes: number; allocated_bytes: number; reader_path: string; reader_bytes: number; reader_sha256: string }
+
+async function backupDiagnostics(f: CopyRestorationFixture, row: BackupRow | undefined, phase: string) {
+  const result: Record<string, unknown> = { phase, row: row ?? null };
+  if (row) {
+    try {
+      const events = await f.computer.pool.query<{ created_at: string; failure: unknown }>(`SELECT created_at::text,
+        metadata->'failure' AS failure FROM audit_events WHERE company_id=$1 AND tenant_id=$2 AND actor_alias=$3
+        AND action='space.backup.failed' AND metadata->>'id'=$4 AND metadata->>'host_id'=$5
+        AND metadata->>'claim_epoch'=$6 AND metadata->>'error'=$7 ORDER BY created_at DESC LIMIT 10`,
+      [f.company, f.tenant, f.alias, row.id, f.host, String(row.claim_epoch), row.error]);
+      result.audit = events.rows.map(event => {
+        const parsed = SpaceBackupFailureSchema.safeParse(event.failure);
+        return { created_at: event.created_at, failure: parsed.success ? safeBackupFailure(parsed.data) : null };
+      });
+    } catch (error) { result.audit_error = backupFailure(error); }
+  }
+  try {
+    const journal = await browserDocker(['exec', '--user', 'cauce', '-e', 'HOME=/home/cauce',
+      '-e', 'XDG_RUNTIME_DIR=/run/user/1500', f.computer.prefix, 'timeout', '15s', 'journalctl', '--user', '-u',
+      `cauce-v3-host-executor-${f.company}-${f.host}.service`, '--no-pager', '-o', 'cat', '-n', '1000'],
+    { timeout: 25_000, maxBuffer: 512 * 1024 });
+    result.journal = journal.stdout.split('\n').flatMap<Record<string, unknown>>(line => {
+      try {
+        const event = JSON.parse(line) as Record<string, unknown>;
+        if (event.event === 'space_backup_failure' && event.id === row?.id) {
+          const parsed = SpaceBackupFailureSchema.safeParse(event.failure);
+          return [{ event: event.event, failure: parsed.success ? safeBackupFailure(parsed.data) : null }];
+        }
+        if (event.event === 'space_backup_metrics' && event.backup_id === row?.id) {
+          return [{ event: event.event, python_peak_rss_kib: event.python_peak_rss_kib, node_max_rss_kib: event.node_max_rss_kib }];
+        }
+      } catch { return []; }
+      return [];
+    });
+  } catch (error) { result.journal_error = backupFailure(error); }
+  await receipt(`${f.scenario}-backup-${phase}`, result);
+  return result;
+}
 
 async function hashFile(path: string): Promise<string> {
   const hash = createHash('sha256');
@@ -85,7 +125,6 @@ async function downloadCopy(f: CopyRestorationFixture, ready: BackupRow) {
 }
 async function readRestored(f: CopyRestorationFixture, restoredFile: string, seed: Seed) {
   const page = f.page; const prompt = `RESTORED_READ_PATH=${restoredFile}`; expect(prompt).not.toContain(seed.reader_sha256);
-  f.errors.expectHttpError(`/v3/console/tenants/${f.tenant}/agents/${f.alias}/native/skill`, 501);
   await page.goto(`${f.baseUrl}/messages/${f.tenant}/${f.alias}`, { waitUntil: 'domcontentloaded' });
   await page.getByLabel(`Mensaje para ${f.alias}`, { exact: true }).fill(prompt);
   await page.getByRole('button', { name: 'Enviar', exact: true }).click();
@@ -102,7 +141,6 @@ async function readRestored(f: CopyRestorationFixture, restoredFile: string, see
   expect(read).toMatchObject({ reader: 'synthetic-provider-real-filesystem', sha256: seed.reader_sha256, bytes: seed.reader_bytes });
   expect(read.pid).toBeGreaterThan(0); expect(read.peak_rss_kib).toBeLessThan(128 * 1024); expect(delivery.last_error).toBeNull();
   expect((await f.computer.pool.query("SELECT 1 FROM delivery_acks WHERE delivery_id=$1 AND status='done' AND applied=true", [delivery.delivery_id])).rowCount).toBe(1);
-  f.errors.expectHttpError(`/v3/console/tenants/${f.tenant}/agents/${f.alias}/native/skill`, 501);
   await page.goto(`${f.baseUrl}/messages/${f.tenant}/${f.alias}`, { waitUntil: 'domcontentloaded' });
   const reply = page.getByRole('region', { name: `Respuesta canónica de ${f.tenant}:${f.alias}`, exact: true }).getByText(delivery.reply, { exact: true });
   await reply.waitFor({ timeout: 30_000 }); await capture(page, `${f.scenario}-restored-file-response`, reply);
@@ -125,14 +163,17 @@ describe.each(['large', 'many'] as const)('copia completa por streaming del espa
     let ready: BackupRow | undefined;
     try {
       await expect.poll(async () => {
-        ready = (await pool.query<BackupRow>(`SELECT id::text,status,error,bytes::text,received_bytes::text,sha256,manifest_sha256
+        ready = (await pool.query<BackupRow>(`SELECT id::text,status,error,bytes::text,received_bytes::text,sha256,manifest_sha256,
+          claim_epoch,lease_until::text,created_at::text,expires_at::text
           FROM space_backups WHERE tenant_id=$1 AND alias=$2 ORDER BY created_at DESC LIMIT 1`, [f.tenant, f.alias])).rows[0];
         return ready && ['ready', 'failed'].includes(ready.status);
       }, { timeout: 540_000, interval: 1_000 }).toBe(true);
-    } catch (error) { await receipt(`${scenario}-backup-timeout`, { last_observed: ready }); throw error; }
+    } catch (error) { await backupDiagnostics(f, ready, 'timeout'); throw error; }
     if (!ready) throw new Error('new backup row is absent');
     const readyId = ready.id;
-    expect(ready).toMatchObject({ status: 'ready', error: null }); expect(Number(ready.bytes)).toBeGreaterThan(seed.bytes);
+    const diagnostics = await backupDiagnostics(f, ready, 'terminal');
+    expect(ready, JSON.stringify(diagnostics)).toMatchObject({ status: 'ready', error: null });
+    expect(Number(ready.bytes)).toBeGreaterThan(seed.bytes);
     const available = panel.getByText('Backup disponible', { exact: true }); await available.waitFor({ timeout: 30_000 });
     await capture(page, `${scenario}-backup-ready`, available); const exportMs = performance.now() - started;
     const downloadStarted = performance.now(); const download = await downloadCopy(f, ready); const downloadMs = performance.now() - downloadStarted;

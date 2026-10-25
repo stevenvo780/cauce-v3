@@ -145,12 +145,12 @@ RUN playwright install --with-deps chromium
   if (!imageId || owner !== 'ui-functional') throw new Error(`built image ownership label is invalid for ${image}; log=${buildLog}`);
   const runtime = { image, imageId, owned: true, playwrightVersion };
   try {
-    const capability = await docker(['run', '--rm', '--network', 'none', '--entrypoint', 'sh', image, '-lc', `playwright --version && command -v certutil && ${chromePathCommand}`]);
+    const capability = await docker(['run', '--rm', '--network', 'none', '--entrypoint', 'sh', image, '-lc', `playwright --version && command -v certutil && ${chromePathCommand}`], { timeout: plazo(60_000) });
     const lines = capability.stdout.trim().split('\n');
     if (lines[0]?.trim() !== `Version ${playwrightVersion}` || !lines.some((line) => line.trim() === '/usr/bin/certutil') || !lines.at(-1)?.trim().endsWith('/chrome')) {
       throw new Error(`built runtime failed capability validation: ${JSON.stringify(capability.stdout.trim())}`);
     }
-    const version = await docker(['run', '--rm', '--network', 'none', '--entrypoint', lines.at(-1)?.trim() ?? '', image, '--version']);
+    const version = await docker(['run', '--rm', '--network', 'none', '--entrypoint', lines.at(-1)?.trim() ?? '', image, '--version'], { timeout: plazo(60_000) });
     assertChromeVersion(version.stdout, chromiumVersion);
     process.stdout.write(`E2E browser runtime: ${image} ${imageId}; Playwright=${playwrightVersion}; Chromium=${chromiumVersion}; build log=${buildLog}\n`);
     return runtime;
