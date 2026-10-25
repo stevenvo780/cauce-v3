@@ -124,7 +124,7 @@ class RestartPane:
         if not home.startswith("/") or "\0" in home:
             hold("HOME_UNKNOWN")
         temporary = environment.get("TMUX_TMPDIR")
-        if ("wireAlias" in document or temporary is not None) and temporary != document["stateDirectory"]:
+        if temporary is not None and temporary != document["stateDirectory"]:
             hold("TMUX_DIRECTORY_UNKNOWN")
         self.target = "=cauce-" + document["alias"] + ":agente"
         self.uid, self.gid = document["runtimeUid"], document["runtimeGid"]
@@ -165,11 +165,11 @@ class RestartPane:
 
     def fields(self, token: str = "") -> tuple[str, ...]:
         self.hooks()
-        format_string = "#{pane_id}\t#{pane_pid}\t#{pane_in_mode}\t#{pane_dead}\t#{cursor_x}\t#{cursor_y}\t#{@cauce_input_barrier}\t#{pane_input_off}\t#{pane_width}\t#{pid}"
+        format_string = "#{pane_id}|#{pane_pid}|#{pane_in_mode}|#{pane_dead}|#{cursor_x}|#{cursor_y}|#{@cauce_input_barrier}|#{pane_input_off}|#{pane_width}|#{pid}"
         lines = self.run("list-panes", "-t", self.target, "-F", format_string).splitlines()
         if len(lines) != 1:
             hold("PANE_AMBIGUOUS")
-        fields = tuple(lines[0].split("\t"))
+        fields = tuple(lines[0].split("|"))
         if len(fields) != 10 or not re.fullmatch(r"%[0-9]+", fields[0]) or not fields[1].isdigit() \
                 or fields[2:4] != ("0", "0") or fields[6] != token or fields[7] != str(int(bool(token))) \
                 or not fields[8].isdigit() or not fields[9].isdigit():

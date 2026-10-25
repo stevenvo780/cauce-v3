@@ -63,10 +63,10 @@ class RestartGuardTests(unittest.TestCase):
             run.assert_not_called()
         signal.assert_not_called()
 
-    def test_shared_fleet_requires_the_metadata_socket_directory(self):
+    def test_shared_fleet_rejects_unpinned_socket_directories(self):
         document, environment = self.shared_identity()
         signal = Mock()
-        for value in (None, "", "/foreign", "relative"):
+        for value in ("", "/foreign", "relative"):
             observed = dict(environment)
             if value is None:
                 observed.pop("TMUX_TMPDIR")
@@ -81,6 +81,34 @@ class RestartGuardTests(unittest.TestCase):
                     signal()
             run.assert_not_called()
         signal.assert_not_called()
+
+    def test_shared_wire_supervisor_keeps_the_observed_default_socket(self):
+        document, environment = self.shared_identity()
+        environment.pop("TMUX_TMPDIR")
+        with patch("cauce_container_restart.os.geteuid", return_value=0):
+            pane = RestartPane(document, environment)
+        self.assertEqual(pane.target, "=cauce-zz-canary-restart-physical:agente")
+        self.assertNotIn("TMUX_TMPDIR", pane.environment)
+
+    def test_pane_identity_uses_printable_separators(self):
+        pane = object.__new__(RestartPane)
+        pane.target = "=cauce-zz-canary-restart:agente"
+        pane.uid = 1000
+        pane.hooks = Mock()
+
+        def run(*arguments):
+            self.assertEqual(arguments[:3], ("list-panes", "-t", pane.target))
+            fields = {"pane_id": "%1", "pane_pid": "101", "pane_in_mode": "0", "pane_dead": "0",
+                      "cursor_x": "2", "cursor_y": "0", "@cauce_input_barrier": "", "pane_input_off": "0",
+                      "pane_width": "80", "pid": "102"}
+            expanded = arguments[4].replace("\t", "_")
+            for key, value in fields.items():
+                expanded = expanded.replace("#{" + key + "}", value)
+            return expanded + "\n"
+
+        pane.run = run
+        with patch("cauce_container_restart.process_identity", return_value=(7, 1000)):
+            self.assertEqual(pane.fields(), ("%1", "101", "0", "0", "2", "0", "", "0", "80", "102"))
 
     def test_legacy_shared_runtime_keeps_its_alias_and_default_or_pinned_socket(self):
         document, environment = self.shared_identity(wire=False)
