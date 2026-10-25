@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const CRED = join(homedir(), ".claude", ".credentials.json");
+// CLAUDE_CONFIG_DIR is how Claude Code itself finds a session kept outside $HOME (fleet profile mounts).
+const CRED = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), ".credentials.json");
 const LOCK = CRED + ".lock";
 const BASE = "https://api.anthropic.com";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";

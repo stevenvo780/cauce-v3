@@ -10,7 +10,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const CRED = join(homedir(), ".grok", "auth.json");
+// GROK_HOME is how the harness itself finds a session kept outside $HOME (fleet profile mounts).
+const CRED = join(process.env.GROK_HOME || join(homedir(), ".grok"), "auth.json");
 const LOCK = CRED + ".lock";
 const USAGE = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
 const LOCK_CADUCA_MS = 60 * 1000;

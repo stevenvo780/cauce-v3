@@ -178,17 +178,22 @@ def perform(policy: dict, document: dict) -> dict:
     profile = str(pathlib.PurePosixPath(agent['home_directory']) / PROFILE_DIRECTORY[provider])
     binding = resolve_profile(policy, agent)
     if binding is not None:
-        if binding.get('provider') != provider or binding.get('path') != profile:
+        if binding.get('provider') != provider or not isinstance(binding.get('path'), str) \
+                or not pathlib.PurePosixPath(binding['path']).is_absolute():
             raise SafeFailure('quota_profile_unsupported')
         binding_for(policy, agent)
+        # A template binding keeps the provider session under the dedicated profile mount, not in $HOME.
+        profile = binding['path']
     if provider == 'codex':
-        if len(command) != 2 or command[1] not in ('/home/node/.codex', profile):
+        if len(command) != 2 or command[1] != '/home/node/.codex':
             raise SafeFailure('quota_profile_unsupported')
         command[1] = profile
     agent, before = container_binding(policy, agent)
     uid, gid = user_identity(agent, before)
+    profile_environment = {'claude': ['CLAUDE_CONFIG_DIR=' + profile], 'grok': ['GROK_HOME=' + profile]}.get(provider, [])
     arguments = [DOCKER, 'exec', '-i', '-w', '/', '--user', uid + ':' + gid, before['container_id'], '/usr/bin/env', '-i',
         'HOME=' + agent['home_directory'], 'PATH=/usr/local/bin:/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE=1',
+        *profile_environment,
         agent['_placement']['python'], '-I', '-B', EXECUTOR_DESTINATION + '/fleet_executor_agent_quota.py', '--read']
     try:
         response = subprocess.run(arguments, input=json.dumps({'provider': provider, 'command': command,
