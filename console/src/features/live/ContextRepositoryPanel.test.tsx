@@ -22,7 +22,7 @@ it('reads the binding on mount and offers only the native manual inspection', as
   await screen.findByLabelText('Commit completo');
   expect(screen.queryByRole('button', { name: 'Inspeccionar versión' })).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /aplicar|restaurar/i })).not.toBeInTheDocument();
-  await user.click(screen.getByText('Manual nativo de Git · sólo inspección'));
+  await user.click(screen.getByText('Manual nativo de Git · solo inspección'));
   expect(await screen.findByRole('button', { name: /Inspeccionar manual/u })).toBeDisabled();
   await user.type(screen.getByLabelText('Commit completo'), COMMIT);
   expect(screen.getByRole('button', { name: /Inspeccionar manual/u })).toBeEnabled();

@@ -21,7 +21,7 @@ function directiva(parcial: Partial<AgentDirective>): AgentDirective {
 describe('girosDeAutonomia', () => {
   it('reconoce la forma con la que la flota escribe REALMENTE la autonomía, con tilde y sin ella', () => {
     expect(girosDeAutonomia(BRIEF_REAL)).toEqual(
-      expect.arrayContaining(['autonomía', 'decidí y actuá', 'pedir permiso']),
+      expect.arrayContaining(['autonomía', 'decide y actúa', 'pedir permiso']),
     );
     expect(girosDeAutonomia('AUTONOMÍA: decidí y actuá')).toContain('autonomía');
   });
@@ -34,7 +34,7 @@ describe('girosDeAutonomia', () => {
   it('NO marca un manual que habla de permisos de fichero o de rutas', () => {
     const manual = '# Cómo se despliega\n\nEl script necesita permiso de lectura sobre /etc/cauce.\n'
       + 'Producción migra dentro de `ops/scripts/deploy-release.sh deploy`; '
-      + '`pnpm migrate:dev` queda sólo para una DB descartable con entorno explícito.';
+      + '`pnpm migrate:dev` queda solo para una DB descartable con entorno explícito.';
     expect(girosDeAutonomia(manual)).toEqual([]);
   });
 
@@ -68,7 +68,7 @@ describe('avisosDeCapas', () => {
     }));
     const choque = avisos.find((aviso) => aviso.id.startsWith('autonomia-duplicada'));
     expect(choque?.tono).toBe('choque');
-    expect(choque?.evidencia).toEqual(expect.arrayContaining(['autonomía', 'decidí y actuá']));
+    expect(choque?.evidencia).toEqual(expect.arrayContaining(['autonomía', 'decide y actúa']));
     expect(choque?.detalle).toMatch(/nadie va a saber cuál manda/i);
   });
 
@@ -175,7 +175,7 @@ describe('avisosDeCapas', () => {
     expect(avisos.filter((aviso) => aviso.id.startsWith('autonomia-duplicada'))).toEqual([]);
   });
 
-  it('avisa del hueco cuando el rol NO fija la autonomía que sólo él debería fijar', () => {
+  it('avisa del hueco cuando el rol NO fija la autonomía que solo él debería fijar', () => {
     const avisos = avisosDeCapas('Sos tales, SIN ROL ASIGNADO.', directiva({
       files: [{ path: '~/.claude/CLAUDE.md', scope: 'user', text: '# manual\n' }],
     }));

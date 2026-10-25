@@ -92,7 +92,7 @@ export function FicherosTab({
         <EmptyState>
           <strong>No se pudo resolver ningún fichero para este alias.</strong>{' '}
           Para saber qué ficheros gobiernan a un agente hay que saber qué arnés corre de verdad y
-          con qué HOME, y eso sólo se puede medir dentro de su contenedor.
+          con qué HOME, y eso solo se puede medir dentro de su contenedor.
         </EmptyState>
       ) : (
         <ul className="m-0 grid list-none gap-2 p-0">
@@ -162,7 +162,7 @@ function FilaDeFichero(
     ? 'no se sirve'
     : canEdit && mutationBlocked
       ? 'bloqueado · aplicación en curso'
-      : canEdit ? 'editable' : 'visor · sólo lectura';
+      : canEdit ? 'editable' : 'visor · solo lectura';
   const header = (
     <>
       {editable ? <FileText size={14} aria-hidden="true" className="shrink-0 text-brand-ink" />
@@ -288,7 +288,7 @@ function Visor({ item, tenantId, alias }: {
       {servido.truncated ? (
         <Notice tone="warn" role="alert" className="flex items-start gap-2">
           <AlertTriangle size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Esta lectura está recortada. El visor
-          muestra sólo el prefijo recibido y no permite modificarlo.
+          muestra solo el prefijo recibido y no permite modificarlo.
         </Notice>
       ) : null}
       <textarea
@@ -302,7 +302,7 @@ function Visor({ item, tenantId, alias }: {
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted">
-          {servido.bytes} bytes · visor de sólo lectura{servido.truncated ? ' · prefijo recortado' : ''}
+          {servido.bytes} bytes · visor de solo lectura{servido.truncated ? ' · prefijo recortado' : ''}
         </span>
         <Button size="sm" onClick={() => void cargar()}>Releer</Button>
       </div>
@@ -346,7 +346,7 @@ function Editor({
     if (mutationBlocked) {
       setFallo({
         titulo: 'Aplicación canónica en curso',
-        detalle: 'Esperá el ACK del perfil antes de cambiar el manual.',
+        detalle: 'Espera el ACK del perfil antes de cambiar el manual.',
       });
       return;
     }
@@ -361,8 +361,8 @@ function Editor({
       setFallo({
         titulo: 'Este contenido no se puede reemplazar',
         detalle: servido.truncated
-          ? 'Lo servido es sólo un prefijo recortado. Reemplazarlo borraría el resto del fichero.'
-          : 'El servidor marcó este documento como sólo lectura.',
+          ? 'Lo servido es solo un prefijo recortado. Reemplazarlo borraría el resto del fichero.'
+          : 'El servidor marcó este documento como solo lectura.',
       });
       return;
     }
@@ -431,7 +431,7 @@ function Editor({
         && error.code === 'managed_context_conflict'
         ? {
           titulo: 'El bloque canónico se edita en Perfil / campos canónicos',
-          detalle: `${error.message}. El manual conserva el borrador; revisá los campos canónicos sin perder este texto.`,
+          detalle: `${error.message}. El manual conserva el borrador; revisa los campos canónicos sin perder este texto.`,
         }
         : status === 409
         ? {
@@ -474,7 +474,7 @@ function Editor({
 
   return (
     <div className="grid gap-3">
-      {changedTarget ? <Notice tone="danger" role="alert">El destino del manual cambió desde que empezaste el borrador. No se guardará ese texto en otro archivo. Conservá tu texto antes de descartarlo y releer.</Notice> : null}
+      {changedTarget ? <Notice tone="danger" role="alert">El destino del manual cambió desde que empezaste el borrador. No se guardará ese texto en otro archivo. Conserva tu texto antes de descartarlo y releer.</Notice> : null}
       {!servido.exists ? (
         <Notice>
           Este fichero todavía no existe. Si guardas, se crea. Está vacío porque no está, no
@@ -515,7 +515,7 @@ function Editor({
       />
 
       <ReasonField label="Motivo del guardado" value={motivo} disabled={bloqueado}
-        placeholder="Escribí por qué cambiás este fichero…"
+        placeholder="Escribe por qué cambias este fichero…"
         onChange={(value) => { setMotivo(value); setGuardado(undefined); }} />
 
       {fallo ? <Notice tone="danger" role="alert"><strong>{fallo.titulo}</strong>: {fallo.detalle}</Notice> : null}

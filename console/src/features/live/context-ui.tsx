@@ -22,7 +22,7 @@ export function ReasonField({ label = 'Motivo del cambio', value, onChange, disa
       <label htmlFor={id}>{label}</label>
       <input
         id={id} type="text" value={value} maxLength={DOCUMENT_REASON_MAX} autoComplete="off" spellCheck={false}
-        placeholder={placeholder ?? 'Por qué hacés este cambio…'} disabled={disabled}
+        placeholder={placeholder ?? 'Por qué haces este cambio…'} disabled={disabled}
         aria-describedby={`${id}-hint`} onChange={(event) => { onChange(event.target.value); }}
       />
       <p id={`${id}-hint`} className={cn('m-0 text-xs', value.length > 0 && problem ? 'text-danger-ink' : 'text-muted')}>

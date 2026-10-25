@@ -26,7 +26,7 @@ beforeEach(() => {
   mock.inspect.mockReset().mockResolvedValue(result());
   mock.subscribe.mockImplementation((fn: typeof listener) => { listener = fn; return () => { listener = undefined; }; });
 });
-async function open() { await userEvent.click(screen.getByText('Manual nativo de Git · sólo inspección')); }
+async function open() { await userEvent.click(screen.getByText('Manual nativo de Git · solo inspección')); }
 async function inspect() { await userEvent.click(screen.getByRole('button', { name: 'Inspeccionar manual' })); }
 it('stays compact, reads on demand and displays source text without active markup', async () => {
   const view = render(<NativeContextRepositoryPanel {...props} />);

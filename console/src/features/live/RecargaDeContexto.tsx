@@ -154,7 +154,7 @@ export function RecargaDeContexto({
         : undefined;
       setFallo(delMotivo ?? {
         titulo: 'No se pudo acreditar la recarga',
-        detalle: `HTTP ${String(status ?? 'sin dato')}: ${mensaje} El resultado puede ser parcial; volvé a medir antes de reintentar.`,
+        detalle: `HTTP ${String(status ?? 'sin dato')}: ${mensaje} El resultado puede ser parcial; vuelve a medir antes de reintentar.`,
       });
       onRecargado();
     } finally {
@@ -169,7 +169,7 @@ export function RecargaDeContexto({
       description="Reescribe y vuelve a medir los ficheros de gobierno desde la revisión ya guardada. NO reinicia la TUI ni toca la conversación de su dueño: que el proceso relea lo dice su ACK de adopción."
     >
       <ReasonField label="Motivo de la recarga" value={motivo} onChange={setMotivo} disabled={bloqueada}
-        placeholder="Por qué recargás el contexto…" />
+        placeholder="Por qué recargas el contexto…" />
       <div>
         <Button size="sm" disabled={bloqueada || problemaMotivo !== undefined} onClick={() => { void recargar(); }}>
           <RefreshCw size={14} aria-hidden />

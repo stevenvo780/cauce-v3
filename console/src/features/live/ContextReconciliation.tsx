@@ -97,7 +97,7 @@ export function ContextReconciliation(props: ContextReconciliationProps) {
   return (
     <SectionCard
       title="Reconciliar huellas del contexto"
-      description="Las huellas difieren de la expectativa registrada. Se comprueba el propietario del bloque y se reconstruye sólo el perfil gestionado desde la revisión guardada, conservando el contenido exterior que autorices. No reinicia la TUI ni acredita adopción por el modelo."
+      description="Las huellas difieren de la expectativa registrada. Se comprueba el propietario del bloque y se reconstruye solo el perfil gestionado desde la revisión guardada, conservando el contenido exterior que autorices. No reinicia la TUI ni acredita adopción por el modelo."
     >
       <ReasonField label="Motivo de la reconciliación" value={reason} disabled={disabled}
         onChange={(value) => { setReason(value); setPreview(undefined); setConfirmed(false); setWritten(false); }} />

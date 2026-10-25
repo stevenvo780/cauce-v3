@@ -212,7 +212,7 @@ export function PerfilTab({
         }
         setMotivo('');
         settle({ tone: 'parcial', text: 'Perfil deseado preparado; se aplicará al iniciar. '
-          + `Desired revisión ${String(receipt.revision)}; aplicado ${String(receipt.appliedRevision ?? 'ninguno')}.` }, { draft: undefined });
+          + `La revisión deseada ${String(receipt.revision)}; aplicado ${String(receipt.appliedRevision ?? 'ninguno')}.` }, { draft: undefined });
         return;
       }
       if (result && typeof result === 'object' && 'state' in result
@@ -229,7 +229,7 @@ export function PerfilTab({
         setMotivo('');
         settle({
           tone: 'parcial',
-          text: 'Desired y ficheros del runtime quedaron actualizados, pero la sesión compartida '
+          text: 'La revisión deseada y los ficheros del runtime quedaron actualizados, pero la sesión compartida '
             + 'todavía no acreditó recibir esa revisión. No se presenta como aplicada.',
         }, { draft: undefined });
         return;
@@ -259,7 +259,7 @@ export function PerfilTab({
         settle({
           tone: 'parcial',
           text: `El runtime acreditó la revisión ${String(result.revision)}, pero la relectura ya muestra `
-            + `desired ${String(recarga.data.revision ?? 'ausente')} y aplicado ${String(recarga.data.applied_revision ?? 'ninguno')}. `
+            + `la revisión deseada ${String(recarga.data.revision ?? 'ausente')} y aplicado ${String(recarga.data.applied_revision ?? 'ninguno')}. `
             + 'No limpio el borrador ni presento esa revisión más nueva como aplicada.',
         });
         return;
@@ -267,7 +267,7 @@ export function PerfilTab({
       setMotivo('');
       settle({
         tone: 'success',
-        text: `Aplicado: desired y runtime acreditan la revisión ${String(result.revision)}; `
+        text: `Aplicado: la revisión deseada y el runtime acreditan la revisión ${String(result.revision)}; `
           + `${String(result.acknowledgements.length)} ficheros respondieron SHA y bytes.`,
       }, { draft: undefined });
     } catch (error) {
@@ -298,12 +298,12 @@ export function PerfilTab({
         tone: 'error',
         text: recarga.error
           ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}) y tampoco pude `
-            + `releer (${recarga.error.message}). El borrador se conserva; no se infiere si el desired avanzó.`
+            + `releer (${recarga.error.message}). El borrador se conserva; no se infiere si la revisión deseada avanzó.`
           : quedaPendiente
             ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). La relectura `
-              + `muestra desired ${String(relectura.revision ?? 'ausente')} pendiente sobre aplicado `
-              + `${String(relectura.applied_revision ?? 'ninguno')}; el borrador se conserva y podés reintentar el lote.`
-            : `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí desired `
+              + `muestra la revisión deseada ${String(relectura.revision ?? 'ausente')} pendiente sobre aplicado `
+              + `${String(relectura.applied_revision ?? 'ninguno')}; el borrador se conserva y puedes reintentar el lote.`
+            : `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí la revisión deseada `
               + `${String(relectura?.revision ?? 'ausente')} / aplicado ${String(relectura?.applied_revision ?? 'ninguno')}; `
               + 'el borrador se conserva.',
       }, { draft: preserved });
@@ -322,14 +322,14 @@ export function PerfilTab({
     estados.push({ key: 'off', tone: 'danger', role: 'alert', body: 'Alias apagado o estado de habilitación no acreditado: edición y aplicación bloqueadas.' });
   }
   if (publicado && preparable) {
-    estados.push({ key: 'prepared', tone: 'warn', role: 'status', body: 'Agente apagado: podés preparar el perfil deseado; se aplicará al iniciar. No se acredita adopción ni ejecución mientras está apagado.' });
+    estados.push({ key: 'prepared', tone: 'warn', role: 'status', body: 'Agente apagado: puedes preparar el perfil deseado; se aplicará al iniciar. No se acredita adopción ni ejecución mientras está apagado.' });
   }
   if (publicado && agenteHabilitado) {
     if (perfil.data?.runtime_state === 'pending') {
-      estados.push({ key: 'pending', tone: 'warn', role: 'status', body: `Desired revisión ${String(perfil.data.revision ?? 'sin dato')} pendiente; el runtime sólo tiene acreditada la revisión ${String(perfil.data.applied_revision ?? 'ninguna')}. La vista previa no se presenta como aplicada. Podés reintentar aunque el texto no haya cambiado.` });
+      estados.push({ key: 'pending', tone: 'warn', role: 'status', body: `La revisión deseada ${String(perfil.data.revision ?? 'sin dato')} pendiente; el runtime solo tiene acreditada la revisión ${String(perfil.data.applied_revision ?? 'ninguna')}. La vista previa no se presenta como aplicada. Puedes reintentar aunque el texto no haya cambiado.` });
     }
     if (perfil.data?.runtime_state === 'drifted') {
-      estados.push({ key: 'drifted', tone: 'danger', role: 'alert', body: `La base conserva la revisión ${String(perfil.data.revision ?? 'sin dato')} como aplicada, pero los SHA medidos del runtime ya no coinciden. La vista no se presenta como aplicada; podés restaurar el lote canónico sin cambiar el borrador.` });
+      estados.push({ key: 'drifted', tone: 'danger', role: 'alert', body: `La base conserva la revisión ${String(perfil.data.revision ?? 'sin dato')} como aplicada, pero los SHA medidos del runtime ya no coinciden. La vista no se presenta como aplicada; puedes restaurar el lote canónico sin cambiar el borrador.` });
     }
     if (perfil.data?.runtime_state === 'pending_session_refresh') {
       estados.push({ key: 'refresh', tone: 'warn', role: 'status', body: <><strong>Sesión sin adoptar todavía:</strong> {MENSAJES_DE_APLICACION.pending_session_refresh} Un ACK de escritura no se presenta como adopción.</> });
@@ -342,10 +342,10 @@ export function PerfilTab({
     }
   }
   if (publicado && incoherente) {
-    estados.push({ key: 'incoherent', tone: 'danger', role: 'alert', body: 'Este gateway no informa presencia, revisión y estado desired/applied de forma coherente. Guardado bloqueado para no perder concurrencia ni afirmar convergencia.' });
+    estados.push({ key: 'incoherent', tone: 'danger', role: 'alert', body: 'Este gateway no informa presencia, revisión y estado deseado/aplicado de forma coherente. Guardado bloqueado para no perder concurrencia ni afirmar convergencia.' });
   }
   if (blockedByManualDraft) {
-    estados.push({ key: 'manual', tone: 'warn', role: 'status', body: 'Hay un borrador manual pendiente. Guardalo o descartalo antes de aplicar estos campos; el perfil cambia el mismo fichero y volvería obsoleta su huella CAS.' });
+    estados.push({ key: 'manual', tone: 'warn', role: 'status', body: 'Hay un borrador manual pendiente. Guárdalo o descártalo antes de aplicar estos campos; el perfil cambia el mismo fichero y volvería obsoleta su huella CAS.' });
   }
 
   return (
@@ -491,7 +491,7 @@ export function PerfilTab({
         <div className="mt-3 grid gap-3">
           {sucio ? <Notice tone="warn">Esta composición corresponde al perfil guardado. El borrador aún no se ha guardado ni proyectado.</Notice> : null}
           {pendiente ? (
-            <Notice tone="warn">Esta composición corresponde al desired pendiente; no describe el runtime aplicado.</Notice>
+            <Notice tone="warn">Esta composición corresponde a la revisión deseada pendiente; no describe el runtime aplicado.</Notice>
           ) : null}
           <p className="m-0 text-xs text-muted">
             {perfil.data?.harness

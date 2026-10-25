@@ -12,7 +12,7 @@ const LABELS = { added: 'Fuente añadida', removed: 'Fuente retirada', modified:
 export function NativeContextRepositoryPanel(props: Props) {
   const [open, setOpen] = useState(false);
   return <details className="min-w-0 rounded-lg border border-line px-3 py-2" onToggle={(event) => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
-    <summary className="cursor-pointer text-[13px] font-medium">Manual nativo de Git · sólo inspección</summary>
+    <summary className="cursor-pointer text-[13px] font-medium">Manual nativo de Git · solo inspección</summary>
     {open ? <NativeInspection key={JSON.stringify([props.tenantId, props.alias, props.instanceId, props.commit, props.previous])} {...props} /> : null}
   </details>;
 }
@@ -47,11 +47,11 @@ function NativeInspection({ tenantId, alias, instanceId, commit, previous }: Pro
       const result = await api.inspectNativeContextRepository(tenantId, alias, instanceId, commit, previous || undefined);
       if (request === sequence.current) setState({ api, result });
     } catch {
-      if (request === sequence.current) setState({ api, error: 'No se pudo inspeccionar el manual. Comprobá los commits y que el repositorio declare un manual nativo v3.' });
+      if (request === sequence.current) setState({ api, error: 'No se pudo inspeccionar el manual. Comprueba los commits y que el repositorio declare un manual nativo v3.' });
     }
   }
   return <div className="grid gap-2 pt-2">
-    <p className="m-0 text-xs text-muted">Usá los commits indicados arriba. Fuente Git declarada; archivo vigente, runtime y adopción de sesión no comprobados. No se puede aplicar desde este visor.</p>
+    <p className="m-0 text-xs text-muted">Usa los commits indicados arriba. Fuente Git declarada; archivo vigente, runtime y adopción de sesión no comprobados. No se puede aplicar desde este visor.</p>
     <div><Button size="sm" disabled={(current?.busy ?? false) || !OID.test(commit) || (previous !== '' && !OID.test(previous))}
       onClick={() => { void inspect(); }}>{current?.busy ? 'Inspeccionando manual…' : current?.error ? 'Reintentar manual' : 'Inspeccionar manual'}</Button></div>
     {current?.busy ? <p role="status" className="m-0 text-xs text-muted">Consultando el manual nativo…</p> : null}

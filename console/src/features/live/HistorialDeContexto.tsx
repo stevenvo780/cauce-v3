@@ -220,7 +220,7 @@ function DiffDePerfil({ anterior, posterior }: {
       aria-label={`Diferencias con la revisión ${String(anterior.revision)}`}
     >
       <p className={NOTE}>
-        Se comparan los siete campos con la revisión {anterior.revision}; sólo se pintan los que
+        Se comparan los siete campos con la revisión {anterior.revision}; solo se pintan los que
         cambiaron. El signo − es lo que había y + lo que quedó.
       </p>
       {cambiados.length === 0 ? (
@@ -407,7 +407,7 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
       <Notice tone="danger" role="alert">
         No se pudo leer el inventario de ficheros de {alias}: {recurso.error.message}. Eso no dice
         que este gateway no lo publique ni que {alias} no tenga ficheros gobernados: dice que la
-        consola no lo pudo mirar, así que sólo se ofrece el diario de los campos canónicos.
+        consola no lo pudo mirar, así que solo se ofrece el diario de los campos canónicos.
       </Notice>
     );
   }
@@ -420,7 +420,7 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
     return (
       <p className={NOTE}>
         {recurso.data.motivo ?? `Este gateway no publica el inventario de ficheros de ${alias}.`}
-        {' '}Sólo se puede ofrecer el diario de los campos canónicos.
+        {' '}Solo se puede ofrecer el diario de los campos canónicos.
       </p>
     );
   }

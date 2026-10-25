@@ -36,7 +36,7 @@ describe('el veredicto', () => {
     expect(veredicto).toHaveTextContent(/no lo sé/i);
   });
 
-  it('cuenta los que necesitan atención y al pulsarlo deja sólo a los caídos y trabados', async () => {
+  it('cuenta los que necesitan atención y al pulsarlo deja solo a los caídos y trabados', async () => {
     const user = userEvent.setup();
     conActividad(mockActivity());
     renderLive();
@@ -58,7 +58,7 @@ describe('el veredicto', () => {
 });
 
 describe('los chips de estado', () => {
-  it('van de lo urgente a lo tranquilo y sólo muestran estados presentes', async () => {
+  it('van de lo urgente a lo tranquilo y solo muestran estados presentes', async () => {
     conActividad(mockActivity());
     renderLive();
 

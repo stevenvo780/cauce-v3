@@ -34,8 +34,8 @@ export function DirectivaPanel({ tenantId, alias, configuration, onEditProfile, 
     <div className="grid gap-4">
       <AvisosDeSolapamiento avisos={warnings} />
       <CapaCard
-        icono={<IdCard size={15} />} numero={1} titulo="Rol declarado" fin="QUIÉN SOS y QUÉ PODÉS DECIDIR"
-        fuente="agent_profiles.role_summary · role_brief es sólo su proyección"
+        icono={<IdCard size={15} />} numero={1} titulo="Rol declarado" fin="QUIÉN ERES y QUÉ PUEDES DECIDIR"
+        fuente="agent_profiles.role_summary · role_brief es solo su proyección"
         porque={'Es la única capa que sigue siendo verdad si se recrea el contenedor o cambia el arnés, así que es la única '
           + 'que debe fijar identidad, límites de autonomía y a quién se escala.'}
         actions={<Button variant="primary" size="sm" onClick={onEditProfile}>
@@ -48,14 +48,14 @@ export function DirectivaPanel({ tenantId, alias, configuration, onEditProfile, 
         icono={<BookOpen size={15} />} numero={2} titulo="Manual del sitio" fin="CÓMO SE TRABAJA AQUÍ"
         fuente="CLAUDE.md / AGENTS.md dentro del runtime · no es inventario de configuración ni memoria"
         porque={'Rutas, comandos, convenciones, qué no tocar, cómo se despliega. No repite identidad ni autonomía: '
-          + 'si empieza con «Sos…», está invadiendo la capa 1.'}
+          + 'si empieza con «Eres…», está invadiendo la capa 1.'}
         actions={<Button size="sm" onClick={onEditManual}>Editar el manual en Ficheros</Button>}
       >
         <CapaDeFicheros recurso={directive} />
       </CapaCard>
       <CapaCard
         icono={<Brain size={15} />} numero={3} titulo="Memoria" fin="LO QUE ESE AGENTE APRENDIÓ"
-        fuente="~/.claude/projects · ~/.openclaw/memory · sólo lectura"
+        fuente="~/.claude/projects · ~/.openclaw/memory · solo lectura"
         porque={'Hechos que midió él mismo. Ni identidad ni manual. Desde acá se lee el índice: el contenido se edita '
           + 'donde se escribió, no desde la consola.'}
       >

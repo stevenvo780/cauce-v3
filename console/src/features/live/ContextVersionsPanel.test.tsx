@@ -12,7 +12,7 @@ function snapshot(): VersionedContextSnapshot { return { version: 2, files: [{ p
   desired_version: 2, applied_version: 1, application: { state: 'pending', last_error: null }, sync: { state: 'error', git_commit: null, pushed_at: null, last_error: 'GitHub no disponible' } }; }
 function handlers(current: () => VersionedContextSnapshot) {
   server.use(http.get(base, () => HttpResponse.json(current())), http.get(base + '/history', () => HttpResponse.json({ entries: [
-    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: 'owner', actor_alias: 'dueno', digest: 'digest' },
+    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: '11111111-1111-4111-8111-111111111111', actor_alias: 'dueno', actor_name: 'Dueño', digest: 'digest' },
     { version: 1, source: 'cli', restored_from: null, created_at: '2026-10-10T00:00:00Z', actor_human_id: null, actor_alias: 'dueno', digest: 'earlier' },
   ], next_cursor: null })));
 }
@@ -38,7 +38,7 @@ it('restaurar crea nueva versión con CAS y no la presenta usada o sincronizada 
   expect(screen.getByText(/El agente aún no acredita la versión 3/u)).toBeVisible();
   expect(screen.getByText('Pendiente')).toBeVisible(); expect(screen.queryByText('Sincronizado')).not.toBeInTheDocument();
 });
-it('un conflicto conserva el texto y versión del borrador; lectores sólo consultan', async () => {
+it('un conflicto conserva el texto y versión del borrador; lectores solo consultan', async () => {
   handlers(snapshot); const writes: unknown[] = [];
   server.use(http.put(base, async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ message: 'Conflicto de versión: el contexto cambió.' }, { status: 409 }); }));
   const user = userEvent.setup(); const view = renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
@@ -54,11 +54,12 @@ it('muestra origen y autor de cada versión, incluidas las nativas del agente', 
   handlers(() => ({ ...snapshot(), version: 3, desired_version: 3 }));
   server.use(http.get(base + '/history', () => HttpResponse.json({ entries: [
     { version: 3, source: 'native', restored_from: null, created_at: '2026-10-12T00:00:00Z', actor_human_id: null, actor_alias: 'worker', digest: 'native-digest' },
-    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: 'owner', actor_alias: 'dueno', digest: 'digest' },
+    { version: 2, source: 'ui', restored_from: null, created_at: '2026-10-11T00:00:00Z', actor_human_id: '11111111-1111-4111-8111-111111111111', actor_alias: 'dueno', actor_name: 'Dueño', digest: 'digest' },
   ], next_cursor: null })));
   renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
-  expect(await screen.findByText(/Versión 3 · Nativo \(en el espacio\) · worker/u)).toBeVisible();
-  expect(screen.getByText(/Versión 2 · Consola · dueno/u)).toBeVisible();
+  expect(await screen.findByText(/Versión 3 · Nativo \(en el espacio\) · agente worker/u)).toBeVisible();
+  expect(screen.getByText(/Versión 2 · Consola · Dueño/u)).toBeVisible();
+  expect(screen.queryByText('11111111-1111-4111-8111-111111111111')).not.toBeInTheDocument();
 });
 it('un conflicto de ingesta nativa se explica en español y se resuelve creando un borrador', async () => {
   handlers(() => ({ ...snapshot(), application: { state: 'error', last_error: 'native_context_conflict' } }));
@@ -76,7 +77,7 @@ it.each([
   ['context_version_unreadable', /La versión actual no se puede leer\. Restaura una versión anterior desde el historial\./u, 'Error de aplicación'],
   ['context_runtime_offline', /desconectado: la versión se aplicará cuando vuelva/u, 'Aplicación pendiente'],
   ['context_runtime_verification_failed', /próximo turno/u, 'Aplicación pendiente'],
-])('traduce %s a español y sólo lo marca como error si exige acción', async (code, text, state) => {
+])('traduce %s a español y solo lo marca como error si exige acción', async (code, text, state) => {
   handlers(() => ({ ...snapshot(), application: { state: 'error', last_error: code } }));
   renderWithApi(<ContextVersionsPanel tenantId="One" alias="worker" canWrite />);
   expect(await screen.findByText(text)).toBeVisible();

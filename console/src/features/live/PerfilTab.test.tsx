@@ -67,7 +67,7 @@ function Vista({ configWritePermission = 'allowed' }: {
   );
 }
 
-it.each(['codex', 'claude', 'openclaw'])('ofrece reconciliación sólo para un arnés soportado: %s', async (harness) => {
+it.each(['codex', 'claude', 'openclaw'])('ofrece reconciliación solo para un arnés soportado: %s', async (harness) => {
   mismatch(harness);
   renderWithApi(<Vista />);
   expect(await screen.findByRole('region', { name: 'Reconciliar huellas del contexto' })).toBeInTheDocument();
@@ -174,7 +174,7 @@ async function casoDeGuardado(existeAlAbrir: boolean) {
   return recibido;
 }
 
-it('un perfil persistido vacío usa su revisión propia y sólo anuncia ACK aplicado completo', async () => {
+it('un perfil persistido vacío usa su revisión propia y solo anuncia ACK aplicado completo', async () => {
   const recibido = await casoDeGuardado(true);
   expect(recibido).toEqual({
     expected_revision: 4,
@@ -184,11 +184,11 @@ it('un perfil persistido vacío usa su revisión propia y sólo anuncia ACK apli
       responsibilities: [], restrictions: [], tools: [], operating_rules: [],
     },
   });
-  expect(await screen.findByText(/Aplicado: desired y runtime acreditan la revisión 5/)).toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: la revisión deseada y el runtime acreditan la revisión 5/)).toBeInTheDocument();
   expect(screen.getByText(/1 ficheros respondieron SHA y bytes/)).toBeInTheDocument();
 });
 
-it('sólo usa expected_revision null cuando el servidor informó ausencia real', async () => {
+it('solo usa expected_revision null cuando el servidor informó ausencia real', async () => {
   const recibido = await casoDeGuardado(false);
   expect(recibido?.expected_revision).toBeNull();
 });
@@ -234,11 +234,11 @@ it('un desired pendiente se puede reintentar sin cambiar el texto', async () => 
   );
   const user = userEvent.setup();
   renderWithApi(<Vista />);
-  expect(await screen.findByText(/Desired revisión 4 pendiente/)).toBeInTheDocument();
+  expect(await screen.findByText(/La revisión deseada 4 pendiente/)).toBeInTheDocument();
   await motivar(user, 'reintento el lote pendiente');
   await user.click(screen.getByRole('button', { name: /Reintentar aplicación/i }));
   await waitFor(() => { expect(recibido?.expected_revision).toBe(4); });
-  expect(await screen.findByText(/Aplicado: desired y runtime acreditan la revisión 4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Aplicado: la revisión deseada y el runtime acreditan la revisión 4/)).toBeInTheDocument();
 });
 
 it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () => {

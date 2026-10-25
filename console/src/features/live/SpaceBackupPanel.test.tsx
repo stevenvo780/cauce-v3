@@ -34,7 +34,7 @@ it('muestra pending y permite descargar únicamente ready después de releer el 
   expect(await screen.findByText(/Descarga iniciada/u)).toBeVisible(); expect(screen.getByText(ready.sha256 ?? '')).toBeVisible();
   expect(clicked).toHaveLength(1); expect(clicked[0]).toContain(`/backups/${pending.id}/download`);
 });
-it('conserva idempotency_key tras una respuesta incierta y genera otra sólo para un nuevo backup', async () => {
+it('conserva idempotency_key tras una respuesta incierta y genera otra solo para un nuevo backup', async () => {
   const create = vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValueOnce(new Error('PRIVATE_PATH')).mockResolvedValue(ready);
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
   await screen.findByRole('alert'); expect(document.body.textContent).not.toContain('PRIVATE_PATH');
@@ -135,7 +135,7 @@ it('la orden de restauración usa el nombre elegido y escapa sus caracteres de s
     expect(screen.getByText(/cauce spaces restore --archive/u)).toHaveTextContent("--archive \"$(pwd -P)/\"'copia '\\''final'\\''.zip'");
   } finally { Reflect.deleteProperty(window, 'showSaveFilePicker'); }
 });
-it('descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y guarda sólo si coincide', { timeout: 30_000 }, async () => {
+it('descarga por stream un ZIP de más de 32 MiB, calcula su SHA-256 visible y guarda solo si coincide', { timeout: 30_000 }, async () => {
   const { saved, picker } = savePicker();
   try {
     vi.spyOn(testApi, 'createSpaceBackup').mockResolvedValue({ ...ready, bytes: LARGE, sha256: largeSha });
@@ -172,7 +172,7 @@ it('consulta la operación pendiente y detiene el sondeo al llegar a ready', asy
   await act(async () => { await vi.advanceTimersByTimeAsync(1500); }); expect(read).toHaveBeenCalledOnce();
   expect(screen.getByText('Backup disponible')).toBeVisible(); await act(async () => { await vi.advanceTimersByTimeAsync(3000); }); expect(read).toHaveBeenCalledOnce();
 });
-it('reader no crea backups y tenant_operator sólo habilita su tenant acreditado por sesión', () => {
+it('reader no crea backups y tenant_operator solo habilita su tenant acreditado por sesión', () => {
   const reader = { ...state, authority: { ...state.authority, role: 'reader' as const } };
   const view = renderWithApi(panel(reader)); expect(screen.getByRole('button', { name: 'Crear backup del espacio' })).toBeDisabled();
   const operator = { ...state, subject: 'operator@example.test', authority: { ...state.authority, role: 'tenant_operator' as const, scope: 'tenant' as const } };

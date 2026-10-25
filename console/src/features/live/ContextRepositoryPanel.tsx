@@ -31,7 +31,7 @@ function RepositoryContent({ tenantId, alias }: Props) {
 
   return <div className="grid gap-4">
     <SectionCard title="Versiones Git del contexto"
-      description={`Repositorio vinculado a la instancia ${capability.data.instance_id ?? ''}. Inspeccioná el manual nativo de ${alias} en un commit del repositorio del broker. Inspeccionar no cambia el perfil ni los archivos; el contexto vigente se edita como archivos versionados en esta misma ficha.`}>
+      description={`Repositorio vinculado a la instancia ${capability.data.instance_id ?? ''}. Inspecciona el manual nativo de ${alias} en un commit del repositorio del broker. Inspeccionar no cambia el perfil ni los archivos; el contexto vigente se edita como archivos versionados en esta misma ficha.`}>
       <div className="grid gap-3 md:grid-cols-2">
         <label htmlFor={`${id}-commit`}>Commit completo
           <input id={`${id}-commit`} value={commit} maxLength={64} autoComplete="off" spellCheck={false} className="font-mono"

@@ -140,9 +140,9 @@ export function HelpPage() {
 
           <Seccion id="terminal" titulo="Terminal de agentes">
             <ul className="m-0 grid max-w-prose list-disc gap-1.5 pl-4 text-[13px] leading-relaxed text-fg-2">
-              <li>Elegí un agente en la barra lateral: su TUI se abre con teclado cuando el servidor autoriza el control, sin justificación. Abrirla y tomarla queda auditado con tu identidad.</li>
-              <li>Mientras tenés el control, los mensajes nuevos del bus quedan en cola; un turno ya en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado. La sesión tiene una ventana limitada; Prorrogar la extiende.</li>
-              <li>Si el destino sólo permite observar, la terminal indica «Solo lectura»; si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte y no reemplaza la TUI.</li>
+              <li>Elige un agente en la barra lateral: su TUI se abre con teclado cuando el servidor autoriza el control, sin justificación. Abrirla y tomarla queda auditado con tu identidad.</li>
+              <li>Mientras tienes el control, los mensajes nuevos del bus quedan en cola; un turno ya en marcha puede terminar. Devolver el control, cambiar de agente o cerrar la vista libera el teclado. La sesión tiene una ventana limitada; Prorrogar la extiende.</li>
+              <li>Si el destino solo permite observar, la terminal indica «Solo lectura»; si falta autoridad o conexión, muestra el motivo real. Una shell es una sesión aparte y no reemplaza la TUI.</li>
             </ul>
           </Seccion>
 

@@ -95,7 +95,7 @@ it('lo no servido dice por qué y no finge ser desplegable ni hace GET', async (
   const PROMPTS_DIRECTORIO = {
     kind: 'prompts', category: 'configuration', label: 'Subagentes (~/.claude/agents)',
     path: '/home/dev/.claude/agents', format: 'markdown', readable: false, editable: false,
-    reason: 'Es un directorio; sólo se lista, no se sirve como si fuera un fichero.',
+    reason: 'Es un directorio; solo se lista, no se sirve como si fuera un fichero.',
   };
   mapaDeKant([CLAUDE_MD, MCP_CERRADO, PROMPTS_DIRECTORIO]);
   let gets = 0;

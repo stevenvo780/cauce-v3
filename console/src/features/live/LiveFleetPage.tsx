@@ -202,7 +202,7 @@ export function LiveFleetPage() {
   const requestedMember = selectedKey ? topologyMembers.get(selectedKey) : undefined;
   const requestedMissing = selectedKey && !selected
     ? requestedMember?.registered === false
-      ? `«${selectedKey}» solo aparece como miembro de una sala: no tiene registro de agente, por eso no tiene ficha en la oficina. Registralo desde Agentes si tiene que trabajar.`
+      ? `«${selectedKey}» solo aparece como miembro de una sala: no tiene registro de agente, por eso no tiene ficha en la oficina. Regístralo desde Agentes si tiene que trabajar.`
       : requestedMember
         ? `«${selectedKey}» está en una sala pero todavía no tiene actividad en la oficina: sin entregas abiertas ni lease reciente no se puede abrir su ficha acá.`
         : `No se encontró el agente «${selectedKey}» en esta empresa. Puede haberse retirado o el enlace es de otra empresa.`
@@ -230,7 +230,7 @@ export function LiveFleetPage() {
           <h1 className={cn(HUD_TEXT, 'm-0 pl-1 text-[14px] text-[#ffcd75]')}>Oficina</h1>
           <PageHelp
             title="Oficina"
-            description="Un campus en pixel art: cada grupo tiene su edificio y cada persona es un agente. Entrá a un edificio con un clic, con la barra de abajo o con las teclas 1 a 9. Trabajan en su escritorio; cuando le pasan trabajo a alguien de otro edificio mandan una cápsula por los tubos neumáticos y quien la recibe se levanta a buscarla a su estación. Los libres van a la Cafetería o al Parque y sólo duermen en la Residencia si llevan mucho rato sin trabajo; los caídos van al Taller y los trabados piden ayuda en su mesa. Los clientes MCP esperan en Recepción y hablarles les deja una nota en su buzón. Las ventanas encendidas dicen quién trabaja; los grupos nuevos se construyen y los que se borran se demuelen. El estado sale del trabajo que avanza (o no), no del latido."
+            description="Un campus en pixel art: cada grupo tiene su edificio y cada persona es un agente. Entra a un edificio con un clic, con la barra de abajo o con las teclas 1 a 9. Trabajan en su escritorio; cuando le pasan trabajo a alguien de otro edificio mandan una cápsula por los tubos neumáticos y quien la recibe se levanta a buscarla a su estación. Los libres van a la Cafetería o al Parque y solo duermen en la Residencia si llevan mucho rato sin trabajo; los caídos van al Taller y los trabados piden ayuda en su mesa. Los clientes MCP esperan en Recepción y hablarles les deja una nota en su buzón. Las ventanas encendidas dicen quién trabaja; los grupos nuevos se construyen y los que se borran se demuelen. El estado sale del trabajo que avanza (o no), no del latido."
           >
             <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
               {ORDEN_VIVO.map((state) => (
@@ -308,7 +308,7 @@ export function LiveFleetPage() {
         ) : null}
         {views.length === 0 && topologyMembers.size > 0 ? (
           <Notice tone="info" role="status" className="m-2 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1">Hay {topologyMembers.size} {topologyMembers.size === 1 ? 'miembro en las salas' : 'miembros en las salas'} pero ningún agente registrado con actividad: revisá el registro y las asignaciones en el plano.</span>
+            <span className="min-w-0 flex-1">Hay {topologyMembers.size} {topologyMembers.size === 1 ? 'miembro en las salas' : 'miembros en las salas'} pero ningún agente registrado con actividad: revisa el registro y las asignaciones en el plano.</span>
             <a href="/config?seccion=agentes" onClick={(event) => { onNavClick(event, '/config?seccion=agentes'); }} className="text-brand-ink underline underline-offset-2">Ver agentes</a>
           </Notice>
         ) : null}
