@@ -13,6 +13,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -276,6 +277,9 @@ class Cut:
         self.save()
         # Cancelling must settle before the inverse update can grant authority to the original host.
         self.fleet.settle_pending(timeout=self.plan.get('timeout', 300))
+        if self.receipt.get('terminal_destination_attempted'):
+            self.receipt['terminal_destination_cleanup'] = self.destination.call('terminal-cleanup', self.terminal_request())
+            self.save()
         if self.legacy:
             return self.rollback_legacy()
         if self.relocation_attempted:
@@ -286,6 +290,7 @@ class Cut:
                 self.fleet.rollback(self.plan['alias'], self.original, timeout=self.plan.get('timeout', 300))
         else:
             self.fleet.operation('start', self.plan['alias'], {}, timeout=self.plan.get('timeout', 300))
+        self.restore_source_terminal()
         self.fleet.refresh_context(self.plan['alias'], 'Restablecer el contexto del agente tras revertir su traslado.',
                                    timeout=self.plan.get('timeout', 300))
         proof = self.fleet.verify(self.plan['alias'], self.original, timeout=self.plan.get('timeout', 300))
@@ -297,6 +302,28 @@ class Cut:
     def legacy_control(self, action):
         return self.source.call('legacy-' + action, {'alias': self.plan['alias'], 'source': self.plan['source'],
                                'config': json.loads(self.alias_config.read_text())})
+
+    def terminal_request(self):
+        return {**self.common, 'source': self.plan['source'], 'config': json.loads(self.alias_config.read_text()),
+                'terminal_source': self.receipt.get('terminal_source', {})}
+
+    def restore_source_terminal(self):
+        if self.receipt.get('terminal_stop_attempted'):
+            self.receipt['terminal_source_restored'] = self.source.call('terminal-start', self.terminal_request())
+            self.save()
+
+    def install_destination_terminal(self):
+        if not self.receipt.get('terminal_source', {}).get('present'):
+            return
+        # The unlinked spool cannot retain channel keys after a process crash.
+        with tempfile.TemporaryFile(dir=pathlib.Path.home()) as transfer:
+            self.source.call('terminal-export', self.terminal_request(), destination=transfer)
+            transfer.flush()
+            transfer.seek(0)
+            self.receipt['terminal_destination_attempted'] = True
+            self.save()
+            self.receipt['terminal_destination'] = self.destination.call('terminal-install', self.terminal_request(), source=transfer)
+            self.save()
 
     def legacy_registry_matches(self, row):
         fields = ('host_id', 'runtime_mode', 'container_name', 'runtime_user', 'home_directory', 'state_directory',
@@ -329,6 +356,7 @@ class Cut:
         if not self.legacy_registry_matches(row):
             raise ValueError('la reversión no restauró el registro legado')
         unit = self.legacy_control('start')
+        self.restore_source_terminal()
         proof = {'verified': cleanup_failure is None, 'unit': unit, 'registry_restored': True, 'source_restarted': True,
                  'retained_runtime_key': row.get('runtime_key')}
         write_json(self.evidence / 'rollback-verificacion.json', proof)
@@ -388,9 +416,19 @@ class Cut:
         baseline = self.step('verificar-origen', lambda: self.legacy_control('status') if self.legacy
                              else self.fleet.verify(alias, self.original, timeout=timeout))
         write_json(self.evidence / 'origen-verificacion.json', baseline)
+        if alias in json.loads(self.alias_config.read_text())['aliases'] and (self.legacy or self.original['placement']['mode'] == 'container'):
+            self.receipt['terminal_source'] = self.step('preflight-terminal-origen', lambda: self.source.call(
+                'terminal-preflight', self.terminal_request()))
+            self.save()
+            if self.receipt['terminal_source']['present']:
+                self.step('preflight-terminal-destino', lambda: self.destination.call('terminal-destination-preflight', self.terminal_request()))
         self.stopped_at = time.monotonic()
         try:
             self.stop_attempted = True
+            if self.receipt.get('terminal_source'):
+                self.receipt['terminal_stop_attempted'] = True
+                self.save()
+                self.step('detener-terminal-origen', lambda: self.source.call('terminal-stop', self.terminal_request()))
             stopped = self.step('detener-origen', lambda: self.legacy_control('stop') if self.legacy
                                 else self.fleet.operation('stop', alias, {}, timeout=timeout))
             if self.legacy:
@@ -430,6 +468,7 @@ class Cut:
                 if repositories.get('verified') is not True:
                     raise ValueError('los clones propios no quedaron verificados')
                 write_json(self.evidence / 'repositorios.json', repositories)
+            self.step('instalar-terminal-destino', self.install_destination_terminal)
             if self.fleet.last_operation.get('status') == 'awaiting_auth':
                 from v4_mover_recibo import finish_pending_auth
                 if self.step('finalizar-pendiente-login', lambda: finish_pending_auth(self)):

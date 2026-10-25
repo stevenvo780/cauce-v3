@@ -231,6 +231,12 @@ def excluded_roots(request, scope, roots):
 
 def dispatch(request):
     action = request['action']
+    if action.startswith('terminal-') and action != 'terminal-probe':
+        from v4_mover_terminal import terminal_action
+        result = terminal_action(request)
+        if result is not None:
+            print(json.dumps(result))
+        return
     with tempfile.TemporaryDirectory(prefix='cauce-move-data-') as work:
         if action == 'identity':
             print(json.dumps(observed_host()))
@@ -322,11 +328,15 @@ def dispatch(request):
 def bundle():
     output = io.BytesIO()
     root = pathlib.Path(__file__).parent
-    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_repos.py', 'v4_mover_destino.py', 'v4_mover_recursos.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
+    names = ['v4_mover_host.py', 'v4_mover_legado.py', 'v4_mover_terminal.py', 'v4_mover_repos.py', 'v4_mover_destino.py', 'v4_mover_recursos.py', 'v4_copia_integral.py', 'v4_copia_migracion.py',
              'v4_git_migracion.py', 'v4_alcance_copia.py', 'v4_medicion_migracion.py']
+    sys.path.insert(0, str(root.parent / 'pty-agent'))
+    from rollout_pty_lib import RELEASE_FILES
     with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
         for name in names:
             archive.writestr(name, (root / name).read_bytes())
+        for name in RELEASE_FILES:
+            archive.writestr('pty-release/' + name, (root.parent / name).read_bytes())
     return base64.b64encode(output.getvalue()).decode()
 
 
@@ -349,8 +359,11 @@ class Remote:
         with tempfile.TemporaryFile(dir=str(pathlib.Path.home())) as incoming:
             incoming.write((json.dumps(request) + '\n').encode())
             if source:
-                with open(source, 'rb') as reader:
-                    shutil.copyfileobj(reader, incoming)
+                if hasattr(source, 'read'):
+                    shutil.copyfileobj(source, incoming)
+                else:
+                    with open(source, 'rb') as reader:
+                        shutil.copyfileobj(reader, incoming)
             incoming.seek(0)
             result = subprocess.run(command, stdin=incoming, stdout=destination or subprocess.PIPE,
                                     stderr=subprocess.PIPE, check=False, timeout=TRANSFER_SECONDS)
