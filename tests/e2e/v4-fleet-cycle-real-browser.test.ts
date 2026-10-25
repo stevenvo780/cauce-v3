@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,7 +22,7 @@ import {
  *
  * CAUCE_FLEET_CYCLE_TARGET selects where the computer lives:
  * - `local` (default): a clean computer is built here (systemd container, enrolled executor, signed authority) and the
- *   company is registered through the console. Every Docker resource of the run starts with `zz-canary-cycle-<run>`.
+ *   company is registered through the console. The computer and its agent resources carry the task's canary prefix.
  * - `deployed`: the same walkthrough against a deployed gateway. The console served here proxies `/v3` to
  *   CAUCE_FLEET_CYCLE_GATEWAY_URL (Origin rewritten to CAUCE_FLEET_CYCLE_GATEWAY_ORIGIN, trusting CAUCE_FLEET_CYCLE_CA_FILE
  *   when set), signs in with CAUCE_FLEET_CYCLE_EMAIL/CAUCE_FLEET_CYCLE_PASSWORD and uses an already enrolled computer:
@@ -32,7 +32,9 @@ import {
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const PREFIX = `zz-canary-cycle-${run}`;
+const OWNER = 'e2e-a2-agentes-1025';
+const PREFIX = `zz-canary-${OWNER}-${run}`;
+const EVIDENCE_DIRECTORY = join(process.cwd(), '.delegados/v4/recibos', OWNER, 'cycle', run);
 const TARGET = process.env.CAUCE_FLEET_CYCLE_TARGET ?? 'local';
 const ALIAS = `ciclo${run}`;
 const RUNTIME_KEY = `ciclo-${run}`;
@@ -58,6 +60,17 @@ interface Observation {
   credentials: boolean;
   /** Every AGENTS.md under the runtime home and whether it carries the context marker. */
   documents: Record<string, boolean>;
+}
+
+async function capture(name: string): Promise<void> {
+  const current = view();
+  const original = current.viewportSize();
+  try {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await current.setViewportSize(viewport);
+      await current.screenshot({ path: join(EVIDENCE_DIRECTORY, `${name}-${String(viewport.width)}x${String(viewport.height)}.png`) });
+    }
+  } finally { if (original) await current.setViewportSize(original); }
 }
 
 /**
@@ -100,8 +113,9 @@ let page: V4Page | undefined;
 let target: CycleTarget | undefined;
 let containerName = '';
 let runtimeUser = '';
+let operationSequence = 0;
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES]);
-const evidence: Record<string, unknown> = { run, target: TARGET };
+const evidence: Record<string, unknown> = { run, target: TARGET, evidence_directory: EVIDENCE_DIRECTORY };
 
 function view() { if (!page) throw new Error('cycle page absent'); return page; }
 function cycle() { if (!target) throw new Error('cycle target absent'); return target; }
@@ -112,8 +126,7 @@ function required(name: string): string {
 }
 
 /** Everything Docker holds for this run: the whole computer locally, the agent container and its volumes remotely. */
-async function inventory(): Promise<{ containers: string[]; volumes: string[]; totals: { containers: number; volumes: number } }> {
-  const prefix = TARGET === 'local' ? PREFIX : containerName;
+async function inventory(prefix = TARGET === 'local' ? PREFIX : containerName): Promise<{ containers: string[]; volumes: string[]; totals: { containers: number; volumes: number } }> {
   const lines = (text: string) => text.split('\n').filter(Boolean).sort();
   return {
     containers: lines(await docker(['ps', '-a', '--format', '{{.Names}}', '--filter', `name=^/${prefix}`])),
@@ -149,8 +162,8 @@ async function certificateAuthority(): Promise<{ ca: string; key: string; cert: 
 
 async function startConsole(frontendPort: number, proxy: Record<string, unknown>, pki: { key: string; cert: string }): Promise<string> {
   const server = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
-    configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
-    server: { host: '127.0.0.1', port: frontendPort, strictPort: true, https: { key: await readFile(pki.key), cert: await readFile(pki.cert) },
+    configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory, cacheDir: join(directory, 'vite-cache'),
+    server: { host: '127.0.0.1', port: frontendPort, strictPort: true, watch: null, hmr: false, https: { key: await readFile(pki.key), cert: await readFile(pki.cert) },
       proxy: { '/v3': proxy } },
   });
   vite = server;
@@ -164,7 +177,7 @@ async function prepareLocal(frontendPort: number, pki: { key: string; cert: stri
   process.env.CAUCE_SPACE_BACKUP_DIRECTORY = join(directory, 'space-backups');
   let computer: ComputerHarness;
   try {
-    computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos' });
+    computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos', resourceOwner: OWNER });
   } finally {
     if (previousBackupDirectory === undefined) delete process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
     else process.env.CAUCE_SPACE_BACKUP_DIRECTORY = previousBackupDirectory;
@@ -172,7 +185,7 @@ async function prepareLocal(frontendPort: number, pki: { key: string; cert: stri
   harness = computer;
   const baseUrl = await startConsole(frontendPort, { target: computer.gatewayUrl, changeOrigin: false, ws: true }, pki);
   trusted = await startTrustedBrowser(join(directory, 'ca.crt'), directory, [frontendPort, Number(new URL(computer.gatewayUrl).port)]);
-  const context = await trusted.browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+  const context = await trusted.browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
   page = asV4Page(await context.newPage());
   errors.watch(page, 'cycle-owner');
   const owner: V4Person = { ...syntheticPerson('ciclo', run), email: `${PREFIX}@example.test`,
@@ -188,7 +201,25 @@ async function prepareLocal(frontendPort: number, pki: { key: string; cert: stri
   const cookie = (Array.isArray(header) ? header : header === undefined ? [] : [header]).map(value => value.split(';', 1)[0]).join('; ');
   const session = { cookie, origin, 'x-csrf-token': login.json<{ csrf_token: string }>().csrf_token };
   const hostId = `${owner.company.slug}-pc`;
-  await enrollComputer(computer, session, owner.company.slug, hostId);
+  try { await enrollComputer(computer, session, owner.company.slug, hostId); }
+  catch (error) {
+    try {
+      const root = join(computer.installRoot, owner.company.slug, hostId);
+      const discovery = await computer.onComputer(['python3', '-B', '-c',
+        'import pathlib,json,sys; print(json.dumps(sorted(str(item.parent) for item in pathlib.Path(sys.argv[1]).glob("release/*/.verified"))))', root]);
+      const releases = JSON.parse(discovery.stdout) as string[];
+      if (discovery.code !== 0 || releases.length !== 1) throw new Error('verified release was not unique');
+      const report = await computer.onComputer(['python3', '-B', join(releases[0] ?? '', 'ops/cli/fleet-executor.py'),
+        '--policy', join(root, 'executor-policy.json'), '--capabilities']);
+      let capabilities: { available?: boolean; reason?: string } = {};
+      try { capabilities = JSON.parse(report.stdout) as typeof capabilities; } catch { /* The exit code and stderr identify malformed output. */ }
+      const stderr = report.stderr.replace(/postgres(?:ql)?:\/\/\S+/gi, 'postgresql://redacted')
+        .replace(/Bearer\s+\S+/gi, 'Bearer redacted').replace(/\bsk-[A-Za-z0-9_-]+/g, 'redacted').slice(-2_000);
+      evidence.setup_diagnostic = { code: report.code, available: capabilities.available, reason: capabilities.reason, stderr };
+    } catch { evidence.setup_diagnostic = { unavailable: true }; }
+    console.info('FLEET_CYCLE_SETUP_DIAGNOSTIC', JSON.stringify(evidence.setup_diagnostic));
+    throw error;
+  }
   const tenantId = (await computer.pool.query<{ tenant_id: string }>('SELECT tenant_id FROM console_users WHERE email=$1', [owner.email])).rows[0]?.tenant_id;
   if (!tenantId) throw new Error('registered company has no tenant');
   const primary = (await computer.pool.query<{ id: string }>('SELECT id FROM rooms WHERE tenant_id=$1 AND enabled ORDER BY id', [tenantId])).rows[0]?.id;
@@ -249,13 +280,32 @@ async function operations(): Promise<Operation[]> {
 
 /** Previews and enqueues what the panel holds, then follows that exact operation to a terminal state. */
 async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<Operation> {
+  const captureName = `${String(++operationSequence).padStart(2, '0')}-${kind}`;
   const known = new Set((await operations()).map(operation => operation.id));
   const preview = scope.getByRole('button', { name: 'Previsualizar operación', exact: true });
   await waitEnabled(preview, `${kind} preview`);
   await preview.click();
   const button = scope.getByRole('button', { name: 'Confirmar operación', exact: true });
   await waitEnabled(button, `${kind} enqueue`);
+  if (kind === 'purge') for (const name of [containerName, `${containerName}-state`, `${containerName}-provider-profiles`]) {
+    expect(await scope.innerText()).toContain(name);
+  }
+  await capture(`${captureName}-preview`);
   await button.click();
+  const operation = await waitForOperation(known, kind);
+  if (receipt) {
+    const rendered = view().getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: operation.id });
+    await rendered.getByText('Terminada', { exact: true }).waitFor({ timeout: 30_000 });
+    await rendered.getByRole('status').filter({ hasText: 'terminó bien.' }).waitFor({ timeout: 30_000 });
+    await rendered.getByRole('progressbar', { name: `Progreso: ${String(operation.steps.length)} de ${String(operation.steps.length)} pasos`, exact: true })
+      .waitFor({ timeout: 30_000 });
+    await rendered.evaluate(element => { element.scrollIntoView({ block: 'start' }); });
+  }
+  await capture(`${captureName}-completed`);
+  return operation;
+}
+
+async function waitForOperation(known: ReadonlySet<string>, kind: string): Promise<Operation> {
   const deadline = Date.now() + 240_000;
   let operation: Operation | undefined;
   while (Date.now() < deadline) {
@@ -267,9 +317,8 @@ async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<
   const journal = operation.status === 'succeeded' || !harness ? ''
     : (await harness.onComputer(['journalctl', '--user', '--no-pager', '-n', '40'])).stdout;
   expect(operation.status, `${kind}: ${JSON.stringify(operation.error)}\n${journal}`).toBe('succeeded');
+  if (kind === 'create' || kind === 'restore') expect(operation.steps).toHaveLength(8);
   expect(operation.steps.every(step => step.status === 'succeeded'), JSON.stringify(operation.steps)).toBe(true);
-  // Retire and purge take the agent out of the open sheet; their receipt is the durable operation itself.
-  if (receipt) await scope.getByText('Completada').first().waitFor({ timeout: 30_000 });
   return operation;
 }
 
@@ -286,7 +335,10 @@ async function openOperationTab(): Promise<V4Locator> {
 
 beforeAll(async () => {
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
+  await mkdir(EVIDENCE_DIRECTORY, { recursive: true, mode: 0o700 });
+  console.info('FLEET_CYCLE_RECEIPTS', JSON.stringify({ run, directory: EVIDENCE_DIRECTORY }));
   directory = await mkdtemp(join(tmpdir(), 'cauce-fleet-cycle-'));
+  if (TARGET === 'local') await mkdir(join(directory, 'space-backups'), { mode: 0o700 });
   const pki = await certificateAuthority();
   const ports = await reserveNamedLoopbackPorts(['frontend', 'spare'] as const);
   await ports.releaseAll();
@@ -313,13 +365,15 @@ afterAll(async () => {
     });
   }
   if (directory) await attempt(() => rm(directory, { recursive: true, force: true }));
+  await attempt(() => writeFile(join(EVIDENCE_DIRECTORY, 'durable-receipts.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 }));
   console.info('FLEET_CYCLE_EVIDENCE', JSON.stringify(evidence));
   if (failures.length) throw new AggregateError(failures, 'fleet cycle cleanup was incomplete');
 }, 300_000);
 
 describe(`ciclo físico de flota desde la web (${TARGET})`, () => {
-  it('crea, actualiza, detiene, retira y purga un agente con efecto comprobado en Docker', async () => {
+  it('crea, actualiza, detiene, retira, restaura y purga un agente con efecto comprobado en Docker', async () => {
     try { await walkthrough(); } catch (error) {
+      await capture('failure').catch(() => undefined);
       console.info('FLEET_CYCLE_PAGE', await bodySnippet(view()));
       throw error;
     }
@@ -422,6 +476,7 @@ async function walkthrough(): Promise<void> {
   await waitEnabled(prepare, 'context preparation');
   await prepare.click();
   await current.getByText('Borrador sin guardar.', { exact: false }).waitFor({ state: 'hidden', timeout: 30_000 });
+  await capture('context-prepared');
   panel = await openOperationTab();
   await panel.getByLabel('¿Qué quieres hacer?').selectOption('start');
   const started = await enqueue(panel, 'start');
@@ -449,6 +504,26 @@ async function walkthrough(): Promise<void> {
   expect(afterRetire).toMatchObject({ container: true, processes: [], credentials: false });
   evidence.retire = { operation: retired.id, observed: afterRetire };
 
+  await current.goto(`${baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
+  await current.getByRole('button', { name: `Restaurar o revisar ${tenantId}/${ALIAS}`, exact: true }).click();
+  panel = current.getByRole('region', { name: `Operación de ${tenantId}/${ALIAS}`, exact: true });
+  await panel.waitFor({ timeout: 30_000 });
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('restore');
+  const restored = await enqueue(panel, 'restore', false);
+  const afterRestore = await observe();
+  expect(afterRestore).toMatchObject({ container: true, running: true, credentials: true, volumes: afterRetire.volumes });
+  expect(afterRestore.processes.length, JSON.stringify(afterRestore)).toBeGreaterThan(0);
+  const restoredConfig = await apiGet(current, '/v3/console/config');
+  const restoredAgents = restoredConfig.body.agents as { tenant_id: string; alias: string; lifecycle_state: string; retired_at: string | null }[];
+  expect(restoredAgents.find(row => row.tenant_id === tenantId && row.alias === ALIAS)).toMatchObject({ lifecycle_state: 'ready', retired_at: null });
+  if (harness) expect((await harness.pool.query('SELECT lifecycle_state,retired_at FROM agents WHERE tenant_id=$1 AND alias=$2', [tenantId, ALIAS])).rows)
+    .toEqual([{ lifecycle_state: 'ready', retired_at: null }]);
+  evidence.restore = { operation: restored.id, observed: afterRestore };
+  panel = await openOperationTab();
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('retire');
+  evidence.retire_after_restore = (await enqueue(panel, 'retire', false)).id;
+  expect(await observe()).toMatchObject({ container: true, processes: [], credentials: false });
+
   // 6. Purge: the retired agent asks for its alias, names what it deletes and leaves nothing behind.
   await current.goto(`${baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
   const purge = current.getByRole('button', { name: `Eliminar definitivamente ${tenantId}/${ALIAS}`, exact: true });
@@ -466,9 +541,9 @@ async function walkthrough(): Promise<void> {
     `volume:${containerName}-provider-profiles`, `volume:${containerName}-state`].sort());
   const afterPurge = await observe();
   expect(afterPurge).toMatchObject({ container: false, volumes: [] });
-  const final = await inventory();
-  expect(final.containers.filter(name => name.startsWith(containerName))).toEqual([]);
-  expect(final.volumes.filter(name => name.startsWith(containerName))).toEqual([]);
+  const final = await inventory(containerName);
+  expect(final.containers).toEqual([]);
+  expect(final.volumes).toEqual([]);
   evidence.purge = { operation: purged.id, removed, observed: afterPurge };
   evidence.docker_after_purge = final;
   console.info('FLEET_CYCLE_DOCKER_AFTER_PURGE', containerName, JSON.stringify(final));

@@ -12,8 +12,8 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const python = 'python3';
-const evidenceDirectory = join(process.cwd(), '.delegados/v4/recibos/e2e-a2-agentes-1025/purge');
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const evidenceDirectory = join(process.cwd(), '.delegados/v4/recibos/e2e-a2-agentes-1025/purge', run);
 const alias = `zzpurge${run}`;
 const runtimeKey = `zz-canary-purge-${run}`;
 const failKey = `zz-canary-fail-${run}`;
@@ -68,6 +68,7 @@ beforeAll(async () => {
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
   fixture = await startConsoleFunctionalFixture();
   await mkdir(evidenceDirectory, { recursive: true });
+  console.info('FLEET_PURGE_RECEIPTS ' + JSON.stringify({ run, directory: evidenceDirectory }));
   page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
   errors.watch(page, 'purge-owner');
   const form = await openRegistration(page, active().baseUrl);
@@ -168,8 +169,10 @@ describe('purga real de un contenedor desechable', () => {
     expect(await physical.innerText()).toContain(runtimeKey);
     expect(await physical.innerText()).toContain(`${runtimeKey}-state`);
     expect(await physical.innerText()).toContain(`${runtimeKey}-provider-profiles`);
+    await physical.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
     await current.screenshot({ path: join(evidenceDirectory, 'preview-desktop.png'), fullPage: true });
     await current.setViewportSize({ width: 390, height: 844 });
+    await physical.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
     await current.screenshot({ path: join(evidenceDirectory, 'preview-mobile.png'), fullPage: true });
     await current.setViewportSize({ width: 1440, height: 900 });
     const enqueued = (current as V4Page & {
@@ -224,7 +227,8 @@ describe('purga real de un contenedor desechable', () => {
     expect(names, observed).toEqual([]);
     expect(volumes, observed).toEqual([]);
     expect(allVolumes).toContain(foreignKey);
-    await writeFile(join(evidenceDirectory, 'physical-result.json'), JSON.stringify({ operationId, status, names, volumes,
+    await writeFile(join(evidenceDirectory, 'physical-result.json'), JSON.stringify({ run, evidence_directory: evidenceDirectory,
+      operationId, status, names, volumes,
       preserved: foreignKey }, null, 2) + '\n');
     const rows = join(directory, 'rows.json');
     await writeFile(rows, '[]', { mode: 0o600 });
