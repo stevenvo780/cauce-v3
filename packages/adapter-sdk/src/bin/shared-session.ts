@@ -24,12 +24,13 @@ interface Options {
   readonly nativeId?: string;
   readonly expectedFingerprint?: string;
   readonly force?: boolean;
+  readonly expiresAt?: number;
 }
 
 function usage(): never {
   process.stderr.write(
     "uso: shared-session.js <ensure|status|degradations|seed|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
-    + " [--workspace /workspace] [--state DIR] [--native-id ID] [--expected-fingerprint SHA256] [--force 0|1]\n",
+    + " [--workspace /workspace] [--state DIR] [--native-id ID] [--expected-fingerprint SHA256] [--force 0|1] [--expires-at UNIX_MS]\n",
   );
   process.exit(2);
 }
@@ -52,8 +53,12 @@ function parse(argv: readonly string[]): Options {
   const nativeId = values.get("native-id");
   const expectedFingerprint = values.get('expected-fingerprint');
   const force = values.get('force');
+  const expiration = values.get('expires-at');
+  const expiresAt = expiration === undefined ? undefined : Number(expiration);
   if (expectedFingerprint !== undefined && !/^[a-f0-9]{64}$/u.test(expectedFingerprint)) usage();
   if (force !== undefined && force !== '0' && force !== '1') usage();
+  if (expiration !== undefined && (expiresAt === undefined || !/^[0-9]+$/u.test(expiration)
+    || !Number.isSafeInteger(expiresAt))) usage();
   return {
     command,
     alias,
@@ -63,6 +68,7 @@ function parse(argv: readonly string[]): Options {
     ...(nativeId === undefined ? {} : { nativeId }),
     ...(expectedFingerprint === undefined ? {} : { expectedFingerprint }),
     ...(force === undefined ? {} : { force: force === '1' }),
+    ...(expiresAt === undefined ? {} : { expiresAt }),
   };
 }
 
@@ -118,12 +124,22 @@ async function main(): Promise<void> {
     const input = { spec: sessionSpec, namespace: options.alias, stateDirectory: options.stateDirectory,
       configDirectory: harnessConfigDirectory(sessionSpec.harness, home, process.env, sessionSpec.alias) };
     if (options.command === 'recovery-apply' && (options.expectedFingerprint === undefined || options.force === undefined)) usage();
-    const signal = AbortSignal.timeout(6500);
-    const boundedTmux: TmuxController = { run: (args, stdin, control) => tmux.run(args, stdin,
-      { ...control, signal: control?.signal === undefined ? signal : AbortSignal.any([signal, control.signal]) }) };
+    const expiresAt = options.expiresAt ?? Date.now() + 6500;
+    if (expiresAt <= Date.now() || expiresAt > Date.now() + 8000) {
+      process.stdout.write(`${JSON.stringify({ type: 'session', state: 'failed', resumable: false,
+        fingerprint: null, reason: 'La autorización venció antes de ejecutar la recuperación.' })}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    const signal = AbortSignal.timeout(Math.min(6500, Math.max(1, expiresAt - Date.now())));
+    const boundedTmux: TmuxController = { run: (args, stdin, control) => {
+      if (Date.now() >= expiresAt) return Promise.reject(new Error('Recovery authorization expired'));
+      return tmux.run(args, stdin,
+        { ...control, signal: control?.signal === undefined ? signal : AbortSignal.any([signal, control.signal]) });
+    } };
     const result = options.command === 'recovery-preview' ? await previewSessionRecovery(boundedTmux, input)
       : await applySessionRecovery(boundedTmux, input, options.expectedFingerprint ?? '', options.force ?? false,
-        { sleep, signal, readyTimeoutMs: 3500 });
+        { sleep, signal, readyTimeoutMs: 3500, recoveryExpiresAt: expiresAt });
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = ['present', 'absent', 'resumed', 'recreated'].includes(result.state) ? 0 : 1;
     return;

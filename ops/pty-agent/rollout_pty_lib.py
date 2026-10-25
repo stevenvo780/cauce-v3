@@ -57,6 +57,7 @@ RELEASE_FILES: Final = (
     "pty-agent/cauce_pty_agent/native_admin_projection.py",
     "pty-agent/cauce_pty_agent/native_admin_vendor.py",
     "pty-agent/cauce_pty_agent/openclaw_input.py",
+    "pty-agent/cauce_pty_agent/openclaw_recovery.py",
     "pty-agent/cauce_pty_agent/runtime_facts.py",
     "pty-agent/cauce_pty_agent/session.py",
     "pty-agent/cauce_pty_agent/session_recovery.py",

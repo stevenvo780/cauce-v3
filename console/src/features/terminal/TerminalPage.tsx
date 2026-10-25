@@ -1,10 +1,10 @@
 import { RefreshCw } from 'lucide-react';
-import { useContext, useEffect, useMemo, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ConsoleAccessBoundary, useConsoleAccess } from '../../api/console-access';
 import { usePolling } from '../../api/use-polling';
 import { useResource } from '../../api/use-resource';
 import { Button, Notice } from '../../components/kit';
-import { onNavClick, useRouteSearch } from '../../router';
+import { navigate, onNavClick, useRouteSearch } from '../../router';
 import { FleetProvider } from '../../shell/fleet';
 import { agentHref } from '../../shell/agent-href';
 import { rememberChat } from '../../shell/last-chat';
@@ -45,6 +45,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const modo = new URLSearchParams(search).get('modo');
   const requestedView = modo === 'tui' || modo === 'terminal' ? modo : undefined;
   const loginAction = loginActionOf(search);
+  const [recovered, setRecovered] = useState<{ agentId: string; revision: number }>();
 
   usePolling(targets.reload, 15_000, { pausedWhile: targets.loading });
   usePolling(access.reload, 30_000, { pausedWhile: access.loading });
@@ -52,6 +53,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const tenantId = params?.[0];
   const alias = params?.[1];
   const agentId = params?.length === 2 && tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
+  const recoveryRevision = recovered && recovered.agentId === agentId ? recovered.revision : 0;
   const { agents, live, loading, error } = fleet;
   const selectedAgent = agents.find((agent) => agent.id === agentId);
   useEffect(() => {
@@ -98,7 +100,11 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           </Button>
         </Notice>
       ) : null}
-      {selectedAgent ? <AgentRecovery tenantId={selectedAgent.tenantId} alias={selectedAgent.alias} onRecovered={refreshAll} className="shrink-0 border-b border-line p-3" /> : null}
+      {selectedAgent ? <AgentRecovery tenantId={selectedAgent.tenantId} alias={selectedAgent.alias} onRecovered={() => {
+        setRecovered(current => ({ agentId: selectedAgent.id, revision: (current?.revision ?? 0) + 1 }));
+        navigate(`/terminal/${encodeURIComponent(selectedAgent.tenantId)}/${encodeURIComponent(selectedAgent.alias)}?modo=tui`);
+        refreshAll();
+      }} className="shrink-0 border-b border-line p-3" /> : null}
       {missing ? (
         <Notice className="m-4" role="status">
           El servidor no observa al agente {tenantId}:{alias}.{' '}
@@ -106,6 +112,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         </Notice>
       ) : (
         <OperatorWorkspace
+          key={`${agentId ?? ''}/${String(recoveryRevision)}`}
           agents={agents}
           agentId={agentId}
           live={live}

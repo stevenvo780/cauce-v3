@@ -341,7 +341,7 @@ def validate_payload(document) -> dict:
     request = document['request']
     if not isinstance(request, dict) or set(request) != {'kind', 'target', 'parameters', 'expected_revision', 'idempotency_key'}:
         raise SafeFailure('invalid declarative request')
-    if request['kind'] not in {'create', 'update', 'start', 'stop', 'retire', 'restore', 'purge'}:
+    if request['kind'] not in {'create', 'update', 'start', 'stop', 'retire', 'restore', 'purge', 'recover'}:
         raise SafeFailure('unsupported declarative request')
     for field in ('previous_agents', 'desired_memberships', 'fenced_targets'):
         if not isinstance(document[field], list) or len(document[field]) > 1000:
@@ -363,7 +363,7 @@ def validate_payload(document) -> dict:
     if type(request['expected_revision']) is not int or request['expected_revision'] < 0 \
             or not isinstance(request['idempotency_key'], str) or re.fullmatch(r'[A-Za-z0-9_-]{8,128}', request['idempotency_key']) is None:
         raise SafeFailure('invalid request revision or idempotency key')
-    if request['kind'] in {'create', 'update', 'start', 'stop'} and target['resource'] != 'agent':
+    if request['kind'] in {'create', 'update', 'start', 'stop', 'recover'} and target['resource'] != 'agent':
         raise SafeFailure('requested lifecycle requires an agent')
     if 'global_desired_memberships' in document:
         rows = document['global_desired_memberships']
@@ -413,6 +413,9 @@ def validate_payload(document) -> dict:
         rooms = [row['room_id'] for row in memberships]
         if len(rooms) != len(set(rooms)) or parameters['primary_room_id'] not in rooms:
             raise SafeFailure('membership intent must include an unambiguous primary room')
+    elif request['kind'] == 'recover':
+        from fleet_executor_recovery import validate_parameters
+        validate_parameters(parameters)
     elif request['kind'] == 'purge' and target['resource'] == 'agent':
         if set(parameters) - {'confirm_alias'}:
             raise SafeFailure('agent purge may only contain alias confirmation')

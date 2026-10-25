@@ -158,18 +158,23 @@ export async function previewSessionRecovery(tmux: TmuxController, input: Sessio
 }
 
 export async function applySessionRecovery(tmux: TmuxController, input: SessionRecoveryInput,
-  expectedFingerprint: string, force: boolean, options: EnsureOptions): Promise<SessionRecoveryOutcome> {
+  expectedFingerprint: string, force: boolean,
+  options: EnsureOptions & { readonly recoveryExpiresAt?: number }): Promise<SessionRecoveryOutcome> {
   try {
+    const expired = (): boolean => options.signal?.aborted === true
+      || options.recoveryExpiresAt !== undefined && Date.now() >= options.recoveryExpiresAt;
+    if (expired()) return reply('failed', 'La autorización venció antes de ejecutar la recuperación.');
     const current = await observeRecovery(tmux, input);
     if (!current.outcome.resumable || current.plan === undefined) return current.outcome;
     if (current.outcome.fingerprint !== expectedFingerprint) return reply('conflict', 'La sesión o la conversación cambió. Vuelve a verificar.');
     if (current.pane !== undefined && current.dead !== true && !force) return reply('conflict', 'La terminal existe. Confirma su reinicio antes de continuar.', true, expectedFingerprint);
-    if (options.signal?.aborted) return reply('failed', 'La recuperación fue cancelada antes de modificar la sesión.');
+    if (expired()) return reply('failed', 'La recuperación fue cancelada antes de modificar la sesión.');
     const freshPlan = await exactLaunch(input);
     if (freshPlan.state !== 'launch' || !freshPlan.resumed || digest(freshPlan.args) !== digest(current.plan.args)) {
       return reply('conflict', 'La conversación cambió antes de detener la terminal. Vuelve a verificar.');
     }
     if (current.pane !== undefined) {
+      if (expired()) return reply('failed', 'La autorización venció antes de detener la terminal.');
       const markers = `#{&&:#{&&:#{==:#{${SESSION_ALIAS_OPTION}},${input.spec.alias}},#{==:#{${SESSION_HARNESS_OPTION}},${input.spec.harness}}},#{==:#{pane_dead},${current.dead === true ? '1' : '0'}}}`;
       const stopped = current.dead === true ? await removeDeadPane(tmux, current.pane, input.spec)
         : await mutateExactPane(tmux, current.pane, `kill-pane -t ${current.pane.paneId}`,
@@ -185,6 +190,7 @@ export async function applySessionRecovery(tmux: TmuxController, input: SessionR
         ? fresh : { state: 'blocked', detail: 'La conversación cambió antes de reanudar.' };
     } } };
     const { log: _log, ...ensureOptions } = options;
+    if (expired()) return reply('failed', 'La autorización venció antes de reanudar la terminal.');
     const ensured = await ensureSharedSession(tmux, spec, ensureOptions);
     if (!ensured.ready || !ensured.created || ensured.resumed !== true) return reply('failed', 'La terminal no confirmó la reanudación exacta. No se intentó un arranque en blanco.');
     return reply(current.outcome.state === 'absent' ? 'recreated' : 'resumed', current.outcome.state === 'absent'

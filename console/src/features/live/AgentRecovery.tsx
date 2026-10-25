@@ -6,6 +6,7 @@ import { useApi } from '../../api/context';
 import { Button, Notice } from '../../components/kit';
 import { cn } from '../../cn';
 import { permissionState, type PermissionState } from '../../lib';
+import { navigate } from '../../router';
 import { terminalRequest } from '../terminal/api';
 
 interface Props {
@@ -99,7 +100,8 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
         throw new Error(result.session.reason || 'El servidor no acreditó la recuperación de la conversación exacta.');
       }
       setOutcome(`${result.session.state === 'resumed' ? 'Reanudado' : 'Recreado'}: ${alias} continúa la misma conversación.`);
-      onRecovered?.();
+      if (onRecovered) onRecovered();
+      else navigate(`/terminal/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}?modo=tui`);
     } catch (failure) {
       if (token === revision.current) setError(failure instanceof Error ? failure.message : 'No se confirmó la recuperación.');
     } finally { if (token === revision.current) { pending.current = undefined; setBusy(undefined); } }

@@ -124,6 +124,7 @@ class PtySession:
         self.exit_signal: int | None = None
         self.kill_deadline: float | None = None
         self.close_reason: str | None = None
+        self.recovery_pending_until: float | None = None
 
 
 def set_window_size(fd: int, rows: int, cols: int) -> None:
@@ -185,9 +186,6 @@ class SessionMixin:
         if request.get("mode") not in (None, mode):
             self._open_error(session_id, "mode_mismatch")
             return
-        if len(self.sessions) >= MAX_SESSIONS:
-            self._open_error(session_id, "too_many_sessions")
-            return
         try:
             argv = self._resolve_command(mode)
         except OpenRefused as refusal:
@@ -197,9 +195,29 @@ class SessionMixin:
         if argv is None:
             self._open_error(session_id, "mode_unavailable")
             return
+        pending = next((session for session in self.sessions.values()
+                        if mode in TUI_MODES and session.recovery_pending_until is not None
+                        and not session.reaped and session.kill_deadline is None and session.argv == argv
+                        and time.monotonic() < session.recovery_pending_until), None)
+        if (mode in TUI_MODES and pending is None
+                and any(session.recovery_pending_until is not None for session in self.sessions.values())):
+            self._open_error(session_id, "mode_unavailable", "recovered_conversation_changed")
+            return
+        if pending is None and len(self.sessions) >= MAX_SESSIONS:
+            self._open_error(session_id, "too_many_sessions")
+            return
         rows, cols = _window(request)
         try:
-            session = self._spawn(session_id, mode, argv, rows, cols)
+            if pending is not None:
+                set_window_size(pending.fd, rows, cols)
+                del self.sessions[pending.session_id]
+                pending.session_id = session_id
+                pending.mode = mode
+                pending.recovery_pending_until = None
+                pending.output_paused = False
+                session = pending
+            else:
+                session = self._spawn(session_id, mode, argv, rows, cols)
         except OSError as error:
             log(f"OPEN spawn failed session={session_id} errno={errno.errorcode.get(error.errno, error.errno)}")
             self._open_error(session_id, "spawn_failed")
@@ -455,6 +473,8 @@ class SessionMixin:
         now = time.monotonic()
         self._reap()
         for session in list(self.sessions.values()):
+            if session.recovery_pending_until is not None and now >= session.recovery_pending_until:
+                self._hangup(session, "recovery_terminal_not_opened")
             if session.kill_deadline is not None and now >= session.kill_deadline and not session.reaped:
                 session.kill_deadline = now + KILL_GRACE
                 self._signal(session, signal.SIGKILL)
@@ -499,13 +519,14 @@ class SessionMixin:
                 session.eof = True
 
     def _retire(self, session: PtySession) -> None:
-        self._flush_session(session, force=True)
-        self._queue(encode_json(TAG_CLOSED, {
-            "session_id": session.session_id,
-            "exit_code": session.exit_code,
-            "signal": session.exit_signal,
-            "reason": session.close_reason or "agent_closed",
-        }))
+        if session.recovery_pending_until is None:
+            self._flush_session(session, force=True)
+            self._queue(encode_json(TAG_CLOSED, {
+                "session_id": session.session_id,
+                "exit_code": session.exit_code,
+                "signal": session.exit_signal,
+                "reason": session.close_reason or "agent_closed",
+            }))
         try:
             os.close(session.fd)
         except OSError:

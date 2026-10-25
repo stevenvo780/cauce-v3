@@ -38,9 +38,11 @@ def checked_command(command: list[str], *, environment: dict | None = None, time
 
 def approved_bundle(policy: dict, agent: dict) -> dict:
     bundle = policy['bundles'][agent['harness_id']]
-    if set(bundle) not in ({'directory', 'digest', 'executable', 'executable_sha256', 'argv'},
+    if set(bundle) - {'shared_tui'} not in ({'directory', 'digest', 'executable', 'executable_sha256', 'argv'},
                           {'directory', 'digest', 'executable', 'executable_sha256', 'argv', 'descriptor_sha256'}) \
             or not isinstance(bundle['argv'], list) or not all(isinstance(value, str) for value in bundle['argv']) \
+            or 'shared_tui' in bundle and (type(bundle['shared_tui']) is not bool
+                or bundle['shared_tui'] and agent['harness_id'] not in {'claude', 'codex', 'grok', 'muse'}) \
             or bundle.get('descriptor_sha256') is not None and (not isinstance(bundle['descriptor_sha256'], str)
                 or re.fullmatch(r'[a-f0-9]{64}', bundle['descriptor_sha256']) is None):
         raise SafeFailure('invalid approved runtime bundle')
@@ -187,6 +189,9 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
     instance = str(uuid.uuid5(uuid.NAMESPACE_URL, '\0'.join((operation_id or receipt['generation'], agent['tenant_id'], agent['runtime_key']))))
     values = {'CAUCE_ROOM': room, 'CAUCE_INSTANCE_ID': instance, 'CAUCE_SPACE_ROOT': str(path(agent['state_directory']) / 'space'),
               'CAUCE_RELAY_URL': urlunsplit(('wss', gateway.netloc, '/v3/ws', '', ''))}
+    if policy['bundles'][agent['harness_id']].get('shared_tui') is True:
+        values.update(CAUCE_SHARED_SESSION='1',
+            CAUCE_SHARED_SESSION_WORKSPACE=str(path(agent['state_directory']) / 'space' / 'projects'))
     model = agent.get('model_id')
     if model is not None:
         if not isinstance(model, str) or not 1 <= len(model) <= 128 or any(ord(char) < 32 for char in model) \
@@ -214,7 +219,8 @@ def sdk_environment_proof(policy: dict, agent: dict, observed: dict, bootstrap: 
     expected = sdk_environment(policy, agent, bootstrap, operation_id)
     # The shared human list must match even when it is absent: a removed admin cannot keep access
     # through a container started with the previous list.
-    if any(observed.get(key) != expected.get(key) for key in {*expected, 'CAUCE_SHARED_HUMAN_IDS'}):
+    if any(observed.get(key) != expected.get(key) for key in {*expected, 'CAUCE_SHARED_HUMAN_IDS',
+            'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE'}):
         raise NamespaceMismatch('running runtime has another SDK identity or transport')
 
 
@@ -245,7 +251,7 @@ def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, boo
             environment = {item.split(b'=', 1)[0].decode(): item.split(b'=', 1)[1].decode()
                            for item in raw.split(b'\0') if item.startswith((b'CAUCE_BOOTSTRAP=', b'CAUCE_FLEET_OPERATION_ID=',
                                b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT=',
-                               b'CAUCE_SHARED_HUMAN_IDS='))}
+                               b'CAUCE_SHARED_HUMAN_IDS=', b'CAUCE_SHARED_SESSION=', b'CAUCE_SHARED_SESSION_WORKSPACE='))}
             namespace_proof(environment, bootstrap, operation_id)
             sdk_environment_proof(policy, agent, environment, bootstrap, operation_id)
         return document
@@ -269,6 +275,8 @@ def start_native(policy: dict, raw_agent: dict, *, bootstrap: bool = True, opera
         raise SafeFailure('runtime user cannot be launched by this executor')
     root = path(agent['_placement']['state_root'])
     prepare_state(str(root), agent['state_directory'], user.pw_uid, user.pw_gid)
+    if policy['bundles'][agent['harness_id']].get('shared_tui') is True:
+        prepare_state(str(root), str(path(agent['state_directory']) / 'space' / 'projects'), user.pw_uid, user.pw_gid)
     view = pathlib.Path(agent['state_directory']) / '.cauce-credentials' / ('bootstrap' if bootstrap else 'normal')
     install(view, payload_for(policy, agent, bootstrap), user.pw_uid, user.pw_gid)
     from fleet_executor_profiles import prepare_profile

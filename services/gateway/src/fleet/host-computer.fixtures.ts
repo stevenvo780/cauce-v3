@@ -361,6 +361,7 @@ async function buildComputerImage(work: string, image: string, providerLogin: bo
 export async function startComputerHarness(options: {
   prefix: string; consoleOrigins: string[]; providerLogin?: boolean; agentNetwork?: { name: string };
   workRoot?: string; dockerSocket?: string; hostDirectories?: readonly string[];
+  resourceOwner?: string;
 }): Promise<ComputerHarness> {
   const { prefix } = options; const owned: Owned = {};
   try {
@@ -435,7 +436,8 @@ export async function startComputerHarness(options: {
     const gatewayUrl = await app.listen({ host: '127.0.0.1', port: 0 });
     if (transport !== undefined) await startAgentForwarder(transport, owned, Number(new URL(bootstrapOrigin).port), Number(new URL(gatewayUrl).port));
     const container = prefix;
-    const started = await command('docker', ['run', '-d', '--name', container, '--privileged', '--cgroupns=private', '--network', 'host',
+    const started = await command('docker', ['run', '-d', '--name', container,
+      ...(options.resourceOwner ? ['--label', `cauce.e2e.owner=${options.resourceOwner}`] : []), '--privileged', '--cgroupns=private', '--network', 'host',
       '--tmpfs', '/run', '--tmpfs', '/run/lock', '-v', `${join(tree, 'ops/cli')}:/opt/cauce-cli:ro`,
       ...(options.dockerSocket !== undefined && transport !== undefined ? ['--mount', `type=bind,src=${join(work, 'transport')},dst=/transport,readonly`] : []),
       ...(options.hostDirectories ?? []).flatMap(directory => ['--mount', `type=bind,src=${directory},dst=${directory},readonly`]),

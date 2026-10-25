@@ -44,6 +44,7 @@ def main() -> int:
     parser.add_argument('--policy', type=pathlib.Path, required=True)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--binding', action='store_true')
+    action.add_argument('--recovery-preview', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
     action.add_argument('--quota', action='store_true')
@@ -74,6 +75,15 @@ def main() -> int:
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     context = validate_payload(json.loads(encoded))
+    if args.recovery_preview or context['request']['kind'] == 'recover':
+        from fleet_executor_recovery import perform as recovery_perform
+        from fleet_executor_recovery import preview as recovery_preview
+        if context['request']['kind'] != 'recover':
+            raise SafeFailure('recovery preview requires an exact recovery request')
+        with executor_lock(policy):
+            receipt = recovery_preview(policy, context) if args.recovery_preview else recovery_perform(policy, context, args.step)
+        print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
+        return 0
     with image_operation(context['operation_id'], legacy_target=context['request']['target']['resource'] == 'agent'):
         if args.binding:
             agent = approve_agent(policy, target_agent(context))
