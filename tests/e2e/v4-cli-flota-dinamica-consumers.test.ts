@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -45,6 +45,22 @@ const consumers = [
   'test_fleet_provider_openclaw.py', 'test_model_fallback_docker.py', 'test_provider_login_container.py',
   'test_fleet_executor_tui.py', 'test_fleet_executor_tui_steps.py',
 ];
+const isolatedSourceConsumers = new Set([
+  'test_fleet_executor_agent_quota.py', 'test_fleet_executor_legacy.py', 'test_fleet_executor_templates.py',
+  'test_model_fallback_docker.py', 'test_provider_login_container.py',
+]);
+
+async function makePublicSourceReadable(path: string): Promise<void> {
+  const entry = await lstat(path);
+  if (entry.isDirectory()) {
+    await chmod(path, 0o755);
+    await Promise.all((await readdir(path)).map(name => makePublicSourceReadable(join(path, name))));
+  } else if (entry.isFile()) {
+    await chmod(path, entry.mode & 0o111 ? 0o755 : 0o644);
+  } else {
+    throw new Error('the isolated public source must contain only regular files and directories');
+  }
+}
 
 const saveManifest = (imageCleanup: Awaited<ReturnType<typeof cleanup>> | null) => writeFile(join(directory, 'manifest.json'),
   JSON.stringify({ prefix, declared_consumers: consumers, image_cleanup: imageCleanup }, null, 2) + '\n', { mode: 0o600 });
@@ -131,7 +147,7 @@ describe.sequential('consumidores del ciclo de vida del executor en docker-lab',
     let timedOut = false;
     let cleaned: Awaited<ReturnType<typeof cleanup>>;
     try {
-      if (filename === 'test_fleet_executor_agent_quota.py') {
+      if (isolatedSourceConsumers.has(filename)) {
         disposableSource = await mkdtemp(join(tmpdir(), `${prefix}-source-`));
         workdir = disposableSource;
         await chmod(workdir, 0o755);
@@ -139,6 +155,7 @@ describe.sequential('consumidores del ciclo de vida del executor en docker-lab',
           'packages/adapter-sdk/descriptors']) {
           await cp(join(process.cwd(), relative), join(workdir, relative), { recursive: true });
         }
+        await makePublicSourceReadable(workdir);
       }
       const command = ['run', '--rm', '--init', '--name', name, '--label', `cauce.e2e.owner=${owner}`,
         '--label', `cauce.e2e.consumer=${consumer}`,
@@ -157,12 +174,12 @@ describe.sequential('consumidores del ciclo de vida del executor en docker-lab',
       summary = result.stderr.split('\n').filter(line => /^(Ran \d+ tests? in [0-9.]+s|OK(?: \(.*\))?|FAILED \(.*\))$/u.test(line)
         || /^(ERROR|FAIL): [A-Za-z0-9_. ()-]+$/u.test(line)
         || /^ {2}File "[^"\r\n]+", line \d+, in [A-Za-z0-9_<>]+$/u.test(line));
-      await save({ exit_code: result.code, timed_out: timedOut, completed: true, summary });
+      await save({ exit_code: result.code, timed_out: timedOut, completed: true, summary, stderr: result.stderr });
     } finally {
       cleaned = await cleanup(consumer);
       if (disposableSource) await rm(disposableSource, { recursive: true, force: true });
     }
-    await save({ exit_code: result.code, timed_out: timedOut, completed: true, summary, cleanup: cleaned });
+    await save({ exit_code: result.code, timed_out: timedOut, completed: true, summary, stderr: result.stderr, cleanup: cleaned });
     expect(cleaned.clean, `${filename}: owned resources must be removed`).toBe(true);
     expect(result.code, `${filename}: ${summary.join(' | ')}`).toBe(0);
     expect(summary.some(line => /^Ran [1-9]\d* tests? /u.test(line)), 'the consumer must execute its tests').toBe(true);

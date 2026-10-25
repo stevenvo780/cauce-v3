@@ -74,6 +74,7 @@ class ModelFallbackDockerTest(unittest.TestCase):
     def ask(self, user: str, *arguments: str) -> tuple[int, list[dict]]:
         result = docker('exec', '-i', '-u', user, self.client, 'python3', '-I', '-B', '/cauce/executor/model_fallback.py', 'client',
                         '--socket', '/cauce/model-fallback/muse.sock', *arguments, check=False, input_data=b'hola')
+        self.assertTrue(result.stdout.strip(), result.stderr.decode(errors='replace'))
         return result.returncode, [json.loads(line) for line in result.stdout.decode().splitlines()]
 
     def test_the_read_only_client_reaches_the_server_and_nothing_else_can(self):
