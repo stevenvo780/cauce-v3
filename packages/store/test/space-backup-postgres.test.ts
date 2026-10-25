@@ -107,6 +107,22 @@ async function finishAtPublishBarrier(claim:SpaceBackupClaim,mutation:string,cha
   } finally {clearTimeout(timer);release();await finishing.catch(()=>undefined);await isolated.close();}
 }
 describe('durable space backup with real PostgreSQL runtime role and signed HTTP',()=>{
+  it('acepta un agente V3 con contenedor como legacy-container y oculta el de otra empresa',async()=>{
+    await admin.query(`UPDATE agents SET runtime_mode=NULL,container_name='zz-legacy-container',systemd_user=NULL
+      WHERE tenant_id=$1 AND alias='worker'`,[north.hub.id]);
+    const created=await post({idempotency_key:`space-legacy-${randomUUID()}`});
+    expect(created.statusCode).toBe(202);
+    const claimResponse=await command({action:'claim'});expect(claimResponse.statusCode).toBe(200);
+    const claim=claimResponse.json<{claim:SpaceBackupClaim}>().claim;
+    expect(claim.agent_snapshot).toMatchObject({runtime_mode:'legacy-container',container_name:'zz-legacy-container',
+      tenant_id:north.hub.id,alias:'worker',company_id:north.company.id});
+    await admin.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,company_id,host_id,runtime_key,runtime_mode,container_name,runtime_user,home_directory,state_directory,systemd_user)
+      VALUES($1,'workersouth','codex',false,$2,$3,'workersouth',NULL,'zz-legacy-container','dev','/home/dev','/home/dev/state/workersouth',NULL)`,
+      [south.hub.id,south.company.id,other.host_id]);
+    const foreign=await app.inject({method:'POST',url:`/v3/console/spaces/${south.hub.id}/workersouth/backups`,
+      payload:{idempotency_key:`space-legacy-foreign-${randomUUID()}`},headers:{cookie,origin:'http://localhost','x-csrf-token':csrf}});
+    expect(foreign.statusCode).toBe(404);
+  });
   it.each(['revoked','rotated'] as const)('rejects %s host identity after verification and before publishing ready',async mutation=>{
     const {claim}=await createClaim();await upload(claim);
     await finishAtPublishBarrier(claim,mutation,async()=>{

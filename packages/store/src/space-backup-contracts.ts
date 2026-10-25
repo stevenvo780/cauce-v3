@@ -15,8 +15,8 @@ export const SpaceBackupRequestSchema=z.object({idempotency_key:z.string().regex
 export const SpaceBackupHash=z.string().regex(/^[a-f0-9]{64}$/u);
 export const SpaceBackupAgentSchema=z.object({company_id:Identifier,tenant_id:TenantSchema,alias:AliasSchema,
   runtime_key:z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u),host_id:Identifier,harness_id:Identifier,
-  runtime_mode:z.enum(['native','container']),container_name:z.string().min(1).max(128),runtime_user:z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
-  home_directory:Path,state_directory:Path,systemd_user:z.string().nullable(),
+  runtime_mode:z.enum(['native','container','legacy-container']),container_name:z.string().min(1).max(128).nullable(),runtime_user:z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
+  home_directory:Path.nullable(),state_directory:Path,systemd_user:z.string().nullable(),
 }).strict();
 export const SpaceBackupFenceSchema=z.object({id:z.uuid(),claim_token:z.uuid(),claim_epoch:z.number().int().positive()}).strict();
 export const SpaceBackupClaimSchema=SpaceBackupFenceSchema.safeExtend({company_id:Identifier,tenant_id:TenantSchema,alias:AliasSchema,
