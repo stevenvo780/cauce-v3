@@ -62,7 +62,7 @@ export async function controlledSessionRuntime(): Promise<ComputerRuntimeBundle>
   } };
 }
 
-export async function prepareSessionQuotaImage(fixture: CancelDeployFixture, scope?: 'security' | 'model-null'): Promise<{ id: string; reference: string }> {
+export async function prepareSessionQuotaImage(fixture: CancelDeployFixture, scope?: 'security' | 'model-null' | 'stopped'): Promise<{ id: string; reference: string }> {
   const suffix = scope === undefined ? '' : '-' + scope;
   const directory = join(cancelDeployReceipts, 'quota-image' + suffix);
   await mkdir(directory, { recursive: true });

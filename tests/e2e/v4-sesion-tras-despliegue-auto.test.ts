@@ -14,6 +14,7 @@ import { assertSessionTurnOrdering, automaticOperations, deliveryState, finishSe
 import { assertDeferred, assertUnchanged, assertUpdated, createCanary, type Canary } from './v4-sesion-tras-despliegue.assertions.js';
 import { assertUninitializedSessionDeferred } from './v4-sesion-tras-despliegue.security.js';
 import { assertNullModelOwnerControl } from './v4-sesion-tras-despliegue.model-null.js';
+import { assertStoppedCurrentRuntimeSkipped } from './v4-sesion-tras-despliegue.stopped.js';
 
 describe('actualización automática de ejecuciones V4 tras una release', () => {
   it('aplaza antes de prepare una TUI sin conversación acreditada y la actualiza tras inicializarla',
@@ -121,4 +122,5 @@ describe('actualización automática de ejecuciones V4 tras una release', () => 
     if (failures.length) throw new AggregateError(failures, 'automatic shared session release reconciliation failed');
   }, 1_800_000);
   it('permite Detener y Arrancar sin cancelar mantenimiento con modelo vacío', assertNullModelOwnerControl, 1_200_000);
+  it('omite como runtime_current un adaptador parado cuya release instalada ya está montada', assertStoppedCurrentRuntimeSkipped, 1_200_000);
 });

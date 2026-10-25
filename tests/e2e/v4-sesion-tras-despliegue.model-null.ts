@@ -10,8 +10,8 @@ import { automaticSessionReleaseSource } from './v4-sesion-tras-despliegue.refs.
 import { buildSessionRelease, installSessionRelease } from './v4-sesion-tras-despliegue.release.js';
 import { AUTO_SESSION_OWNER, controlledSessionRuntime, prepareSessionQuotaImage, stageSessionDescriptors } from './v4-sesion-tras-despliegue.runtime.js';
 
-function observeMaintenanceScans(fixture: CancelDeployFixture, release: string) {
-  const counts = { created: 0, started: 0 };
+export function observeMaintenanceScans(fixture: CancelDeployFixture, release: string) {
+  const counts = { created: 0, started: 0, stopped: 0 };
   let phase: keyof typeof counts | undefined;
   const observe = (request: IncomingMessage, response: ServerResponse) => {
     if (request.method !== 'POST' || request.url !== '/v3/fleet/hosts/' + fixture.hostId + '/channel') return;
@@ -43,7 +43,7 @@ function observeMaintenanceScans(fixture: CancelDeployFixture, release: string) 
     response.once('finish', () => { if (matched && response.statusCode === 200 && activePhase) counts[activePhase]++; });
   };
   fixture.computer.app.server.on('request', observe);
-  return { counts, afterCreate() { phase = 'created'; }, afterStart() { phase = 'started'; },
+  return { counts, afterCreate() { phase = 'created'; }, afterStart() { phase = 'started'; }, afterStop() { phase = 'stopped'; },
     close() { fixture.computer.app.server.off('request', observe); } };
 }
 
