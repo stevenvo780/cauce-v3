@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import pathlib
 import signal
 import subprocess
@@ -53,6 +54,7 @@ class ResumeProofTest(unittest.TestCase):
         self.cleanup_error = False
         self.interrupt_run = False
         self.timeouts = []
+        self.cidfile_modes = []
         for patch in (mock.patch.object(runtime, 'docker', side_effect=self.docker),
                       mock.patch.object(runtime, 'checked_command', side_effect=self.command),
                       mock.patch.object(runtime, 'runtime_mounts', return_value=self.binds),
@@ -67,7 +69,9 @@ class ResumeProofTest(unittest.TestCase):
         if arguments[0:2] == ('volume', 'inspect'):
             return json.dumps([self.volumes[arguments[2]]]).encode()
         if arguments[0] == 'run':
-            pathlib.Path(arguments[arguments.index('--cidfile') + 1]).write_text('e' * 64 + '\n')
+            cidfile = pathlib.Path(arguments[arguments.index('--cidfile') + 1])
+            cidfile.write_text('e' * 64 + '\n')
+            self.cidfile_modes.append(cidfile.stat().st_mode & 0o777)
             if self.run_error is not None:
                 raise self.run_error
             if self.interrupt_run:
@@ -120,6 +124,32 @@ class ResumeProofTest(unittest.TestCase):
         with self.assertRaisesRegex(SafeFailure, 'current adapter bundle'):
             self.run_proof()
         self.assertEqual(self.calls, [])
+
+    def test_group_writable_caller_umask_cannot_make_probe_identity_unsafe(self):
+        previous = os.umask(0o002)
+        try:
+            self.assertEqual(self.run_proof(), {'resumable': True, 'fingerprint': 'c' * 64})
+            self.assertEqual(self.cidfile_modes, [0o600])
+            self.assertEqual(self.calls[-1], ('rm', '-f', 'e' * 64))
+            self.assertEqual(os.umask(0o002), 0o002)
+        finally:
+            os.umask(previous)
+
+    def test_private_probe_umask_is_restored_after_failed_launch_cleanup_or_signal(self):
+        for failure in ('launch', 'timeout', 'cleanup', 'termination'):
+            with self.subTest(failure=failure):
+                self.run_error = {'launch': SafeFailure('SDK failed'),
+                                  'timeout': subprocess.TimeoutExpired('probe', 12)}.get(failure)
+                self.cleanup_error = failure == 'cleanup'
+                self.interrupt_run = failure == 'termination'
+                previous = os.umask(0o002)
+                try:
+                    with self.assertRaises(SafeFailure):
+                        self.run_proof()
+                    self.assertEqual(os.umask(0o002), 0o002)
+                    self.assertEqual(self.cidfile_modes[-1], 0o600)
+                finally:
+                    os.umask(previous)
 
     def test_missing_or_foreign_persistent_volume_never_launches_probe(self):
         for mutation in ('name', 'readonly', 'owner'):

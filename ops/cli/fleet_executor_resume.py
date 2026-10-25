@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import pathlib
 import re
 import signal
@@ -15,6 +16,15 @@ ENVIRONMENT = frozenset({'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GROK_HOME', 'XDG_CO
     'CAUCE_HARNESS_COMMAND', 'CAUCE_HARNESS_COMMAND_SHA256', 'CAUCE_HARNESS_COMMAND_FILES',
     'CAUCE_MUSE_CLI_COMMAND', 'CAUCE_MUSE_CLI_SHA256'})
 SHA = re.compile(r'[0-9a-f]{64}')
+
+
+@contextlib.contextmanager
+def _private_probe_files():
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
 
 
 @contextlib.contextmanager
@@ -111,7 +121,7 @@ def resume_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: i
         raise SafeFailure('resume proof environment differs from the approved selection')
     workspace = str(path(agent['state_directory']) / 'space' / 'projects')
     labels = {**runtime.expected_labels(policy, agent), 'cauce.fleet.probe': 'resume-proof'}
-    with tempfile.TemporaryDirectory(prefix='resume-proof-', dir=policy['roots']['state']) as directory, _probe_signal():
+    with _private_probe_files(), tempfile.TemporaryDirectory(prefix='resume-proof-', dir=policy['roots']['state']) as directory, _probe_signal():
         cidfile = pathlib.Path(directory) / 'container.id'
         try:
             try:
