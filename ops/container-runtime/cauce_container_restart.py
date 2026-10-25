@@ -88,6 +88,69 @@ def dim_text(raw: str, start: int = 0) -> bool:
     return visible
 
 
+def codex_status_line(raw: str) -> bool:
+    foreground: tuple[int, ...] | None = None
+    cells: list[tuple[str, tuple[int, ...] | None]] = []
+    offset = 0
+    for match in SGR.finditer(raw):
+        cells.extend((char, foreground) for char in raw[offset:match.start()])
+        codes = (match.group(1) or "0").split(";")
+        index = 0
+        while index < len(codes):
+            if not codes[index].isdigit():
+                return False
+            code = int(codes[index])
+            if code in {38, 48, 58}:
+                mode = codes[index + 1:index + 2]
+                count = 3 if mode == ["2"] else 1 if mode == ["5"] else 0
+                values = codes[index + 2:index + 2 + count]
+                if not count or len(values) != count or any(not value.isdigit() or int(value) > 255 for value in values):
+                    return False
+                if code == 38:
+                    foreground = (int(mode[0]), *(int(value) for value in values))
+                index += 2 + count
+                continue
+            if code in {0, 39}:
+                foreground = None
+            elif 30 <= code <= 37 or 90 <= code <= 97:
+                foreground = (code,)
+            elif code not in {1, 2, 3, 4, 7, 9, 21, 22, 23, 24, 27, 29, 49, 59} \
+                    and not 40 <= code <= 47 and not 100 <= code <= 107:
+                return False
+            index += 1
+        offset = match.end()
+    cells.extend((char, foreground) for char in raw[offset:])
+    if any(not char.isprintable() for char, _ in cells) or "".join(char for char, _ in cells[:2]) != "  ":
+        return False
+    while cells and cells[-1][0] == " ":
+        cells.pop()
+    body = cells[2:]
+    if not body or body[0][0].isspace() or body[0][1] is None:
+        return False
+    component = body[0][1]
+    separator: tuple[int, ...] | None = None
+    components = 1
+    index = 0
+    while index < len(body):
+        if body[index][1] == component:
+            index += 1
+            continue
+        delimiter = body[index:index + 3]
+        if "".join(char for char, _ in delimiter) != " · " or len({color for _, color in delimiter}) != 1:
+            return False
+        color = delimiter[0][1]
+        following = body[index + 3:index + 4]
+        if not following or following[0][0].isspace() or following[0][1] in {None, color}:
+            return False
+        if components > 1 and color != separator:
+            return False
+        separator = color
+        component = following[0][1]
+        components += 1
+        index += 3
+    return components >= 2
+
+
 def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int, harness: str = "codex") -> None:
     lines = pane.splitlines()
     if not 0 <= cursor_y < len(lines):
@@ -133,7 +196,9 @@ def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int, harness: str 
     for index, line in enumerate(plain[cursor_y + 1:]):
         if frame_rule(line):
             return
-        if line.strip() and (bounded or not placeholder or index == 0 or not FOOTER.search(line)):
+        styled_status = harness == "codex" and index == 1 and not plain[cursor_y + 1].strip() \
+            and codex_status_line(lines[cursor_y + 2])
+        if line.strip() and (bounded or not placeholder or index == 0 or not (FOOTER.search(line) or styled_status)):
             hold("COMPOSER_CONTINUATION_UNKNOWN")
     # A scrolled nonempty buffer can expose only blank rows without an authentic placeholder.
     if bounded or not placeholder:

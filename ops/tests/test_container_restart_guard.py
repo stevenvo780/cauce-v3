@@ -357,6 +357,87 @@ class RestartGuardTests(unittest.TestCase):
                 with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_ATTACHMENT_PENDING$"):
                     assert_empty_composer("› \x1b[2m" + widget + "\x1b[22m\n" + "\n" * 30, 2, 0)
 
+    def codex_status_frame(self, status, *, gap=1):
+        prompt = "\x1b[0;1m›\x1b[0;39;49m \x1b[2mAsk an owned question\x1b[0;39;49m"
+        shortcuts = ("  \x1b[1m?\x1b[0;39;49m for shortcuts" + " " * 30
+                     + "\x1b[38;5;179m⚠ 2 warnings \x1b[39m· \x1b[1mf2\x1b[0;39;49m to view")
+        return "neutral completed output\n" + "\n" * 45 + prompt + "\n" * (gap + 1) + status + "\n" + shortcuts + "\n"
+
+    def test_codex_styled_status_with_no_context_percentage_is_idle(self):
+        status = ("  \x1b[38;5;223mOwnedModel default\x1b[39m · \x1b[38;5;151m~/owned/projects"
+                  "\x1b[39m · \x1b[38;5;225mOwned thread")
+        frame = self.codex_status_frame(status)
+        self.assertEqual(len(frame.splitlines()), 50)
+        assert_empty_composer(frame, 2, 46, "codex")
+
+    def test_codex_styled_status_variants_preserve_the_segment_structure(self):
+        model = "\x1b[38;5;223mOwnedModel high"
+        cwd = "\x1b[38;5;151m~/owned/projects"
+        variants = [
+            "  " + model + "\x1b[39m · " + cwd,
+            "  " + model + "\x1b[39m · " + cwd + "\x1b[39m · \x1b[38;5;225mOwned title…",
+            "  " + model + "\x1b[39m · " + cwd + "\x1b[39m · \x1b[38;5;225mOwned · title",
+            "  " + model + "\x1b[39m · " + cwd + "\x1b[39m · \x1b[38;5;153mowned-branch"
+            + "\x1b[39m · \x1b[38;5;225mOwned title",
+            "  " + model + "\x1b[39m · " + cwd + "\x1b[39m · \x1b[38;5;144mContext 67% left",
+            "  \x1b[38;2;220;180;140mOwnedModel default\x1b[38;2;100;110;120m · "
+            "\x1b[38;2;140;220;160m~/owned/projects\x1b[38;2;100;110;120m · "
+            "\x1b[38;2;210;150;230mOwned title",
+        ]
+        for status in variants:
+            with self.subTest(variant=variants.index(status)):
+                assert_empty_composer(self.codex_status_frame(status), 2, 46, "codex")
+
+    def test_codex_status_rejects_unstyled_or_incomplete_impostors(self):
+        cases = [
+            "  \x1b[38;5;223m \x1b[39m · \x1b[38;5;151mOwned title",
+            "  \x1b[38;5;223m\u00a0\x1b[39m · \x1b[38;5;151mOwned title",
+            "  \x1b[38;5;223mOwnedModel\x1b[39m · \x1b[38;5;151m\u00a0",
+            "  OwnedModel default · ~/owned/projects · Owned title",
+            "  \x1b[1mOwnedModel default · ~/owned/projects · Owned title\x1b[22m",
+            "  \x1b[38;5;223mOwnedModel default\x1b[39m · ~/owned/projects",
+            "  \x1b[38;5;223mOwnedModel default · ~/owned/projects · Owned title",
+            "  \x1b[38;5;223mOwnedModel default\x1b[39m · ",
+            "  \x1b[38;5;223mOwnedModel default\x1b[39m · \x1b[38;5;151m~/owned/projects\x1b[39m ·",
+            "  \x1b[38;5;999mOwnedModel default\x1b[39m · \x1b[38;5;151m~/owned/projects",
+            "  \x1b[38;5;223mOwnedModel default\x1b[39m · \x1b[38;5;151m~/owned/projects\x1b[2J",
+        ]
+        for status in cases:
+            with self.subTest(case=cases.index(status)), \
+                    self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_CONTINUATION_UNKNOWN$"):
+                assert_empty_composer(self.codex_status_frame(status), 2, 46, "codex")
+
+    def test_codex_status_requires_its_position_and_does_not_hide_drafts(self):
+        styled = "  \x1b[38;5;223mOwnedModel default\x1b[39m · \x1b[38;5;151m~/owned/projects"
+        for gap in (0, 2):
+            with self.subTest(gap=gap), self.assertRaises(PermanentError):
+                assert_empty_composer(self.codex_status_frame(styled, gap=gap), 2, 46, "codex")
+        frame = self.codex_status_frame(styled)
+        for x, y in ((7, 46), (2, 48)):
+            with self.subTest(cursor=(x, y)), self.assertRaises(PermanentError):
+                assert_empty_composer(frame, x, y, "codex")
+        for draft in ("OwnedModel default · ~/owned/projects · Owned title",
+                      "\n\n  OwnedModel default · ~/owned/projects · Owned title",
+                      "[Pasted text #1 +3 lines]", "\n  > Owned title"):
+            candidate = "neutral history\n\n› " + draft + "\n\n" + styled + "\n"
+            with self.subTest(draft=draft), self.assertRaises(PermanentError):
+                assert_empty_composer(candidate, 2, 2, "codex")
+
+    def test_claude_measured_composer_states_are_unchanged(self):
+        def frame(draft):
+            return "neutral history\n────────────\n❯\u00a0" + draft + "\n────────────\n  auto mode on (shift+tab)\n"
+
+        assert_empty_composer(frame(""), 2, 2, "claude")
+        for draft, x, y, reason in (
+            ("owned draft", 13, 2, "COMPOSER_CURSOR_AMBIGUOUS"),
+            ("owned draft", 2, 2, "COMPOSER_NOT_EMPTY"),
+            ("owned first\n  owned second", 14, 3, "PROMPT_UNKNOWN"),
+            ("owned first\n  owned second", 2, 2, "COMPOSER_NOT_EMPTY"),
+            ("\n  owned second", 2, 2, "COMPOSER_CONTINUATION_UNKNOWN"),
+        ):
+            with self.subTest(reason=reason), self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_" + reason + "$"):
+                assert_empty_composer(frame(draft), x, y, "claude")
+
     def test_idle_harness_layouts_with_history_and_status_footers(self):
         # Idle composers as each TUI drew them on 25-oct, with their history replaced.
         codex = ("• Ran the last command\n  Worked for 1h 27m\n\n\n"
