@@ -2,7 +2,7 @@
 
 > Histórico: este inventario, sus conteos y pendientes pertenecen al cierre anterior; para verificar y operar la versión actual, consulta [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md).
 
-Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos son por los patrones indicados y se recalculan en `tests/unit/docs-v4-pruebas.test.ts`; no cuentan casos ejecutados ni equivalen a un resultado PASS. Las categorías se pueden solapar.
+Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos corresponden a los patrones indicados (la metaprueba histórica `tests/unit/docs-v4-pruebas.test.ts` que los recalculaba se retiró en el commit `1899fde1` por doctrina de no vigilar documentos); no cuentan casos ejecutados ni equivalen a un resultado PASS. Las categorías se pueden solapar.
 
 | ID | Categoría | Archivos | Ejecución | Cubre | No cubre todavía |
 |---|---|---:|---|---|---|
@@ -30,7 +30,7 @@ Ejecutar desde la raíz del repositorio. Cada comando imprime el número de arch
 
 ## E2E de navegador real
 
-Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorrido V4 de 12 pasos fuera del repo», que ningún recibo acredita. Lo verificable es lo versionado: los archivos `tests/e2e/*real-browser*.test.*` y sus casos `it(`. El recorrido V4 que estaba fuera del repo es hoy `tests/e2e/v4-console-real-browser.test.ts`, con 13 casos. `tests/unit/docs-v4-pruebas.test.ts` recalcula estas tablas. Contar un caso no equivale a un resultado PASS.
+Este inventario sustituye la cifra histórica «17 e2e de vistas V3 y un recorrido V4 de 12 pasos fuera del repo», que ningún recibo acredita. Lo verificable es lo versionado: los archivos `tests/e2e/*real-browser*.test.*` y sus casos `it(`. El recorrido V4 que estaba fuera del repo es hoy `tests/e2e/v4-console-real-browser.test.ts`, con 13 casos (la metaprueba `tests/unit/docs-v4-pruebas.test.ts` fue retirada). Contar un caso no equivale a un resultado PASS.
 
 | Grupo | Archivos | Casos |
 |---|---:|---:|
@@ -63,5 +63,5 @@ grep -cE '^\s*it\(' tests/e2e/*real-browser*.test.ts
 ## Límites de aceptación que siguen abiertos
 
 - GOAL §10 deja pendientes los estados vacíos, de carga y error con retroalimentación en todas las vistas, los fallos con procesos reales y la documentación operativa completa.
-- La matriz CRUD mantiene 23 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json` (validado por `tests/unit/crud-matrix.test.ts` y `tests/unit/v4-matriz-crud.test.ts`).
+- La matriz CRUD mantiene 23 elementos pendientes. Incluye recorridos de navegador para ordenadores, personas, autoridad, runtime, contextos, harnesses, cuotas y oficina; el detalle verificable está en `docs/v4-matriz-crud.json` (las metapruebas `tests/unit/crud-matrix.test.ts` y `tests/unit/v4-matriz-crud.test.ts` fueron retiradas en el commit `4a9f2aee`).
 - Los conteos reflejan archivos presentes, no ejecución de comandos ni evidencia de aceptación local o desplegada.

@@ -41,7 +41,7 @@ se describe en [ADR-002](adr/002-lease-epoch-fencing.md).
 
 ## Modelo de ejecución
 
-Entregar = pegar texto en la sesión tmux viva del harness (`paste-runner.ts`, `tmux.ts`: cuarentena de panel, barrera de entrada) y esperar el turno del modelo. Esta es la parte costosa e inherentemente frágil: los errores típicos en producción provienen del turno del harness (ACK timeout, deadline exceeded), no del bus.
+Entregar = pegar texto en la sesión tmux viva del harness (`shared-session/paste-runner.ts`, `shared-session/tmux.ts`: cuarentena de panel, barrera de entrada) y esperar el turno del modelo. Esta es la parte costosa e inherentemente frágil: los errores típicos en producción provienen del turno del harness (ACK timeout, deadline exceeded), no del bus.
 
 ## Componentes clave
 
@@ -398,8 +398,8 @@ leen y se lo pasan a `ficherosDelArnes` como `topes`:
 | ruta | de dónde sale el hecho |
 |---|---|
 | siembra del adaptador (`context/siembra-del-perfil.ts`) | lee el `config.toml` del directorio del arnés con el mismo `DiscoDelArnes` que escribe |
-| PUT del runtime (`console/agent-profile-runtime.ts`) | `RuntimeFacts.projectDocMaxBytes` de la presencia medida |
-| vista previa de la consola (`console/agent-profile.routes.ts`) | el presupuesto y los bytes de disco que devuelve el propio preflight |
+| PUT del runtime (`services/gateway/src/console/agent-profile-runtime.ts`) | `RuntimeFacts.projectDocMaxBytes` de la presencia medida |
+| vista previa de la consola (`services/gateway/src/console/agent-profile.routes.ts`) | el presupuesto y los bytes de disco que devuelve el propio preflight |
 
 La vista previa compone contra los **bytes medidos** del contenedor, no contra un fichero vacío
 imaginado, y aplica el mismo presupuesto que la siembra. Si el perfil no entra, el GET **sigue

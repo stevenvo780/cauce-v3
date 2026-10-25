@@ -2,11 +2,7 @@
 
 > Histórico: esta matriz y sus validadores describen un proceso de aceptación retirado; usa la [guía V4](v4-guia.md), [Calidad y gates](calidad-y-gates.md) y [Operación](operacion.md) para el uso y la comprobación actuales.
 
-La fuente de datos es [`v4-matriz-crud.json`](v4-matriz-crud.json). El validador comprueba las operaciones declaradas frente a las rutas registradas, los controles de la consola y los nombres de prueba citados:
-
-```sh
-pnpm exec vitest run tests/unit/crud-matrix.test.ts
-```
+La fuente de datos es [`v4-matriz-crud.json`](v4-matriz-crud.json). El validador comprobaba históricamente las operaciones declaradas frente a las rutas registradas, los controles de la consola y los nombres de prueba citados (`tests/unit/crud-matrix.test.ts`, retirado en el commit `4a9f2aee` al eliminar metapruebas de documentación).
 
 Las referencias E2E indican que el caso existe en el árbol; no afirman que se haya ejecutado ni que haya pasado. Los estados `covered`, `pending` y `not_applicable` se aplican a cada operación de la matriz, no a la aceptación completa de V4.
 
