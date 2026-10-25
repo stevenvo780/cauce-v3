@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from 'vitest';
 import { cliAcceptsDatabaseHostWithoutTls, forwardTcpToLoopback, publishCliDatabase } from '../e2e/cli-database-loopback.js';
 
 async function acceptedDatabaseUrl(url: string): Promise<string> {
-  const imported: unknown = await import('../../ops/cli/platform_admin.mjs');
+  const imported: unknown = await import(new URL('../../ops/cli/platform_admin.mjs', import.meta.url).href);
   if (typeof imported !== 'object' || imported === null || !('databaseUrl' in imported)) throw new Error('databaseUrl export missing');
   const databaseUrl = imported.databaseUrl;
   if (typeof databaseUrl !== 'function') throw new Error('databaseUrl export missing');
