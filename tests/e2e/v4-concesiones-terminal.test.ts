@@ -6,8 +6,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildGateway } from '../../services/gateway/src/app.js';
+import { withTransaction } from '@cauce/store';
 import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services/gateway/src/auth.js';
-import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
@@ -61,42 +61,53 @@ class GrantsFixture {
     const pool = this.database.pool;
     const roomA = `grants-room-${randomUUID()}`;
     const roomB = `grants-room-${randomUUID()}`;
-    await pool.query("INSERT INTO companies(id,name) VALUES($1,'ZZ Canary B')", [this.companyB]);
-    await pool.query('INSERT INTO tenants(id,company_id) VALUES($1,$2)', [this.tenantB, this.companyB]);
-    await pool.query('INSERT INTO rooms(id,tenant_id) VALUES($1,$2),($3,$4)',
-      [roomA, this.tenantA, roomB, this.tenantB]);
-    await pool.query(
-      `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,state_directory)
-       VALUES($1,$2,'openclaw',true,$3,'claw','/home/claw','/home/claw/.cauce'),
-             ($4,$5,'openclaw',true,$6,'claw','/home/claw','/home/claw/.cauce'),
-             ($7,$8,'openclaw',true,$9,'claw','/home/claw','/home/claw/.cauce'),
-             ($10,$11,'openclaw',true,$12,'claw','/home/claw','/home/claw/.cauce')`,
-      [this.tenantA, this.actorA, `grants-actor-${this.actorA}`,
-        this.tenantA, this.targetA, this.containerA,
-        this.tenantB, this.actorB, `grants-actor-${this.actorB}`,
-        this.tenantB, this.targetB, this.containerB]);
-    await pool.query(
-      `INSERT INTO memberships(tenant_id,room_id,alias,role)
-       VALUES($1,$2,$3,'operator'),($1,$2,$4,'agent'),($5,$6,$7,'operator'),($5,$6,$8,'agent')`,
-      [this.tenantA, roomA, this.actorA, this.targetA, this.tenantB, roomB, this.actorB, this.targetB]);
     const passwordHash = await hashPassword(this.password);
-    const makeUser = async (tenant: string, alias: string): Promise<{ id: string; email: string }> => {
-      const email = `grants-${randomUUID()}@cauce.test`;
-      const user = await maintainConsoleUser(pool, {
-        email, name: 'Grants QA', role: 'operator', tenant, alias, updateOnly: false, activate: true,
-      }, passwordHash);
-      return { id: user.id, email };
-    };
-    const adminA = await makeUser(this.tenantA, this.actorA);
-    const granteeA = await makeUser(this.tenantA, this.actorA);
-    const adminB = await makeUser(this.tenantB, this.actorB);
-    this.adminAId = adminA.id; this.adminAEmail = adminA.email;
-    this.granteeAId = granteeA.id; this.granteeAEmail = granteeA.email;
-    this.adminBId = adminB.id; this.adminBEmail = adminB.email;
-    await pool.query(
-      `INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
-       VALUES('humanizar',$1,'owner','platform',$1),($2,$3,'owner','platform',$3)`,
-      [this.adminAId, this.companyB, this.adminBId]);
+    // One transaction: the deferred owner-continuity guard only passes when the new company
+    // and its active owner land together.
+    await withTransaction(pool, async (client) => {
+      await client.query("INSERT INTO companies(id,name) VALUES($1,'ZZ Canary B')", [this.companyB]);
+      await client.query('INSERT INTO tenants(id,company_id) VALUES($1,$2)', [this.tenantB, this.companyB]);
+      await client.query('INSERT INTO rooms(id,tenant_id) VALUES($1,$2),($3,$4)',
+        [roomA, this.tenantA, roomB, this.tenantB]);
+      await client.query(
+        `INSERT INTO agents(tenant_id,alias,harness_id,enabled,container_name,runtime_user,home_directory,state_directory)
+         VALUES($1,$2,'openclaw',true,$3,'claw','/home/claw','/home/claw/.cauce'),
+               ($4,$5,'openclaw',true,$6,'claw','/home/claw','/home/claw/.cauce'),
+               ($7,$8,'openclaw',true,$9,'claw','/home/claw','/home/claw/.cauce'),
+               ($10,$11,'openclaw',true,$12,'claw','/home/claw','/home/claw/.cauce')`,
+        [this.tenantA, this.actorA, `grants-actor-${this.actorA}`,
+          this.tenantA, this.targetA, this.containerA,
+          this.tenantB, this.actorB, `grants-actor-${this.actorB}`,
+          this.tenantB, this.targetB, this.containerB]);
+      await client.query(
+        `INSERT INTO memberships(tenant_id,room_id,alias,role)
+         VALUES($1,$2,$3,'operator'),($1,$2,$4,'agent'),($5,$6,$7,'operator'),($5,$6,$8,'agent')`,
+        [this.tenantA, roomA, this.actorA, this.targetA, this.tenantB, roomB, this.actorB, this.targetB]);
+      const makeUser = async (tenant: string, alias: string): Promise<{ id: string; email: string }> => {
+        const email = `grants-${randomUUID()}@cauce.test`;
+        const inserted = await client.query<{ id: string }>(
+          `INSERT INTO console_users(email,email_normalized,password_hash,display_name,role,tenant_id,alias,active)
+           VALUES($1,$2,$3,'Grants QA','operator',$4,$5,true) RETURNING id`,
+          [email, email.toLowerCase(), passwordHash, tenant, alias]);
+        const id = inserted.rows[0]?.id;
+        if (id === undefined) throw new Error('console user insert lost its row');
+        await client.query(
+          `INSERT INTO human_tenant_memberships(human_id,tenant_id,actor_alias,role,permissions,enabled)
+           VALUES($1,$2,$3,'operator',ARRAY['read','route','control'],true)`,
+          [id, tenant, alias]);
+        return { id, email };
+      };
+      const adminA = await makeUser(this.tenantA, this.actorA);
+      const granteeA = await makeUser(this.tenantA, this.actorA);
+      const adminB = await makeUser(this.tenantB, this.actorB);
+      this.adminAId = adminA.id; this.adminAEmail = adminA.email;
+      this.granteeAId = granteeA.id; this.granteeAEmail = granteeA.email;
+      this.adminBId = adminB.id; this.adminBEmail = adminB.email;
+      await client.query(
+        `INSERT INTO company_admins(company_id,human_id,role,source,granted_by)
+         VALUES('humanizar',$1,'owner','platform',$1),($2,$3,'owner','platform',$3)`,
+        [this.adminAId, this.companyB, this.adminBId]);
+    });
     const grantsFile = join(this.directory, 'grants.json');
     await writeFile(grantsFile, JSON.stringify({ version: 1, grants: [] }), { mode: 0o600 });
     const identities = join(this.directory, 'identities.json');
