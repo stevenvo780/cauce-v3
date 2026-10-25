@@ -41,7 +41,8 @@ async function capabilityReport(config: FleetHostConfig, signal: AbortSignal) {
     template_id: `tpl-${createHash('sha256').update(JSON.stringify(runtime)).digest('hex').slice(0, 24)}` })));
   return HostCapabilitiesSchema.parse({ resource: 'host', action: 'capabilities', schemaVersion: 1,
     executor_version: '4.0.0', policy_sha256: digest, fleet_executor: capabilities.available,
-    templates, agent_recovery: capabilities.actions.includes('recover'), quota_executor: quotaCapabilities !== undefined,
+    templates, agent_recovery: capabilities.actions.includes('recover'), agent_recovery_preflight: true,
+    quota_executor: quotaCapabilities !== undefined,
     quota_providers: quotaCapabilities?.providers ?? [],quota_provider_actions:quotaCapabilities?.actions ?? {},
     ...(quotaCapabilities?.unavailable === undefined ? {} : { quota_provider_unavailable: quotaCapabilities.unavailable }) });
 }
@@ -58,8 +59,10 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     perform: (execution, signal) => performAgentQuotaHostCommand(config.command, execution, signal),
   });
   const authOptions = config.enrolledAuthPolicyFile === undefined ? undefined
-    : { hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot };
-  const agentAuthentication = authOptions === undefined ? undefined : new AgentProviderAuthHost(channel, authOptions);
+    : { hostConfig: { host: config.host, command: config.command }, authPolicyFile: config.enrolledAuthPolicyFile, projectRoot: config.projectRoot,
+      companyId: channel.identity.company_id };
+  const agentAuthentication = new AgentProviderAuthHost(channel, { hostConfig: { host: config.host, command: config.command },
+    projectRoot: config.projectRoot, companyId: channel.identity.company_id, ...(authOptions ?? {}) });
   const authFault = authOptions === undefined ? undefined : await hostProviderAuthPolicyFault(authOptions);
   if (authFault !== undefined) process.stderr.write(`Host provider authentication policy is unusable: ${authFault}\n`);
   const backups = new SpaceBackupHost(channel, { python: config.command.python, policyFile: config.command.policyFile,
@@ -101,7 +104,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
     return activeReport;
   };
   await heartbeat();
-  agentAuthentication?.start();
+  agentAuthentication.start();
   const timer = setInterval(() => { void heartbeat().catch(() => {
     process.stderr.write('Enrolled host capability report could not be verified\n');
   }); }, 30_000);
@@ -110,7 +113,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const shutdown = (): Promise<void> => {
     abort.abort(); clearInterval(timer);
     closing ??= worker.shutdown().finally(async () => {
-      await authentication.shutdown(); await agentAuthentication?.shutdown(); await activeReport?.catch(() => undefined);
+      await authentication.shutdown(); await agentAuthentication.shutdown(); await activeReport?.catch(() => undefined);
     });
     return closing;
   };

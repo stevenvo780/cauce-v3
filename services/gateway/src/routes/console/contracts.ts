@@ -4,8 +4,10 @@ import type { AgentPreferencesRepository, DatabasePool } from '@cauce/store';
 import type { GatewayRepository } from '../../app.js';
 import type { AuthProvider } from '../../auth.js';
 import type { OperatorResolution } from '../../terminal/authority.js';
+import type { RecoveryPreflightBroker } from '../../fleet/agent-recovery-preflight.js';
 
 export interface ConsoleRouteOptions {
+  readonly recoveryPreflight?: RecoveryPreflightBroker;
   readonly contextRepository?: ContextRepositoryBinding;
   readonly pool: DatabasePool;
   readonly authProvider: AuthProvider;

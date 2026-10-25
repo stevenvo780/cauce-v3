@@ -3,6 +3,8 @@ import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { performHostCommand, performHostCompensation, performHostLoginStop } from './host-command.js';
 import type { FleetExecution } from './executor.js';
+import { FleetErrorSchema, FleetExecutionReasonSchema, FleetOperationRequestSchema } from '@cauce/protocol';
+import { fleetExecutionFailure } from './recovery-host-command.js';
 const directories: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 const execution = { request: { kind: 'stop', target: { resource: 'agent', tenant_id: 'Steven', alias: 'one' },
@@ -92,5 +94,36 @@ describe('host effect transport', () => {
     const result = performHostCommand(config, 'stop', execution, abort.signal);
     abort.abort();
     await expect(result).rejects.toThrow('Host effect could not be verified');
+  });
+  it.each(['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge', 'recover'] as const)('carries a typed failure for %s without exposing process diagnostics', async kind => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const config = await helper("import sys\nsys.stdin.read()\nprint('PRIVATE_SECRET_DIAGNOSTIC',file=sys.stderr)\nprint('CAUCE_FLEET_FAILURE=runtime_identity_mismatch',file=sys.stderr)\nsys.exit(2)");
+    const parameters = kind === 'recover' ? { action: 'probe' } : kind === 'create' || kind === 'update' ? {
+      runtime_key: 'physical-one', harness_id: 'codex', primary_room_id: 'office', memberships: [{ room_id: 'office', role: 'agent' }],
+      placement: { host_id: 'old-host', mode: 'container', container_name: 'cauce-one', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/home/dev/.cauce/one' } } : {};
+    const current = { ...execution, request: FleetOperationRequestSchema.parse({ ...execution.request, kind, parameters }) };
+    await expect(performHostCommand(config, 'stop', current, new AbortController().signal))
+      .rejects.toMatchObject({ reason: 'runtime_identity_mismatch', message: 'No se pudo completar este paso de la ejecución.' });
+  });
+  it('carries compensation failure without reporting confirmed cleanup', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const config = await helper("import sys\nsys.stdin.read()\nassert sys.argv[-1]=='compensate'\nprint('CAUCE_FLEET_FAILURE=runtime_stop_unverified',file=sys.stderr)\nsys.exit(2)");
+    await expect(performHostCompensation(config, execution, new AbortController().signal)).rejects.toMatchObject({ reason: 'runtime_stop_unverified' });
+  });
+  it('accepts the finite vocabulary and legacy recovery markers while rejecting ambiguous or private causes', () => {
+    for (const reason of FleetExecutionReasonSchema.options) {
+      expect(fleetExecutionFailure(`PRIVATE\nCAUCE_FLEET_FAILURE=${reason}\n`)).toMatchObject({ reason });
+      expect(FleetErrorSchema.parse({ code: 'STEP_FAILED', retryable: true, reason }).reason).toBe(reason);
+    }
+    expect(FleetErrorSchema.parse({ code: 'STEP_FAILED', retryable: true })).not.toHaveProperty('reason');
+    expect(fleetExecutionFailure('CAUCE_RECOVERY_FAILURE=runtime_mounts_differ\n')).toMatchObject({ reason: 'runtime_mounts_differ' });
+    expect(fleetExecutionFailure('CAUCE_FLEET_FAILURE=runtime_mounts_differ\nCAUCE_RECOVERY_FAILURE=runtime_mounts_differ\n'))
+      .toMatchObject({ reason: 'runtime_mounts_differ' });
+    for (const stderr of ['CAUCE_FLEET_FAILURE=runtime_identity_mismatch', 'CAUCE_FLEET_FAILURE=PRIVATE\n',
+      'CAUCE_FLEET_FAILURE=runtime_identity_mismatch PRIVATE\n', 'CAUCE_RECOVERY_FAILURE=runtime_identity_mismatch\n',
+      'CAUCE_FLEET_FAILURE=runtime_identity_mismatch\nCAUCE_RECOVERY_FAILURE=runtime_mounts_differ\n',
+      'CAUCE_FLEET_FAILURE=runtime_identity_mismatch\nCAUCE_FLEET_FAILURE=runtime_identity_mismatch\n',
+      `PRIVATE${'x'.repeat(4096)}\nCAUCE_FLEET_FAILURE=runtime_identity_mismatch\n`]) expect(fleetExecutionFailure(stderr)).toBeUndefined();
+    expect(FleetErrorSchema.safeParse({ code: 'STEP_FAILED', retryable: true, reason: 'PRIVATE' }).success).toBe(false);
   });
 });

@@ -11,6 +11,8 @@ import { hostProviderLoginConfiguration, readHostProviderAuthPolicy, type HostPr
 import { cleanupProviderLogin, createProviderLogin, providerAuthFailureReason, queryProviderLoginBinding, type ProviderLoginConfig } from './provider-login.js';
 import type { QuotaHostChannel } from './quota-executor.js';
 import type { RuntimeDriftReceipt } from './agent-runtime-reconcile.js';
+import { recoveryHostPreflight } from './recovery-host-command.js';
+import type { RecoveryPreflightEvent } from './agent-recovery-preflight.js';
 
 const Records = z.array(z.record(z.string(), z.unknown())).max(1000);
 const Target = z.object({ resource: z.literal('agent'), tenant_id: z.string(), alias: z.string() }).strict();
@@ -27,7 +29,9 @@ const ACTIVE_POLL_MS = 100;
 const IDLE_POLL_MIN_MS = 1000;
 const IDLE_POLL_MAX_MS = 5000;
 interface Login { fence: AgentAuthCommand['fence']; login: ProviderAuthLogin; config: ProviderLoginConfig; unsubscribe(): void }
-export interface AgentProviderAuthHostOptions extends HostProviderAuthOptions {
+export interface AgentProviderAuthHostOptions extends Omit<HostProviderAuthOptions, 'authPolicyFile'> {
+  authPolicyFile?: string;
+  companyId?: string;
   createLogin?(config: ProviderLoginConfig, signal: AbortSignal): Promise<ProviderAuthLogin>;
 }
 export class AgentProviderAuthHost {
@@ -41,8 +45,14 @@ export class AgentProviderAuthHost {
   private reconcileAt = 0;
   private reconcileAfter: string | undefined;
   private readonly driftReceipts: RuntimeDriftReceipt[] = [];
+  private readonly recoveryResults: RecoveryPreflightEvent[] = [];
   constructor(private readonly channel: QuotaHostChannel, private readonly options: AgentProviderAuthHostOptions) {}
   start(): void { this.loop ??= this.poll(); }
+  private authenticationOptions(): HostProviderAuthOptions {
+    const authPolicyFile = this.options.authPolicyFile;
+    if (authPolicyFile === undefined) throw new ProviderAuthError('HOST_UNAVAILABLE');
+    return { hostConfig: this.options.hostConfig, projectRoot: this.options.projectRoot, authPolicyFile };
+  }
   private async context(packet: AgentAuthCommand) {
     const value = Context.parse(await this.channel.request('POST', `/v3/fleet/hosts/${this.options.hostConfig.host}/agent-auth`,
       { action: 'context', id: packet.command.id, fence: packet.fence }));
@@ -56,6 +66,7 @@ export class AgentProviderAuthHost {
     const prior = this.completed.get(packet.command.id); if (prior) return prior;
     const result: AgentAuthResult = { type: 'result', fence: packet.fence, id: packet.command.id, ok: false };
     try {
+      const options = this.authenticationOptions();
       const { command, fence } = packet; const closing = command.type === 'cleanup' || command.type === 'close';
       if (!closing && Date.parse(fence.expires_at) <= Date.now()) throw new Error('Agent authentication expired');
       const context = await this.context(packet);
@@ -64,7 +75,7 @@ export class AgentProviderAuthHost {
       if (command.type === 'cleanup') {
         const stopped = await session?.login.close();
         if (stopped && !stopped.stopped) throw new Error('Agent authentication stop is unconfirmed');
-        const policy = await readHostProviderAuthPolicy(this.options);
+        const policy = await readHostProviderAuthPolicy(options);
         result.stopped = (await cleanupProviderLogin({ python: this.options.hostConfig.command.python, helper: policy.helper,
           stateRoot: policy.state_root }, fence.operation_id, this.abort.signal)).stopped;
         if (!result.stopped) throw new Error('Agent authentication cleanup is unconfirmed');
@@ -72,7 +83,7 @@ export class AgentProviderAuthHost {
       } else if (command.type === 'close') {
         if (session) result.stopped = (await session.login.close()).stopped;
         else {
-          const policy = await readHostProviderAuthPolicy(this.options);
+          const policy = await readHostProviderAuthPolicy(options);
           result.stopped = (await cleanupProviderLogin({ python: this.options.hostConfig.command.python, helper: policy.helper,
             stateRoot: policy.state_root }, fence.operation_id, this.abort.signal)).stopped;
         }
@@ -83,7 +94,7 @@ export class AgentProviderAuthHost {
           case 'stop': result.stopped = (await performHostLoginStop(this.options.hostConfig.command, context.execution, this.abort.signal)).stopped; break;
           case 'open': {
             if (session || this.logins.size >= 64) throw new Error('Agent login is already open');
-            const config = await hostProviderLoginConfiguration(this.options, context.execution, context.physical, this.abort.signal, true);
+            const config = await hostProviderLoginConfiguration(options, context.execution, context.physical, this.abort.signal, true);
             config.packet.ttl_seconds = Math.max(1, Math.min(900, Math.ceil((Date.parse(fence.expires_at) - Date.now()) / 1000)));
             const login = await (this.options.createLogin ?? createProviderLogin)(config, this.abort.signal);
             const unsubscribe = login.subscribeOutput(bytes => {
@@ -97,7 +108,7 @@ export class AgentProviderAuthHost {
           }
           case 'start': case 'input': case 'resize': case 'verify': {
             if (!session) throw new Error('Agent login is unavailable');
-            const config = await hostProviderLoginConfiguration(this.options, context.execution, context.physical, this.abort.signal);
+            const config = await hostProviderLoginConfiguration(options, context.execution, context.physical, this.abort.signal);
             const { ttl_seconds: _prior, ...previous } = session.config.packet;
             const { ttl_seconds: _current, ...current } = config.packet;
             if (!isDeepStrictEqual(previous, current) || !isDeepStrictEqual(session.config.helper, config.helper)) throw new Error('Agent login binding changed');
@@ -160,18 +171,30 @@ export class AgentProviderAuthHost {
         try {
           const sent = this.events.splice(0, 32);
           const response = AgentAuthExchangeSchema.parse(await this.channel.request('POST', `/v3/fleet/hosts/${this.options.hostConfig.host}/agent-auth`,
-            { action: 'exchange', events: sent }));
+            { action: 'exchange', events: sent,
+              ...(this.recoveryResults.length === 0 ? {} : { recovery_results: this.recoveryResults.splice(0, 8) }) }));
           for (const [id, session] of this.logins) if (!response.active_sessions.some(fence => isDeepStrictEqual(fence, session.fence))) {
             session.unsubscribe(); await session.login.close(); this.logins.delete(id); this.sequences.delete(id);
           }
           for (const packet of response.commands) this.events.push(await this.dispatch(packet));
+          for (const command of response.recovery_previews ?? []) {
+            const { tenant_id, alias, runtime_key } = command.payload;
+            const target = { tenant_id, alias, runtime_key };
+            try {
+              if (command.expires_at <= Date.now() || command.payload.agent.host_id !== this.options.hostConfig.host
+                  || command.payload.agent.company_id !== this.options.companyId) throw new Error('Recovery target differs from its enrolled host');
+              const result = await recoveryHostPreflight(this.options.hostConfig.command, command.payload, this.abort.signal);
+              this.recoveryResults.push({ id: command.id, target, ok: true, result });
+            } catch { this.recoveryResults.push({ id: command.id, target, ok: false }); }
+          }
           if (!this.reconciliation && Date.now() >= this.reconcileAt) {
             this.reconcileAt = Date.now() + 30_000;
             this.reconciliation = this.reconcile().catch(() => {
               if (!this.abort.signal.aborted) process.stderr.write('Agent runtime reconciliation could not be verified\n');
             }).finally(() => { this.reconciliation = undefined; });
           }
-          busy = response.commands.length > 0 || response.active_sessions.length > 0 || this.logins.size > 0 || this.events.length > 0;
+          busy = response.commands.length > 0 || response.active_sessions.length > 0 || this.logins.size > 0 || this.events.length > 0
+            || this.recoveryResults.length > 0;
         } catch {
           await this.stopLocal(); this.events.length = 0; this.completed.clear();
         }

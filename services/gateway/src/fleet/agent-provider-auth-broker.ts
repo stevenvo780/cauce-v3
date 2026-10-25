@@ -14,6 +14,7 @@ import { fleetHostInputs } from './coordinator.js';
 import type { FleetExecution } from './executor.js';
 import { recoverAgentAuthSession } from './agent-provider-auth-recovery.js';
 import { recoverableAgentAuthStart } from './agent-provider-auth-start.js';
+import { RecoveryPreflightBroker, type RecoveryPreflightEvent } from './agent-recovery-preflight.js';
 
 interface Pending { packet: AgentAuthCommand; binding: AgentAuthBinding; timer: ReturnType<typeof setTimeout>; resolve(value: AgentAuthResult): void }
 interface Output { binding: AgentAuthBinding; sequence: number; listeners: Set<(bytes: Uint8Array) => void> }
@@ -21,6 +22,7 @@ const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
 
 export class AgentProviderAuthBroker {
+  readonly recoveryPreflight = new RecoveryPreflightBroker();
   readonly service: ProviderAuthService;
   private readonly pending = new Map<string, Pending>();
   private readonly outputs = new Map<string, Output>();
@@ -160,7 +162,7 @@ export class AgentProviderAuthBroker {
     if (['cleanup','close'].includes(pending.packet.command.type)) return { physical: pending.binding.physical };
     return { physical: pending.binding.physical, execution: await this.active(client, pending.binding) };
   }
-  async exchange(client: DatabaseClient, host: { host_id: string; company_id: string }, events: AgentAuthEvent[]) {
+  async exchange(client: DatabaseClient, host: { host_id: string; company_id: string }, events: AgentAuthEvent[], recoveryResults: RecoveryPreflightEvent[] = []) {
     const commands: AgentAuthCommand[] = []; const activeSessions = new Map<string, AgentAuthCommand['fence']>();
     const accepted: (() => void)[] = []; const results = new Set<string>(); const sequences = new Map<string, number>();
     const matching = [...this.pending.values()].filter(value => value.binding.physical.host_id === host.host_id && value.binding.actor.requestedCompany === host.company_id);
@@ -193,10 +195,13 @@ export class AgentProviderAuthBroker {
         accepted.push(() => { for (const listener of output.listeners) listener(Buffer.from(event.data, 'base64')); output.sequence = event.sequence; });
       }
     }
-    return { response: { commands: commands.filter(command => !results.has(command.command.id)).slice(0, 32), active_sessions: [...activeSessions.values()] },
-      accept: () => { for (const commit of accepted) commit(); } };
+    const recovery = await this.recoveryPreflight.exchange(client, host, recoveryResults);
+    return { response: { commands: commands.filter(command => !results.has(command.command.id)).slice(0, 32), active_sessions: [...activeSessions.values()],
+      ...(recovery.commands.length === 0 ? {} : { recovery_previews: recovery.commands }) },
+      accept: () => { for (const commit of accepted) commit(); recovery.accept(); } };
   }
   async shutdown(): Promise<void> {
+    this.recoveryPreflight.shutdown();
     await this.service.shutdown();
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.resolve({ type: 'result', id: pending.packet.command.id, fence: pending.packet.fence, ok: false }); }
     this.pending.clear(); this.outputs.clear();

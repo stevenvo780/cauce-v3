@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FleetExecutor, type FleetExecution } from './executor.js';
-import type { FleetOperation, FleetOperationRequest, FleetStepName, FleetEvidence } from '@cauce/protocol';
+import type { FleetOperation, FleetOperationRequest, FleetStepName, FleetEvidence, FleetError } from '@cauce/protocol';
+import { FleetOperationRequestSchema } from '@cauce/protocol';
+import { FleetExecutionFailure } from './recovery-host-command.js';
 import type { FleetOperationClaim } from '@cauce/store';
 const request: FleetOperationRequest = { kind: 'stop', target: { resource: 'agent', tenant_id: 'Steven', alias: 'one' },
   expected_revision: 0, idempotency_key: 'stop-one-isolated', parameters: {} };
@@ -128,5 +130,33 @@ describe('fleet step execution', () => {
       perform: async () => { calls.push('effect'); return { evidence: {} }; } });
     await executor.runOnce();
     expect(calls).toEqual(['compensate']);
+  });
+  it.each(['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge', 'recover'] as const)('persists a typed failure for %s without requiring a recovery operation', async kind => {
+    const f = fixture(); const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const original = await f.repository.claim();
+    const parameters = kind === 'recover' ? { action: 'probe' } : kind === 'create' || kind === 'update' ? {
+      runtime_key: 'physical-one', harness_id: 'codex', primary_room_id: 'office', memberships: [{ room_id: 'office', role: 'agent' }],
+      placement: { host_id: 'old-host', mode: 'container', container_name: 'cauce-one', runtime_user: 'dev', home_directory: '/home/dev', state_directory: '/home/dev/.cauce/one' } } : {};
+    const current = FleetOperationRequestSchema.parse({ ...request, kind, parameters });
+    const fail = vi.fn(async (_claim: FleetOperationClaim, _error: FleetError) => original.operation);
+    const repository = { ...f.repository, fail, claim: async () => ({ ...original, request: current }),
+      execution: async () => ({ ...await f.repository.execution(), request: current }) };
+    try {
+      await new FleetExecutor(repository, { host: 'isolated', worker: 'worker',
+        perform: async () => { throw new FleetExecutionFailure('runtime_identity_mismatch'); } }).runOnce();
+      expect(fail.mock.calls[0]?.[1]).toEqual({ code: 'STEP_FAILED', step: 'stop', retryable: true, reason: 'runtime_identity_mismatch' });
+      expect(log.mock.calls.flat().join(' ')).not.toContain('PRIVATE');
+    } finally { log.mockRestore(); }
+  });
+  it('persists a typed compensation failure without releasing its fence', async () => {
+    const f = fixture(); f.cancel(); const original = await f.repository.claim();
+    const fail = vi.fn(async (_claim: FleetOperationClaim, _error: FleetError) => original.operation);
+    const compensate = vi.fn(f.repository.compensate); const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await new FleetExecutor({ ...f.repository, fail, compensate }, { host: 'isolated', worker: 'worker',
+        perform: async () => ({ evidence: {} }), compensate: async () => { throw new FleetExecutionFailure('runtime_stop_unverified'); } }).runOnce();
+      expect(fail.mock.calls[0]?.[1]).toEqual({ code: 'STEP_FAILED', retryable: true, reason: 'runtime_stop_unverified' });
+      expect(compensate).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
   });
 });

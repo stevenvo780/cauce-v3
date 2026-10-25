@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
@@ -10,6 +11,8 @@ import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProv
 import { consoleHumanAccess, type ConsoleHumanAccess } from '../console-human-authority.js';
 import { PasswordAuthProvider } from '../password-auth.js';
 import type { AgentFactsProbe } from './agent-documents.routes.js';
+import { FleetRecoveryPreviewSchema } from '@cauce/protocol/fleet-recovery';
+import { recoveryPreflightPayload, unavailableRecoveryPreflight, type RecoveryPreflightBroker } from '../fleet/agent-recovery-preflight.js';
 
 const paramsSchema = z.object({ tenantId: TenantSchema, alias: AliasSchema });
 const bodySchema = z.object({ identity: NativeRuntimeIdentitySchema,
@@ -19,7 +22,7 @@ type RecoveryInput = z.infer<typeof bodySchema>;
 class RecoveryError extends Error {
   constructor(readonly code: 'conflict' | 'unsupported' | 'unavailable' | 'delivery_in_flight', message: string) { super(message); }
 }
-interface Dependencies { pool: DatabasePool; probe: AgentFactsProbe; authProvider: AuthProvider }
+interface Dependencies { pool: DatabasePool; probe: AgentFactsProbe; authProvider: AuthProvider; preflight?: RecoveryPreflightBroker }
 interface Actor { tenant: string; alias: string; subject: string; access: ConsoleHumanAccess }
 
 async function authorize(client: DatabaseClient, actor: Actor, target: Target) {
@@ -155,10 +158,33 @@ export function registerAgentRecoveryRoutes(app: FastifyInstance, deps: Dependen
     try { return await run(deps, request, reply, async (actor, target) => {
       const fleet = await withTransaction(deps.pool, async client => {
         const owner = await authorize(client, actor, target);
-        return usesFleet(owner) ? { tenant_id: target.tenantId, alias: target.alias, transport: 'fleet',
-          expected_revision: await companyRevision(client, owner.company_id), in_flight: await inFlight(client, target) } : undefined;
+        if (!usesFleet(owner)) return undefined;
+        const supported = (await client.query(`SELECT 1 FROM fleet_host_identities identity
+          JOIN fleet_hosts host ON host.host_id=identity.host_id AND host.company_id=identity.company_id
+          WHERE identity.host_id=$1 AND identity.company_id=$2 AND identity.enabled AND host.enabled
+            AND identity.capabilities_seen_at>now()-interval '120 seconds'
+            AND identity.capabilities->>'agent_recovery_preflight'='true'`, [owner.host_id, owner.company_id])).rowCount === 1;
+        return { owner, supported, payload: supported ? await recoveryPreflightPayload(client, target, owner.company_id) : undefined,
+          public: { tenant_id: target.tenantId, alias: target.alias, transport: 'fleet' as const,
+            expected_revision: await companyRevision(client, owner.company_id), in_flight: await inFlight(client, target) } };
       });
-      if (fleet) return fleet;
+      if (fleet) {
+        if (!fleet.supported || !fleet.payload || !fleet.owner.host_id || !deps.preflight) {
+          return FleetRecoveryPreviewSchema.parse({ ...fleet.public, ...unavailableRecoveryPreflight });
+        }
+        const payload = fleet.payload;
+        const verify = async (client: DatabaseClient) => {
+          const owner = await authorize(client, actor, target);
+          if (!isDeepStrictEqual(owner, fleet.owner) || await companyRevision(client, owner.company_id) !== fleet.public.expected_revision
+              || !isDeepStrictEqual(await recoveryPreflightPayload(client, target, owner.company_id), payload)) {
+            throw new RecoveryError('conflict', 'La ejecución o su configuración cambió durante la consulta. Vuelve a consultar antes de reiniciar.');
+          }
+        };
+        const measured = await deps.preflight.request({ company_id: fleet.owner.company_id, host_id: fleet.owner.host_id },
+          payload, verify, actor.access.options.signal);
+        const count = await withTransaction(deps.pool, async client => { await verify(client); return inFlight(client, target); });
+        return FleetRecoveryPreviewSchema.parse({ ...fleet.public, ...measured, in_flight: count });
+      }
       const identity = await runtime(deps.probe, target);
       const session = await call(deps, actor, target, { op: 'session_probe', request_id: randomUUID(), identity });
       const count = await withTransaction(deps.pool, async client => { await authorize(client, actor, target); return inFlight(client, target); });

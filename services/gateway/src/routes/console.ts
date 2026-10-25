@@ -299,7 +299,8 @@ function registerConsoleAgentRoutes(
   */
   const sondaDeDocumentos = new SondaCompartida();
   const profileProbe = sondaDiferida(sondaDeDocumentos);
-  registerAgentRecoveryRoutes(app, { pool: options.pool, authProvider: options.authProvider, probe: profileProbe });
+  registerAgentRecoveryRoutes(app, { pool: options.pool, authProvider: options.authProvider, probe: profileProbe,
+    ...(options.recoveryPreflight === undefined ? {} : { preflight: options.recoveryPreflight }) });
   app.decorate('sondaDeDocumentos', sondaDeDocumentos);
   {
     const perfiles = agentProfiles;

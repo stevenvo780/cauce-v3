@@ -416,7 +416,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   const publishHandler = coreRoutes.registerPublishRoutes();
 
-  const agentProfiles = registerConsoleRoutes(app, consoleRoutes, publishHandler);
+  const agentProfiles = registerConsoleRoutes(app, { ...consoleRoutes, options: { ...consoleRoutes.options,
+    ...(agentAuthentication === undefined ? {} : { recoveryPreflight: agentAuthentication.recoveryPreflight }) } }, publishHandler);
 
   if (fleetBinding !== undefined) {
     registerFleetOperationRoutes(app, options.authProvider, fleetBinding, fleetCapability);

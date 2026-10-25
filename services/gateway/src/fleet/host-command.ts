@@ -7,6 +7,7 @@ import type { FleetExecution, FleetEffectResult } from './executor.js';
 import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
 import { BoundedTail, logHostCommandFailure } from './host-stderr.js';
 import { providerProbeFailure, providerRuntimeFailureReason } from './provider-login.js';
+import { fleetExecutionFailure } from './recovery-host-command.js';
 
 export interface HostCommandConfig { python: string; executable: string; policyFile: string; timeoutMs?: number; transport?: FleetSshTransport }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
@@ -73,7 +74,9 @@ async function runHostCommand(
     let force: NodeJS.Timeout | undefined;
     const chunks: Buffer[] = [];
     const stderr = new BoundedTail();
-    const failure = () => { const reason = providerRuntimeFailureReason(runtimeStderr);
+    const failure = () => { const executionFailure = fleetExecutionFailure(runtimeStderr);
+      if (executionFailure) return executionFailure;
+      const reason = providerRuntimeFailureReason(runtimeStderr);
       return reason ? new ProviderAuthError('HOST_UNAVAILABLE', reason) : unverified(); };
     const kill = (termination: NodeJS.Signals) => {
       if (child.pid === undefined) return;
