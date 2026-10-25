@@ -225,7 +225,7 @@ supervise() {
 }
 
 case $action in
-  __supervise) supervise; exit ;;
+  __supervise) supervise; cleanup ;;
   up)
     exec 9>"$receipt/command.lock"
     flock -n 9 || { printf 'Otra orden usa este nombre\n' >&2; exit 75; }
