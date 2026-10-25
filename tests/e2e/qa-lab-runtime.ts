@@ -15,5 +15,5 @@ if sys.stdin.isatty() and 'app-server' not in sys.argv and 'exec' not in sys.arg
 else:
  exec(${JSON.stringify(runtime.providerCli)})
 `;
-  return { ...runtime, providerCli, sharedTui: true, stage: standardRecoveryBundle.stage };
+  return { ...runtime, providerCli, sharedTui: true, stage: directory => standardRecoveryBundle.stage(directory) };
 }
