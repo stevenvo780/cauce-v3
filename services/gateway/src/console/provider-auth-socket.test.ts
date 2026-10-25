@@ -64,6 +64,30 @@ describe('private provider auth websocket', () => {
     f.revoke(); f.browser.message('PRIVATE_PASSWORD', true); await f.tick();
     expect(f.state().written).toBe(''); expect(f.browser.readyState).toBe(3); await f.manager.shutdown();
   });
+  it('closes the seventeenth queued frame while authorization is blocked and discards the queue', async () => {
+    const f = await fixture(); const ticket = await f.manager.issueSocketTicket(actor, f.session.session_id);
+    await f.connect(); f.browser.message({ type: 'auth', ticket: ticket.ticket }); await f.tick();
+    const authenticate = f.auth.authenticateHttp.bind(f.auth);
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    f.auth.authenticateHttp = async request => { await blocked; return authenticate(request); };
+    try {
+      for (let index = 0; index < 16; index += 1) f.browser.message('x', true);
+      await f.tick();
+      expect(f.browser.readyState).toBe(1); expect(f.state().written).toBe('');
+      f.browser.message('x', true);
+      expect(f.browser.readyState).toBe(3); expect(f.browser.reason).toBe('provider_auth_closed');
+    } finally { release?.(); }
+    await f.tick(); expect(f.state().written).toBe(''); await f.manager.shutdown();
+  });
+  it.each([4096, 4097])('bounds a single input frame of %i bytes', async length => {
+    const f = await fixture(); const ticket = await f.manager.issueSocketTicket(actor, f.session.session_id);
+    await f.connect(); f.browser.message({ type: 'auth', ticket: ticket.ticket }); await f.tick();
+    f.browser.message('x'.repeat(length), true); await f.tick();
+    expect(f.browser.readyState).toBe(length === 4096 ? 1 : 3);
+    expect(f.state().written.length).toBe(length === 4096 ? length : 0);
+    f.browser.close(); await f.manager.shutdown();
+  });
   it('expires unused tickets and does not replay earlier output into a second browser', async () => {
     const f = await fixture(); const ticket = await f.manager.issueSocketTicket(actor, f.session.session_id);
     vi.useFakeTimers(); vi.setSystemTime(Date.now() + 10_001);

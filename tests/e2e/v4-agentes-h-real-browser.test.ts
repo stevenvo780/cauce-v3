@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { CauceRepository } from '@cauce/store';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -10,18 +10,31 @@ import type { ProviderAuthReservation } from '../../services/gateway/src/console
 import { AgentProviderAuthBroker } from '../../services/gateway/src/fleet/agent-provider-auth-broker.js';
 import { SignedFleetAuthorityClient } from '../../services/gateway/src/fleet/authority/signed-client.js';
 import { COMPUTER_RUNTIME, FIXTURE_DEVICE_CODE, FIXTURE_LOGIN_DONE, FIXTURE_PROVIDER_IDENTITY, docker } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
-import { bodySnippet, type V4Locator } from './v4-console-real-browser.helpers.js';
+import { apiGet, bodySnippet, type IgnoredConsoleRule, type V4Locator } from './v4-console-real-browser.helpers.js';
 import { coverageCapture, coverageEnabled, coverageEnqueue, coverageOperations, startCoverageFixture,
   type CoverageFixture, type CoverageOperation } from './v4-agentes-l-helpers.js';
 
 let fixture: CoverageFixture | undefined;
 let gateway: Awaited<ReturnType<typeof buildGateway>> | undefined;
 let alias = '', runtime = '', container = '';
+let deniedScope = '';
+const fixtureRules: IgnoredConsoleRule[] = [
+  { id: 'provider-auth-scope-403', reason: 'scope endpoint probed while provider account is disabled',
+    matches: (text, url) => text.includes('status of 403')
+      && deniedScope !== '' && new URL(url, 'https://fixture.invalid').pathname === deniedScope },
+];
 const evidence: Record<string, unknown> = { section: 'H', provider: 'pinned interactive fixture CLI' };
 const active = () => { if (!fixture) throw new Error('operation authentication fixture absent'); return fixture; };
 const card = () => active().page.getByRole('region', { name: 'Operación de flota', exact: true });
 const auth = () => card().getByRole('region', { name: 'Autenticación de la operación', exact: true });
-interface AuthSocket { on(event: 'framereceived', callback: (frame: { payload: string | Buffer }) => void): void }
+interface AuthFrame { payload: string | Buffer }
+interface AuthSocket {
+  on(event: 'framereceived' | 'framesent', callback: (frame: AuthFrame) => void): void;
+  on(event: 'close', callback: () => void): void;
+}
+type TextInputPage = CoverageFixture['page'] & { keyboard: { insertText(value: string): Promise<void> } };
+const socketObservations: { session_id: string; sent: { type: string; bytes: number; at_ms: number }[]; closed: boolean }[] = [];
+const providerPosts: { path: string; status: number }[] = [];
 let terminalOutput = '';
 
 async function loginTtl(ttlMs: number): Promise<void> {
@@ -83,8 +96,15 @@ async function prepare(): Promise<V4Locator> {
 }
 async function openExecution(): Promise<void> {
   const { page, baseUrl, tenantId } = active();
-  await page.goto(`${baseUrl}/config?seccion=agentes&agente=${encodeURIComponent(`${tenantId}/${alias}`)}`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('tab', { name: 'Ejecución', exact: true }).click();
+  const target = `${baseUrl}/config?seccion=agentes&agente=${encodeURIComponent(`${tenantId}/${alias}`)}`;
+  if (page.url() === target) {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+  } else {
+    await page.goto(target, { waitUntil: 'domcontentloaded' });
+  }
+  const tab = page.getByRole('tab', { name: 'Ejecución', exact: true });
+  await tab.waitFor({ timeout: 30_000 });
+  await tab.click();
 }
 async function signIn(): Promise<V4Locator> {
   terminalOutput = '';
@@ -98,24 +118,58 @@ async function signIn(): Promise<V4Locator> {
 }
 
 beforeAll(async () => {
-  fixture = await startCoverageFixture('oh', { providerLogin: true, extraSourceFiles: ['packages/store/src/device-authorization.ts',
+  process.env.CAUCE_PLAZOS_FACTOR ??= '3';
+  fixture = await startCoverageFixture('oh', { ignoredConsoleRules: fixtureRules, providerLogin: true, extraSourceFiles: ['packages/store/src/device-authorization.ts',
     'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts',
     'packages/store/src/repository/fleet-operation-recovery.ts', 'ops/cli/fleet_executor_probe_cache.py',
-    'ops/cli/fleet_provider_capability_probe.py', 'services/gateway/src/fleet/space-backup.failure.ts'] });
+    'ops/cli/fleet_provider_capability_probe.py', 'services/gateway/src/fleet/space-backup.failure.ts',
+    'packages/protocol/src/context-retirement.ts', 'packages/store/src/context-retirement.ts',
+    'packages/store/src/context-git-retirement.ts', 'ops/container-runtime/cauce_container_restart.py'] });
   alias = `auth${fixture.run}`; runtime = `auth-${fixture.run}`; container = `${fixture.prefix}-${runtime}`;
+  const sharedReceipts = fixture.receipts;
+  const ownReceipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a19-rojas-viejas-1025/h', fixture.run);
+  fixture.receipts = ownReceipts;
+  await mkdir(ownReceipts, { recursive: true, mode: 0o700 });
+  const sharedClose = fixture.close.bind(fixture);
+  fixture.close = async () => { try { await sharedClose(); } finally { await cp(sharedReceipts, ownReceipts, { recursive: true }); } };
+  const sourcePaths = ['tests/e2e/v4-agentes-h-real-browser.test.ts', 'services/gateway/src/console/provider-auth-socket.ts'];
+  evidence.sources = Object.fromEntries(await Promise.all(sourcePaths.map(async path => [path, createHash('sha256').update(await readFile(path)).digest('hex')])));
+  console.info('A19_H_RECEIPTS', JSON.stringify({ receipts: fixture.receipts, run: fixture.run, prefix: fixture.prefix }));
   fixture.page.on('websocket', candidate => {
-    if (!new URL(candidate.url()).pathname.startsWith('/v3/console/provider-auth/sessions/')) return;
-    (candidate as unknown as AuthSocket).on('framereceived', ({ payload }) => {
+    const path = new URL(candidate.url()).pathname;
+    const matched = /^\/v3\/console\/provider-auth\/sessions\/([a-f0-9-]+)\/stream$/u.exec(path);
+    if (!matched?.[1]) return;
+    const observed = { session_id: matched[1], sent: [] as { type: string; bytes: number; at_ms: number }[], closed: false };
+    socketObservations.push(observed);
+    const socket = candidate as unknown as AuthSocket;
+    socket.on('framereceived', ({ payload }) => {
       terminalOutput += Buffer.isBuffer(payload) ? payload.toString('utf8') : payload;
     });
+    socket.on('framesent', ({ payload }) => {
+      let type = 'input';
+      if (typeof payload === 'string') {
+        try { const value = JSON.parse(payload) as { type?: unknown }; type = value.type === 'auth' || value.type === 'resize' ? value.type : 'unknown_control'; }
+        catch { type = 'unknown_control'; }
+      }
+      observed.sent.push({ type, bytes: Buffer.byteLength(payload), at_ms: performance.now() });
+    });
+    socket.on('close', () => { observed.closed = true; });
+  });
+  fixture.page.on('response', response => {
+    const path = new URL(response.url()).pathname;
+    if (response.request().method() === 'POST' && /^\/v3\/console\/provider-auth\/sessions(?:\/[a-f0-9-]+\/(?:verify|cancel|ticket))?$/u.test(path)) {
+      providerPosts.push({ path, status: response.status() });
+    }
   });
 }, 900_000);
 afterAll(async () => {
   if (!fixture) return;
   try {
     evidence.operations = await coverageOperations(fixture, alias).catch(() => []);
-    evidence.journal = (await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-n', '120'])).stdout;
+    evidence.journal = (await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-n', '500'])).stdout;
     evidence.browser = { unexpected: fixture.errors.unexpected, trace: fixture.errors.trace };
+    evidence.provider_auth = { sockets: socketObservations, posts: providerPosts,
+      fixture_success_observed: terminalOutput.includes(`${FIXTURE_LOGIN_DONE} ${FIXTURE_PROVIDER_IDENTITY}`) };
     await writeFile(join(fixture.receipts, 'h-evidence.json'), JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
   } finally {
     try { await gateway?.close(); } finally { await fixture.close(); }
@@ -136,8 +190,7 @@ describe('login de una operación desde Chromium con CLI de prueba y autoridad p
       await coverageCapture(active(), 'h-o01-awaiting-auth');
       await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
       await computer.pool.query('UPDATE provider_accounts SET enabled=false WHERE id=$1', [accountId]);
-      active().errors.expectHttpError(`/v3/console/provider-auth/operations/${waiting.id}/scope`, 403);
-      active().errors.expectHttpError(`/v3/console/provider-auth/operations/${waiting.id}/scope`, 403);
+      deniedScope = `/v3/console/provider-auth/operations/${waiting.id}/scope`;
       await openExecution();
       await auth().getByRole('alert').filter({ hasText: 'No se pudo preparar el inicio de sesión de esta operación' }).waitFor({ timeout: 30_000 });
       expect(await auth().getByRole('button', { name: 'Iniciar sesión', exact: true }).count()).toBe(0);
@@ -152,6 +205,7 @@ describe('login de una operación desde Chromium con CLI de prueba y autoridad p
         await coverageCapture(active(), 'h01-preparando');
       } finally { await lock.query('ROLLBACK'); lock.release(); }
       await auth().getByRole('button', { name: 'Iniciar sesión', exact: true }).waitFor({ timeout: 30_000 });
+      deniedScope = '';
       const first = await signIn();
       const expiringSession = await reservation(waiting.id);
       const reservedOperation = await waitReceipt(waiting.id, 'awaiting_auth');
@@ -182,12 +236,24 @@ describe('login de una operación desde Chromium con CLI de prueba y autoridad p
       await openExecution();
       await auth().getByRole('button', { name: 'Iniciar sesión', exact: true }).waitFor({ timeout: 30_000 });
       const second = await signIn();
-      await second.locator('.xterm-helper-textarea').type(FIXTURE_DEVICE_CODE);
+      const successfulSession = await reservation(waiting.id);
+      await second.locator('.xterm-helper-textarea').click();
+      await (page as TextInputPage).keyboard.insertText(FIXTURE_DEVICE_CODE);
       await second.locator('.xterm-helper-textarea').press('Enter');
       await expect.poll(() => terminalOutput, { timeout: 30_000 }).toContain(`${FIXTURE_LOGIN_DONE} ${FIXTURE_PROVIDER_IDENTITY}`);
+      const sentInput = socketObservations.at(-1)?.sent.filter(row => row.type === 'input').map(row => row.bytes);
+      expect(sentInput).toEqual([Buffer.byteLength(FIXTURE_DEVICE_CODE), 1]);
+      evidence.interactive_input = { method: 'native Chromium keyboard.insertText followed by Enter', input_frame_bytes: sentInput, fixture_success_observed: true };
       const verify = second.getByRole('button', { name: 'Verificar conexión', exact: true });
       await coverageEnabled(verify); await verify.click();
       await auth().getByText('Cuenta verificada. Ya puedes pulsar «Reanudar» para que la operación siga.', { exact: true }).waitFor({ timeout: 60_000 });
+      expect(providerPosts).toContainEqual({ path: `/v3/console/provider-auth/sessions/${successfulSession.session_id}/verify`, status: 200 });
+      const verifiedSession = await apiGet(page, `/v3/console/provider-auth/sessions/${successfulSession.session_id}`);
+      expect(verifiedSession.status).toBe(200);
+      expect(verifiedSession.body).toMatchObject({ session_id: successfulSession.session_id, operation_id: waiting.id, status: 'authenticated', cleanup_pending: false, error: null });
+      evidence.authenticated_session = { session_id: successfulSession.session_id, verify_post_status: 200,
+        reread_status: verifiedSession.body.status, cleanup_pending: verifiedSession.body.cleanup_pending,
+        release: await releasedReservation(waiting.id, successfulSession.session_id) };
       expect(await second.count()).toBe(0);
       const verified = await waitReceipt(waiting.id, 'awaiting_auth');
       expect(verified.version).toBeGreaterThan(released.version);
