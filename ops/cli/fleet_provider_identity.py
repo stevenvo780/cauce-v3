@@ -40,13 +40,18 @@ class ProbeFailure(ProviderProofError):
 
 
 def space_turn_tmpdir(state_directory: str) -> str:
-    """Private turn temp for a container agent: `<state>/space/tmp`, created at 0700 when missing.
+    """Resolve the container path without materializing it in the caller's namespace."""
+    if not isinstance(state_directory, str) or '//' in state_directory or any(ord(character) < 32 for character in state_directory):
+        raise ValueError('space state path is not canonical')
+    state = pathlib.Path(state_directory)
+    if not state.is_absolute() or state == pathlib.Path('/') or str(state) != state_directory or '..' in state.parts:
+        raise ValueError('space state path is not canonical')
+    return str(state / 'space' / 'tmp')
 
-    The container root is read-only, so the turn cannot use it. A profile directory the provider
-    still needs stays under its own variable; this path is only TMPDIR.
-    """
-    space = pathlib.Path(state_directory) / 'space'
-    target = space / 'tmp'
+
+def prepare_space_turn_tmpdir(state_directory: str) -> str:
+    target = pathlib.Path(space_turn_tmpdir(state_directory))
+    space = target.parent
     for directory in (space, target):
         try:
             os.mkdir(directory, 0o700)

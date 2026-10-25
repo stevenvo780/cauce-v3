@@ -266,6 +266,9 @@ def agent_model(agent: dict) -> str | None:
 
 def prepare(binding: dict, agent: dict) -> None:
     env = environment(binding, agent)
+    if agent.get('runtime_mode') == 'container':
+        from fleet_provider_identity import prepare_space_turn_tmpdir
+        prepare_space_turn_tmpdir(agent['state_directory'])
     root = pathlib.Path(binding['path'])
     prepare_temporary(root)
     for directory in [root / 'agents', root / 'agents' / agent['runtime_key'], pathlib.Path(env['OPENCLAW_AGENT_DIR']),

@@ -52,11 +52,11 @@ class SshExtensionEnvironmentTest(unittest.TestCase):
         self.assertEqual(identity.ssh_environment({}, "/profiles/a/h"), {})
 
     def test_provider_environment_carries_ssh_variables(self):
-        agent = {"extensions": [{"type": "ssh", "hosts": ["ops@example.test"]}]}
+        agent = {"harness_id": "openclaw", "extensions": [{"type": "ssh", "hosts": ["ops@example.test"]}]}
         with patch.object(runtime, "provider_base_environment", return_value={"OPENCLAW_HOME": "/x"}), \
                 patch("fleet_executor_templates.resolve_profile", return_value={"path": "/home/node/.cauce-profiles/a/h"}), \
                 patch.object(runtime, "path", side_effect=lambda value: pathlib.Path(value)):
-            values = runtime.provider_environment({}, agent)
+            values = runtime.provider_environment({"bundles": {"openclaw": {"shared_tui": False}}}, agent)
         self.assertEqual(values["CAUCE_SSH_CONFIG"], "/home/node/.cauce-profiles/a/h/ssh/config")
         self.assertEqual(values["GIT_SSH_COMMAND"], "ssh -F /home/node/.cauce-profiles/a/h/ssh/config")
         self.assertEqual(values["OPENCLAW_HOME"], "/x")

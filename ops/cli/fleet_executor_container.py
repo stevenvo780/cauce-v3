@@ -663,6 +663,8 @@ def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: di
     managed = agent['_placement'].get('ownership') != 'shared'
     if managed:
         helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', workspace, '--uid', uid, '--gid', gid)
+    helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'],
+           '--state', str(pathlib.Path(agent['state_directory']) / 'space' / 'tmp'), '--uid', uid, '--gid', gid)
     if (fallback := pairing(agent)) is not None and fallback['server']:
         helper(agent, identity, 'prepare-state', '--mount', fallback['destination'], '--state', fallback['destination'], '--uid', uid, '--gid', gid)
     from fleet_executor_profiles import prepare_profile

@@ -55,14 +55,15 @@ class IsolatedProviderTests(unittest.TestCase):
         self.assertEqual(driver.environment(self.binding, self.agent), {'GROK_HOME': self.binding['path']})
         self.assertEqual(driver.login_command(self.binding), [str(self.cli), 'login', '--device-auth'])
 
-    def test_grok_container_profile_points_tmpdir_into_the_space(self):
+    def test_grok_container_environment_is_pure_when_the_computer_has_no_agent_state(self):
         driver = self.driver('grok')
-        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container'})
-        temporary = self.state / 'space' / 'tmp'
+        state = self.root / 'absent-computer-parent' / 'state'
+        self.assertFalse(state.parent.exists())
+        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container', 'state_directory': str(state)})
+        temporary = state / 'space' / 'tmp'
         self.assertEqual(values['TMPDIR'], str(temporary))
-        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
-        self.assertFalse(temporary.is_symlink())
-        self.assertEqual(values['CAUCE_GROK_WORKSPACE'], str(self.state / 'space' / 'projects'))
+        self.assertFalse(state.parent.exists())
+        self.assertEqual(values['CAUCE_GROK_WORKSPACE'], str(state / 'space' / 'projects'))
         self.assertNotEqual(values['TMPDIR'], values['GROK_HOME'] + '/tmp')
         self.assertFalse((pathlib.Path(values['GROK_HOME']) / 'tmp').exists())
 
@@ -79,14 +80,35 @@ class IsolatedProviderTests(unittest.TestCase):
         self.assertEqual(values['TMPDIR'], self.binding['path'] + '/tmp')
         self.assertNotIn('CAUCE_MUSE_WORKSPACE', values)
 
-    def test_muse_container_tmpdir_is_the_space(self):
+    def test_muse_container_environment_is_pure_when_the_computer_has_no_agent_state(self):
         driver = self.driver('muse')
-        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container'})
-        temporary = self.state / 'space' / 'tmp'
+        state = self.root / 'absent-computer-parent' / 'state'
+        self.assertFalse(state.parent.exists())
+        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container', 'state_directory': str(state)})
+        temporary = state / 'space' / 'tmp'
         self.assertEqual(values['TMPDIR'], str(temporary))
-        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
-        self.assertFalse(temporary.is_symlink())
-        self.assertEqual(values['CAUCE_MUSE_WORKSPACE'], str(self.state / 'space' / 'projects'))
+        self.assertFalse(state.parent.exists())
+        self.assertEqual(values['CAUCE_MUSE_WORKSPACE'], str(state / 'space' / 'projects'))
+
+    def test_container_authentication_prepares_private_temp_before_the_nonce_turn(self):
+        for provider in ('grok', 'muse'):
+            with self.subTest(provider=provider):
+                driver = self.driver(provider)
+                state = self.root / ('agent-' + provider)
+                state.mkdir(mode=0o700)
+                packet = {**self.packet, 'agent': {**self.agent, 'runtime_mode': 'container', 'state_directory': str(state)}}
+
+                def roundtrip(*_, state=state):
+                    temporary = state / 'space' / 'tmp'
+                    self.assertTrue(temporary.is_dir())
+                    self.assertFalse(temporary.is_symlink())
+                    self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+                    return True
+
+                with mock.patch.object(driver, 'nonce_roundtrip', side_effect=roundtrip) as nonce, \
+                        mock.patch.object(driver, 'verified_identities', return_value={'subject'}):
+                    self.assertEqual(driver.authenticated_identity(packet), 'subject')
+                nonce.assert_called_once()
 
     def test_driver_rejects_foreign_harness_owner_and_profile_paths(self):
         for provider in ('grok', 'muse'):
