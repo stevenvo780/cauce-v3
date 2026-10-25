@@ -457,7 +457,7 @@ export async function startComputerHarness(options: {
         transport: { bootstrap_url: agentOrigin, gateway_url: agentOrigin, ca_certificate: '@install@/files/fleet-ca',
           network: options.agentNetwork?.name ?? 'host' },
         authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' },
-        terminal: { required: options.terminal !== undefined },
+        ...(options.terminal === undefined ? {} : { terminal: { required: true } }),
       } }), generateKeyPairSync('ed25519').privateKey);
     const app = await buildGateway({ pool, repository: new CauceRepository(pool), consoleOrigins: options.consoleOrigins, logger: false,
       authProvider: new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: Buffer.alloc(32, 61) }),
