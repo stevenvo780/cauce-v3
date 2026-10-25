@@ -6,6 +6,7 @@ import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, ty
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
 import { lockPreparedFleetRevision, sealFleetTargetSlice } from './fleet-operation-slice.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
+import { canRestoreFleetUpdate } from './fleet-operation-compensation.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
   readFleetGroupAgents, readFleetHostReceipts, usesFleetHostSlices, type FleetHostReceipt, type FleetHostSlice, type FleetHostStep } from './fleet-operation-hosts.js';
@@ -44,6 +45,11 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     const proof = hostStepEvidence(name, evidence);
     return this.transaction(async client => {
       const row = name === 'compensate' ? await lockFleetClaim(client, claim, true) : await this.current(client, claim);
+      if (name === 'compensate' && proof.runtime_digest !== undefined
+          && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
+            row.request, (await preparedState(client, row.id)).previous_agents)) {
+        throw new FleetOperationError('conflict', 'runtime restoration requires an unchanged update placement before artifacts');
+      }
       if (name === 'compensate') {
         if (!row.cancel_requested || row.status !== 'cancelling') throw new FleetOperationError('conflict', 'host compensation requires cancellation');
       } else {
@@ -204,6 +210,11 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       if (!row.cancel_requested) throw new FleetOperationError('conflict', 'compensation requires an operator cancellation');
+      if (proof.data.runtime_digest !== undefined
+          && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
+            row.request, (await preparedState(client, row.id)).previous_agents)) {
+        throw new FleetOperationError('conflict', 'runtime restoration requires an unchanged update placement before artifacts');
+      }
       if (row.desired_revision !== null && (usesFleetHostSlices(row.request)
           || (await loadFleetHostSlices(client, row)).some(slice => slice.placement_role !== undefined))) {
         await assertFleetHostBarrier(client, row, claim, 'compensate', proof.data);

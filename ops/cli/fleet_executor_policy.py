@@ -323,8 +323,10 @@ def declarative_provider_module(row: dict):
 
 def validate_payload(document) -> dict:
     required = {'operation_id', 'request', 'fenced_targets', 'previous_agents', 'desired_memberships'}
-    if not isinstance(document, dict) or set(document) - {'snapshot', 'trusted_accounts', 'fleet_scope', 'global_desired_memberships'} != required:
+    if not isinstance(document, dict) or set(document) - {'snapshot', 'trusted_accounts', 'fleet_scope', 'global_desired_memberships', 'restore_previous_runtime'} != required:
         raise SafeFailure('invalid execution payload')
+    if 'restore_previous_runtime' in document and document['restore_previous_runtime'] is not True:
+        raise SafeFailure('invalid runtime restoration request')
     if str(uuid.UUID(document['operation_id'])) != document['operation_id']:
         raise SafeFailure('invalid operation identity')
     if 'fleet_scope' in document:

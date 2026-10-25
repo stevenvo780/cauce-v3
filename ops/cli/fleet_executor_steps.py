@@ -572,6 +572,8 @@ class Executor:
         raise SafeFailure('missing verified hook for requested fleet step')
 
     def compensate(self) -> dict:
+        if self.context.get('restore_previous_runtime') is True:
+            return self.restore_previous_runtime()
         rows = self.physical_placements()
         for row in rows:
             if row.get('runtime_mode') == 'container':
@@ -619,6 +621,28 @@ class Executor:
             revoked[key] = True
             self.save()
         return {'stopped_verified': True, 'revocation_verified': True}
+
+    def restore_previous_runtime(self) -> dict:
+        request = self.context['request']
+        previous = self.context['previous_agents']
+        if request['kind'] != 'update' or placement_role(self.context) is not None or len(previous) != 1 \
+                or any(step not in {'prepare', 'stop'} for step in self.journal.get('attempted', [])) \
+                or any(name in self.journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime')):
+            raise SafeFailure('runtime restoration requires an update before credential or runtime effects')
+        agent = previous[0]
+        placement = request['parameters']['placement']
+        if agent.get('runtime_mode') != 'container' or agent.get('runtime_key') != request['parameters']['runtime_key'] \
+                or any(agent.get(field) != request['target'].get(field) for field in ('tenant_id', 'alias')) \
+                or any(agent.get(field) != placement.get(field) for field in
+                       ('host_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory')):
+            raise SafeFailure('runtime restoration differs from the previous placement')
+        from fleet_executor_container import restore_existing_adapter
+        restored = restore_existing_adapter(self.policy, {**agent, '_trusted_accounts': self.context.get('trusted_accounts', []),
+                                            '_trusted_accounts_present': 'trusted_accounts' in self.context},
+                                            was_running=agent.get('enabled') is True)
+        self.journal['previous_runtime_restored'] = restored
+        self.save()
+        return {**restored, 'revocation_verified': True}
 
     def physical_placements(self) -> list[dict]:
         rows = scoped_agents(self.policy, self.context)

@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, type FleetStepName } from '@cauce/protocol';
+import { canRestoreFleetUpdate } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
 import { fleetHostSpawn, type FleetSshTransport } from './host-transport.js';
@@ -22,7 +23,10 @@ export async function performHostCommand(
 
 export async function performHostCompensation(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal) {
   const result = await runHostCommand(config, 'compensate', execution, signal);
-  if (result.awaiting_auth || result.evidence.stopped_verified !== true || result.evidence.revocation_verified !== true) throw unverified();
+  const restored = canRestoreFleetUpdate(execution.operation, execution.request, execution.previous_agents ?? [])
+    && result.evidence.runtime_digest !== undefined;
+  if (result.awaiting_auth || (!restored && result.evidence.stopped_verified !== true)
+      || result.evidence.revocation_verified !== true) throw unverified();
   return result.evidence;
 }
 
@@ -47,6 +51,8 @@ async function runHostCommand(
   const request = FleetOperationRequestSchema.parse(execution.request);
   const encoded = JSON.stringify({ operation_id: execution.operation.id, request, fenced_targets: execution.fenced_targets,
     previous_agents: execution.previous_agents ?? [], desired_memberships: execution.desired_memberships ?? [],
+    ...(step === 'compensate' && canRestoreFleetUpdate(execution.operation, request, execution.previous_agents ?? [])
+      ? { restore_previous_runtime: true } : {}),
     ...(execution.global_desired_memberships === undefined ? {} : { global_desired_memberships: execution.global_desired_memberships }),
     ...(execution.trusted_accounts === undefined ? {} : { trusted_accounts: execution.trusted_accounts }),
     ...(execution.fleet_scope === undefined ? {} : { fleet_scope: execution.fleet_scope }),

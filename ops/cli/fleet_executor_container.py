@@ -6,6 +6,7 @@ import pathlib
 import re
 import subprocess
 import time
+import uuid
 
 from fleet_executor_policy import (
     SafeFailure,
@@ -135,8 +136,18 @@ def rebased(value: str, release: pathlib.Path, root: pathlib.Path) -> str:
     return str(root / candidate.relative_to(release)) if candidate.is_relative_to(release) else value
 
 
+def rebased_policy(value, release: pathlib.Path, root: pathlib.Path):
+    if isinstance(value, dict):
+        return {(rebased(key, release, root) if isinstance(key, str) and key.startswith('/') else key):
+                rebased_policy(item, release, root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [rebased_policy(item, release, root) for item in value]
+    return rebased(value, release, root) if isinstance(value, str) and value.startswith('/') else value
+
+
 def runtime_mounts(policy: dict, agent: dict, root: pathlib.Path | None = None, release: pathlib.Path | None = None) -> dict:
-    root, release = root or RELEASE_ROOT, release or RELEASE_ROOT
+    root = root or pathlib.Path(policy.get('_runtime_release', RELEASE_ROOT))
+    release = release or RELEASE_ROOT
     bundle = rebased(policy['bundles'][agent['harness_id']]['directory'], release, root)
     return {HELPER_DESTINATION: str(root / 'ops/container-runtime'), EXECUTOR_DESTINATION: str(root / 'ops/cli'), bundle: bundle}
 
@@ -488,6 +499,63 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
         assert_shared_start(policy, agent)
     bundle = approved_bundle(policy, agent)
     observed = ensure_container(policy, agent, operation_id)
+    return start_existing_adapter(policy, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
+
+
+def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool = True,
+                             bootstrap: bool = False, operation_id: str | None = None) -> dict:
+    from fleet_executor_image import previous_agent, validate_previous
+    from fleet_executor_rebind import bound_release
+    agent = approve_agent(policy, raw_agent)
+    observed = inspect_container(agent['container_name'])
+    if observed is None:
+        raise SafeFailure('original container is unavailable for adapter restoration')
+    validate_previous(policy, agent, observed)
+    agent = previous_agent(agent, observed['Image'])
+    if not was_running:
+        return stop_running_adapter(agent, observed)
+    if not observed['State']['Running']:
+        docker('start', observed['Id'])
+        current = inspect_container(agent['container_name'])
+        if current is None or current['Id'] != observed['Id'] or not current['State']['Running'] or current['State']['Pid'] <= 0:
+            raise SafeFailure('original container is not observed running for adapter restoration')
+        observed = current
+    restored = {**policy, 'containers': {**policy.get('containers', {}), agent['container_name']: agent['_placement']}}
+    previous = bound_release(observed, RELEASE_ROOT)
+    if previous is not None:
+        restored = rebased_policy(restored, RELEASE_ROOT, previous)
+        bundle = policy['bundles'][agent['harness_id']]
+        directory = rebased(bundle['directory'], RELEASE_ROOT, previous)
+        restored.update(_runtime_release=str(previous), bundles={**policy['bundles'], agent['harness_id']: {
+            **bundle, 'directory': directory,
+            'executable': rebased(bundle['executable'], RELEASE_ROOT, previous),
+            'argv': [rebased(value, RELEASE_ROOT, previous) if value.startswith('/') else value for value in bundle['argv']]}})
+    bundle = approved_bundle(restored, agent)
+    identity = identity_for(agent, observed)
+    try:
+        process_proof(restored, agent, identity, bundle)
+    except SafeFailure:
+        return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
+    metadata = json.loads(docker('exec', '--user', '0', identity['container_id'], '/bin/cat',
+                                 str(identity['control'] / 'cauce-v3-adapter.json')))
+    script = ('import json,pathlib,sys; p=pathlib.Path("/proc")/sys.argv[1]; '
+              'assert int((p/"stat").read_text().rsplit(")",1)[1].split()[19])==int(sys.argv[2]); '
+              'values=[v.split(b"=",1)[1].decode() for v in (p/"environ").read_bytes().split(b"\\0") '
+              'if v.startswith(b"CAUCE_FLEET_OPERATION_ID=")]; '
+              'assert len(values)<=1; print(json.dumps(values[0] if values else None))')
+    previous_operation = json.loads(docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
+                                           '-I', '-B', '-c', script, str(metadata['pid']), str(metadata['starttime'])))
+    if previous_operation is not None:
+        try:
+            if not isinstance(previous_operation, str) or str(uuid.UUID(previous_operation)) != previous_operation:
+                raise ValueError
+        except ValueError:
+            raise SafeFailure('original adapter operation identity is invalid') from None
+    return process_proof(restored, agent, identity, bundle, bootstrap=bootstrap, operation_id=previous_operation)
+
+
+def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: dict, *,
+                           bootstrap: bool, operation_id: str | None = None) -> dict:
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
     try:
