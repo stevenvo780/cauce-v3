@@ -72,7 +72,7 @@ export async function startCancelDeployFixture(options: { runtimeBundle?: typeof
     computer = await startComputerHarness({ prefix: cancelDeployPrefix, consoleOrigins: [baseUrl], workRoot: '/datos',
       resourceOwner: CANCEL_DEPLOY_OWNER, runtimeBundle: options.runtimeBundle ?? cancelDeployRuntime,
       extraSourceFiles: ['packages/store/src/repository/fleet-operation-recovery.ts', 'packages/protocol/src/context-retirement.ts', 'ops/cli/fleet_executor_probe_cache.py',
-        'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
+        'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts', 'packages/store/src/context-version-reevaluation.ts',
         'packages/protocol/src/fleet-recovery.ts', 'services/gateway/src/fleet/recovery-host-command.ts',
         'services/gateway/src/fleet/agent-recovery-preflight.ts',
         'ops/cli/fleet_executor_container_tui.py',
