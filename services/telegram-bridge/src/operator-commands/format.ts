@@ -97,7 +97,7 @@ export function formatStuckEgress(items: readonly StuckEgressItem[]): string {
     `${item.id} · ${item.disposition} · intentos ${String(item.attempts)}`
   );
   return [
-    'Replies ambiguos/muertos (Telegram). Inspeccioná con /forzar_salida <id>.',
+    'Replies ambiguos/muertos (Telegram). Inspecciona con /forzar_salida <id>.',
     'Para reenviar: /forzar_salida <id> duplicado-ok — puede duplicar el mensaje.',
     ...lines
   ].join('\n');
@@ -118,6 +118,6 @@ export function formatReplayInspection(
     ...lines,
     chunks.length === 1
       ? `Para reenviar: /forzar_salida ${letterId} duplicado-ok`
-      : 'Hay más de un chunk: usá la consola. Desde Telegram solo reencolo un chunk.'
+      : 'Hay más de un chunk: usa la consola. Desde Telegram solo reencolo un chunk.'
   ].join('\n');
 }

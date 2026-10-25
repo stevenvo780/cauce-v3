@@ -211,9 +211,9 @@ export async function normalizedBody(
     : spoken === undefined ? typed : `${typed}\n\n${spoken}`;
   const problems = [
     ...(prepared.errors.length === 0
-      ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explicá este error al usuario y pedile que lo mande de nuevo.`]),
+      ? [] : [`No pude procesar el adjunto: ${prepared.errors.join('; ')}. Explica este error al usuario y pídele que lo mande de nuevo.`]),
     ...(voiceRecord.error === undefined
-      ? [] : [`${voiceRecord.error} Decíselo al usuario y pedile que lo escriba o lo mande de nuevo.`])
+      ? [] : [`${voiceRecord.error} Díselo al usuario y pídele que lo escriba o lo mande de nuevo.`])
   ];
   const attachmentError = problems.length === 0 ? undefined : problems.join('\n\n');
   const effectiveRequest = attachmentError === undefined

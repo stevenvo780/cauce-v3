@@ -103,7 +103,7 @@ describe('Telegram egress text extraction', () => {
       artifacts: [{ uri: 'file:///run/secrets/payload-sentinel', name: 'payload-sentinel' }],
       error_code: 'MISSING_FINAL_REPLY'
     }, '\nSENTINEL_FOOTER')).toEqual([
-      'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.'
+      'No pude completar una respuesta para este turno. Vuelve a preguntarme para intentarlo de nuevo.'
     ]);
   });
 

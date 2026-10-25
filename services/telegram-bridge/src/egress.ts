@@ -51,7 +51,7 @@ class EgressLeaseLost extends Error {
 }
 
 const MISSING_FINAL_REPLY_NOTICE =
-  'No pude completar una respuesta para este turno. Volvé a preguntarme para intentarlo de nuevo.';
+  'No pude completar una respuesta para este turno. Vuelve a preguntarme para intentarlo de nuevo.';
 
 /**
  * Unwrapping of structured envelopes to extract the reply text.
@@ -397,7 +397,7 @@ export class TelegramEgressWorker {
     }
     this.onMetric('egress_attachment_upload_failed');
     const aviso = `📎 No pude adjuntar «${upload.name}»: Telegram rechazó el archivo. `
-      + 'Pedile al agente que lo mande más liviano o en otro formato.';
+      + 'Pídele al agente que lo mande más liviano o en otro formato.';
     await beforeRemote();
     return options === undefined
       ? await api.sendText(chatId, aviso)

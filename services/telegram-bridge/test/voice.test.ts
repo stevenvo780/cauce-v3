@@ -252,7 +252,7 @@ describe('cuerpo del mensaje', () => {
     const cuerpo = await normalizedBody(
       message({ voice: VOICE }), 42, voiceApi(), undefined, undefined
     );
-    expect(cuerpo.prompt).toMatch(/^No pude escuchar la nota de voz: .*Decíselo al usuario/su);
+    expect(cuerpo.prompt).toMatch(/^No pude escuchar la nota de voz: .*Díselo al usuario/su);
   });
 
   it('el audio también viaja como fichero: transcripción Y documento adjunto', async () => {

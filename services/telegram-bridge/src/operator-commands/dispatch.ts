@@ -103,13 +103,13 @@ function explain(error: unknown): string {
       return 'Este bot no tiene permiso de control. operator_commands debe vivir en un alias con allow_control.';
     }
     if (error.code === 'conflict') {
-      return 'La entrega ya no está en el estado que ese comando espera. Releé /colas antes de repetir.';
+      return 'La entrega ya no está en el estado que ese comando espera. Relee /colas antes de repetir.';
     }
     if (error.code === 'invalid_input') {
-      return 'El comando no trajo evidencia exacta suficiente. Reinspeccioná con /forzar_salida <id>.';
+      return 'El comando no trajo evidencia exacta suficiente. Reinspecciona con /forzar_salida <id>.';
     }
   }
-  return 'La acción durable falló. No repetí el POST; releé /colas o /forzar_salida.';
+  return 'La acción durable falló. No repetí el POST; relee /colas o /forzar_salida.';
 }
 
 export interface OperatorDispatchResult {

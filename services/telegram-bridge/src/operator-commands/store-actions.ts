@@ -170,8 +170,8 @@ export function createStoreOperatorActions(
         recipients: [{ tenant_id: input.targetTenant, alias: input.targetAlias }],
         body: {
           type: 'telegram.operator.nudge',
-          text: 'Nudge del operador: seguí el trabajo en curso o contestá lo pendiente.',
-          prompt: 'Nudge del operador: seguí el trabajo en curso o contestá lo pendiente.'
+          text: 'Nudge del operador: sigue el trabajo en curso o contesta lo pendiente.',
+          prompt: 'Nudge del operador: sigue el trabajo en curso o contesta lo pendiente.'
         },
         idempotency_key: correlation,
         lane: 'interactive',

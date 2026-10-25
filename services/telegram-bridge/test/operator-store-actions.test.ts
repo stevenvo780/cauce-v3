@@ -155,8 +155,8 @@ describe('createStoreOperatorActions', () => {
       authenticated_context: { session_id: 'tg-operator:900001', channel: 'telegram' },
       body: {
         type: 'telegram.operator.nudge',
-        text: 'Nudge del operador: seguí el trabajo en curso o contestá lo pendiente.',
-        prompt: 'Nudge del operador: seguí el trabajo en curso o contestá lo pendiente.'
+        text: 'Nudge del operador: sigue el trabajo en curso o contesta lo pendiente.',
+        prompt: 'Nudge del operador: sigue el trabajo en curso o contesta lo pendiente.'
       }
     });
     expect(published[0]?.request_id).toMatch(/^[0-9a-f-]{36}$/i);
