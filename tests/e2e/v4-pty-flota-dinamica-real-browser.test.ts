@@ -10,7 +10,7 @@ import { assertPtyFleetOnline, createPtyFleetAgent, enqueuePtyFleet, observePtyF
   ptyFleetAlias, ptyFleetRuntimeKey, retryPtyFleet, type PtyFleetOperation } from './v4-pty-flota-dinamica.flow.js';
 import { capturePtyFleet, PTY_FLEET_OWNER, ptyFleetReceipt, ptyFleetReceipts, startPtyFleetFixture,
   type PtyFleetFixture } from './v4-pty-flota-dinamica.helpers.js';
-import { ptyFleetTuiRuntime, usePtyFleetTui } from './v4-pty-flota-dinamica.tui.js';
+import { capturePtyFleetTuiDiagnostics, ptyFleetTuiRuntime, usePtyFleetTui, waitPtyFleetTuiModes } from './v4-pty-flota-dinamica.tui.js';
 
 const execute = promisify(execFile);
 let installation = '', cli: PtyFleetCli | undefined, fixture: PtyFleetFixture | undefined;
@@ -35,8 +35,11 @@ const sources = ['ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_poli
   'console/src/features/terminal/pty-types.ts', 'ops/generated/container-systemd/rootless/OPERATIONS.sha256',
   'ops/generated/container-systemd/rootless/SHA256SUMS', 'ops/pty-agent/cauce_pty_agent/tmux.py',
   'ops/pty-agent/tests/test_tmux_dynamic.py', 'tests/e2e/v4-pty-flota-dinamica.tui.ts',
+  'ops/pty-agent/cauce_pty_agent/agent.py', 'ops/pty-agent/cauce_pty_agent/session.py',
+  'ops/pty-agent/tests/test_native_tmux_presence.py',
   'ops/pty-agent/systemd/cauce-v3-pty@.service'];
-const dependencies = ['tests/e2e/v4-cli-flota-dinamica.runtime.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts'];
+const dependencies = ['tests/e2e/v4-cli-flota-dinamica.runtime.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts',
+  'packages/adapter-sdk/src/bin/shared.ts', 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts'];
 
 async function sourceReceipt(phase: string): Promise<void> {
   const hashes: Record<string, string> = {};
@@ -60,12 +63,15 @@ async function journalDiagnostics(active: PtyFleetFixture, executor = false): Pr
     'fleet_executor_terminal_files.py', 'fleet_executor_terminal_inventory.py', 'fleet_executor_steps.py'];
   const publicFailures = executor ? (await Promise.all(publicSources.map(name => readFile(join('ops/cli', name), 'utf8'))))
     .flatMap(source => [...source.matchAll(/raise SafeFailure\('([A-Za-z0-9 ,;:._-]+)'\)/gu)].map(match => match[1] ?? '')) : [];
+  const launcherFailures = [...(await readFile('ops/pty-agent/cauce-pty-launcher.sh', 'utf8'))
+    .matchAll(/die(?:_transient)? '([A-Za-z0-9 ,;:._-]+)'/gu)].map(match => match[1] ?? '');
   const rows = result.stdout.split('\n').filter(Boolean).map(line => {
     const row = JSON.parse(line) as Record<string, unknown>, message = typeof row.MESSAGE === 'string' ? row.MESSAGE : '';
     const identifiers = Object.fromEntries(Object.entries(row).filter(([name, value]) => typeof value === 'string'
       && (fields.has(name) || /^[A-Z_]*INVOCATION_ID$/u.test(name))));
     return { ...identifiers, start: /\bstarting alias=/u.test(message), ack: /\brelay accepted alias=/u.test(message),
       disconnect: message.includes('relay connect failed:') || message.includes('relay session ended:'),
+      launcher_failures: [...new Set(launcherFailures.filter(value => value && message.includes(value)))],
       ...(executor ? { safe_failures: [...new Set(publicFailures.filter(value => value && message.includes('fleet effect failed: ' + value)))],
         command_failed: message.startsWith('fleet host command failed '),
         step_failed: message.startsWith('fleet step failed '),
@@ -88,6 +94,7 @@ async function failureDiagnostics(active: PtyFleetFixture): Promise<void> {
       .then(result => ({ code: result.code, properties: result.stdout })),
     journalDiagnostics(active),
     journalDiagnostics(active, true),
+    capturePtyFleetTuiDiagnostics(active, 'failed'),
   ]);
   const values = observed.map(result => result.status === 'fulfilled' ? result.value : { observation_unavailable: true });
   const browserEvents = await active.page.evaluate(() =>
@@ -168,6 +175,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
     await ptyFleetReceipt('relay-resumed', { paused, resumed });
   }
   if (!stagedFingerprint) throw new Error('the real failed admission omitted its staged grant');
+  await capturePtyFleetTuiDiagnostics(fixture, 'before-retry');
   const created = await retryPtyFleet(fixture, failed);
   expect(created.id).toBe(failed.id);
   const first = await assertPtyFleetOnline(fixture, 'created');
@@ -175,6 +183,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   expect(created.steps.find(step => step.name === 'admission')?.evidence).toMatchObject({
     terminal_verified: true, terminal_certificate_sha256: first.fingerprint,
   });
+  await waitPtyFleetTuiModes(fixture);
   await capturePtyFleet(fixture.page, 'created-online');
   await capturePtyFleet(fixture.page, 'retried-same-operation');
   console.info('H12_FLOW created online; web and installed CLI');
@@ -196,6 +205,7 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   expect(started.steps.find(step => step.name === 'admission')?.evidence).toMatchObject({
     terminal_verified: true, terminal_certificate_sha256: second.fingerprint,
   });
+  await waitPtyFleetTuiModes(fixture);
   await capturePtyFleet(fixture.page, 'started-online');
   console.info('H12_FLOW started online; web and installed CLI');
   await usePtyFleetShells(fixture, cli, second.uid, 'started');

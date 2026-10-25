@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
+import tempfile
 import time
 import unittest
 import uuid
 from unittest import mock
 
-from .test_tmux_dynamic import TMUX, _loadable_bundle, agent
+from .test_tmux_dynamic import TMUX, _loadable_bundle, agent, tmux_runtime
 
 
 @unittest.skipUnless(TMUX, "tmux is required for native presence")
@@ -84,6 +86,43 @@ class NativeTmuxPresenceTest(unittest.TestCase):
                        check=True, env=self.env)
         with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
             instance._maintain()
+
+    def test_a_pinned_fleet_channel_waits_for_its_canonical_panel_then_reconnects_with_current_modes(self):
+        for harness in ('claude', 'codex', 'grok', 'muse'):
+            with self.subTest(harness=harness), tempfile.TemporaryDirectory(prefix='cauce-pty-pinned-') as temporary:
+                state = pathlib.Path(temporary)
+                directory = state / ('tmux-' + str(os.geteuid()))
+                directory.mkdir(mode=0o700)
+                socket = str(directory / 'cauce')
+                environment = {'CAUCE_ALIAS': 'logical_alias', 'CAUCE_RUNTIME_KEY': 'physical-one', 'TMUX_TMPDIR': str(state)}
+                bundle = agent.validate_bundle(_loadable_bundle(alias='logical_alias', harness=harness,
+                    runtime_uid=os.geteuid(), runtime_gid=os.getegid(),
+                    tmux_tui={'path': TMUX, 'socket': 'cauce', 'alias': 'physical-one', 'state_directory': str(state)},
+                    session_recovery={'state_directory': str(state), 'adapter_generation': 'a' * 64}))
+                try:
+                    with mock.patch.object(tmux_runtime, '_matching_environments', return_value=[environment]):
+                        channel = agent.PtyAgent(bundle)
+                        self.assertEqual(channel.modes, ['shell'])
+                        channel.acknowledged = True
+                        channel.last_ping = time.monotonic()
+                        subprocess.run([TMUX, '-S', socket, 'new-session', '-d', '-s', 'cauce-physical-one',
+                                        '-n', 'agente', 'sleep 30'], check=True, env=self.env)
+                        for key, value in (('@cauce_alias', 'physical-one'), ('@cauce_harness', harness)):
+                            subprocess.run([TMUX, '-S', socket, 'set-option', '-t', 'cauce-physical-one', key, value], check=True)
+                        with self.assertRaisesRegex(agent.ProtocolError, 'dynamic harness capability changed'):
+                            channel._maintain()
+                        current = agent.PtyAgent(bundle)
+                        self.assertEqual(current.modes, ['shell', 'harness', 'harness_rw'])
+                        current.acknowledged = True
+                        current.last_ping = time.monotonic()
+                        subprocess.run([TMUX, '-S', socket, 'set-option', '-t', 'cauce-physical-one',
+                                        '@cauce_alias', 'foreign'], check=True)
+                        with self.assertRaisesRegex(agent.ProtocolError, 'dynamic harness capability changed'):
+                            current._maintain()
+                        self.assertEqual(agent.PtyAgent(bundle).modes, ['shell'])
+                finally:
+                    subprocess.run([TMUX, '-S', socket, 'kill-server'], stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, check=False)
 
 
 if __name__ == "__main__":

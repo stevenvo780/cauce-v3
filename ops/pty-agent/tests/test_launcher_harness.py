@@ -265,13 +265,14 @@ class DynamicDescriptorTest(unittest.TestCase):
 
 
 class ApprovedFleetTuiTest(unittest.TestCase):
-    def capability(self, harness, approved, *, explicit=False, managed=True, session_live=True, marker_harness=None):
+    def capability(self, harness, approved, *, explicit=False, managed=True, session_live=True, marker_harness=None,
+                   tmux_path='/usr/bin/tmux'):
         import tempfile
 
         text = LAUNCHER.read_text(encoding='utf-8')
         prefix = text[text.index('publish_bundle() {'):text.index('  runtime_facts=$(measure_adapter_runtime_facts)')]
         with tempfile.TemporaryDirectory() as raw:
-            fake = _fake_docker(pathlib.Path(raw), tmux_path='/usr/bin/tmux', session_live=session_live,
+            fake = _fake_docker(pathlib.Path(raw), tmux_path=tmux_path, session_live=session_live,
                                 marker_harness=marker_harness or harness,
                                 expected_tmux_tmpdir='/home/runtime/state' if managed else None)
             script = PRELUDE.replace('harness=claude', 'harness=' + harness) + r'''
@@ -314,12 +315,21 @@ die_transient() { die "$1" 75; }
         result = self.capability('codex', '2')
         self.assertEqual(result.returncode, 2)
 
-    def test_a_shared_approval_never_treats_the_binary_or_a_foreign_panel_as_a_live_tui(self):
+    def test_a_shared_descriptor_can_wait_for_the_canonical_panel_after_admission(self):
         for options in ({'session_live': False}, {'marker_harness': 'foreign'}):
             with self.subTest(options=options):
                 result = self.capability('codex', '1', **options)
-                self.assertEqual(result.returncode, 75, result.stderr)
-                self.assertEqual(result.stdout, '')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                descriptor, native, command = map(json.loads, result.stdout.splitlines())
+                self.assertEqual(descriptor, {'path': '/usr/bin/tmux', 'socket': 'cauce', 'alias': 'zeus',
+                                              'state_directory': '/home/runtime/state'})
+                self.assertIsNone(native)
+                self.assertIsNone(command)
+
+    def test_a_shared_approval_without_the_tmux_binary_fails_closed(self):
+        result = self.capability('codex', '1', tmux_path=None)
+        self.assertEqual(result.returncode, 75, result.stderr)
+        self.assertEqual(result.stdout, '')
 
     def test_an_unmanaged_legacy_unit_keeps_its_explicit_command(self):
         result = self.capability('claude', None, explicit=True, managed=False)

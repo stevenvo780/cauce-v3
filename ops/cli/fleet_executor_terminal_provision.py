@@ -241,15 +241,13 @@ def _ensure(policy: dict, context: dict, agent: dict, generation: pathlib.Path, 
     try:
         if not was_verified and (entry['new_credentials'] or entry['files']):
             raise SafeFailure('terminal current publication requires a fresh relay acknowledgement')
-        ready = presence(unit, agent['alias'], version, attempts=1,
-                         shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
+        ready = presence(unit, agent['alias'], version, attempts=1)
     except SafeFailure:
         entry['activation_changed'] = True
         save()
         systemctl('enable', unit)
         systemctl('restart', unit)
-        ready = presence(unit, agent['alias'], version,
-                         shared_tui=policy['bundles'][agent['harness_id']].get('shared_tui', False))
+        ready = presence(unit, agent['alias'], version)
     entry.update(stage='verified', proof=proof, presence=ready)
     save()
     for name, pin in entry.get('work_files', {}).items():

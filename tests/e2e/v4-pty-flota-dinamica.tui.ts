@@ -12,6 +12,65 @@ import { capturePtyFleet, ptyFleetReceipt, type PtyFleetFixture } from './v4-pty
 export const ptyFleetTuiRuntime: ComputerRuntimeBundle = { ...cancelDeployRuntime, sharedTui: true,
   providerCli: createFleetCliRuntimeBundle(process.cwd()).providerCli };
 
+export async function capturePtyFleetTuiDiagnostics(fixture: PtyFleetFixture, phase: string): Promise<void> {
+  try {
+    const row = (await fixture.computer.pool.query<{ state_directory: string; runtime_user: string }>(
+      'SELECT state_directory,runtime_user FROM agents WHERE tenant_id=$1 AND alias=$2', [fixture.tenantId, ptyFleetAlias])).rows[0];
+    const physical = await observePtyFleet(fixture);
+    if (!row || !physical.sdk.container_id) { await ptyFleetReceipt(phase + '-tui-diagnostics', { runtime_absent: true }); return; }
+    const script = `import json,os,pathlib,stat,subprocess,sys
+key,state,socket_name=sys.argv[1:];stage='socket';result={'uid':os.getuid(),'tmux_binary_exists':os.access('/usr/bin/tmux',os.X_OK)}
+sys.excepthook=lambda kind,error,trace: print(json.dumps({'error_stage':stage,'error_type':kind.__name__,'errno':getattr(error,'errno',None)}))
+socket=pathlib.Path(state)/('tmux-'+str(os.getuid()))/socket_name
+try: info=socket.lstat()
+except FileNotFoundError: result['socket_exists']=False
+else:
+ result.update(socket_exists=True,socket_is_socket=stat.S_ISSOCK(info.st_mode),socket_uid=info.st_uid,socket_mode=stat.S_IMODE(info.st_mode),socket_inode=info.st_ino)
+ if not stat.S_ISSOCK(info.st_mode) or info.st_uid!=os.getuid():raise ValueError('invalid scoped tmux socket')
+ stage='tmux_windows'
+ command=subprocess.run(['/usr/bin/tmux','-S',str(socket),'list-windows','-t','=cauce-'+key,'-F',
+  '#{session_name}|#{window_name}|#{window_panes}|#{@cauce_alias}|#{@cauce_harness}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_current_path}'],capture_output=True,text=True,timeout=5)
+ result['tmux_exit_code']=command.returncode;result['windows']=[]
+ if command.returncode==0:
+  if len(command.stdout)>65536:raise ValueError('tmux metadata exceeds its bound')
+  for line in command.stdout.splitlines():
+   fields=line.split('|')
+   if len(fields)!=9:raise ValueError('tmux metadata shape differs')
+   session,window,panes,alias,harness,pane,pid,dead,cwd=fields
+   observed={'session_matches':session=='cauce-'+key,'window_matches':window=='agente','panes':int(panes),
+    'alias_matches':alias==key,'harness_matches':harness=='codex','pane':pane,'pid':int(pid),'dead':dead=='1','cwd_matches':cwd==state+'/space/projects'}
+   stage='pane_process';proc=pathlib.Path('/proc')/pid
+   try:
+    values=(proc/'stat').read_text().rsplit(')',1)[1].split();observed.update(starttime=int(values[19]),process_state=values[0],process_uid=proc.stat().st_uid)
+   except FileNotFoundError:observed['process_absent']=True
+   result['windows'].append(observed)
+print(json.dumps(result))`;
+    const logScript = `import json,os,pathlib,re,stat,sys
+result={};stage='sdk_log'
+sys.excepthook=lambda kind,error,trace: print(json.dumps({'error_stage':stage,'error_type':kind.__name__,'errno':getattr(error,'errno',None)}))
+try:fd=os.open(pathlib.Path(sys.argv[1])/'.cauce-adapter.log',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+except FileNotFoundError:result['log_absent']=True
+else:
+ try:
+  info=os.fstat(fd);assert stat.S_ISREG(info.st_mode) and info.st_uid==0 and info.st_nlink==1 and not info.st_mode&63
+  os.lseek(fd,max(0,info.st_size-262144),os.SEEK_SET);raw=os.read(fd,262144).decode(errors='replace')
+ finally:os.close(fd)
+ result={'log_observed':True,'codes':sorted(set(re.findall(r'(?m)^(AGENT_DISABLED|SHARED_TUI_UNAVAILABLE|ADAPTER_FATAL|LEASE_CONFLICT|BOOTSTRAP_FAILED)(?=:|$)',raw))),
+  'disabled_gate_mentioned':'AGENT_DISABLED' in raw or 'agent_disabled' in raw,'shared_degraded_event':'"shared_session_degraded"' in raw}
+print(json.dumps(result))`;
+    const results = await Promise.all([
+      fixture.computer.onComputer(['docker', 'exec', '--user', row.runtime_user, physical.sdk.container_id, 'python3', '-I', '-B', '-c',
+        script, ptyFleetRuntimeKey, row.state_directory, TMUX_SOCKET]),
+      fixture.computer.onComputer(['docker', 'exec', '--user', '0', physical.sdk.container_id, 'python3', '-I', '-B', '-c', logScript, row.state_directory]),
+    ]);
+    const [tmux, sdkLog] = results.map(result => ({ exit_code: result.code, observation: result.stdout.trim()
+      ? JSON.parse(result.stdout) as unknown : { unavailable: true } }));
+    await ptyFleetReceipt(phase + '-tui-diagnostics', { sdk: physical.sdk, tmux, sdk_log: sdkLog });
+  } catch {
+    await ptyFleetReceipt(phase + '-tui-diagnostics', { observation_unavailable: true });
+  }
+}
+
 interface PaneObservation {
   container_id: string;
   pane: string; pid: number; starttime: number; native_id: string; clients: number; socket_inode: number;
@@ -78,14 +137,26 @@ function samePane(actual: PaneObservation, previous: PaneObservation): void {
   expect(actual.native_id).toBe(previous.native_id); expect(actual.socket_inode).toBe(previous.socket_inode);
 }
 
-export async function usePtyFleetTui(fixture: PtyFleetFixture, cli: PtyFleetCli, phase: string,
-  previous?: { marker: string; nativeId: string }): Promise<{ marker: string; nativeId: string }> {
-  const targets = await apiGet(fixture.page, '/v3/console/terminal/targets');
-  expect(targets.status).toBe(200);
-  const target = (targets.body.items as { tenant_id: string; alias: string; modes: string[]; writable_modes?: string[] }[])
-    .find(item => item.tenant_id === fixture.tenantId && item.alias === ptyFleetAlias);
+export async function waitPtyFleetTuiModes(fixture: PtyFleetFixture): Promise<{
+  tenant_id: string; alias: string; modes: string[]; writable_modes?: string[];
+}> {
+  let target: { tenant_id: string; alias: string; modes: string[]; writable_modes?: string[] } | undefined;
+  await expect.poll(async () => {
+    const targets = await apiGet(fixture.page, '/v3/console/terminal/targets');
+    expect(targets.status).toBe(200);
+    target = (targets.body.items as NonNullable<typeof target>[])
+      .find(item => item.tenant_id === fixture.tenantId && item.alias === ptyFleetAlias);
+    return ['shell', 'harness', 'harness_rw'].every(mode => target?.modes.includes(mode)) && target?.writable_modes?.includes('harness_rw');
+  }, { timeout: 30_000, interval: 300 }).toBe(true);
   expect(target?.modes).toEqual(expect.arrayContaining(['shell', 'harness', 'harness_rw']));
   expect(target?.writable_modes).toContain('harness_rw');
+  if (!target) throw new Error('the announced canonical TUI target is unavailable');
+  return target;
+}
+
+export async function usePtyFleetTui(fixture: PtyFleetFixture, cli: PtyFleetCli, phase: string,
+  previous?: { marker: string; nativeId: string }): Promise<{ marker: string; nativeId: string }> {
+  const target = await waitPtyFleetTuiModes(fixture);
   const known = new Set((await fixture.computer.pool.query<{ id: string }>(
     "SELECT id FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 AND mode IN ('harness','harness_rw')",
     [fixture.tenantId, ptyFleetAlias])).rows.map(row => row.id));

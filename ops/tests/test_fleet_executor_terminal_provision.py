@@ -97,7 +97,7 @@ class TerminalVerifiedInventoryTest(unittest.TestCase):
 class TerminalPresenceTest(unittest.TestCase):
     def check_presence(self, invocation, *, process_uid=None, wire='logical', record_fields=None,
                        missing_fields=(), environment=None, environments=None, process_starttimes=(77, 77),
-                       after_invocation=None, attempts=1, observations=None, shared_tui=False, modes='shell,harness'):
+                       after_invocation=None, attempts=1, observations=None, modes='shell,harness'):
         current = 'a' * 32
         unit = 'cauce-v3-pty@physical.service'
         state = 'ActiveState=active\nMainPID=101\nExecMainStartTimestampMonotonic=100\nInvocationID=' + current
@@ -133,7 +133,7 @@ class TerminalPresenceTest(unittest.TestCase):
                 mock.patch.object(manager.pathlib.Path, 'read_text', autospec=True, side_effect=process_text), \
                 mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_uid=os.geteuid() if process_uid is None else process_uid)), \
                 mock.patch.object(manager.subprocess, 'run', return_value=result) as journal:
-            observed = manager.presence(unit, wire, 'b' * 64, attempts=attempts, shared_tui=shared_tui)
+            observed = manager.presence(unit, wire, 'b' * 64, attempts=attempts)
         if observations is not None:
             observations['journal_queries'] = journal.call_count
         command = journal.call_args.args[0]
@@ -173,11 +173,11 @@ class TerminalPresenceTest(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(SafeFailure):
                 self.check_presence('a' * 32, **options)
 
-    def test_shared_approval_requires_the_current_ack_to_include_both_real_tui_modes(self):
-        self.assertTrue(self.check_presence('a' * 32, shared_tui=True, modes='shell,harness,harness_rw')['relay_acknowledged'])
-        for modes in ('shell', 'shell,harness', 'shell,harness_rw', 'shell,harness,harness_rw,harness'):
+    def test_the_transport_ack_can_precede_the_shared_panel_but_must_include_shell_exactly_once(self):
+        self.assertTrue(self.check_presence('a' * 32, modes='shell')['relay_acknowledged'])
+        for modes in ('harness', 'harness,harness_rw', 'shell,shell'):
             with self.subTest(modes=modes), self.assertRaises(SafeFailure):
-                self.check_presence('a' * 32, shared_tui=True, modes=modes)
+                self.check_presence('a' * 32, modes=modes)
 
     def test_an_active_unit_waits_for_its_initial_exec_environment_before_accepting_its_ack(self):
         approved = ['CAUCE_PTY_AGENT_VERSION=' + 'b' * 64, 'INVOCATION_ID=' + 'a' * 32]
@@ -333,7 +333,7 @@ class TerminalProvisionTest(unittest.TestCase):
         self.ensure()
         selected = self.home / '.config/systemd/user/cauce-v3-pty@physical-one.service.d/zz-fleet-terminal.conf'
         self.assertIn(b'CAUCE_PTY_FLEET_SHARED_TUI=1', selected.read_bytes())
-        self.assertTrue(self.mocks[6].call_args.kwargs['shared_tui'])
+        self.mocks[6].assert_called_with('cauce-v3-pty@physical-one.service', 'same_alias', 'b' * 64)
 
     def test_healthy_existing_channel_reuses_its_credentials_without_issuance_or_rollback_revocation(self):
         self.ensure()

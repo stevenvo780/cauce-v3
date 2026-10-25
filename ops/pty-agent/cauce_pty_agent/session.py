@@ -30,7 +30,7 @@ from .framing import (
     verify_ticket,
 )
 from .openclaw_input import OpenClawInput
-from .tmux import LIVE_TMUX_HARNESSES, resolve_openclaw_tui_command, resolve_tmux_tui_command
+from .tmux import dynamic_tmux_capability, resolve_openclaw_tui_command, resolve_tmux_tui_command
 from .tui_environment import PATH_KEYS, measured_environment, openclaw_environment
 
 MAX_SESSIONS = 2
@@ -500,7 +500,7 @@ class SessionMixin:
             if now >= expiry:
                 del self.tombstones[session_id]
         dynamic_tui = self.bundle.get("openclaw_tui") is not None \
-            or self.bundle.get("harness") in LIVE_TMUX_HARNESSES
+            or dynamic_tmux_capability(self.bundle)
         if dynamic_tui and now >= self.next_dynamic_capability_check:
             self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
             if self._advertised_modes() != self.modes:
