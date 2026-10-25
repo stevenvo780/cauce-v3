@@ -4,4 +4,6 @@ FROM docker.io/library/node:22-trixie-slim@sha256:8eb619e402eaede1748a3c8173bffa
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git jq openssh-client openssl procps python3 tmux && rm -rf /var/lib/apt/lists/*
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
-RUN npm install --global --no-audit --no-fund pnpm@11.8.0
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+# The release tooling runs /usr/bin/docker by absolute path, as on the real hosts.
+RUN ln -s /usr/local/bin/docker /usr/bin/docker && npm install --global --no-audit --no-fund pnpm@11.8.0
