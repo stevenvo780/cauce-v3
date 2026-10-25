@@ -49,13 +49,17 @@ export async function assertStoppedCurrentRuntimeSkipped(): Promise<void> {
     const running = await observeCancelDeployActor(actor);
     expect(running.adapterAlive).toBe(true);
     const known = new Set((await automaticOperations(actor)).map(row => row.id));
-    await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c',
-      'import os,signal,sys;os.kill(int(sys.argv[1]),signal.SIGKILL)', String(running.pid)]);
+    // El contenedor corre sin CAP_KILL: se para el contenedor entero, que es como queda un adaptador parado fuera de flota.
+    const inspect = async () => JSON.parse(await docker(['inspect', '--format', '{{json .}}', actor.container])) as {
+      Id: string; State: { Running: boolean }; Mounts: { Type: string; Source: string; Name?: string }[] };
+    const mounts = (row: Awaited<ReturnType<typeof inspect>>) => row.Mounts.map(mount => mount.Type + ':' + (mount.Name ?? mount.Source)).sort();
+    const before = await inspect();
+    await docker(['stop', '--time', '10', actor.container]);
     const killedAt = Date.now();
-    await expect.poll(async () => (await observeCancelDeployActor(actor)).adapterAlive, { timeout: 20_000 }).toBe(false);
-    const stopped = await observeCancelDeployActor(actor);
-    expect(stopped.running).toBe(true);
-    expect(stopped.release).toBe(running.release);
+    const stopped = await inspect();
+    expect(stopped.State.Running).toBe(false);
+    expect(stopped.Id).toBe(before.Id);
+    expect(mounts(stopped)).toEqual(mounts(before));
     scans.afterStop();
     await expect.poll(async () => (await skips()).filter(row => !known.has(row.id)
       && row.created_at.getTime() > killedAt).length, { timeout: 95_000 }).toBeGreaterThan(0);
@@ -63,11 +67,11 @@ export async function assertStoppedCurrentRuntimeSkipped(): Promise<void> {
     evidence.operations = operations.map(row => ({ id: row.id.slice(0, 8), status: row.status, desired: row.desired_revision,
       skipped: row.events.map(event => event.metadata.maintenance_skipped).filter(Boolean) }));
     expect(operations.filter(row => !known.has(row.id) && !['cancelled'].includes(row.status))).toEqual([]);
-    const after = await observeCancelDeployActor(actor);
-    expect(after.adapterAlive).toBe(false);
-    expect(after.id).toBe(stopped.id);
-    expect(after.volumes).toEqual(stopped.volumes);
-    evidence.after = after;
+    const after = await inspect();
+    expect(after.State.Running).toBe(false);
+    expect(after.Id).toBe(stopped.Id);
+    expect(mounts(after)).toEqual(mounts(stopped));
+    evidence.after = { id: after.Id.slice(0, 12), running: after.State.Running, mounts: mounts(after).length };
     evidence.scans = { ...scans.counts };
     await cancelDeployCapture(fixture.page, 'auto-stopped-current');
     fixture.errors.assertClean();
