@@ -345,7 +345,6 @@ class TerminalLegacyUnitTest(unittest.TestCase):
                  release / 'pty-agent/systemd/cauce-v3-pty@.service': template if published_template is None else published_template}
         rollout = mock.Mock()
         rollout.RolloutError = RuntimeError
-        worker = rollout.ManagerWorker.return_value
 
         def validate(version):
             if not validated or version != 'd' * 64:
@@ -353,15 +352,15 @@ class TerminalLegacyUnitTest(unittest.TestCase):
             selected = {'tenant': 'Steven', 'alias': 'logical', 'container': 'physical-container', **(identity or {})}
             return release, mock.Mock(aliases={'logical': selected})
 
-        worker.validate_release.side_effect = validate
-        with mock.patch.object(manager, 'properties', return_value=row), \
+        with mock.patch.object(manager, 'legacy_release', side_effect=validate) as verified, \
+                mock.patch.object(manager, 'properties', return_value=row), \
                 mock.patch.object(manager, 'checked_file', side_effect=lambda path, **_options: files[path]), \
                 mock.patch.object(manager.pathlib.Path, 'stat', return_value=mock.Mock(st_mode=0o100644)), \
                 mock.patch.dict(sys.modules, {'rollout_pty_lib': rollout}):
             result = manager.pin_unit(unit, root, b'[Service]\nExecStart=/new/launcher %i\n',
                                       agent={'tenant_id': 'Steven', 'alias': 'logical', 'runtime_key': 'physical',
                                              'container_name': 'physical-container'})
-        worker.validate_release.assert_called_once_with('d' * 64)
+        verified.assert_called_once_with('d' * 64)
         self.assertEqual(result, {**row, 'legacy_dropins': [{'path': str(dropin), 'sha256': hashlib.sha256(raw).hexdigest(), 'mode': 0o644}]})
         return result
 
@@ -390,6 +389,39 @@ class TerminalLegacyUnitTest(unittest.TestCase):
                         {'filename': '10-custom.conf'}, {'fragment': pathlib.Path('/fixture/systemd/cauce-v3-pty@logical.service')}):
             with self.subTest(options=options), self.assertRaises(SafeFailure):
                 self.pin_legacy(**options)
+
+    def published_release(self, files):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
+        import rollout_pty_lib as rollout
+        work = pathlib.Path(tempfile.mkdtemp(prefix='cauce-legacy-release-'))
+        self.addCleanup(__import__('shutil').rmtree, work, True)
+        pins = {}
+        for name, body in files.items():
+            (work / name).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            (work / name).write_bytes(body)
+            pins[name] = hashlib.sha256(body).hexdigest()
+        sha = rollout.sha256(rollout.canonical_json({'schemaVersion': rollout.SCHEMA_VERSION, 'files': pins}))
+        (work / 'manifest.json').write_bytes(json.dumps({'schemaVersion': rollout.SCHEMA_VERSION, 'releaseSha': sha,
+                                                         'files': pins, 'mappingSha256': pins.get('container-aliases.json')}).encode())
+        return rollout, work, sha
+
+    def test_an_older_v3_release_is_verified_over_its_own_manifest_and_tampering_still_fails(self):
+        files = {name: name.encode() for name in manager.LEGACY_RELEASE_FILES} | {'pty-agent/cauce-pty-host-launcher.sh': b'host'}
+        rollout, work, sha = self.published_release(files)
+        with mock.patch.object(rollout.ManagerWorker, 'release_path', return_value=work), \
+                mock.patch.object(rollout.Fleet, 'load', return_value='fleet') as load:
+            self.assertEqual(manager.legacy_release(sha), (work, 'fleet'))
+            load.assert_called_once_with(b'container-aliases.json')
+            (work / 'pty-agent/cauce-pty-host-launcher.sh').write_bytes(b'changed')
+            with self.assertRaises(rollout.RolloutError):
+                manager.legacy_release(sha)
+        missing = {name: body for name, body in files.items() if name != 'pty-agent/systemd/cauce-v3-pty@.service'}
+        rollout, work, sha = self.published_release(missing)
+        with mock.patch.object(rollout.ManagerWorker, 'release_path', return_value=work), self.assertRaises(rollout.RolloutError):
+            manager.legacy_release(sha)
+        rollout, work, sha = self.published_release(files)
+        with mock.patch.object(rollout.ManagerWorker, 'release_path', return_value=work), self.assertRaises(rollout.RolloutError):
+            manager.legacy_release('e' * 64)
 
     def test_a_noncanonical_generic_template_without_a_release_selector_still_fails_closed(self):
         row = {'LoadState': 'loaded', 'FragmentPath': '/fixture/systemd/cauce-v3-pty@.service', 'DropInPaths': ''}

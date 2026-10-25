@@ -68,13 +68,53 @@ def unit_state(unit: str, root: pathlib.Path) -> dict:
     return {'active': row.get('ActiveState') == 'active', 'enabled': row.get('UnitFileState', '').startswith('enabled')}
 
 
+LEGACY_RELEASE_FILES = frozenset({'container-aliases.json', 'pty-agent/cauce-pty-launcher.sh', 'pty-agent/systemd/cauce-v3-pty@.service'})
+
+
+def legacy_release(release_sha: str):
+    """A V3 rollout release is content-addressed over its own manifest file set, which older rollouts drew from a
+    shorter list than today's; every listed file, the digest and the alias mapping are still verified exactly."""
+    from rollout_pty_lib import (
+        SCHEMA_VERSION,
+        Fleet,
+        ManagerWorker,
+        canonical_json,
+        duplicate_safe_json,
+        fail,
+        safe_directory,
+        safe_regular,
+        sha256,
+    )
+    root = ManagerWorker('server').release_path(release_sha)
+    safe_directory(root)
+    manifest = root / 'manifest.json'
+    safe_regular(manifest, 'manifest del release')
+    document = duplicate_safe_json(manifest.read_bytes(), 'manifest del release')
+    files = document.get('files')
+    if document.get('schemaVersion') != SCHEMA_VERSION or document.get('releaseSha') != release_sha \
+            or not isinstance(files, dict) or not LEGACY_RELEASE_FILES <= set(files) \
+            or any(not isinstance(name, str) or name.startswith('/') or '..' in pathlib.PurePosixPath(name).parts
+                   for name in files):
+        fail('manifest del release publicado es invalido')
+    calculated = {}
+    for relative in files:
+        safe_regular(root / relative, f'input publicado {relative}')
+        calculated[relative] = sha256((root / relative).read_bytes())
+    if files != calculated:
+        fail('un release publicado cambio de contenido')
+    if sha256(canonical_json({'schemaVersion': SCHEMA_VERSION, 'files': calculated})) != release_sha \
+            or document.get('mappingSha256') != calculated['container-aliases.json']:
+        fail('digest del release publicado no cierra')
+    return root, Fleet.load((root / 'container-aliases.json').read_bytes())
+
+
 def legacy_selector(filename: pathlib.Path, values: dict, commands: list[str], unit: str, root: pathlib.Path,
                     agent: dict) -> tuple[pathlib.Path, bytes]:
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
     try:
-        from rollout_pty_lib import ManagerWorker, RolloutError
+        from rollout_pty_lib import RolloutError
         try:
-            published, fleet = ManagerWorker('server').validate_release(values.get('CAUCE_PTY_AGENT_VERSION', ''))
+            published, fleet = legacy_release(values.get('CAUCE_PTY_AGENT_VERSION', ''))
         except RolloutError:
             raise SafeFailure('terminal legacy immutable release is unverified') from None
         if set(values) != {'CAUCE_PTY_OPS_ROOT', 'CAUCE_PTY_AGENT_VERSION'} \
