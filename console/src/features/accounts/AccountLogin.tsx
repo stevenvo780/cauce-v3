@@ -48,12 +48,16 @@ export function AccountLogin({ account, companyId, snapshot, allowed, reload, re
     && operation.status === 'awaiting_auth';
   const brokenEnvironment = environment?.status === 'failed' && operation?.action === 'create';
   const otherOperation = !scope && !!operation && BUSY.includes(operation.status) && operation.action !== 'authenticate' && operation.action !== 'create';
+  const noTarget = !destination || (!environment && !!snapshot && !snapshot.capabilities.hosts.some(host => host.host_id === hostId
+    && quotaHostSupports(host, account.provider, 'create') && quotaHostSupports(host, account.provider, 'authenticate')));
+  // A balance already measured (by the account's agents, say) means the account has a working session: no sign-in is asked for.
+  const measuredElsewhere = noTarget && !requested && account.refresh_status !== 'not_authenticated'
+    && account.windows.some(window => window.observation_status === 'ok');
   const block = !allowed ? 'Solo el dueño o un administrador de la empresa inicia sesión en las cuentas.'
     : !snapshot ? 'Todavía no llegó la lectura de entornos. Espera unos segundos.'
       : destination?.environmentId && ((!environment && !busy) || environment?.status === 'deleted' || environment?.status === 'deleting') ? 'Este entorno ya no está disponible. Actualiza cuotas y entornos.'
         : environment && !environmentHost ? 'El ordenador del entorno de esta cuenta no está disponible ahora. Revisa que esté encendido y conectado.'
-          : !destination || (!environment && !snapshot.capabilities.hosts.some(host => host.host_id === hostId
-            && quotaHostSupports(host, account.provider, 'create') && quotaHostSupports(host, account.provider, 'authenticate')))
+          : noTarget
             ? snapshot.capabilities.hosts.length
               ? `Ningún ordenador conectado ofrece iniciar sesión en ${account.provider}: el ejecutor de cuotas de la empresa no tiene ese proveedor. Revisa los proveedores del ordenador en Ajustes → Computadoras.`
               : `Ningún ordenador de la empresa puede iniciar sesión en ${account.provider}. Conecta un ordenador con el ejecutor de cuotas en Ajustes → Computadoras.`
@@ -147,6 +151,9 @@ export function AccountLogin({ account, companyId, snapshot, allowed, reload, re
     : !environment ? 'Preparando el entorno de la cuenta…'
       : (environment.status === 'pending' || environment.status === 'running') ? 'Preparando el entorno de la cuenta…'
         : awaitingLogin ? 'Abriendo la terminal de inicio de sesión…' : 'Pidiendo el inicio de sesión…';
+  if (measuredElsewhere && snapshot && allowed && !error) return <section aria-label={`Inicio de sesión de ${account.label}`} className="grid gap-2">
+    <p className="m-0 text-sm text-muted">El saldo ya se mide con la sesión de esta cuenta. Solo tendrás que iniciar sesión aquí si la medición se detiene o la sesión caduca.</p>
+  </section>;
   return <section aria-label={`Inicio de sesión de ${account.label}`} className="grid gap-2">
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="primary" disabled={!!block || busy || requested} title={block}

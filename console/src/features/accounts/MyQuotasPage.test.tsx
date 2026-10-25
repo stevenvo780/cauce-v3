@@ -90,6 +90,27 @@ it('datos antiguos con saldo cero no muestran el cansancio de agotado', async ()
   expect(card.getAllByText('Datos antiguos').length).toBeGreaterThan(0);
   expect(card.queryByText('Sin disponibilidad')).not.toBeInTheDocument();
 });
+it('una cuenta con saldo medido sin ordenador de cuotas no ofrece iniciar sesión ni dice que falte un proveedor', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [account] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: true, providers: ['claude'], hosts: [{ host_id: 'host', display_name: 'Host', providers: ['claude'], provider_actions: { claude: ['create', 'authenticate'] } }], actions: ['create', 'authenticate'] } })));
+  renderWithApi(owner());
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
+  expect(card.getByRole('meter')).toHaveAttribute('value', '56');
+  await waitFor(() => { expect(card.getByText(/El saldo ya se mide con la sesión de esta cuenta/u)).toBeVisible(); });
+  expect(card.queryByText(/Ningún ordenador/u)).not.toBeInTheDocument();
+  expect(card.queryByRole('button', { name: 'Iniciar sesión' })).not.toBeInTheDocument();
+});
+it('una cuenta sin saldo medido y sin ordenador explica qué falta para iniciar sesión', async () => {
+  server.use(http.get('*/v3/console/quota-accounts', () => HttpResponse.json({ company_id: 'one', observed_at: '2026-10-11T00:00:00Z', accounts: [
+    { ...account, observation_status: 'stale', windows: [{ ...account.windows[0], observation_status: 'stale' }] }] })),
+    http.get('*/v3/console/quota-environments', () => HttpResponse.json({ company_id: 'one', environments: [], operations: [],
+      capabilities: { available: true, providers: ['claude'], hosts: [{ host_id: 'host', display_name: 'Host', providers: ['claude'], provider_actions: { claude: ['create', 'authenticate'] } }], actions: ['create', 'authenticate'] } })));
+  renderWithApi(owner());
+  const card = within(await screen.findByRole('article', { name: 'Cuotas de Cuenta compartida' }));
+  expect(await card.findByText(/Ningún ordenador conectado ofrece iniciar sesión en codex/u)).toBeVisible();
+  expect(card.getByRole('button', { name: 'Iniciar sesión' })).toBeDisabled();
+});
 it('iniciar sesión pide el login con un solo clic y muestra la operación pendiente sin afirmar autenticación completa', async () => {
   const environment = { id: 'env-1', company_id: 'one', account_id: 'subscription', host_id: 'host', provider: 'codex', label: 'Consulta GPT',
     status: 'ready', version: 2, created_at: '2026-10-11T00:00:00Z', updated_at: '2026-10-11T00:00:00Z' };

@@ -15,6 +15,7 @@ import { ConfigChangeReceipt } from './ConfigChangeReceipt';
 import { ConflictNotice } from '../../components/ConflictNotice';
 import { useConfigMutation, useRevisionEncadenada } from './use-config-mutation';
 import { hostById, hostUnavailableReason, useFleetHosts } from './use-fleet-hosts';
+import { placementHosts, quotaOnlyHostIds, useQuotaOnlyInputs } from './quota-only-hosts';
 import { fleetCapabilityReasonText } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import { agentLifecycleDraft } from './agent-lifecycle-model';
@@ -80,7 +81,9 @@ export function AgentRegistryCreate({ snapshot, open, onOpenChange, onReloaded, 
   const tenants = useMemo(() => registryTenantOptions(activeSnapshot), [activeSnapshot]);
   const harnesses = useMemo(() => registryHarnessOptions(activeSnapshot), [activeSnapshot]);
   const rooms = useMemo(() => registryRoomOptions(activeSnapshot, draft.tenantId), [activeSnapshot, draft.tenantId]);
-  const hosts = fleet.hosts ?? [];
+  const quotaInputs = useQuotaOnlyInputs(open);
+  const hosts = useMemo(() => placementHosts(fleet.hosts ?? [], quotaOnlyHostIds(fleet.hosts ?? [], quotaInputs.quota, quotaInputs.enrollments), draft.hostId),
+    [fleet.hosts, quotaInputs.quota, quotaInputs.enrollments, draft.hostId]);
   const hostReason = hostUnavailableReason(hostById(fleet.hosts, draft.hostId));
   const error = agentRegistryCreateError(draft, activeSnapshot);
   const mutation = error ? undefined : createAgentRegistryMutation(draft);
