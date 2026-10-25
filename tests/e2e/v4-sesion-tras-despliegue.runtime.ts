@@ -1,15 +1,42 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { expect } from 'vitest';
+import { approvedAgentQuotaHarnesses } from '../../packages/store/src/agent-quota-operations-model.js';
 import { command, docker, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { cancelDeployReceipts, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
+import type { SessionRelease } from './v4-sesion-tras-despliegue.release.js';
 
 export const AUTO_SESSION_OWNER = 'h13b-v4-1025';
 export const AUTO_SESSION_MODEL = 'gpt-5.4';
 const readerName = 'v4-sesion-tras-despliegue-quota.py';
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+
+export async function registerSessionQuotaApprovals(release: SessionRelease) {
+  const directory = join(dirname(release.directory), 'stage/adapter/descriptors');
+  const descriptorSha256 = hash(await readFile(join(directory, 'codex.json')));
+  expect(descriptorSha256).toBe(release.source.fixture?.descriptors['descriptors/codex.json']);
+  expect(descriptorSha256).toBe(release.source.fixture?.descriptors['packages/adapter-sdk/dist/descriptors/codex.json']);
+  const approvalsFile = join(dirname(release.directory), 'quota-descriptor-approvals.json');
+  await writeFile(approvalsFile, JSON.stringify({ codex: descriptorSha256 }) + '\n', { mode: 0o600 });
+  const previous = { approvals: process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE,
+    directory: process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY };
+  const close = () => {
+    if (previous.approvals === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE;
+    else process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE = previous.approvals;
+    if (previous.directory === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
+    else process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = previous.directory;
+  };
+  const before = await approvedAgentQuotaHarnesses();
+  process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE = approvalsFile;
+  process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = directory;
+  try {
+    const approved = await approvedAgentQuotaHarnesses();
+    expect(approved).toEqual(['codex']);
+    return { close, evidence: { releaseSha256: release.manifest.release.sha256, descriptorSha256, before, approved } };
+  } catch (error) { close(); throw error; }
+}
 
 export async function stageSessionDescriptors(adapter: string): Promise<Record<string, string>> {
   const source = JSON.parse(await readFile(join(adapter, 'descriptors/codex.json'), 'utf8')) as {

@@ -7,7 +7,7 @@ import { assertNativeSessionTurn, collectSessionFailure, observeSessionExecutor,
 import { buildSessionRelease, installSessionRelease } from './v4-sesion-tras-despliegue.release.js';
 import { automaticSessionReleaseSource, SESSION_RELEASE_A } from './v4-sesion-tras-despliegue.refs.js';
 import { AUTO_SESSION_OWNER, controlledSessionRuntime, prepareSessionQuotaImage,
-  stageSessionDescriptors } from './v4-sesion-tras-despliegue.runtime.js';
+  registerSessionQuotaApprovals, stageSessionDescriptors } from './v4-sesion-tras-despliegue.runtime.js';
 import { assertSessionTurnOrdering, automaticOperations, deliveryState, finishSessionDelivery, observeAutomaticActor, observeAutomaticQuota, providerState,
   sendSessionDelivery, sessionControl, sessionKeys } from './v4-sesion-tras-despliegue.control.js';
 
@@ -28,6 +28,7 @@ describe('actualización automática de ejecuciones V4 tras una release', () => 
     const canaries: Canary[] = [];
     const failures: unknown[] = [];
     let fixture: CancelDeployFixture | undefined;
+    let quotaApproval: Awaited<ReturnType<typeof registerSessionQuotaApprovals>> | undefined;
     try {
       await mkdir(cancelDeployReceipts, { recursive: true, mode: 0o700 });
       const runtime = await controlledSessionRuntime();
@@ -43,6 +44,8 @@ describe('actualización automática de ejecuciones V4 tras una release', () => 
       evidence.initial = canaries.map(row => ({ actor: row.actor.alias, before: row.before, context: row.context, native: row.native }));
       const releaseB = await buildSessionRelease(fixture, 'auto-b', source.reference, source.workingTree, overlay);
       evidence.sourceB = releaseB;
+      quotaApproval = await registerSessionQuotaApprovals(releaseB);
+      evidence.quotaApproval = quotaApproval.evidence;
       expect(releaseB.source.fixture).toEqual(releaseA.source.fixture);
       await sessionKeys(draft.actor, ['H13B_OWNED_UNSENT_DRAFT'], true);
       await expect.poll(async () => (await providerState(draft.actor)).draftLength, { timeout: 20_000 }).toBe(23);
@@ -111,6 +114,7 @@ describe('actualización automática de ejecuciones V4 tras una release', () => 
         try { await fixture.close(); evidence.cleanup = { containers: '', volumes: '', images: '' }; }
         catch (error) { failures.push(error); evidence.cleanupError = error instanceof Error ? error.message : String(error); }
       }
+      quotaApproval?.close();
       await sessionReceipt('auto-evidence', evidence);
     }
     console.info('H13B_EVIDENCE', cancelDeployReceipts, baseline ? 'baseline' : 'candidate', failures.length === 0 ? 'green' : 'red');

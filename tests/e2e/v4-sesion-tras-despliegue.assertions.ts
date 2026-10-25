@@ -141,8 +141,19 @@ export async function assertUpdated(canary: Canary, fixture: CancelDeployFixture
   expect(resume?.metadata.maintenance_resume_sha256).toMatch(/^[a-f0-9]{64}$/u);
   expect(operation.events.some(row => row.event === 'succeeded')).toBe(true);
   expect(operation.steps.find(row => row.name === 'stop')?.status).toBe('succeeded');
-  const observed = await observeAutomaticActor(canary.actor);
   const expectedRelease = join(fixture.computer.installRoot, fixture.company, fixture.hostId, 'release', release.manifest.release.sha256);
+  let observed: Observation | undefined;
+  await expect.poll(async () => {
+    try { observed = await observeAutomaticActor(canary.actor); }
+    catch { return false; }
+    const livePane = observed.runtime.tmux.panes.split('\n').some(row => {
+      const fields = row.split('|');
+      return fields[0] === 'cauce-' + canary.actor.runtime && fields[5] === '0';
+    });
+    return observed.actor.running && observed.actor.adapterAlive && observed.actor.release === expectedRelease
+      && observed.actor.bundleDigest === release.manifest.pins.adapter_digest && observed.runtime.tmux.code === 0 && livePane;
+  }, { timeout: 60_000, interval: 500 }).toBe(true);
+  if (!observed) throw new Error('the replacement runtime and canonical TUI did not become observable');
   expect(observed.actor.id).not.toBe(canary.before.actor.id);
   expect(observed.actor.release).toBe(expectedRelease);
   expect(observed.actor.bundleDigest).toBe(release.manifest.pins.adapter_digest);

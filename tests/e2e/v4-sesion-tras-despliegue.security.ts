@@ -7,7 +7,8 @@ import { automaticOperations, finishSessionDelivery, observeAutomaticActor, obse
   sessionPointerState } from './v4-sesion-tras-despliegue.control.js';
 import { buildSessionRelease, installSessionRelease } from './v4-sesion-tras-despliegue.release.js';
 import { automaticSessionReleaseSource, SESSION_RELEASE_A } from './v4-sesion-tras-despliegue.refs.js';
-import { AUTO_SESSION_OWNER, controlledSessionRuntime, prepareSessionQuotaImage, stageSessionDescriptors } from './v4-sesion-tras-despliegue.runtime.js';
+import { AUTO_SESSION_OWNER, controlledSessionRuntime, prepareSessionQuotaImage, registerSessionQuotaApprovals,
+  stageSessionDescriptors } from './v4-sesion-tras-despliegue.runtime.js';
 
 export async function assertUninitializedSessionDeferred(): Promise<void> {
   expect(CANCEL_DEPLOY_OWNER).toBe(AUTO_SESSION_OWNER);
@@ -17,6 +18,7 @@ export async function assertUninitializedSessionDeferred(): Promise<void> {
     releaseBReference: source.reference, releaseBWorkingTree: source.workingTree };
   const failures: unknown[] = [];
   let fixture: CancelDeployFixture | undefined;
+  let quotaApproval: Awaited<ReturnType<typeof registerSessionQuotaApprovals>> | undefined;
   let unseeded: UnseededCanary | undefined;
   try {
     const runtime = await controlledSessionRuntime();
@@ -32,6 +34,8 @@ export async function assertUninitializedSessionDeferred(): Promise<void> {
     evidence.initial = { before: unseeded.before, context: unseeded.context, pointer };
     const releaseB = await buildSessionRelease(fixture, 'security-b', source.reference, source.workingTree, overlay);
     evidence.sourceB = releaseB;
+    quotaApproval = await registerSessionQuotaApprovals(releaseB);
+    evidence.quotaApproval = quotaApproval.evidence;
     expect(releaseB.source.fixture).toEqual(releaseA.source.fixture);
     evidence.setupB = await installSessionRelease(fixture, releaseB);
     evidence.deferred = await assertDeferred(unseeded, fixture, releaseB, ['preflight_unavailable']);
@@ -69,6 +73,7 @@ export async function assertUninitializedSessionDeferred(): Promise<void> {
       try { await fixture.close(); evidence.cleanup = { containers: '', volumes: '', images: '' }; }
       catch (error) { failures.push(error); evidence.cleanupError = error instanceof Error ? error.message : String(error); }
     }
+    quotaApproval?.close();
     await sessionReceipt('auto-pointer-evidence', evidence);
   }
   if (failures.length) throw new AggregateError(failures, 'uninitialized shared session update safety failed');
