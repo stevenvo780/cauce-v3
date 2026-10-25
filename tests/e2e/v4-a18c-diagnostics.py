@@ -16,10 +16,12 @@ expected=json.loads(sys.argv[1]); result={"diagnostic_only":True}; phase="metada
 try:
  control=open_control_directory(expected["controlDirectory"])
  document,raw=read_metadata(control)
+ result["metadata_present"]=document is not None
  assert document is not None and all(document.get(key)==value for key,value in expected.items())
  result["metadata"]={key:document.get(key) for key in ("phase","pid","starttime","controllerPid","controllerStarttime","stopAuthority")}
  result["metadata_sha256"]=hashlib.sha256(raw).hexdigest()
  phase="process_identity"; verify_adapter(document,document["alias"],document["stateDirectory"]); verify_controller(document)
+ result["process_identity_verified"]=True
  phase="flags"
  with matched_fs_credentials(document["runtimeUid"],document["runtimeGid"]):
   environment=(pathlib.Path("/proc")/str(document["pid"])/"environ").read_bytes()
@@ -68,12 +70,22 @@ def observe() -> dict:
     for name in ("ops/cli/fleet_executor_lifecycle.py", "ops/container-runtime/cauce-container-runtime.py"):
         hashes[name] = hashlib.sha256((release / name).read_bytes()).hexdigest()
     policy = json.loads((pathlib.Path(root) / "executor-policy.json").read_text())
-    inspected = subprocess.run(["/usr/bin/docker", "inspect", container_id], capture_output=True, timeout=10, check=True)
+    record = {"diagnostic_only": True, "functional_stop_repeated": False, "release": release_id,
+              "installed_source_sha256": hashes, "observation_entry_sha256": hashlib.sha256(OBSERVATION.encode()).hexdigest()}
+    inspected = subprocess.run(["/usr/bin/docker", "inspect", container_id], capture_output=True, timeout=10, check=False)
+    if inspected.returncode:
+        absent = re.search(rb"no such (?:object|container)", inspected.stderr, re.I) is not None
+        return {**record, "container": {"exists": False} if absent else {"inspection_exit": inspected.returncode}}
     container, = json.loads(inspected.stdout)
     labels = container["Config"]["Labels"]
-    assert container["Id"] == container_id and container["State"]["Running"]
+    assert container["Id"] == container_id or container["Name"] == "/" + container_id
     assert labels["cauce.fleet.runtime_key"] == key and labels["cauce.fleet.alias"] == alias \
         and labels["cauce.fleet.tenant"] == tenant and labels["cauce.fleet.host"] == policy["host_id"]
+    container_id = container["Id"]
+    record["container"] = {"exists": True, "id": container_id, "running": container["State"]["Running"],
+                           "status": container["State"]["Status"]}
+    if not container["State"]["Running"]:
+        return record
     placement, = [row for row in policy["container_templates"] if row["harness_id"] == "codex"
                    and container["Name"] == "/" + row["prefix"] + key]
     expected = {"alias": key, "wireAlias": alias, "tenantId": tenant, "containerId": container_id,
@@ -86,9 +98,7 @@ def observe() -> dict:
                "-I", "-B", "-c", lifecycle.BOOTSTRAP, hashlib.sha256(raw).hexdigest(), json.dumps(expected)]
     result = subprocess.run(command, input=raw, capture_output=True, timeout=30, check=False)
     assert result.returncode == 0 and len(result.stdout) < 32768
-    return {"diagnostic_only": True, "functional_stop_repeated": False, "release": release_id,
-            "installed_source_sha256": hashes, "observation_entry_sha256": hashlib.sha256(OBSERVATION.encode()).hexdigest(),
-            "observation": json.loads(result.stdout)}
+    return {**record, "observation": json.loads(result.stdout)}
 
 
 try:

@@ -222,16 +222,18 @@ it('login con deriva real recrea el contenedor y reanuda la misma operación des
     evidence.page = await bodySnippet(fixture.page);
     evidence.browser_errors = fixture.errors.unexpected;
     evidence.browser_trace = fixture.errors.trace;
-    if (originalContainer && installedRelease) {
-      try {
-        const source = await readFile('tests/e2e/v4-a18c-diagnostics.py', 'utf8');
-        const diagnostic = await fixture.computer.onComputer(['python3', '-I', '-B', '-c', source,
-          join(fixture.computer.installRoot, fixture.company, fixture.host), installedRelease, KEY, ALIAS, fixture.tenant, originalContainer]);
-        evidence.runtime_diagnostic_exit = diagnostic.code;
-        await writeFile(join(RECEIPTS, 'runtime-diagnostic.json'), diagnostic.stdout, { mode: 0o600 });
-      } catch (diagnosticError) {
-        evidence.runtime_diagnostic_error_class = diagnosticError instanceof Error ? diagnosticError.name : 'unknown';
-      }
+    try {
+      const failedContainer = originalContainer ? undefined : await observe().catch(() => undefined);
+      if (failedContainer) evidence.runtime_failure_container = failedContainer;
+      const diagnosticContainer = originalContainer ?? failedContainer?.id ?? CONTAINER;
+      const diagnosticRelease = installedRelease ?? fixture.firstRelease;
+      const source = await readFile('tests/e2e/v4-a18c-diagnostics.py', 'utf8');
+      const diagnostic = await fixture.computer.onComputer(['python3', '-I', '-B', '-c', source,
+        join(fixture.computer.installRoot, fixture.company, fixture.host), diagnosticRelease, KEY, ALIAS, fixture.tenant, diagnosticContainer]);
+      evidence.runtime_diagnostic_exit = diagnostic.code;
+      await writeFile(join(RECEIPTS, 'runtime-diagnostic.json'), diagnostic.stdout, { mode: 0o600 });
+    } catch (diagnosticError) {
+      evidence.runtime_diagnostic_error_class = diagnosticError instanceof Error ? diagnosticError.name : 'unknown';
     }
     const journal = await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-o', 'cat',
       '--grep=Agent provider authentication command=|provider auth helper failed:|fleet host command failed', '-n', '12']);

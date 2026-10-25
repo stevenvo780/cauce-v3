@@ -51,7 +51,7 @@ export interface A18cOperation {
 export interface A18cFixture {
   computer: ComputerHarness; page: V4Page; baseUrl: string; tenant: string; host: string;
   account: string; room: string; company: string; unit: string; setup: CancelDeploySetup;
-  firstImage: string; firstPortableImage: string; errors: BrowserErrorLog;
+  firstImage: string; firstPortableImage: string; firstRelease: string; errors: BrowserErrorLog;
   deploy(): Promise<{ image: string; portableImage: string; release: string; adapterDigest: string }>;
   close(): Promise<void>;
 }
@@ -81,7 +81,6 @@ export async function startA18cFixture(): Promise<A18cFixture> {
   const directory = await mkdtemp(join(tmpdir(), 'cauce-a18c-'));
   const tls = createSelfSignedCert({ directory });
   const ports = await reserveNamedLoopbackPorts(['frontend'] as const);
-  await ports.releaseAll();
   const baseUrl = 'https://localhost:' + String(ports.ports.frontend);
   const images = new Map<string, string>();
   const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES]);
@@ -93,6 +92,7 @@ export async function startA18cFixture(): Promise<A18cFixture> {
     const attempt = async (action: () => Promise<unknown>) => { try { await action(); } catch (error) { failures.push(error); } };
     await attempt(async () => browser?.close());
     await attempt(async () => vite?.close());
+    await attempt(() => ports.releaseAll());
     if (computer) {
       const active = computer;
       await attempt(async () => {
@@ -124,6 +124,7 @@ export async function startA18cFixture(): Promise<A18cFixture> {
         watch: null, hmr: false, https: { key: await readFile(tls.key_path), cert: await readFile(tls.cert_path) },
         proxy: { '/v3': { target: computer.gatewayUrl, changeOrigin: false, ws: true } } },
     });
+    await ports.release('frontend');
     await vite.listen();
     browser = await startTrustedBrowser(tls.cert_path, directory, [ports.ports.frontend, Number(new URL(computer.gatewayUrl).port)]);
     const context = await browser.browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
@@ -230,7 +231,7 @@ export async function startA18cFixture(): Promise<A18cFixture> {
     await active.pool.query("INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled) VALUES($1,'codex',$2,$3,'env_path','CAUCE_A18C_TEST_PROFILE_PATH',true)",
       [account, FIXTURE_PROVIDER_IDENTITY, tenant]);
     return { computer: active, page, baseUrl, tenant, host, room, account, unit, company: person.company.slug,
-      setup: installed.setup, firstImage: initial.image, firstPortableImage: initial.portableImage, errors, close,
+      setup: installed.setup, firstImage: initial.image, firstPortableImage: initial.portableImage, firstRelease: initial.release, errors, close,
       deploy: async () => {
         const image = await buildImage('updated', first.tag);
         const result = await publish('updated', image);
