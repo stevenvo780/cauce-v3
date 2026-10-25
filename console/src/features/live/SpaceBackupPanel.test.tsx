@@ -221,10 +221,11 @@ it('no depende de AbortSignal.any y explica un 409 del servidor en español', as
     expect(screen.queryByText(/space backup/u)).not.toBeInTheDocument();
   } finally { vi.unstubAllGlobals(); }
 });
-it('explica un 404 con un mensaje específico', async () => {
+it('explica un 404 al crear como estado neutro, sin error', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValue(new ApiError('a placed space backup target is required', 404));
   renderWithApi(panel()); fireEvent.click(screen.getByRole('button', { name: 'Crear backup del espacio' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/No se encontró el agente, su ubicación/u);
+  expect(await screen.findByText(/todavía no tiene habilitada la copia de su espacio/u)).toBeVisible();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 it('indica esperar y actualizar cuando el servicio de backups no está disponible', async () => {
   vi.spyOn(testApi, 'createSpaceBackup').mockRejectedValue(new ApiError('space backup service unavailable', 503, 'space_backup_unavailable'));
