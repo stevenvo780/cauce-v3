@@ -149,11 +149,13 @@ supervise() {
     if (( selected )); then
       stop_and_reclaim || code=1
       save_runner_log || code=1
+      remote rm -rf -- "$vmroot/.delegados/v4/recibos/$OWNER/$name/private" || code=1
       sync_receipts || code=1
       if remove_resources && assert_empty; then absent=true; else code=1; fi
       remote rm -rf -- "/tmp/$prefix-runtime" "/tmp/$prefix-work" || code=1
       if [[ $ctx != lab ]]; then remote rm -rf -- "/tmp/$prefix-checkout" || code=1; fi
     fi
+    rm -rf -- "$receipt/private" || code=1
     if [[ -n $tunnel_pid ]]; then kill -TERM "$tunnel_pid" 2>/dev/null || true; fi
     if [[ -n $waiter_pid ]] && jobs -pr | rg -qx "$waiter_pid"; then kill -TERM "$waiter_pid" 2>/dev/null || true; fi
     printf '%s\n' "$code" > "$receipt/supervisor.exit"
@@ -286,6 +288,8 @@ case $action in
     stop_and_reclaim
     remove_resources
     assert_empty
+    remote rm -rf -- "$vmroot/.delegados/v4/recibos/$OWNER/$name/private"
+    rm -rf -- "$receipt/private"
     printf '{"status":"down","context":"%s","containers":0,"networks":0,"volumes":0,"images":0}\n' "$ctx" > "$receipt/down.json"
     printf 'Abajo; verificado: 0 contenedores, redes, volúmenes e imágenes con owner/instancia.\n'
     ;;
