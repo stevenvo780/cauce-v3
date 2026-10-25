@@ -35,10 +35,21 @@ export interface QuotaContainerObservation {
   mounts?: { destination: string; source: string; type: string; writable: boolean }[];
 }
 
+function quotaDockerEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const context = process.env.CAUCE_QUOTA_DOCKER_CONTEXT;
+  if (!context) return base;
+  return { ...base, DOCKER_CONTEXT: context,
+    ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+    ...(process.env.USER ? { USER: process.env.USER } : {}),
+    ...(process.env.DOCKER_HOST ? { DOCKER_HOST: process.env.DOCKER_HOST } : {}),
+    ...(process.env.DOCKER_CONFIG ? { DOCKER_CONFIG: process.env.DOCKER_CONFIG } : {}),
+    ...(process.env.SSH_AUTH_SOCK ? { SSH_AUTH_SOCK: process.env.SSH_AUTH_SOCK } : {}) };
+}
+
 async function command(filename: string, args: string[], input?: unknown, timeout = 180_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(filename, args, { cwd: repository, timeout, maxBuffer: 1_048_576,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' } }, (error, stdout, stderr) => {
+      env: quotaDockerEnv({ PATH: process.env.PATH ?? '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1' }) }, (error, stdout, stderr) => {
       if (error) reject(new Error(`quota fixture command failed: ${filename}; exit=${String(error.code ?? 'unknown')}; ${stderr.trim().slice(-4000)}`));
       else resolve(stdout.trim());
     });
@@ -154,7 +165,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
   })();
   const args = ['--import', 'tsx', join(repository, 'services/gateway/src/fleet/main.ts')];
-  const child = spawn(process.execPath, args, { cwd: repository, env: {
+  const child = spawn(process.execPath, args, { cwd: repository, env: quotaDockerEnv({
     PATH: process.env.PATH ?? '/usr/bin:/bin', NODE_ENV: 'test',
     XDG_CONFIG_HOME: join(directory, 'config'), XDG_DATA_HOME: join(directory, 'data'),
     NODE_EXTRA_CA_CERTS: fixture.pki.ca.cert, CAUCE_FLEET_PROJECT_ROOT: repository,
@@ -162,7 +173,7 @@ export async function startQuotaDockerHost(fixture: ConsoleFixture, owner: V4Per
     CAUCE_FLEET_IDENTITY_DIRECTORY: identityDirectory, CAUCE_FLEET_PYTHON: '/usr/bin/python3',
     CAUCE_FLEET_EXECUTABLE: executor, CAUCE_FLEET_POLICY_FILE: policyFile,
     CAUCE_FLEET_POLL_MS: '100', CAUCE_FLEET_LEASE_MS: '120000', CAUCE_FLEET_COMMAND_TIMEOUT_MS: '300000',
-  }, stdio: ['ignore', 'pipe', 'pipe'] });
+  }), stdio: ['ignore', 'pipe', 'pipe'] });
   const hostFailure = { processError: false };
   child.on('error', () => { hostFailure.processError = true; });
   child.stdout.resume(); child.stderr.resume();
