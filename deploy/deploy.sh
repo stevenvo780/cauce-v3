@@ -282,7 +282,7 @@ fi
 [ -d "$(dirname "$HISTORY_FILE")" ] || die "no existe el directorio de historial $(dirname "$HISTORY_FILE")"
 [ ! -L "$HISTORY_FILE" ] || die "CAUCE_DEPLOY_HISTORY_FILE no puede ser un symlink"
 for name in CAUCE_RUNTIME_IMAGE CAUCE_CONSOLE_IMAGE; do
-  [ "${!name+x}" != x ] || die "$name del entorno anularia el pin de $ENV_FILE; quitalo del entorno"
+  [ "${!name+x}" != x ] || die "$name del entorno anularia el pin de $ENV_FILE; quítalo del entorno"
   if [ "$(env_declarations "$name")" != 1 ] || ! grep -q "^$name=" "$ENV_FILE"; then
     die "$name debe declararse una sola vez como $name=... en $ENV_FILE"
   fi
@@ -624,7 +624,7 @@ check_blob_migration_window() {
         || die "no pude leer el flag de blobs del gateway anterior"
       if [ "$BLOB_MIGRATION_PENDING" = 1 ]; then
         [ "$gateway_blob_flag" = 0 ] \
-          || die "el gateway anterior sigue con API de blobs activa o indeterminada; reinicialo con CAUCE_BLOB_API_ENABLED=0 antes de migrar 043"
+          || die "el gateway anterior sigue con API de blobs activa o indeterminada; reinícialo con CAUCE_BLOB_API_ENABLED=0 antes de migrar 043"
       elif [ "$gateway_blob_flag" = 1 ]; then
         gateway_image="$(docker inspect -f '{{.Image}}' "$GATEWAY_CONTAINER")" \
           || die "no pude identificar la imagen del gateway vivo con 043 aplicada"

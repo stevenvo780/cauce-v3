@@ -31,7 +31,7 @@ is_gateway_secret() { [[ -n $1 && ( ${1##*/} == database_url_gateway || $1 == "$
 repositorio() {
   if [[ -n ${CAUCE_DECISIONES_GIT:-} ]]; then printf '%s' "$CAUCE_DECISIONES_GIT"; return; fi
   git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null \
-    || die 'no encuentro el repositorio: fijá CAUCE_DECISIONES_GIT a un clon que tenga el commit'
+    || die 'no encuentro el repositorio: fija CAUCE_DECISIONES_GIT a un clon que tenga el commit'
 }
 
 compose_de() { printf '%s/%s/compose.yaml' "$DESPLIEGUES" "${1##*:}"; }
@@ -55,7 +55,7 @@ resolver() {
   local repo sha
   repo=$(repositorio)
   sha=$(git -C "$repo" rev-parse --verify --quiet "$COMMIT^{commit}") \
-    || die "commit desconocido en $repo: $COMMIT (fijá CAUCE_DECISIONES_GIT a un clon que lo tenga)"
+    || die "commit desconocido en $repo: $COMMIT (fija CAUCE_DECISIONES_GIT a un clon que lo tenga)"
   git -C "$repo" cat-file -e "$sha:deploy/decisiones/compose.yaml" 2>/dev/null || die "el commit $sha no trae deploy/decisiones"
   printf '%s' "$sha"
 }
@@ -193,7 +193,7 @@ modo_aplicar() {
   paso 'up'
   compose up -d --wait --wait-timeout 120 || die "up falló; reversa: $0 anterior, o $0 revertir"
   humo
-  paso "hecho: $imagen. Registrá en deploy/HISTORIAL.md y habilitá alias de a uno (DECISIONES_URL + registrar-mcp)."
+  paso "hecho: $imagen. Registra en deploy/HISTORIAL.md y habilita alias de a uno (DECISIONES_URL + registrar-mcp)."
 }
 
 # Back to the image the last aplicar replaced, with the compose file it shipped with; no rebuild.
@@ -203,9 +203,9 @@ modo_anterior() {
   [[ -f $ENV_FILE ]] || die "no existe $ENV_FILE: todavía no se aplicó"
   antes=$(valor_de IMAGEN_ANTES "$REVERT_FILE")
   actual=$(valor_de CAUCE_DECISIONES_IMAGE "$ENV_FILE")
-  [[ -n $antes ]] || die "no hay imagen anterior anotada en $REVERT_FILE: bajá el servicio con $0 revertir"
-  docker image inspect "$antes" >/dev/null 2>&1 || die "la imagen $antes ya no está: reconstruila con $0 aplicar <su commit>"
-  [[ -f $(compose_de "$antes") ]] || die "falta $(compose_de "$antes"): reconstruila con $0 aplicar <su commit>"
+  [[ -n $antes ]] || die "no hay imagen anterior anotada en $REVERT_FILE: baja el servicio con $0 revertir"
+  docker image inspect "$antes" >/dev/null 2>&1 || die "la imagen $antes ya no está: reconstrúyela con $0 aplicar <su commit>"
+  [[ -f $(compose_de "$antes") ]] || die "falta $(compose_de "$antes"): reconstrúyela con $0 aplicar <su commit>"
   paso "de $actual a $antes"
   fijar CAUCE_DECISIONES_IMAGE "$antes" "$ENV_FILE"
   fijar IMAGEN_ANTES "$actual" "$REVERT_FILE"
@@ -237,7 +237,7 @@ modo_revertir() {
       paso "clave devuelta a $dueno $modo"
     fi
   fi
-  echo 'quitá también DECISIONES_URL de los <alias>.env (la línea entera, antes de volver el supervisor) y la entrada cauce-decisiones de cada arnés (registrar-mcp.py --quitar)'
+  echo 'quita también DECISIONES_URL de los <alias>.env (la línea entera, antes de volver el supervisor) y la entrada cauce-decisiones de cada arnés (registrar-mcp.py --quitar)'
 }
 
 modo_estado() {
