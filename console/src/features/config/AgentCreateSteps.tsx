@@ -57,7 +57,6 @@ export function IdentityStep({ draft, edit, disabled, tenants, aliasInput }: Ste
   tenants: { id: string; label: string }[]; aliasInput: RefObject<HTMLInputElement | null>;
 }) {
   return <div className={SECTION}>
-    {!tenants.length ? <Notice role="note" className="sm:col-span-2">No hay espacios de trabajo publicados en esta lectura; no se puede elegir destino.</Notice> : null}
     <div className="grid content-start gap-1.5">
       <label>Espacio de trabajo
         <select value={draft.tenantId} aria-describedby="create-tenant-hint" onChange={(event) => { edit({ tenantId: event.target.value, roomId: '' }); }} disabled={disabled}>

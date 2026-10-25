@@ -25,11 +25,10 @@ describe('inventario compacto de configuración', () => {
   it('no presenta la proyección heredada como responsabilidad canónica ni inventa grupos', () => {
     const [agent] = settingsAgents({ agents: [{ tenant_id: 'A', alias: 'one', role_brief: 'obsoleto' }] });
     expect(agent.responsibility).toBeUndefined();
-    expect(agent.groupsKnown).toBe(false);
     expect(agent.groups).toEqual([]);
     expect(agent.enabled).toBeUndefined();
     const [known] = settingsAgents({ agents: [{ tenant_id: 'A', alias: 'one' }], memberships: [] });
-    expect(known.groupsKnown).toBe(true);
+    expect(known.groups).toEqual([]);
   });
 
   it('muestra responsabilidad canónica y busca también grupo, tenant y arnés', () => {

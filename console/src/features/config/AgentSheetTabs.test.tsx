@@ -7,7 +7,7 @@ import type { SettingsAgent } from './settings-model';
 
 const agent: SettingsAgent = {
   key: '["A","w"]', tenantId: 'A', alias: 'w', name: 'Worker', registered: true,
-  enabled: true, harness: 'codex', responsibility: undefined, groups: [], groupsKnown: true,
+  enabled: true, harness: 'codex', responsibility: undefined, groups: [],
 };
 
 function view(row: Record<string, unknown>): AgentView {

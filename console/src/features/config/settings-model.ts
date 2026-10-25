@@ -16,7 +16,6 @@ export interface SettingsAgent {
   harness: string | undefined;
   responsibility: string | undefined;
   groups: SettingsGroup[];
-  groupsKnown: boolean;
 }
 
 function text(row: Row | undefined, key: string): string | undefined {
@@ -65,7 +64,6 @@ export function settingsAgents(snapshot: ConfigurationSnapshot): SettingsAgent[]
       registered: agent !== undefined, enabled: flag(agent?.enabled),
       harness: text(agent, 'harness_id'), responsibility: text(profile, 'role_summary'),
       groups: [...groups.values()].sort((a, b) => a.label.localeCompare(b.label)),
-      groupsKnown: Array.isArray(snapshot.memberships),
     };
   }).sort((a, b) => a.tenantId.localeCompare(b.tenantId) || a.alias.localeCompare(b.alias));
 }

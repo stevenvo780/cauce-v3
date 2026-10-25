@@ -21,7 +21,6 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
   const bindings = registry.bindings.items.filter(row => row.tenantId === tenantId && row.agentAlias === alias);
   const selected = registry.accounts.items.find(account => account.id === accountId);
   const binding = bindings.find(row => row.accountId === accountId);
-  const available = registry.accounts.available && registry.bindings.available && registry.ceiling.available;
   const eligible = registry.accounts.items.filter(account => account.enabled === true
     && (account.payerTenant === tenantId || account.sharedWithPool === true));
   const priorities = bindings.filter(row => row.enabled).map(row => row.priority ?? 0);
@@ -32,19 +31,18 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
   const dirty = accountId !== '' && binding?.enabled !== true;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => () => { onDirtyChange(false); }, [onDirtyChange]);
-  const mutation: ConfigMutation | undefined = !available || !canAssign || !dirty || priority > 32767
+  const mutation: ConfigMutation | undefined = !canAssign || !dirty || priority > 32767
     || !eligible.some(account => account.id === accountId) ? undefined : {
       resource: 'batch', action: 'apply', mutations: [
         ...(hasCeiling ? [] : [ceilingMutation('create', tenantId, alias, accountId) as ConfigLeafMutation]),
         bindingMutation(binding ? 'update' : 'create', tenantId, alias, accountId, { priority, enabled: true }) as ConfigLeafMutation,
       ],
     };
-  const disabled = !runner.canWrite || runner.busy || !available || !canAssign;
+  const disabled = !runner.canWrite || runner.busy || !canAssign;
   return <section className="grid gap-3 rounded-lg border border-line bg-surface p-4" aria-label={`Cuentas de cuota de ${tenantId}/${alias}`}>
     <h3 className="m-0 text-sm font-semibold">Cuentas de cuota</h3>
     <p className="m-0 text-xs text-muted">De estas cuentas sale el saldo que ves en «Estado» y en la oficina; con varias, se muestra la que tenga más disponible.
       La cuenta con la que trabaja el agente se cambia en «Ejecución».</p>
-    {!available ? <p className="m-0 text-sm text-muted">No se publicaron las cuentas o sus asignaciones. Relee el inventario.</p> : null}
     {bindings.some(row => row.enabled) ? <ul className="m-0 grid gap-1 pl-4 text-sm">
       {bindings.filter(row => row.enabled).map(row => {
         const account = registry.accounts.items.find(entry => entry.id === row.accountId);
@@ -59,7 +57,7 @@ export function AgentQuotaBinding({ tenantId, alias, snapshot, onReloaded, onDir
         </option>)}
       </select>
     </label>
-    {available && !eligible.length ? <Notice tone="info">Solo aparecen cuentas habilitadas de este espacio o compartidas con él. Las cuentas nuevas quedan deshabilitadas hasta iniciar sesión. Ve a{' '}
+    {!eligible.length ? <Notice tone="info">Solo aparecen cuentas habilitadas de este espacio o compartidas con él. Las cuentas nuevas quedan deshabilitadas hasta iniciar sesión. Ve a{' '}
       <a href="/my-quotas" onClick={event => { onNavClick(event, '/my-quotas'); }}>Mis cuotas</a>, registra una cuenta si hace falta y pulsa «Iniciar sesión» en su tarjeta. Si ya tiene sesión, comprueba que esté habilitada.</Notice> : null}
     {selected && binding?.enabled ? <p className="m-0 text-xs text-muted">Esta cuenta ya está vinculada.</p> : null}
     {dirty && priority > 32767 ? <Notice role="note">No queda un orden de respaldo disponible para esta cuenta.</Notice> : null}

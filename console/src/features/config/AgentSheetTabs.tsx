@@ -34,7 +34,6 @@ function StatusTile({ question, answer, value, title }: { question: string; answ
 }
 
 export function GroupChips({ agent, max }: { agent: SettingsAgent; max?: number }) {
-  if (!agent.groupsKnown) return <span className="text-xs text-muted">Grupos desconocidos</span>;
   if (!agent.groups.length) return <span className="text-xs text-muted">Sin grupos</span>;
   const shown = max === undefined ? agent.groups : agent.groups.slice(0, max);
   return <>
@@ -128,15 +127,14 @@ export function GroupsTab({ agent, view, snapshot, onReloaded, onDirtyChange, on
   const origin = agent.groups.length === 1 ? agent.groups[0]?.id ?? '' : source;
   return <div className="grid gap-4">
     <p className="m-0 text-[13px] text-fg-2">Los grupos reúnen a los agentes que trabajan juntos. Aquí ves en cuáles participa {agent.name}.</p>
-    {!agent.groupsKnown ? <Notice role="note">El servidor no publicó las membresías en esta lectura.</Notice>
-      : !agent.groups.length ? <Notice role="note">Este agente no tiene membresías registradas.</Notice>
+    {!agent.groups.length ? <Notice role="note">Este agente no tiene membresías registradas.</Notice>
         : <ul className="m-0 grid list-none gap-2 p-0" aria-label={`Grupos de ${view.ref}`}>
           {agent.groups.map((group) => <li key={group.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border border-line bg-surface p-3">
             <span className="min-w-0"><strong className="block truncate text-[13px]">{group.label}</strong>
               <span className="block truncate font-mono text-xs text-muted">{group.id}</span></span>
             <span className="flex flex-wrap items-center gap-2">
-              <Pill tone={group.enabled === false ? 'warn' : group.enabled ? 'ok' : 'neutral'}>
-                {group.enabled === false ? 'Membresía deshabilitada' : group.enabled ? 'Activa' : 'Estado desconocido'}</Pill>
+              <Pill tone={group.enabled === false ? 'warn' : 'ok'}>
+                {group.enabled === false ? 'Membresía deshabilitada' : 'Activa'}</Pill>
               {onEditTeam ? <Button size="sm" disabled={Boolean(blockOf(group.id)) || !room(group.id)} title={blockOf(group.id)}
                 aria-label={`Editar equipo ${group.id}`} onClick={() => { const row = room(group.id); if (row) onEditTeam(row); }}>
                 <Pencil size={12} aria-hidden="true" />Editar equipo</Button> : null}
