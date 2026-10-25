@@ -614,9 +614,9 @@ export class AdapterEngine {
         {
           output,
           ...(profileAdoption === undefined ? {} : { profileAdoption }),
-          ...(consumption === undefined || delivery.versioned_context === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
-            || space.materializedVersion !== delivery.versioned_context.version
-            ? {} : { contextAdoption: { version: delivery.versioned_context.version, digest: delivery.versioned_context.digest, input_sha256: consumption.input_sha256 } }),
+          ...(consumption === undefined || sentContext === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
+            || space.materializedVersion !== sentContext.version || space.materializedDigest !== sentContext.digest
+            ? {} : { contextAdoption: { version: sentContext.version, digest: sentContext.digest, input_sha256: consumption.input_sha256 } }),
           ...(consumption === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
             ? {} : { consumptionWitness: consumption }),
           retainRequest: output.messages.length > 0

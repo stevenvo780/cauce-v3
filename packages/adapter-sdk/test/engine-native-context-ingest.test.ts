@@ -5,12 +5,13 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { VersionedContext } from '@cauce/protocol';
-import { HarnessAdapter, fakeDefinition } from '../src/harnesses/index.js';
+import { HarnessAdapter, codexDefinition, fakeDefinition } from '../src/harnesses/index.js';
 import type { NativeContextIngest, NativeContextIngestInput, NativeContextIngestResult } from '../src/sdk/context-ingest-client.js';
 import { DurableStore } from '../src/sdk/durable-store.js';
 import { AdapterEngine } from '../src/sdk/engine.js';
 import { canonicalVersionedContext } from '../src/context/versioned-context-files.js';
 import { VersionedContextTurn } from '../src/sdk/engine/versioned-context.js';
+import { consumptionWitness } from '../src/shared-session/consumption.js';
 import type { AdapterLog, CommandRunner, DeliveryEvent } from '../src/sdk/types.js';
 import { conversation, delivery, SUCCESS } from './engine-fixtures.js';
 
@@ -27,19 +28,24 @@ function claimed(id: string, context: VersionedContext) {
 }
 
 async function fixture(t: TestContext, ingest: NativeContextIngest | undefined,
-  options: { editDuringTurn?: string } = {}) {
+  options: { editDuringTurn?: string; withWitness?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'cauce-native-ingest-'));
   const space = join(root, 'space'); const path = join(space, 'context/mission.md');
   const previous = process.env.CAUCE_SPACE_ROOT; process.env.CAUCE_SPACE_ROOT = space;
   const reads: string[] = []; const logs: AdapterLog[] = []; let runs = 0;
-  const runner: CommandRunner = { run: async () => {
+  const runner: CommandRunner = { run: async input => {
     runs += 1;
     reads.push(await readFile(path, 'utf8').catch(() => 'absent'));
     if (options.editDuringTurn !== undefined && runs === 2) await writeFile(path, options.editDuringTurn);
-    return { stdout: SUCCESS, stderr: '', exitCode: 0, signal: null, timedOut: false, cancelled: false };
+    const nativeSession = '00000000-0000-4000-8000-000000000001';
+    const proof = options.withWitness === true ? consumptionWitness('codex', nativeSession, 'native-ingest-turn', input.stdin) : undefined;
+    const stdout = options.withWitness === true ? [JSON.stringify({ type: 'thread.started', thread_id: nativeSession }),
+      JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: SUCCESS } }), JSON.stringify({ type: 'turn.completed' })].join('\n') : SUCCESS;
+    return { stdout, stderr: '', exitCode: 0, signal: null, timedOut: false, cancelled: false,
+      ...(proof === undefined ? {} : { consumptionWitness: proof }) };
   } };
   const store = await DurableStore.open(join(root, 'store')); const events: DeliveryEvent[] = [];
-  const harness = new HarnessAdapter({ definition: fakeDefinition, runner, store });
+  const harness = new HarnessAdapter({ definition: options.withWitness === true ? codexDefinition : fakeDefinition, runner, store });
   const engine: AdapterEngine = new AdapterEngine({ store, harness, ownTenantId: 'Steven',
     executionIntentMode: 'local-test-only', claimRenewalMs: 10, claimWatchdogMs: 2000,
     ...(ingest === undefined ? {} : { contextIngest: ingest }), logger: entry => { logs.push(entry); },
@@ -84,6 +90,34 @@ test('a local context edit is ingested before the turn, N+1 is adopted, and the 
     { path: 'directives/local.md', content: 'Created inside the space.' }])));
   assert.equal(f.store.getDelivery('ingest-third')?.state, 'done');
   assert.equal(calls.length, 1, 'a steady state must not ingest again');
+});
+
+test('a consumption witness adopts the ingested version actually sent to the harness instead of the sealed delivery version', async t => {
+  const calls: NativeContextIngestInput[] = [];
+  const f = await fixture(t, accepting(calls), { withWitness: true });
+  await f.engine.handleDelivery(claimed('witness-ingest-first', snapshot(1, v1Files)));
+  await writeFile(f.path, 'Native content ingested before execution.');
+  await f.engine.handleDelivery(claimed('witness-ingest-second', snapshot(1, v1Files)));
+  assert.equal(calls.length, 1);
+  const ingested = calls[0]; assert.ok(ingested);
+  const done = f.events.find(event => event.phase === 'done' && event.delivery_id === 'witness-ingest-second');
+  assert.ok(done?.harness_consumption_v1);
+  assert.deepEqual(done.context_adoption, { version: 2, digest: snapshot(2, [...ingested.files]).digest,
+    input_sha256: done.harness_consumption_v1.input_sha256 });
+  assert.equal(await f.stateVersion(), 2);
+});
+
+test('a mid-turn ingest never adopts either the sealed or sent version when materialization advanced after execution', async t => {
+  const calls: NativeContextIngestInput[] = [];
+  const f = await fixture(t, accepting(calls), { withWitness: true, editDuringTurn: 'Native content written during execution.' });
+  await f.engine.handleDelivery(claimed('witness-midturn-first', snapshot(1, v1Files)));
+  await writeFile(f.path, 'Native content ingested before execution.');
+  await f.engine.handleDelivery(claimed('witness-midturn-second', snapshot(1, v1Files)));
+  assert.equal(calls.length, 2);
+  const done = f.events.find(event => event.phase === 'done' && event.delivery_id === 'witness-midturn-second');
+  assert.ok(done?.harness_consumption_v1);
+  assert.equal(done.context_adoption, undefined);
+  assert.equal(await f.stateVersion(), 3);
 });
 
 test('files added or normalized by the server snapshot are materialized after ingest', { timeout: 6000 }, async t => {
