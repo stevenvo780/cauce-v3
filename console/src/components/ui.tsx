@@ -23,8 +23,8 @@ export function PageHeader({ eyebrow, title, description, notes, actions }: {
   actions?: ReactNode;
 }) {
   return (
-    <header className="mb-5 flex items-end justify-between gap-x-6 gap-y-3 sm:flex-wrap">
-      <div className="min-w-0 max-sm:flex-1">
+    <header className="mb-5 flex items-end justify-between gap-x-6 gap-y-3 max-sm:flex-col max-sm:items-stretch sm:flex-wrap">
+      <div className="min-w-0">
         <p className="m-0 text-xs font-semibold tracking-wide text-brand-ink">{eyebrow}</p>
         <div className="mt-0.5 flex items-center gap-2">
           <h1 className="m-0 text-[22px] font-semibold tracking-tight text-fg">{title}</h1>
@@ -185,10 +185,11 @@ export function EmptyState({ children }: { children: ReactNode }) {
   return <p className="m-0 rounded-lg border border-dashed border-line-strong p-6 text-center text-[13px] text-muted">{children}</p>;
 }
 
-export function RefreshButton({ onClick, loading = false, compact = false }: {
+export function RefreshButton({ onClick, loading = false, compact = false, announceError }: {
   onClick: () => unknown;
   loading?: boolean;
   compact?: boolean;
+  announceError?: boolean;
 }) {
   return (
     <ActionButton
@@ -198,6 +199,7 @@ export function RefreshButton({ onClick, loading = false, compact = false }: {
       busy={loading}
       icon={<RefreshCw size={16} aria-hidden="true" />}
       action={onClick}
+      announceError={announceError}
     />
   );
 }

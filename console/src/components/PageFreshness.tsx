@@ -49,18 +49,19 @@ function RefreshInterval({ value, onChange, options, what }: {
 }
 
 /** The one way every view says how fresh its data is: when it was read, how often, and «read now». */
-export function PageFreshness({ at, loading, onRefresh, interval, what = 'los datos' }: {
+export function PageFreshness({ at, loading, onRefresh, interval, what = 'los datos', announceError }: {
   at?: string | null;
   loading: boolean;
-  onRefresh: () => void;
+  onRefresh: () => unknown;
+  announceError?: boolean;
   interval?: { value: number; onChange: (ms: number) => void; options: readonly RefreshOption[] };
   what?: string;
 }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-muted">
+    <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted">
       {at !== undefined ? <span className="tabular-nums">{at ? <>Leído <Time value={at} relativo /></> : 'Sin lectura'}</span> : null}
       {interval ? <RefreshInterval {...interval} what={what} /> : null}
-      <RefreshButton onClick={onRefresh} loading={loading} compact />
+      <RefreshButton onClick={onRefresh} loading={loading} announceError={announceError} compact />
     </div>
   );
 }

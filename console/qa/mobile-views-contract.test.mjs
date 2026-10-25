@@ -121,7 +121,7 @@ test('the operator-facing refresh control preserves its loading announcement', a
   const accounts = await readFile(new URL('../src/features/accounts/AccountsPage.tsx', import.meta.url), 'utf8');
   assert.ok(accounts.includes('<PageFreshness'));
   const freshness = await readFile(new URL('../src/components/PageFreshness.tsx', import.meta.url), 'utf8');
-  assert.ok(freshness.includes('<RefreshButton onClick={onRefresh} loading={loading} compact />'));
+  assert.ok(freshness.includes('<RefreshButton onClick={onRefresh} loading={loading} announceError={announceError} compact />'));
   const ui = await readFile(new URL('../src/components/ui.tsx', import.meta.url), 'utf8');
   assert.ok(ui.includes('label="Actualizar"'));
   assert.ok(ui.includes('pendingLabel="Releyendo…"'));
