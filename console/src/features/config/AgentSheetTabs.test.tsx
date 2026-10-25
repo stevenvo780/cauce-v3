@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { expect, it } from 'vitest';
+import { ConsoleAccessBoundary } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
-import { SummaryTab } from './AgentSheetTabs';
+import { renderWithApi } from '../../test/render';
+import { GroupChips, GroupsTab, SummaryTab } from './AgentSheetTabs';
 import type { AgentView } from './agent-view';
 import type { SettingsAgent } from './settings-model';
 
@@ -39,4 +41,38 @@ it('never prints the raw account id as the main text when the account has no lab
   expect(screen.getByText(/Cuenta sin etiqueta/)).toHaveAttribute('title', 'acc-secreto');
   expect(screen.queryByText('acc-secreto')).not.toBeInTheDocument();
   expect(screen.getByText('La misma empresa')).toBeInTheDocument();
+});
+
+it('shows historical groups in GroupChips and GroupsTab without falling back to empty notices', () => {
+  const retiredMemberAgent: SettingsAgent = {
+    key: 'retired:A/retirado', tenantId: 'A', alias: 'retirado', name: 'Agente Retirado',
+    registered: true, enabled: false, harness: 'codex', responsibility: undefined,
+    groups: [{ id: 'grp.a', label: 'Grupo Alfa', enabled: false }],
+  };
+  const snapshot = {
+    revision: 1,
+    tenants: [{ id: 'A', display_name: 'Empresa A' }],
+    rooms: [{ tenant_id: 'A', id: 'grp.a', display_name: 'Grupo Alfa', enabled: true }],
+  } as unknown as ConfigurationSnapshot;
+
+  render(<GroupChips agent={retiredMemberAgent} />);
+  expect(screen.getByText(/Grupo Alfa/)).toBeInTheDocument();
+  expect(screen.getByText(/pausada/)).toBeInTheDocument();
+  expect(screen.queryByText('Sin grupos')).not.toBeInTheDocument();
+
+  renderWithApi(<ConsoleAccessBoundary><GroupsTab agent={retiredMemberAgent} view={view({})} snapshot={snapshot} onReloaded={() => undefined} /></ConsoleAccessBoundary>);
+  expect(screen.getByText('Grupo Alfa')).toBeInTheDocument();
+  expect(screen.getByText('Membresía deshabilitada')).toBeInTheDocument();
+  expect(screen.queryByText('Este agente no tiene membresías registradas.')).not.toBeInTheDocument();
+});
+
+it('shows empty notices in GroupChips and GroupsTab when an agent has no groups', () => {
+  const withoutGroups: SettingsAgent = { ...agent, groups: [] };
+  const snapshot = { revision: 1 } as unknown as ConfigurationSnapshot;
+
+  render(<GroupChips agent={withoutGroups} />);
+  expect(screen.getByText('Sin grupos')).toBeInTheDocument();
+
+  renderWithApi(<ConsoleAccessBoundary><GroupsTab agent={withoutGroups} view={view({})} snapshot={snapshot} onReloaded={() => undefined} /></ConsoleAccessBoundary>);
+  expect(screen.getByText('Este agente no tiene membresías registradas.')).toBeInTheDocument();
 });

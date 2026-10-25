@@ -23,13 +23,28 @@ import { useAgentLifecycle } from './use-agent-lifecycle';
 
 const PAGE_SIZE = 12;
 
-function retiredAgent(row: Record<string, unknown> | undefined): SettingsAgent | undefined {
+function retiredGroups(snapshot: ConfigurationSnapshot, tenantId: string, alias: string): SettingsAgent['groups'] {
+  const groups = new Map<string, SettingsAgent['groups'][number]>();
+  const list = [...(snapshot.retired?.memberships ?? []), ...(snapshot.memberships ?? [])];
+  for (const membership of list) {
+    if (membership.tenant_id !== tenantId || membership.alias !== alias) continue;
+    const id = typeof membership.room_id === 'string' ? membership.room_id : undefined;
+    if (!id || groups.has(id)) continue;
+    const room = (snapshot.retired?.rooms ?? []).find((row) => row.tenant_id === tenantId && row.id === id)
+      ?? snapshot.rooms?.find((row) => row.tenant_id === tenantId && row.id === id);
+    const label = typeof room?.display_name === 'string' && room.display_name.trim() ? room.display_name.trim() : id;
+    groups.set(id, { id, label, enabled: typeof membership.enabled === 'boolean' ? membership.enabled : undefined });
+  }
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label));
+}
+
+function retiredAgent(snapshot: ConfigurationSnapshot, row: Record<string, unknown> | undefined): SettingsAgent | undefined {
   if (typeof row?.tenant_id !== 'string' || typeof row.alias !== 'string') return undefined;
   const name = typeof row.display_name === 'string' && row.display_name.trim() ? row.display_name.trim() : row.alias;
   return {
     key: `retired:${row.tenant_id}/${row.alias}`, tenantId: row.tenant_id, alias: row.alias, name, registered: true,
     enabled: false, harness: typeof row.harness_id === 'string' ? row.harness_id : undefined, responsibility: undefined,
-    groups: [],
+    groups: retiredGroups(snapshot, row.tenant_id, row.alias),
   };
 }
 
@@ -75,7 +90,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const currentPage = Math.min(page, lastPage);
   const first = currentPage * PAGE_SIZE;
   const reloaded = (siguiente: ConfigurationSnapshot) => { setReleido(siguiente); onReload?.(); };
-  const retired = (snapshot.retired?.agents ?? []).flatMap((row) => retiredAgent(row) ?? []);
+  const retired = (snapshot.retired?.agents ?? []).flatMap((row) => retiredAgent(snapshot, row) ?? []);
   const wanted = parseAgentRef(openRef);
   const listed = wanted ? agents.find((agent) => agent.tenantId === wanted.tenantId && agent.alias === wanted.alias) : undefined;
   // A retired agent keeps its historical memberships, so it is also listed as member-only: the retired row is the operable one.
