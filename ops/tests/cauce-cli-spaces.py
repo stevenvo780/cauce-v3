@@ -237,6 +237,12 @@ class SpacesCliTests(unittest.TestCase):
         self.assertEqual(self.posts()[1][2]['mutation']['value']['enabled'], False)
         self.assertEqual(self.posts()[1][2]['mutation']['value']['display_name'], 'Canario')
 
+    def test_registry_create_refuses_a_primary_room_before_any_write(self):
+        self.input.write_text(json.dumps({'display_name': 'Canario', 'primary_room_id': 'office'}))
+        code, result, error = self.run_cli('create', '--registry-only', '--apply')
+        self.assertEqual((code, result, self.posts()), (1, None, []))
+        self.assertIn('quita primary_room_id', error)
+
     def test_registry_edit_blocks_enabling_and_runtime_relocation_before_write(self):
         for value in ({'enabled': True}, {'host_id': 'different-host'}, {'credential_ref': 'forbidden'}):
             self.input.write_text(json.dumps(value))
