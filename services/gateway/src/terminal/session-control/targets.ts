@@ -36,19 +36,19 @@ function terminalTargetStateReason(resolution: AgentResolution): string {
   }
 }
 
-/** The causes of a refused target, told apart: only the missing grant row is the operator's own. */
+/** The causes of a refused target, told apart: only the missing grant is the operator's own. */
 function terminalTargetDenialReason(denial: TerminalDenial | undefined, target: string): string {
   switch (denial) {
     case 'no_grant_for_operator':
-      return `no_grant_for_operator: no hay concesión en grants.json para tu operador sobre ${target}`;
+      return `no_grant_for_operator: sin permiso de terminal para tu cuenta sobre ${target}`;
     case 'no_recognized_mode':
-      return `no_recognized_mode: el agente PTY de ${target} no publica ningún modo que este gateway conozca`;
+      return `no_recognized_mode: el programa de terminal de ${target} no ofrece ningún modo que este servidor conozca`;
     case 'writable_tui_disabled':
-      return 'writable_tui_disabled: el control de la TUI está desactivado en el gateway.';
+      return 'writable_tui_disabled: escribir en la TUI está apagado en el servidor.';
     case 'attribution_required':
-      return `attribution_required: sin identidad por persona para alcanzar ${target}`;
+      return `attribution_required: falta que entres con tu nombre de persona para alcanzar ${target}`;
     default:
-      return `no_routing_authority: sin autoridad de ruteo sobre ${target}`;
+      return `no_routing_authority: sin permiso sobre todos los agentes del contenedor de ${target}`;
   }
 }
 

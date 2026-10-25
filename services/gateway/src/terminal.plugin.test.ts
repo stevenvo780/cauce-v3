@@ -275,7 +275,7 @@ describe('terminal control plane', () => {
     // denied, but its cohort is legitimate read/control-visible metadata.
     expect(iza).toMatchObject({
       authorized: false, container: null, runtime_user: null, harness: null, image: null, modes: [], writable_modes: [],
-      reason: 'attribution_required: sin identidad por persona para alcanzar Miguel:iza',
+      reason: 'attribution_required: falta que entres con tu nombre de persona para alcanzar Miguel:iza',
       shares_container_with: [
         { tenant_id: 'Miguel', alias: 'atlas' }, { tenant_id: 'Miguel', alias: 'kratos' }
       ]
@@ -366,9 +366,9 @@ describe('terminal control plane', () => {
       tenant_id: 'Steven', alias: 'jarvis', pty_state: 'online', authorized: available.length > 0,
       modes: available, writable_modes: available.filter((mode) => mode !== 'harness'),
     });
-    if (disabled) expect(target?.reason).toContain('writable_tui_disabled:');
+    if (disabled) expect(target?.reason).toContain('writable_tui_disabled: escribir en la TUI está apagado en el servidor.');
     else if (available.length > 0) expect(target?.reason).toBe('El agente PTY está conectado al terminal-relay.');
-    else expect(target?.reason).toContain('no_grant_for_operator:');
+    else expect(target?.reason).toContain('no_grant_for_operator: sin permiso de terminal para tu cuenta sobre Steven:jarvis');
     expect(target).toMatchObject(available.length > 0
       ? { container: 'claw', runtime_user: 'claw', harness: 'openclaw', image: 'sha256:c0ffee' }
       : { container: null, runtime_user: null, harness: null, image: null });
@@ -388,7 +388,7 @@ describe('terminal control plane', () => {
       authorized: false,
       container: null,
       shares_container_with: [],
-      reason: 'no_routing_authority: sin autoridad de ruteo sobre Steven:jarvis',
+      reason: 'no_routing_authority: sin permiso sobre todos los agentes del contenedor de Steven:jarvis',
     });
   });
 
