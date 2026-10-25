@@ -424,7 +424,7 @@ describe('CauceApi', () => {
     ]);
   });
 
-  it('la recarga de contexto es un POST con sólo el motivo, y escapa alias y tenant', async () => {
+  it('la recarga de contexto es un POST con solo el motivo, y escapa alias y tenant', async () => {
     let cuerpo: Record<string, unknown> | undefined;
     let metodo: string | undefined;
     server.use(http.post(

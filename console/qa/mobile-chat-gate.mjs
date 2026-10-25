@@ -78,7 +78,7 @@ try {
           return route.abort();
         }
         if ((queueReadFails && path === '/v3/console/queues') || (messageReadFails && path === '/v3/console/messages')) {
-          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable', message: path.endsWith('queues') ? 'El servicio de colas no está disponible. Intentá nuevamente.' : 'El servicio de mensajes no está disponible. Intentá nuevamente.' }) });
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable', message: path.endsWith('queues') ? 'El servicio de colas no está disponible. Intenta nuevamente.' : 'El servicio de mensajes no está disponible. Intenta nuevamente.' }) });
           return;
         }
         const payload = fixtures[path];

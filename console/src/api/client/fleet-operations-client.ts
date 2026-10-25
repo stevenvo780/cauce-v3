@@ -56,7 +56,7 @@ export function fleetOperationsClient(request: RequestFn, authGeneration: () => 
   const path = '/v3/console/fleet/operations';
   const verifyGeneration = (expected: number) => {
     if (expected !== authGeneration()) {
-      throw new ApiError('La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.', 409, 'session_changed');
+      throw new ApiError('La sesión cambió antes de enviar la operación. Reintenta desde la cuenta actual.', 409, 'session_changed');
     }
   };
   const control = async (action: 'cancel' | 'resume', id: string, version: number) => {

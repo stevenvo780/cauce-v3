@@ -134,13 +134,13 @@ it('conserva el borrador y su carril al visitar herramientas, aislado por agente
   const user = userEvent.setup();
   renderWithApi(<App />);
   const input = await screen.findByRole('textbox', { name: 'Mensaje para argos' });
-  await user.type(input, 'Revisá el trabajo pendiente');
+  await user.type(input, 'Revisa el trabajo pendiente');
   await pickLane(user, /^Batch/);
   await openTools();
   await user.click(screen.getByRole('link', { name: 'Cuentas' }));
   await screen.findByRole('heading', { name: 'Cuentas' });
   await user.click(await agentLink('argos'));
-  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisa el trabajo pendiente');
   expect(screen.getByText('Batch')).toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Opciones de la conversación' }));
   expect(await screen.findByRole('menuitemradio', { name: /^Batch/ })).toBeChecked();
@@ -148,7 +148,7 @@ it('conserva el borrador y su carril al visitar herramientas, aislado por agente
   await user.click(await agentLink('kratos'));
   expect(await screen.findByRole('textbox', { name: 'Mensaje para kratos' })).toHaveValue('');
   await user.click(await agentLink('argos'));
-  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisá el trabajo pendiente');
+  expect(await screen.findByRole('textbox', { name: 'Mensaje para argos' })).toHaveValue('Revisa el trabajo pendiente');
 });
 
 it.each([

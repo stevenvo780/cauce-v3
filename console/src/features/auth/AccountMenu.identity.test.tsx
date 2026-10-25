@@ -74,7 +74,7 @@ it('cancelar, Escape, cerrar y navegar descartan el cambio pendiente sin cerrar 
   expect(input.logout).not.toHaveBeenCalled();
 });
 
-it('la confirmación usa sólo logout y mantiene su error visible si el cierre falla', async () => {
+it('la confirmación usa solo logout y mantiene su error visible si el cierre falla', async () => {
   const input = gate();
   const { rerender } = render(<AccountMenu gate={input} />);
   const user = await openAccount();

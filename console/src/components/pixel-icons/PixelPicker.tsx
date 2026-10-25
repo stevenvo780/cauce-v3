@@ -53,7 +53,7 @@ export function PixelPicker({ value, onPick }: PixelPickerProps) {
           );
         })}
       </div>
-      {names.length === 0 ? <p className="m-0 text-xs text-muted" role="status">Ningún icono se llama así. Probá en inglés: «heart», «code», «robot».</p> : null}
+      {names.length === 0 ? <p className="m-0 text-xs text-muted" role="status">Ningún icono se llama así. Prueba en inglés: «heart», «code», «robot».</p> : null}
     </div>
   );
 }

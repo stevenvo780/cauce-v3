@@ -135,7 +135,7 @@ export function MyQuotasPage() {
         : describeQuotaError(preferences.error, 'No se pudieron leer las cuotas.'))}
       {preferences.error || pinFailed ? <ActionButton size="sm" label="Releer tarjetas fijadas" busy={preferences.loading} done={false} announceError={false} action={() => { setPinFailed(false); return preferences.reload(); }} /> : null}</Notice> : null}
     {notice ? <Notice tone="ok" role="status">{notice}</Notice> : null}
-    <div className="flex flex-wrap items-center gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver sólo cuentas fijadas'}</Button></div>
+    <div className="flex flex-wrap items-center gap-2"><Button aria-pressed={filterPinned} disabled={!preferences.data || !!preferences.error} onClick={() => { setFilterPinned(!filterPinned); }}>{filterPinned ? 'Ver todas las cuentas' : 'Ver solo cuentas fijadas'}</Button></div>
     {creating ? <QuotaAccountForm executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setCreating(false); }}
       save={input => canWriteAccounts ? write(() => api.createQuotaAccount({ provider: input.provider, label: input.label, idempotency_key: input.idempotency_key }), 'Cuenta registrada. Crea su entorno para autenticar y consultar.') : Promise.resolve()} /> : null}
     {editing ? <QuotaAccountForm key={`${editing.id}:${String(accountFormEpoch)}`} formRef={accountForm} account={editing} executable={executableProviders} busy={busy} canWrite={canWriteAccounts} cancel={() => { setEditing(undefined); setAccountConflict(undefined); }}

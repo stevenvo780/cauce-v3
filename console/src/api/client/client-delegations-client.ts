@@ -29,7 +29,7 @@ export function clientDeclarationLabel(value: string): string {
 }
 
 export class ClientDeclarationResponseError extends Error {
-  constructor() { super('La respuesta del servidor no confirma esta declaración. Recargá las conexiones.'); }
+  constructor() { super('La respuesta del servidor no confirma esta declaración. Recarga las conexiones.'); }
 }
 
 function responseObject(value: unknown): Record<string, unknown> {

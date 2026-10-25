@@ -43,7 +43,7 @@ function foreignDetail(count: number | null, names: readonly string[]): string {
  */
 function editBlocker(account: ProviderAccount): string | undefined {
   if (account.sharedWithPool === null || account.enabled === null) {
-    return 'El snapshot no trae shared_with_pool y/o enabled para esta cuenta. El update reescribe los tres campos a la vez, así que sin el estado actual no se puede editar sin pisar algo: actualizá el snapshot.';
+    return 'El snapshot no trae shared_with_pool y/o enabled para esta cuenta. El update reescribe los tres campos a la vez, así que sin el estado actual no se puede editar sin pisar algo: actualiza el snapshot.';
   }
   return undefined;
 }
@@ -99,7 +99,7 @@ export function AccountsInventory({ config, access, registry }: {
     ? accounts.items.find((item) => item.id === form.edit.id)
     : undefined;
   const editInvalid = form?.kind === 'edit'
-    ? (editing ? editBlocker(editing) : 'La cuenta que estabas editando ya no está en el snapshot: volvé al inventario.')
+    ? (editing ? editBlocker(editing) : 'La cuenta que estabas editando ya no está en el snapshot: vuelve al inventario.')
     : undefined;
   const accountCeilings = form?.kind === 'delete'
     ? ceiling.items.filter((entry) => entry.accountId === form.accountId)
@@ -109,10 +109,10 @@ export function AccountsInventory({ config, access, registry }: {
       ? 'No se puede borrar con seguridad: el gateway no publicó los accesos y no se sabe si algún agente todavía usa la cuenta.'
       : accountCeilings.length > 0
         ? accountCeilings.length === 1
-          ? `Primero quitá el acceso que todavía usa esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
-          : `Primero quitá los ${String(accountCeilings.length)} accesos que todavía usan esta cuenta: ${accountCeilings.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
+          ? `Primero quita el acceso que todavía usa esta cuenta: ${accountCeilings[0]?.tenantId}/${accountCeilings[0]?.alias}.`
+          : `Primero quita los ${String(accountCeilings.length)} accesos que todavía usan esta cuenta: ${accountCeilings.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
         : form.confirmation !== form.accountId
-          ? `Escribí exactamente «${form.accountId}» para confirmar el borrado.`
+          ? `Escribe exactamente «${form.accountId}» para confirmar el borrado.`
           : undefined
     : undefined;
   const mutation = form?.kind === 'edit'
@@ -231,7 +231,7 @@ export function AccountsInventory({ config, access, registry }: {
 
     <FormDialog open={shown && form?.kind === 'edit'} onClose={close} busy={runner.busy}
       title={form?.kind === 'edit' ? `Edición de «${form.edit.id}»` : 'Edición'}
-      description="Sólo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
+      description="Solo la etiqueta, la publicación al pool y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
       {form?.kind === 'edit' ? <>
         <div className="grid gap-3">
           <label>Etiqueta <span className={HINT}>vacío guarda null</span>
@@ -241,7 +241,7 @@ export function AccountsInventory({ config, access, registry }: {
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.enabled} onChange={(event) => { patchEdit({ enabled: event.target.checked }); }} /> Habilitada</label>
         </div>
         <Notice>
-          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta. Quitá antes ese acceso, que también borra su orden de consulta.
+          Despublicar del pool falla mientras otra empresa tenga acceso a la cuenta. Quita antes ese acceso, que también borra su orden de consulta.
         </Notice>
         <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="edición de cuenta" />
       </> : null}
@@ -252,7 +252,7 @@ export function AccountsInventory({ config, access, registry }: {
       description="Borrar retira esta cuenta del inventario de forma irreversible. Las cuentas nuevas se registran desde «Mis cuotas».">
       {form?.kind === 'delete' ? <>
         <Notice tone="danger" role="note">
-          El borrado falla si cualquier agente conserva acceso a esta cuenta. Quitá antes esos accesos y retira sus entornos de consulta.
+          El borrado falla si cualquier agente conserva acceso a esta cuenta. Quita antes esos accesos y retira sus entornos de consulta.
         </Notice>
         <Notice tone="info">
           Para eliminar la cuenta y su historial de cuotas, confirma su eliminación en «Mis cuotas» después de retirar sus entornos.
@@ -260,7 +260,7 @@ export function AccountsInventory({ config, access, registry }: {
           <LinkButton href="/my-quotas" onClick={(event) => { onNavClick(event, '/my-quotas'); }}>Eliminar en Mis cuotas</LinkButton>
         </Notice>
         <label>
-          <span>Confirmá escribiendo <strong className="mono">{form.accountId}</strong></span>
+          <span>Confirma escribiendo <strong className="mono">{form.accountId}</strong></span>
           <input
             {...writeProps}
             aria-label={`Confirmar borrado de ${form.accountId}`}

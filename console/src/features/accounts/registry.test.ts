@@ -107,7 +107,7 @@ it('marca el techo sin binding habilitado como alcanzable pero nunca elegido', (
   expect(kant.idleCeiling).toEqual(['codex-steven', 'minimax-pablo']);
 });
 
-it('el update sólo manda los tres campos mutables: identidad y locator son inmutables', () => {
+it('el update solo manda los tres campos mutables: identidad y locator son inmutables', () => {
   expect(updateAccountMutation('codex-steven', { label: null, sharedWithPool: false, enabled: true })).toEqual({
     resource: 'provider_account', action: 'update', id: 'codex-steven',
     value: { label: null, shared_with_pool: false, enabled: true },
@@ -188,7 +188,7 @@ it('enumera las dos únicas causas posibles cuando el snapshot local no muestra 
 
   expect(described.message).toMatch(/alias_routing_ceiling_agent_fk/);
   expect(described.message).toMatch(/alias_routing_ceiling_borrow_requires_pool/);
-  expect(described.message).toMatch(/actualizá y volvé a previsualizar/i);
+  expect(described.message).toMatch(/actualiza y vuelve a previsualizar/i);
 });
 
 it('nombra la cuenta que ya ocupa esa prioridad en el orden de fallback', () => {

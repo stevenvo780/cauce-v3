@@ -185,7 +185,7 @@ export class CauceApi {
     const csrfToken = unsafe && requireCsrf ? await this.csrfForMutation() : undefined;
 
     if (unsafe && requestGeneration !== this.authGeneration) {
-      throw new ApiError('La sesión cambió antes de enviar la operación. Reintentá desde la cuenta actual.', 409, 'session_changed');
+      throw new ApiError('La sesión cambió antes de enviar la operación. Reintenta desde la cuenta actual.', 409, 'session_changed');
     }
 
     const propio = init.signal || !(this.tiempoMaximoMs > 0) ? undefined : new AbortController();
@@ -364,7 +364,7 @@ export class CauceApi {
   }
 
   updateHumanProfile(name: string): Promise<{ name: string }> {
-    if (this.profileRequest) return Promise.reject(new Error('Ya hay un nombre guardándose. Esperá y reintentá.'));
+    if (this.profileRequest) return Promise.reject(new Error('Ya hay un nombre guardándose. Espera y reintenta.'));
     const generation = this.authGeneration;
     this.sessionRead += 1;
     this.sessionRequest = undefined;

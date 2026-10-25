@@ -33,7 +33,7 @@ export class PublishIntentReconciliationError extends ApiError {
 export class PublishIntentExpiredError extends ApiError {
   constructor(readonly expiration: PublishIntentExpired) {
     super(
-      'La reserva durable expiró sin publicar ningún mensaje. El borrador sigue intacto; volvé a enviarlo.',
+      'La reserva durable expiró sin publicar ningún mensaje. El borrador sigue intacto; vuelve a enviarlo.',
       410,
       'publish_intent_expired',
     );
@@ -45,7 +45,7 @@ export class PublishIntentExpiredError extends ApiError {
 export class PublishIntentRateLimitedError extends ApiError {
   constructor(readonly rateLimit: PreparePublishIntentRateLimited) {
     super(
-      `Hay demasiadas reservas durables recientes. Reintentá en ${String(rateLimit.retry_after_seconds)} s; `
+      `Hay demasiadas reservas durables recientes. Reintenta en ${String(rateLimit.retry_after_seconds)} s; `
       + 'el borrador sigue intacto.',
       429,
       'publish_intent_rate_limited',

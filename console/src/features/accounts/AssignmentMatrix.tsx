@@ -110,9 +110,9 @@ export function AssignmentMatrix({ config, access, registry }: {
   const needsPriority = assignment.operation === 'create-binding' || assignment.operation === 'update-binding';
 
   const invalid = !assignment.agentKey || !selectedTenant || !selectedAlias
-    ? 'Elegí un agente: la mutación identifica al alias por tenant y alias.'
+    ? 'Elige un agente: la mutación identifica al alias por tenant y alias.'
     : !assignment.accountId
-      ? 'Elegí una cuenta.'
+      ? 'Elige una cuenta.'
       : needsPriority && !priorityValid
         ? 'El orden debe ser un entero entre 0 y 32767; el número menor se consulta primero.'
         : undefined;
@@ -143,7 +143,7 @@ export function AssignmentMatrix({ config, access, registry }: {
       <div className="mb-3 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           <h2 className="m-0 text-sm font-semibold">Qué cuenta puede usar cada agente</h2>
-          <p className="m-0 mt-0.5 text-xs text-muted">Tocá una celda para cambiar el acceso o el orden: cada cambio pasa por una vista previa.</p>
+          <p className="m-0 mt-0.5 text-xs text-muted">Toca una celda para cambiar el acceso o el orden: cada cambio pasa por una vista previa.</p>
         </div>
         <Button variant="primary" {...writeProps} onClick={() => { setFormOpen(true); }}>
           <Plus size={15} aria-hidden="true" />Nueva asignación
@@ -266,7 +266,7 @@ export function AssignmentMatrix({ config, access, registry }: {
         <Link2Off size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Quitar el acceso borra también el orden de consulta de ese agente hacia esa cuenta.
       </Notice> : null}
       {assignment.operation === 'grant-ceiling' ? <Notice role="note" className="flex items-start gap-1.5">
-        <ShieldQuestion size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Si la cuenta la paga otro tenant, sólo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
+        <ShieldQuestion size={14} aria-hidden="true" className="mt-0.5 shrink-0" /> Si la cuenta la paga otro tenant, solo se puede otorgar cuando su pagador la publicó al pool. Ese consentimiento lo verifica Postgres, no la consola.
       </Notice> : null}
       <MutationBar runner={runner} mutation={mutation} invalid={invalid} previewLabel="asignación" />
     </FormDialog>

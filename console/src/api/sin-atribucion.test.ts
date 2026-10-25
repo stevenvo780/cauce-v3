@@ -6,7 +6,7 @@
  * reconciliación). La consola NO puede confundir ese 403 con el 403 de la política de rutas:
  * el primero dice qué hacer (entrar con identidad de persona), el segundo dice que la ruta
  * mezcla credenciales. Este fichero fija que el cliente separa los dos en TODAS las rutas,
- * no sólo en la de documentos, y que las lecturas (GET) no se bloquean: T042 deja shell y
+ * no solo en la de documentos, y que las lecturas (GET) no se bloquean: T042 deja shell y
  * lectura como están.
  */
 import { http, HttpResponse } from 'msw';

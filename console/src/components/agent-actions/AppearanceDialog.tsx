@@ -110,7 +110,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'el servidor no contestó';
       setOutcome(isRevisionConflict(error)
-        ? { tone: 'warn', text: 'Otra persona cambió este icono mientras lo editabas. Cargamos su versión (la ves como «En el servidor»); tu borrador sigue acá y podés guardarlo encima.' }
+        ? { tone: 'warn', text: 'Otra persona cambió este icono mientras lo editabas. Cargamos su versión (la ves como «En el servidor»); tu borrador sigue acá y puedes guardarlo encima.' }
         : { tone: 'danger', text: kind === 'save' ? `No se guardó: ${detail}` : `No se restableció: ${detail}` });
     } finally {
       setBusy(undefined);
@@ -118,9 +118,9 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
   }
 
   const gate = permission === 'denied'
-    ? `${APPEARANCE_DENIED_REASON} Podés probar combinaciones, pero no guardarlas.`
+    ? `${APPEARANCE_DENIED_REASON} Puedes probar combinaciones, pero no guardarlas.`
     : permission === 'unknown'
-      ? 'No se pudo acreditar config.write: podés probar combinaciones, pero Guardar queda apagado hasta que el servidor confirme el permiso.'
+      ? 'No se pudo acreditar config.write: puedes probar combinaciones, pero Guardar queda apagado hasta que el servidor confirme el permiso.'
       : undefined;
 
   return (
@@ -184,7 +184,7 @@ function Editor({ agent, guard, onClose }: { agent: AgentRef; guard: CloseGuard;
                 ))}
               </div>
               <label className="grid gap-1 text-xs font-normal text-muted">
-                O escribí cualquiera
+                O escribe cualquiera
                 <input type="text" value={glyphText} placeholder="🐉, Ω, K…" maxLength={16} aria-invalid={problem !== undefined && draft.glyph !== null}
                   onChange={(event) => { setGlyphText(event.target.value); update({ glyph: event.target.value.trim() || null }); }}
                   className="max-w-40 text-center text-base" />

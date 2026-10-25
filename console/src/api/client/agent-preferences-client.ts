@@ -24,7 +24,7 @@ export interface AgentPreferencesClient {
 }
 
 export class AgentPreferencesResponseError extends Error {
-  constructor() { super('La respuesta del servidor no confirma las preferencias de los agentes. Recargá la consola.'); }
+  constructor() { super('La respuesta del servidor no confirma las preferencias de los agentes. Recarga la consola.'); }
 }
 
 /** Someone else saved this agent's appearance after it was read: the draft must be rebased, never forced. */
