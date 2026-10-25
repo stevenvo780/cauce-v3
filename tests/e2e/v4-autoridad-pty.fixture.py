@@ -20,6 +20,13 @@ INPUT = json.load(sys.stdin)
 sys.path.insert(0, str(ROOT / 'ops/cli'))
 sys.path.insert(0, str(ROOT / 'ops/tests'))
 sys.path.insert(0, str(ROOT / 'ops/container-runtime'))
+runtime_spec = importlib.util.spec_from_file_location('authority_live_fixture', ROOT / 'tests/e2e/v4-autoridad-pty-runtime.py')
+runtime_module = importlib.util.module_from_spec(runtime_spec)
+runtime_spec.loader.exec_module(runtime_module)
+
+
+def live_runtime():
+    return runtime_module.LiveAuthorityFixture(ROOT, INPUT, command, write, digest)
 
 
 def command(argv, *, data=None, user=None):
@@ -29,9 +36,10 @@ def command(argv, *, data=None, user=None):
     result = subprocess.run(argv, input=data, capture_output=True, text=True, timeout=180)
     if result.returncode:
         journal = ''
-        if any(str(part).endswith('/fleet-authority-install.py') for part in argv):
-            journal = subprocess.run(['journalctl', '--no-pager', '-u', 'zz-canary-h7d-authority.service', '-n', '30', '-o', 'cat'],
-                                     capture_output=True, text=True, check=False).stdout[-5000:]
+        if any(str(part).endswith('/fleet-authority-install.py') or str(part).startswith('zz-canary-h7d-') for part in argv):
+            journal = subprocess.run(['journalctl', '--no-pager', '-u', 'zz-canary-h7d-authority.service',
+                '-u', 'zz-canary-h7d-controller.service', '-n', '30', '-o', 'cat'],
+                capture_output=True, text=True, check=False).stdout[-5000:]
         raise RuntimeError(f'{argv[0]} exit={result.returncode}: {result.stderr[-1500:]} {result.stdout[-1500:]} {journal}')
     return result.stdout
 
@@ -187,9 +195,12 @@ def setup():
     write(unit, f'[Service]\nExecStart=/usr/local/bin/node {ROOT}/app/services/gateway/dist/fleet/main.js\n', 0o644)
     write(pathlib.Path('/etc/systemd/system/zz-canary-h7d-authority.service'),
           '[Service]\nExecStart=/bin/false\n[Install]\nWantedBy=multi-user.target\n', 0o644)
+    runtime = live_runtime()
+    runtime.configure()
     command(['systemctl', 'daemon-reload'])
     command(['python3', '-B', str(ROOT / 'ops/scripts/fleet-authority-install.py'), '--apply', *installer_arguments()])
-    print(json.dumps({'native': native, 'registry_count': len(registries), 'unit_active': True}))
+    baseline = runtime.start()
+    print(json.dumps({'native': native, 'registry_count': len(registries), 'unit_active': True, 'live_baseline': baseline}))
 
 
 def transport(connection, socket):
@@ -218,6 +229,8 @@ def transport(connection, socket):
 
 
 def exercise():
+    runtime = live_runtime()
+    live_before = runtime.verify()
     fleet = pathlib.Path('/etc/cauce-v3/fleet-v35')
     policy_file = fleet / 'controller/authority.v1.json'
     allowlist = pathlib.Path('/etc/cauce-v3/terminal/pty_agent_identities.json')
@@ -226,11 +239,15 @@ def exercise():
                  pathlib.Path('/etc/tmpfiles.d/zz-canary-h7d-authority.conf')]
         return {str(p): (digest(p), p.stat().st_uid, p.stat().st_gid, p.stat().st_mode, p.stat().st_ino) for p in files if p.is_file()}
     before = snapshot()
-    invocation = [str(ROOT / '.delegados/v4/autoridad-pty.sh'), '--ops-root', str(ROOT / 'ops'), *installer_arguments()]
+    invocation = [str(ROOT / '.delegados/v4/autoridad-pty.sh'), '--ops-root', str(ROOT / 'ops'),
+        '--backup-root', '/var/backups/cauce-v3/authority-pty-h7e', '--executor-host', INPUT['host'], *installer_arguments()]
     command([*invocation, '--simular'])
     assert snapshot() == before
     receipt = pathlib.Path(INPUT['receipt'])
     command([*invocation, '--aplicar', '--recibo', str(receipt)])
+    backup_verification = runtime.verify_receipt(receipt)
+    live_after = runtime.verify()
+    assert all(live_before['pids'][unit] != live_after['pids'][unit] for unit in live_before['pids'])
     assert len(json.loads(policy_file.read_text())['registries']) == 5
     assert stat_mode(allowlist.with_name(allowlist.name + '.lock')) == 0o600
     assert snapshot()[str(allowlist)] == before[str(allowlist)]
@@ -293,6 +310,8 @@ def exercise():
         assert len(remaining) == 1 and remaining[0]['tenant_id'] == 'Other'
         command([*invocation, '--revertir', '--simular', '--recibo', str(receipt)])
         command([*invocation, '--revertir', '--recibo', str(receipt)])
+        live_reverted = runtime.verify()
+        assert all(live_after['pids'][unit] != live_reverted['pids'][unit] for unit in live_after['pids'])
         assert len(json.loads(policy_file.read_text())['registries']) == 4
         assert json.loads(allowlist.read_text())['agents'] == remaining
         assert allowlist.stat().st_uid == 1000 and stat_mode(allowlist) == 0o440
@@ -306,15 +325,30 @@ def exercise():
             pass
         else:
             raise AssertionError('installer accepted an absent gateway')
-        assert json.loads(failed_receipt.read_text())['status'] == 'reverted'
+        persistent_status = json.loads(failed_receipt.read_text())['status']
+        assert persistent_status == 'failed-requires-reconciliation'
+        write(failed_receipt.with_name('authority-pty-failed-before-retry.json'), failed_receipt.read_text())
         assert len(json.loads(policy_file.read_text())['registries']) == 4
         assert json.loads(allowlist.read_text())['agents'] == remaining
         assert stat_mode(allowlist.with_name(allowlist.name + '.lock')) == 0o644
         assert command(['systemctl', 'is-active', 'zz-canary-h7d-authority.service']).strip() == 'active'
-        print(json.dumps({'simulation_unchanged': True, 'authorities_after_apply': 5, 'authorities_after_revert': 4,
+        command([*invocation, '--revertir', '--recibo', str(failed_receipt)])
+        assert json.loads(failed_receipt.read_text())['status'] == 'reverted'
+        live_failures = [runtime.failure(invocation, mode, receipt.with_name('authority-pty-' + mode + '-failed.json'))
+                         for mode in ('readiness', 'capabilities')]
+        default_receipt = runtime.default_receipt_cycle(invocation, receipt.with_name('authority-pty-default-receipt.json'))
+        evidence = {'simulation_unchanged': True, 'authorities_after_apply': 5, 'authorities_after_revert': 4,
             'canonical_installer_active': True, 'canonical_cli_purge': purge, 'foreign_identity_preserved': True,
             'allowlist_not_restored': True, 'rollback_cas_rejected_before_writes': True,
-            'failed_install_automatically_compensated': True, 'receipt': str(receipt)}))
+            'persistent_gateway_failure_rejected': True, 'persistent_gateway_failure_status': persistent_status,
+            'valid_gateway_retry_verified': True, 'receipt': str(receipt),
+            'live_controller_and_enclave': True, 'controller_pin_loaded_at_start': True,
+            'both_services_restarted_after_apply_and_revert': True, 'live_failure_compensation': live_failures,
+            'backup_verification': backup_verification, 'default_receipt_cycle': default_receipt,
+            'baseline': live_before, 'applied': live_after, 'reverted': live_reverted}
+        write(receipt.with_name('authority-pty-before-preflight.json'), json.dumps(evidence, indent=2) + '\n')
+        evidence['full_upgrade_preflight'] = runtime.preflight()
+        print(json.dumps(evidence))
     finally:
         proxy.terminate()
         proxy.join(timeout=10)
