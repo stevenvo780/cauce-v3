@@ -235,7 +235,7 @@ function entregaEnVuelo(status: number, body: unknown): ApiError | undefined {
 const CONTEXT_SOURCE_INVALID = 'La revisión del perfil Git no es válida o está incompleta. Elige otra revisión y vuelve a preparar el cambio.';
 
 const GOVERNANCE_ERROR_TEXT: Readonly<Record<string, string>> = {
-  agent_disabled: 'El agente está deshabilitado. Habilítalo desde Configuración > Operación y vuelve a guardar el perfil.',
+  agent_disabled: 'El agente está deshabilitado. Habilítalo desde la pestaña Ejecución de su ficha y vuelve a guardar el perfil.',
   profile_revision_conflict: 'El perfil cambió desde que se abrió. Actualízalo y vuelve a aplicar el borrador sobre la revisión vigente.',
   not_found: 'No se encontró el agente o ya no está visible. Actualiza el inventario y elige un agente disponible.',
   forbidden: 'Tu sesión ya no tiene permiso para esta operación. Entra con una persona autorizada o pide a un operador que revise el acceso.',
@@ -278,7 +278,7 @@ const GOVERNANCE_ERROR_TEXT: Readonly<Record<string, string>> = {
 
 const RECONCILIATION_ERROR_TEXT: Readonly<Record<string, string>> = {
   context_write_not_applied: 'El lote de reconciliación no se aplicó. Relee el estado del contexto y vuelve a medir antes de reintentar.',
-  agent_disabled: 'El agente está deshabilitado. Habilítalo desde Configuración > Operación y vuelve a medir el contexto.',
+  agent_disabled: 'El agente está deshabilitado. Habilítalo desde la pestaña Ejecución de su ficha y vuelve a medir el contexto.',
   reconcile_snapshot_conflict: 'El perfil, la generación o los documentos cambiaron desde la medición. Relee el agente y crea una vista previa nueva antes de reconciliar.',
   runtime_ack_incomplete: 'El runtime no confirmó todos los documentos. Relee el perfil y las huellas; vuelve a medir antes de reintentar.',
   runtime_unverified: 'No se pudo verificar el runtime de este agente. Revisa la conexión de su computadora y vuelve a medir.',

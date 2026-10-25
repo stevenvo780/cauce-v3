@@ -151,7 +151,7 @@ export function fleetScopeGap(snapshot: ConfigurationSnapshot, target: FleetTarg
   const legacy = agents.flatMap((row) => { const gaps = placementGaps(row); return gaps.length ? [{ alias: String(row.alias), gaps }] : []; });
   const first = legacy.at(0);
   if (!first) return undefined;
-  const pause = 'Mientras tanto puedes pausar su admisión de entregas en la pestaña Registro; para darlo de baja hay que retirarlo en su computadora';
+  const pause = 'Mientras tanto puedes pausar su admisión de entregas en la pestaña Ajustes; para darlo de baja hay que retirarlo en su computadora';
   if (target.resource === 'agent') {
     return `Este agente se instaló antes del ejecutor de flota y su registro no tiene ${first.gaps.length > 1 ? `${first.gaps.slice(0, -1).join(', ')} ni ${String(first.gaps.at(-1))}` : first.gaps.join('')}. `
       + `La consola no puede detenerlo, retirarlo, actualizarlo ni eliminarlo hasta adoptarlo en la flota. ${pause} con «cauce ${first.alias} retirar».`;

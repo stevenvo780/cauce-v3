@@ -489,7 +489,7 @@ describe('CauceApi', () => {
   });
 
   it.each([
-    [409, 'agent_disabled', 'Habilítalo desde Configuración'],
+    [409, 'agent_disabled', 'pestaña Ejecución'],
     [409, 'profile_revision_conflict', 'aplicar el borrador sobre la revisión vigente'],
     [503, 'profile_write_unavailable', 'Conserva el borrador'],
     [403, 'forbidden', 'Tu sesión ya no tiene permiso'],

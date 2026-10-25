@@ -153,7 +153,7 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
    La sesión del proveedor se queda en el volumen de perfiles del agente, en tu máquina; ni el terminal ni el código pasan a la plataforma. Si la operación no se para en «Esperando autenticación», la cuenta ya tenía sesión en ese agente y puedes saltar este paso.
 6. Escríbele en su sala: el agente tiene que contestar.
 
-En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` muestra su contenedor. Para pararlo, arrancarlo o cambiar su ejecución, abre la pestaña **Ejecución** y confirma con **Previsualizar operación** y **Confirmar operación**. Para retirarlo o eliminarlo, usa **Estado**. Nunca `docker stop` ni `docker rm` a mano: el ejecutor lo detectaría como divergencia. Algunos avisos del servidor todavía dicen «pestaña Operación»: es esta misma pestaña, cuyo identificador interno es `operacion` y cuyo rótulo es **Ejecución**.
+En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` muestra su contenedor. Para pararlo, arrancarlo o cambiar su ejecución, abre la pestaña **Ejecución** y confirma con **Previsualizar operación** y **Confirmar operación**. Para retirarlo o eliminarlo, usa **Estado**. Nunca `docker stop` ni `docker rm` a mano: el ejecutor lo detectaría como divergencia. El identificador interno de la pestaña sigue siendo `operacion`; el rótulo visible es **Ejecución**.
 
 ## 6. Si algo falla
 

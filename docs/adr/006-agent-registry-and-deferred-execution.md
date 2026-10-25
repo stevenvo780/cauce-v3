@@ -1,8 +1,8 @@
 # ADR-006: registro de agentes, pool de suscripciones cross-tenant, y ejecución remota diferida
 
-**Estado:** parcialmente implementado. La parte de datos/configuración está aceptada; la parte de
-ejecución remota sobre un host de la flota distinto del que lleva el stack es **diseño únicamente,
-no implementado**.
+**Estado:** el registro y el pool de esta decisión están aceptados. La ejecución remota por
+entregas del bus, descrita más abajo, no se construyó. El ordenador remoto ejecuta hoy con el
+ejecutor de flota y las operaciones de la consola ([ordenadores](../v4-ordenadores.md)).
 
 ## Decisión central: la cuenta no pertenece a quien la usa, pertenece a quien la paga
 

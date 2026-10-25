@@ -2,9 +2,9 @@
 
 **Estado:** aceptada. El modo `harness_rw`, la tabla `terminal_control_holds` (migración `040`),
 las rutas de toma/devolución/prórroga, la grabación del relay y el interruptor
-`CAUCE_TERMINAL_RW_ENABLED` están en el árbol. El interruptor arranca **apagado** y
-`deploy/compose.yaml` todavía no declara ninguna de las variables del modo: un despliegue tal cual
-sigue comportándose exactamente como antes.
+`CAUCE_TERMINAL_RW_ENABLED` están en el árbol. El interruptor arranca **apagado**:
+`deploy/compose.yaml` declara `CAUCE_TERMINAL_RW_ENABLED` y `CAUCE_TERMINAL_CONTROL_HOLD_SECONDS`
+con defecto `0` y `900`. Un despliegue que no fija `CAUCE_TERMINAL_RW_ENABLED=1` no abre la escritura.
 
 ## Contexto
 

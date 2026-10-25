@@ -59,7 +59,7 @@ export function AgentSignInDialog({ open, tenantId, alias, harnessId, onClose }:
   }, [open, api, tenantId, alias, harnessId]);
   const [resume, setResume] = useState<Resume>();
   useEffect(() => { if (open) setResume(undefined); }, [open]);
-  // A sign-in that the provider confirmed resumes its operation here, so the agent starts without a trip to «Operación».
+  // A sign-in that the provider confirmed resumes its operation here, so the agent starts without a trip to «Ejecución».
   const resumeAfterAuth = useCallback(async (operationId: string) => {
     setResume({ status: 'resuming' });
     try {
@@ -81,13 +81,13 @@ export function AgentSignInDialog({ open, tenantId, alias, harnessId, onClose }:
         : <>
           {phase.latest ? <Notice tone="warn" role="note">
             Este agente no tiene ninguna operación esperando el inicio de sesión (la última está {phase.latest}). Si corre en contenedor,
-            abre la pestaña «Operación» y vuelve a prepararlo; el inicio de sesión aparecerá ahí.
+            abre la pestaña «Ejecución» y vuelve a prepararlo; el inicio de sesión aparecerá ahí.
           </Notice> : null}
           <AgentPtyLogin tenantId={tenantId} alias={alias} harnessId={harnessId} />
         </>}
     </Suspense> : null}
     {resume?.status === 'resuming' ? <p className="m-0 text-sm" role="status">Cuenta verificada. Reanudamos la operación del agente…</p> : null}
     {resume?.status === 'resumed' ? <Notice tone="ok" role="status">Cuenta verificada y operación reanudada. El agente sigue preparándose; puedes cerrar esta ventana.</Notice> : null}
-    {resume?.status === 'failed' ? <Notice tone="danger" role="alert">La cuenta se verificó, pero no pudimos reanudar la operación. Abre la pestaña «Operación» y pulsa «Reanudar».</Notice> : null}
+    {resume?.status === 'failed' ? <Notice tone="danger" role="alert">La cuenta se verificó, pero no pudimos reanudar la operación. Abre la pestaña «Ejecución» y pulsa «Reanudar».</Notice> : null}
   </ProviderSignInDialog>;
 }

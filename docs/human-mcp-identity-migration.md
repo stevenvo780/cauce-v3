@@ -2,17 +2,15 @@
 
 ## Alcance y estado
 
-Esquema aditivo sobre el commit `373b7f992f373e955dddf6fda6a7c735eb2b3740`
-(árbol `aea9b1e1a8e2332147039dcede3ee0956f1762b5`): 39 migraciones anteriores,
-última numerada 043. No modifica sus fuentes, ni Gateway, resolver, SDK o producción.
-`ExternalSubjectResolver` sigue inyectado: todavía no consume estas tablas.
-Los DTO siguientes describen filas nuevas, no una API que ya esté implementada.
+La migración 044 añadió estas tablas. El gateway ya las consume: `resolveHumanIdentity` y
+`lockHumanIdentity` en `packages/store/src/human-identity.ts`, montadas desde
+`services/gateway/src/mcp-mounting.ts`. Los DTO de abajo describen el esquema de aquella
+migración, no una API pendiente. `human_tenant_memberships.role` se retiró después; el
+estado vigente está en [membresías](v4-membresias.md).
 
-La suite usa PostgreSQL real mediante los helpers canónicos; no emula SQL.
-En el entorno de preparación no hay Docker ni PostgreSQL disponible: sus nueve casos
-quedan pendientes, con salto explícito. Compilar o recolectar la suite no acredita los
-constraints ni un pase de PostgreSQL. Se requiere ejecución sobre el commit publicado
-antes de integrar o desplegar.
+La suite de PostgreSQL está en `tests/integration/human-mcp-identity-postgres.test.ts` y
+`tests/integration/human-identity-resolver-postgres.test.ts`. Este documento ya no registra
+un salto por falta de Docker.
 
 ## DTO de esquema
 

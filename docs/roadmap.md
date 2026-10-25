@@ -141,19 +141,21 @@ Lo que la consola NO deja editar del contexto de un agente, y por qué. La conso
 
 ## 3. Producto — los 7 puntos de la visión
 
+El cuadro mezcla el estado de entonces con funciones que ya existen. La terminal web está en `/terminal`. El CLI se instala fuera del host del stack: [v4-cli](v4-cli.md). El alta de un agente se hace en la consola: [guía](v4-guia.md). Siguen sin esa función los permisos dinámicos, la auditoría de comportamiento entre instancias y la generalización de avisos cron.
+
 Estado de cada punto de [doctrina-del-dueno.md](doctrina-del-dueno.md) §La visión:
 
 | Punto | Estado |
 |---|---|
 | Flota como datos (alta/baja de agentes trivial) | **Hecho** — demo probeta superada: alta y baja tocando solo BD+CLI, todo lo demás derivado (manifests, units, telegram, aprovisionamiento mTLS). Persiste el hallazgo de seguridad del gateway (§1). La coletilla de baja propia está CERRADA: `register-agent-identity.py` tiene `--revoke` (`fe6d234c`) y `cauce retirar` lo encadena (paso 2b). Ver `arquitectura.md` §4. |
 | Contextos nativos por harness | **Pendiente** — subpuntos §1 1,3,4,5 cerrados (TOPES 90K/200K), flag OFF |
-| Rotación de credenciales fácil / cuotas inteligentes | **Pendiente** — `quota-collector` se queda como referencia hasta que el CLI integral (abajo) lo absorba; no se rehace todavía |
+| Rotación de credenciales fácil / cuotas inteligentes | **Parcial** — la consola lee las ventanas en [cuotas](v4-cuotas.md). El recolector periódico sigue aparte y no es esa pantalla |
 | Permisos dinámicos | **Pendiente** — sin ronda dedicada |
-| Terminal/TUI web desde cualquier dispositivo | **En curso** — el CLI ya opera TUIs vía `ops/guardias/cauce-attach`; falta el acceso web (parte del CLI integral) |
+| Terminal/TUI web desde cualquier dispositivo | **Hecho el acceso** — `/terminal` y `cauce <alias>` ([v4-cli](v4-cli.md), [terminal](terminal-pty.md)). Escribir en la TUI sigue detrás de `CAUCE_TERMINAL_RW_ENABLED`, apagado por defecto |
 | UI clara multi-socio | **En curso** — consola operativa (`/live`, `/observability`, `/messages`); pendiente el mega-refactor (§4) |
 | Logs de auditoría de comportamiento | **Pendiente** — guardia de contaminación existe (`contaminacion-de-contexto.ts` + endpoint audit); detectar patrones entre instancias sigue pendiente |
 
-**CLI instalable.** Hoy `ops/cli/cauce` es una única fuente rescatada que asume el host del stack: deriva rutas locales, habla con systemd por `systemctl --user` y con Docker por el socket local, y corre solo desde esta VPS. Falta empaquetarlo como aplicación instalable en cualquier ordenador sin depender de la torre, con autenticación hacia TUIs/máquinas remotas y consumo de cuotas en tiempo real integrado (reemplaza a `quota-collector`). Centro de mando sigue siendo siempre esta VPS; multi-servidor ya tiene precedente (kant).
+**CLI instalable.** `ops/cli/cauce` se instala en el ordenador del operador y habla con la consola por HTTPS. El alta del ordenador y los comandos están en [v4-cli](v4-cli.md) y [alta de servidor](v4-alta-servidor.md). El recolector periódico `quota-collector` sigue siendo otra vía ([runbook](../ops/runbooks/quota-collector.md)) y no quedó absorbido por ese CLI.
 
 **Notificaciones recurrentes por agente.** Sustituye a la idea descartada de Alertmanager, que salió del stack entero. Cualquier agente puede tener mensajes tipo cron encolados a su canal por el bus; generaliza el patrón ya probado del revividor de colas, con su salvaguarda de idempotencia. Primer uso, ya versionado en el árbol: `ops/guardias/cauce-alertas-al-bus.py` consulta `/api/v1/alerts` de Prometheus y publica la entrega al bus, con su par systemd `ops/guardias/systemd/cauce-alertas-al-bus.{service,timer}` y cadencia de 5 min (`OnCalendar=*-*-* *:0/5:00 UTC`). Alternativas evaluadas y descartadas: receptor webhook de Alertmanager; registrar `mcp-fleet-monitor` en el arnés de un alias operador para que investigue con tools. **Lo que falta es la generalización**: hoy la ruta es ese guardia dedicado a alertas, no la capacidad de encolar mensajes tipo cron al canal de cualquier agente.
 
