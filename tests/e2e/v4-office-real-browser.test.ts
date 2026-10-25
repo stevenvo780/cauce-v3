@@ -121,7 +121,7 @@ async function savedLayout(): Promise<Pick<CompanyOfficeLayout, 'version' | 'roo
 }
 
 async function selectRoomEditor(page: V4Page) {
-  await page.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).getByRole('button').click();
+  await page.getByRole('region', { name: planRoom(renamedRoomLabel), exact: true }).locator('button[aria-pressed]').click();
   const editor = page.getByRole('region', { name: `Editar sala ${hubA}/${renamedRoomLabel}`, exact: true });
   await editor.waitFor({ timeout: 20_000 });
   return editor;
@@ -197,7 +197,7 @@ async function moveAgent(page: V4Page, destination: string, alias = agentAlias):
 async function assertAgentInPlan(page: V4Page, label: string, alias = agentAlias): Promise<void> {
   const room = page.getByRole('region', { name: planRoom(label), exact: true });
   await room.waitFor({ timeout: 30_000 });
-  await room.getByRole('button').click();
+  await room.locator('button[aria-pressed]').click();
   const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${label}`, exact: true });
   await roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).waitFor({ timeout: 20_000 });
 }
@@ -205,7 +205,7 @@ async function assertAgentInPlan(page: V4Page, label: string, alias = agentAlias
 async function assertAgentNotInPlan(page: V4Page, label: string, alias = agentAlias): Promise<void> {
   const room = page.getByRole('region', { name: planRoom(label), exact: true });
   await room.waitFor({ timeout: 30_000 });
-  await room.getByRole('button').click();
+  await room.locator('button[aria-pressed]').click();
   const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${label}`, exact: true });
   await roster.waitFor({ timeout: 20_000 });
   expect(await roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).count()).toBe(0);
@@ -241,8 +241,9 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     await step(ownerPage(), 'same-company reader creation', async () => {
       await openConfig(ownerPage(), 'acceso');
       await ownerPage().getByRole('button', { name: 'Administrar personas', exact: true }).click();
-      await ownerPage().getByRole('button', { name: 'Crear persona', exact: true }).click();
-      const form = ownerPage().getByRole('form', { name: 'Crear persona', exact: true });
+      await ownerPage().getByRole('region', { name: 'Administración de personas', exact: true })
+        .getByRole('button', { name: 'Invitar persona', exact: true }).click();
+      const form = ownerPage().getByRole('form', { name: 'Invitar persona', exact: true });
       await form.getByLabel('Correo de acceso', { exact: true }).fill(readerA.email);
       await form.getByLabel('Nombre de persona', { exact: true }).fill(readerA.name);
       await form.getByLabel('Permiso web').selectOption('reader');
@@ -744,7 +745,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       const confirm = form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true });
       await expect.poll(() => confirm.isDisabled(), { timeout: 20_000 }).toBe(false);
       await confirm.click();
-      await page.getByText(`Registro de ${hubA}/${cycleAlias} eliminado en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
+      await page.getByText(`Registro de ${hubA}/${cycleAlias} eliminado del inventario en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
     });
     expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rowCount).toBe(0);
     for (const browser of [page, reader]) await step(browser, 'deleted agent absent after reload in both browsers', async () => {

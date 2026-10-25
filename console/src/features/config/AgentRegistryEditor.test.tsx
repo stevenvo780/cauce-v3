@@ -206,7 +206,7 @@ it('deletes an unmanaged registry row only after its exact preview and keeps the
   const apply = screen.getByRole('button', { name: 'Confirmar eliminación del registro' }); expect(apply).toBeDisabled();
   await user.click(screen.getByRole('button', { name: 'Previsualizar eliminación' }));
   await waitFor(() => { expect(apply).toBeEnabled(); }); await user.click(apply);
-  expect(await screen.findByRole('status')).toHaveTextContent('Registro de A/one eliminado en revisión 5');
+  expect(await screen.findByRole('status')).toHaveTextContent('Registro de A/one eliminado del inventario en revisión 5');
   expect(screen.queryByRole('button', { name: 'Acciones de A/one' })).not.toBeInTheDocument();
   expect(changes).toEqual([
     { expected_revision: 4, dry_run: true, mutation: { resource: 'agent', action: 'delete', tenant_id: 'A', alias: 'one' } },

@@ -77,6 +77,9 @@ beforeAll(async () => {
   await mkdir(evidence, { recursive: true });
   // Quota readers exist only for owner-approved descriptors: pin the packaged codex descriptor, never openclaw.
   approvals = await mkdtemp(join(tmpdir(), 'zz-canary-v4-console-approvals-'));
+  const backupDirectory = join(approvals, 'space-backups');
+  await mkdir(backupDirectory, { mode: 0o700 });
+  vi.stubEnv('CAUCE_SPACE_BACKUP_DIRECTORY', backupDirectory);
   const approvalsFile = join(approvals, 'approvals.json');
   const codex = await readFile(new URL('codex.json', descriptors));
   await writeFile(approvalsFile, JSON.stringify({ codex: createHash('sha256').update(codex).digest('hex') }), { mode: 0o600 });
@@ -378,7 +381,9 @@ describe('recorrido V4 de la consola en navegador real contra gateway y PostgreS
       VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`, [hubA, agentAlias, `cauce-v4-${run}`, `/srv/v4/${run}`, `/srv/v4/${run}/state`, ownerA.company.slug]);
     await pool().query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [hubA, agentAlias]);
     await pool().query('INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES($1,$2,$3)', [hubA, agentAlias, 'Agente de prueba V4']);
-    errors.expectHttpError(`/v3/console/spaces/${hubA}/${agentAlias}/backups`, 404);
+    const backups = await apiGet(page, `/v3/console/spaces/${hubA}/${agentAlias}/backups`);
+    expect(backups.status).toBe(200);
+    expect(backups.body).toEqual({ backups: [] });
     await step(page, 'agent sheet', async () => {
       await openPlan(page);
       await page.getByRole('region', { name: officeRoom(), exact: true }).getByRole('button').first().click();

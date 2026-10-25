@@ -235,7 +235,7 @@ function AgentRegistryForm({
     if (!outcome.ok) { runner.informar({ text: outcome.message, tone: 'error' }); return; }
     const reread = outcome.recarga?.releido === true ? outcome.recarga : undefined;
     const notice: ConfigMutationNotice = {
-      text: `Registro de ${agent.tenant_id}/${agent.alias} eliminado en revisión ${String(outcome.result.revision)}.`
+      text: `Registro de ${agent.tenant_id}/${agent.alias} eliminado del inventario en revisión ${String(outcome.result.revision)}.`
         + (reread ? ` Inventario releído en revisión ${String(reread.revision)}.` : ' La relectura no quedó acreditada; actualiza el inventario antes de seguir.'),
       tone: reread ? 'success' : 'parcial',
     };

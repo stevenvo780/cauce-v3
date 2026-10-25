@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { purgeDependencies } from '../../packages/store/src/repository/fleet-operation-purge-plan.js';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES,
@@ -7,6 +10,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const evidenceDirectory = join(process.cwd(), '.delegados/v4/recibos/e2e-a2-sigue-1025/matrix', run);
 function canaryPerson(label: string): V4Person {
   const person = syntheticPerson(label, run);
   return {
@@ -41,6 +45,49 @@ const base = () => active().baseUrl;
 const pool = () => active().database.pool;
 const ownerPage = () => { if (!pageA) throw new Error('owner A has no page yet'); return pageA; };
 const foreignPage = () => { if (!pageB) throw new Error('owner B has no page yet'); return pageB; };
+
+interface AgentDeletionEvidence {
+  agents: { enabled: boolean; has_runtime_key: boolean; retired: boolean; purged: boolean }[];
+  quota_observation_count: string;
+}
+async function recordAgentDeletionEvidence(stage: 'before-preview' | 'before-apply' | 'after-apply' | 'verified'): Promise<AgentDeletionEvidence> {
+  const client = await pool().connect();
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const preserved = (await purgeDependencies(client, { resource: 'agent', tenant_id: hubA, alias: agentAlias }))
+      .filter(dependency => dependency.type.startsWith('purge.preserve.') && dependency.type !== 'purge.preserve.agents')
+      .map(dependency => ({ type: dependency.type, identity: { kind: dependency.identity.kind ?? '' } }));
+    const agents = (await client.query<{
+      enabled: boolean; has_runtime_key: boolean; retired: boolean; purged: boolean;
+    }>(`SELECT enabled,runtime_key IS NOT NULL AS has_runtime_key,retired_at IS NOT NULL AS retired,purged_at IS NOT NULL AS purged
+      FROM agents WHERE tenant_id=$1 AND alias=$2`, [hubA, agentAlias])).rows;
+    const memberships = (await client.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows[0]?.count ?? '0';
+    const observations = (await client.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM agent_quota_observations WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows[0]?.count ?? '0';
+    const evidence = { run, stage, observed_at: new Date().toISOString(), preserved, agents,
+      membership_count: memberships, quota_observation_count: observations };
+    await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
+    const path = join(evidenceDirectory, `agent-delete-${stage}.json`);
+    await writeFile(path, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+    console.log('V4_CRUD_MATRIX_AGENT_DELETE_EVIDENCE', JSON.stringify({ path, ...evidence }));
+    return evidence;
+  } finally {
+    try { await client.query('ROLLBACK'); }
+    finally { client.release(); }
+  }
+}
+
+async function captureAgentDeletion(page: V4Page, name: string): Promise<void> {
+  const original = page.viewportSize();
+  await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
+  try {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.screenshot({ path: join(evidenceDirectory, `${name}-${String(viewport.width)}x${String(viewport.height)}.png`) });
+    }
+  } finally { if (original) await page.setViewportSize(original); }
+}
 
 async function freshPage(label: string): Promise<V4Page> {
   const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
@@ -439,13 +486,14 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
     expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);
   }, 240_000);
 
-  it('registro de agente: la baja atómica previsualiza sin escribir y elimina registro y membresías de la UI y PostgreSQL', async () => {
+  it('registro de agente: la baja previsualiza sin escribir, conserva el historial y reserva la identidad fuera del inventario', async () => {
     const page = ownerPage();
     const ref = encodeURIComponent(`${hubA}/${agentAlias}`);
     expect((await pool().query('SELECT enabled,runtime_key FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ enabled: false, runtime_key: null }]);
     expect((await pool().query('SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ room_id: 'office' }]);
     const before = (await apiGet(page, '/v3/console/config')).body.revision;
     expect(typeof before).toBe('number');
+    await recordAgentDeletionEvidence('before-preview');
     await step(page, 'agent delete preview preserves the registry, membership and revision', async () => {
       await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
       const sheet = page.getByRole('dialog');
@@ -461,19 +509,80 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);
       expect((await pool().query('SELECT room_id FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rows).toEqual([{ room_id: 'office' }]);
     });
-    await step(page, 'agent delete atomically removes its registry and membership', async () => {
+    const quota = await apiGet(page, `/v3/console/agents/${hubA}/${agentAlias}/quota`);
+    expect(quota.status).toBe(200);
+    const beforeApply = await recordAgentDeletionEvidence('before-apply');
+    expect(beforeApply.quota_observation_count).toBe('1');
+    await captureAgentDeletion(page, 'agent-delete-preview');
+    await step(page, 'agent delete removes its inventory entry and membership while retaining historical identity', async () => {
       const form = page.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
       await form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).click();
-      await page.getByText(`Registro de ${hubA}/${agentAlias} eliminado en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
+      await page.getByText(`Registro de ${hubA}/${agentAlias} eliminado del inventario en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
     });
-    expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(0);
+    const afterApply = await recordAgentDeletionEvidence('after-apply');
+    expect(afterApply.agents).toEqual([{ enabled: false, has_runtime_key: false, retired: true, purged: true }]);
+    expect(afterApply.quota_observation_count).toBe(beforeApply.quota_observation_count);
     expect((await pool().query('SELECT 1 FROM memberships WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(0);
-    expect(Number((await apiGet(page, '/v3/console/config')).body.revision)).toBeGreaterThan(Number(before));
-    await step(page, 'deleted agent stays deleted after reload', async () => {
+    await captureAgentDeletion(page, 'agent-delete-applied');
+    const configuration = await apiGet(page, '/v3/console/config');
+    expect(configuration.status).toBe(200);
+    const deletedRevision = Number(configuration.body.revision);
+    expect(deletedRevision).toBeGreaterThan(Number(before));
+    const config = configuration.body as {
+      agents?: Record<string, unknown>[]; memberships?: Record<string, unknown>[];
+      retired?: { agents?: Record<string, unknown>[]; memberships?: Record<string, unknown>[] };
+    };
+    for (const rows of [config.agents ?? [], config.memberships ?? [], config.retired?.agents ?? [], config.retired?.memberships ?? []]) {
+      expect(rows.some(row => row.tenant_id === hubA && row.alias === agentAlias)).toBe(false);
+    }
+    for (const path of ['/v3/console/agents', '/v3/console/topology']) {
+      const listed = await apiGet(page, path);
+      expect(listed.status).toBe(200);
+      expect(JSON.stringify(listed.body)).not.toContain(agentAlias);
+    }
+    errors.expectHttpError('/v3/console/config/changes', 409);
+    expect(await configChange(page, { resource: 'agent', action: 'create', tenant_id: hubA, alias: agentAlias,
+      value: { enabled: false } })).toBe(409);
+    expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(deletedRevision);
+    await step(page, 'purged agent stays outside active and retired inventory after reload and deep link', async () => {
       await openConfig(page, 'agentes');
       await page.getByLabel('Buscar agente o grupo').fill(agentAlias);
+      await page.getByText('No hay agentes que coincidan con la búsqueda.', { exact: true }).waitFor({ timeout: 20_000 });
       expect(await page.getByText(agentAlias, { exact: true }).count()).toBe(0);
+      await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByLabel('Buscar agente o grupo').fill(agentAlias);
+      await page.getByText('No hay agentes que coincidan con la búsqueda.', { exact: true }).waitFor({ timeout: 20_000 });
+      expect(await page.getByRole('dialog').count()).toBe(0);
+      expect(await page.getByText(agentAlias, { exact: true }).count()).toBe(0);
+      await captureAgentDeletion(page, 'agent-delete-inventory-deep-link');
     });
+    await step(page, 'purged agent is absent from the office plan and room roster', async () => {
+      await openPlan(page);
+      await selectOfficeEditor(page);
+      const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/office`, exact: true });
+      await roster.waitFor({ timeout: 20_000 });
+      expect(await roster.getByRole('button', { name: new RegExp(agentAlias, 'u') }).count()).toBe(0);
+      const map = page.getByLabel('Mapa de salas y agentes', { exact: true });
+      await map.waitFor({ timeout: 20_000 });
+      for (const name of [agentAlias, agentName]) {
+        expect(await map.getByRole('button', { name: new RegExp(name, 'u') }).count()).toBe(0);
+      }
+      await captureAgentDeletion(page, 'agent-delete-plan-roster');
+    });
+    await step(page, 'purged agent has no chat launcher entry or deep link conversation', async () => {
+      await page.goto(`${base()}/messages`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: '¿Con quién trabajamos hoy?', exact: true }).waitFor({ timeout: 20_000 });
+      await page.locator(`a[data-launcher-card][href="/messages/${hubA}/owner"]`).waitFor({ timeout: 25_000 });
+      expect(await page.locator(`a[data-launcher-card][href="/messages/${hubA}/${agentAlias}"]`).count()).toBe(0);
+      await page.goto(`${base()}/messages/${hubA}/${agentAlias}`, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: 'No encontramos esa conversación', exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByText('Cauce no inventa un agente que no existe.', { exact: false }).waitFor({ timeout: 20_000 });
+      await captureAgentDeletion(page, 'agent-delete-chat-deep-link');
+    });
+    const verified = await recordAgentDeletionEvidence('verified');
+    expect(verified.agents).toEqual(afterApply.agents);
+    expect(verified.quota_observation_count).toBe(beforeApply.quota_observation_count);
   }, 240_000);
 
   it('plano: crea, edita y quita una parte desde la UI con persistencia tras recarga y en un segundo navegador', async () => {

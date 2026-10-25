@@ -32,7 +32,7 @@ import {
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const OWNER = 'e2e-a2-agentes-1025';
+const OWNER = 'e2e-a2-sigue-1025';
 const PREFIX = `zz-canary-${OWNER}-${run}`;
 const EVIDENCE_DIRECTORY = join(process.cwd(), '.delegados/v4/recibos', OWNER, 'cycle', run);
 const TARGET = process.env.CAUCE_FLEET_CYCLE_TARGET ?? 'local';
@@ -52,6 +52,11 @@ interface Operation {
   id: string; kind: string; status: string; created_at: string; error: unknown;
   steps: { name: string; status: string; evidence?: Record<string, unknown> }[];
 }
+type BackupPhase = 'operations' | 'context' | 'purging' | 'purged' | 'purged-context';
+interface BackupRequestReceipt {
+  phase: BackupPhase; method: string; path: string; status: number | null; response_phase?: BackupPhase;
+}
+interface ObservedBrowserRequest { url(): string; method(): string }
 interface Observation {
   container: boolean; running: boolean; labels: Record<string, string>; volumes: string[];
   processes: { pid: number; start: number; CAUCE_ALIAS: string | null; CAUCE_ROOM: string | null; CAUCE_MODEL_ID: string | null;
@@ -114,11 +119,40 @@ let target: CycleTarget | undefined;
 let containerName = '';
 let runtimeUser = '';
 let operationSequence = 0;
+let backupPhase: BackupPhase = 'operations';
+let verifiedBackupPanels: number | undefined;
+const backupRequests: BackupRequestReceipt[] = [];
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES]);
 const evidence: Record<string, unknown> = { run, target: TARGET, evidence_directory: EVIDENCE_DIRECTORY };
 
 function view() { if (!page) throw new Error('cycle page absent'); return page; }
 function cycle() { if (!target) throw new Error('cycle target absent'); return target; }
+function watchBackupRequests(current: V4Page, tenantId: string): void {
+  const path = `/v3/console/spaces/${encodeURIComponent(tenantId)}/${encodeURIComponent(ALIAS)}/backups`;
+  const observed = new Map<object, BackupRequestReceipt>();
+  evidence.backup_requests = { path, requests: backupRequests };
+  current.on('request', (value: unknown) => {
+    const request = value as ObservedBrowserRequest;
+    if (new URL(request.url()).pathname !== path) return;
+    const receipt: BackupRequestReceipt = { phase: backupPhase, method: request.method(), path, status: null };
+    observed.set(request, receipt);
+    backupRequests.push(receipt);
+  });
+  current.on('response', (response) => {
+    const receipt = observed.get(response.request());
+    if (receipt) { receipt.status = response.status(); receipt.response_phase = backupPhase; }
+  });
+}
+function assertBackupContract(backupPanels: number): void {
+  const duringPurge = backupRequests.filter(request => request.phase === 'purging');
+  const afterPurge = backupRequests.filter(request => request.phase === 'purged' || request.phase === 'purged-context');
+  evidence.backup_contract = { context_reads: backupRequests.filter(request => request.phase === 'context').length, during_purge_requests: duringPurge.length,
+    after_purge_requests: afterPurge.length, purged_context_missing: true, purged_context_backup_panels: backupPanels };
+  expect(duringPurge, JSON.stringify(duringPurge)).toEqual([]);
+  expect(afterPurge, JSON.stringify(afterPurge)).toEqual([]);
+  expect(backupRequests.every(request => request.method === 'GET' && request.status === 200), JSON.stringify(backupRequests)).toBe(true);
+  errors.assertClean();
+}
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required for CAUCE_FLEET_CYCLE_TARGET=${TARGET}`);
@@ -291,8 +325,10 @@ async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<
     expect(await scope.innerText()).toContain(name);
   }
   await capture(`${captureName}-preview`);
+  if (kind === 'purge') backupPhase = 'purging';
   await button.click();
   const operation = await waitForOperation(known, kind);
+  if (kind === 'purge') backupPhase = 'purged';
   if (receipt) {
     const rendered = view().getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: operation.id });
     await rendered.getByText('Terminada', { exact: true }).waitFor({ timeout: 30_000 });
@@ -324,6 +360,7 @@ async function waitForOperation(known: ReadonlySet<string>, kind: string): Promi
 
 async function openOperationTab(): Promise<V4Locator> {
   const current = view(); const { baseUrl, tenantId } = cycle();
+  backupPhase = 'operations';
   await current.goto(`${baseUrl}/config?seccion=agentes&agente=${encodeURIComponent(`${tenantId}/${ALIAS}`)}`, { waitUntil: 'domcontentloaded' });
   const tab = current.getByRole('tab', { name: 'Ejecución', exact: true });
   await tab.waitFor({ timeout: 30_000 });
@@ -354,7 +391,13 @@ beforeAll(async () => {
 afterAll(async () => {
   const failures: unknown[] = [];
   const attempt = async (operation: () => Promise<unknown>) => { try { await operation(); } catch (error) { failures.push(error); } };
-  await attempt(async () => trusted?.close());
+  await attempt(async () => {
+    await trusted?.close();
+    if (verifiedBackupPanels !== undefined) {
+      assertBackupContract(verifiedBackupPanels);
+      evidence.backup_contract_verified_after_browser_close = true;
+    }
+  });
   await attempt(async () => vite?.close());
   if (harness) {
     const computer = harness;
@@ -386,6 +429,8 @@ describe(`ciclo físico de flota desde la web (${TARGET})`, () => {
 async function walkthrough(): Promise<void> {
   const current = view(); const { baseUrl, tenantId, hostId, accountId, rooms } = cycle();
   const [primary, second] = rooms;
+  watchBackupRequests(current, tenantId);
+  const contextUrl = `${baseUrl}/messages/${encodeURIComponent(tenantId)}/${encodeURIComponent(ALIAS)}?view=context`;
 
   // 1. Create: «Añadir agente» → «Solo preparar, sin desplegar», a template approved by the enrolled computer.
   await current.goto(`${baseUrl}/config?seccion=agentes`, { waitUntil: 'domcontentloaded' });
@@ -466,8 +511,12 @@ async function walkthrough(): Promise<void> {
 
   // 4. Context: with the agent stopped, the person rewrites its identity and purpose and prepares it for the next start;
   // the start applies it inside the container and only admits the runtime once its ACK measures the same documents.
-  await current.goto(`${baseUrl}/messages/${encodeURIComponent(tenantId)}/${encodeURIComponent(ALIAS)}?view=context`, { waitUntil: 'domcontentloaded' });
+  backupPhase = 'context';
+  await current.goto(contextUrl, { waitUntil: 'domcontentloaded' });
   await current.getByText('No hay copias guardadas de este espacio.', { exact: true }).waitFor({ timeout: 30_000 });
+  const contextReads = backupRequests.filter(request => request.phase === 'context');
+  expect(contextReads.length).toBeGreaterThan(0);
+  expect(contextReads.every(request => request.method === 'GET' && request.status === 200), JSON.stringify(contextReads)).toBe(true);
   const purpose = current.getByLabel('Identidad y propósito');
   await purpose.waitFor({ timeout: 30_000 });
   await purpose.fill(`Agente del ciclo físico ${CONTEXT_MARKER}.`);
@@ -547,5 +596,16 @@ async function walkthrough(): Promise<void> {
   evidence.purge = { operation: purged.id, removed, observed: afterPurge };
   evidence.docker_after_purge = final;
   console.info('FLEET_CYCLE_DOCKER_AFTER_PURGE', containerName, JSON.stringify(final));
-  errors.assertClean();
+  backupPhase = 'purged-context';
+  await current.goto(contextUrl, { waitUntil: 'domcontentloaded' });
+  const missing = current.getByRole('region', { name: 'Sin conversación abierta', exact: true });
+  await missing.getByRole('heading', { name: 'No encontramos esa conversación', exact: true }).waitFor({ timeout: 30_000 });
+  const absence = missing.getByText('El servidor no observa a', { exact: false });
+  await absence.waitFor({ timeout: 30_000 });
+  expect(await absence.innerText()).toContain(`${tenantId}:${ALIAS}`);
+  const backupPanels = await current.getByRole('region', { name: 'Backup del espacio', exact: true }).count();
+  expect(backupPanels).toBe(0);
+  await capture('purged-context-missing');
+  assertBackupContract(backupPanels);
+  verifiedBackupPanels = backupPanels;
 }
