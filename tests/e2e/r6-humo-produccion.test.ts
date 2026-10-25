@@ -56,6 +56,8 @@ const MODULE_PATH = join(ROOT, '.delegados/v4/humo-produccion.mjs');
 
 let tempHome = '';
 let sessionFile = '';
+let sessionCookie = '';
+let sessionCsrfToken = '';
 let gatewayUrl = '';
 let database: StartedTestContainer | undefined;
 let pool: DatabasePool | undefined;
@@ -150,6 +152,46 @@ beforeAll(async () => {
     await pool.query("INSERT INTO acl_edges(from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control) VALUES('Steven','Hospital',true,true,true,true) ON CONFLICT DO NOTHING");
     await pool.query("INSERT INTO acl_edges(from_tenant,to_tenant,enabled,allow_route,allow_read,allow_control) VALUES('Hospital','Steven',true,true,true,true) ON CONFLICT DO NOTHING");
 
+    // Seed MCP OAuth grant with NO human delegation (binding_id: null, label: null)
+    const extIdentityId = randomUUID();
+    await pool.query(
+      "INSERT INTO human_external_identities(id, human_id, provider, namespace, subject) VALUES($1, $2, 'oauth', 'http://127.0.0.1', 'canary-oauth-sub') ON CONFLICT DO NOTHING",
+      [extIdentityId, ownerUser.id],
+    );
+    const oauthGrantId = randomUUID();
+    await pool.query(
+      `INSERT INTO cauce_oauth_grants(id, human_id, issuer, resource, client_id, redirect_uri, scopes,
+         binding_id, binding_revision, membership_revision, tenant_id, actor_alias, credential_stamp, expires_at)
+       VALUES($1, $2, 'http://127.0.0.1', 'http://127.0.0.1/mcp', 'canary-client', 'http://127.0.0.1/callback',
+         ARRAY['cauce.read'], $3, 1, 1, 'Steven', 'zeus', repeat('a', 43), clock_timestamp() + interval '1 day')
+       ON CONFLICT DO NOTHING`,
+      [oauthGrantId, ownerUser.id, extIdentityId],
+    );
+
+    // Seed real DLQ entry in dead_letters
+    await pool.query("INSERT INTO rooms(id, tenant_id) VALUES('grp.steven', 'Steven') ON CONFLICT DO NOTHING");
+    await pool.query("INSERT INTO memberships(tenant_id, room_id, alias, role) VALUES('Steven', 'grp.steven', 'zeus', 'operator') ON CONFLICT DO NOTHING");
+    const dlqMessageId = randomUUID();
+    await pool.query(
+      `INSERT INTO messages(id, request_id, trace_id, tenant_id, room_id, actor_alias, body, lane, priority)
+       VALUES($1, gen_random_uuid(), 'trace-dlq', 'Steven', 'grp.steven', 'zeus', '{"text":"test dlq msg"}'::jsonb, 'interactive', 0)
+       ON CONFLICT DO NOTHING`,
+      [dlqMessageId],
+    );
+    const dlqDeliveryId = randomUUID();
+    await pool.query(
+      `INSERT INTO deliveries(id, message_id, recipient_tenant, recipient_alias, status)
+       VALUES($1, $2, 'Steven', 'zeus', 'failed')
+       ON CONFLICT DO NOTHING`,
+      [dlqDeliveryId, dlqMessageId],
+    );
+    await pool.query(
+      `INSERT INTO dead_letters(id, delivery_id, tenant_id, reason, payload, attempts, disposition, disposition_at, evidence_sha256)
+       VALUES(gen_random_uuid(), $1, 'Steven', 'simulated dead letter', '{"error":"simulated"}'::jsonb, 1, 'ambiguous', clock_timestamp(), repeat('a', 64))
+       ON CONFLICT DO NOTHING`,
+      [dlqDeliveryId],
+    );
+
     const grantsFile = join(tempHome, 'grants.json');
     await writeFile(grantsFile, '[]\n', { mode: 0o600 });
 
@@ -225,6 +267,8 @@ beforeAll(async () => {
     const cookie = setCookie ? setCookie.split(';')[0] ?? '' : '';
     const loginBody = (await loginRes.json()) as { csrf_token: string };
     const csrfToken = loginBody.csrf_token;
+    sessionCookie = cookie;
+    sessionCsrfToken = csrfToken;
 
     sessionFile = join(tempHome, 'console-session.json');
     await writeFile(
@@ -332,8 +376,60 @@ describe.sequential('humo-produccion.sh: pasada de humo de solo lectura para pro
     await expect(client('GET', '/v3/console/ruta-fuera-de-inventario')).rejects.toThrow('ROUTE_NOT_IN_INVENTORY');
   });
 
-  it('admite la opción --empresa praxis para verificar una segunda empresa', async () => {
-    const result = await runSmokeScript([
+  it('valida delegación MCP con binding_id null y DLQ real sin delivery_id', async () => {
+    const moduleImports = (await import(MODULE_PATH)) as {
+      createHttpClient: (
+        session: { gateway: string; origin: string; cookie: string; csrf_token: string },
+        options?: { gateway?: string },
+      ) => (method: string, path: string) => Promise<{ ok: boolean; status: number; body: unknown; error: string | null }>;
+    };
+    const schemasModule = (await import(join(ROOT, '.delegados/v4/humo-schemas.mjs'))) as {
+      ClientConnectionsPageSchema: { safeParse: (data: unknown) => { success: boolean; data?: { items: { binding_id: string | null }[] } } };
+      DlqPageSchema: { safeParse: (data: unknown) => { success: boolean; data?: { items?: Record<string, unknown>[] | null } } };
+    };
+
+    const client = moduleImports.createHttpClient({
+      gateway: gatewayUrl,
+      origin: gatewayUrl,
+      cookie: sessionCookie,
+      csrf_token: sessionCsrfToken,
+    });
+
+    const delegationsRes = await client('GET', '/v3/console/mcp/client-delegations');
+    expect(delegationsRes.ok).toBe(true);
+    const parsedDelegations = schemasModule.ClientConnectionsPageSchema.safeParse(delegationsRes.body);
+    expect(parsedDelegations.success).toBe(true);
+    expect(parsedDelegations.data?.items.some((item) => item.binding_id === null)).toBe(true);
+
+    const dlqRes = await client('GET', '/v3/console/dlq?limit=200');
+    expect(dlqRes.ok).toBe(true);
+    const parsedDlq = schemasModule.DlqPageSchema.safeParse(dlqRes.body);
+    expect(parsedDlq.success).toBe(true);
+    expect(parsedDlq.data?.items).toBeDefined();
+    expect(parsedDlq.data?.items?.length).toBeGreaterThan(0);
+    for (const item of parsedDlq.data?.items ?? []) {
+      expect(item).not.toHaveProperty('delivery_id');
+      expect(item.id).toBeDefined();
+    }
+  });
+
+  it('con --empresa aborta si la empresa activa no coincide para evitar rotar la sesión por POST', async () => {
+    // Coincide con la empresa activa de la sesión (humanizar): verde
+    const matchResult = await runSmokeScript([
+      '--session-file',
+      sessionFile,
+      '--gateway',
+      gatewayUrl,
+      '--empresa',
+      'humanizar',
+    ]);
+    expect(matchResult.code).toBe(0);
+    expect(matchResult.stdout).toContain('Empresa: humanizar');
+    expect(matchResult.stdout).toContain('Total vistas: 10 | Pasadas: 10 | Fallidas: 0');
+    expect(matchResult.stdout).toContain('Veredicto final: VERDE (PASÓ)');
+
+    // No coincide con la empresa activa de la sesión (praxis): aborta sin hacer POST
+    const mismatchResult = await runSmokeScript([
       '--session-file',
       sessionFile,
       '--gateway',
@@ -341,9 +437,9 @@ describe.sequential('humo-produccion.sh: pasada de humo de solo lectura para pro
       '--empresa',
       'praxis',
     ]);
-    expect(result.code).toBe(0);
-    expect(result.stdout).toContain('Empresa: praxis');
-    expect(result.stdout).toContain('Total vistas: 10 | Pasadas: 10 | Fallidas: 0');
-    expect(result.stdout).toContain('Veredicto final: VERDE (PASÓ)');
+    expect(mismatchResult.code).toBe(1);
+    expect(mismatchResult.stderr).toContain('ABORT_COMPANY_MISMATCH');
+    expect(mismatchResult.stderr).toContain('no coincide con la solicitada en --empresa ("praxis")');
+    expect(mismatchResult.stderr).toContain('sin realizar peticiones POST');
   });
 });
