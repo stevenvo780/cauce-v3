@@ -81,7 +81,13 @@ def process_environment(pid: str) -> dict[str, str]:
 
 def adapter_command(bundle: dict[str, Any], deadline: float) -> tuple[list[str], dict[str, str]] | None:
     configuration = descriptor(bundle.get("session_recovery"), bundle["runtime_uid"])
+    alias = bundle.get("alias")
+    tmux_configuration = bundle.get("tmux_tui")
+    physical_alias = tmux_configuration.get("alias", alias) if isinstance(tmux_configuration, dict) else alias
     if configuration is None or bundle.get("harness") not in HARNESSES or os.geteuid() != bundle["runtime_uid"]:
+        return None
+    if (not isinstance(alias, str) or not ALIAS.fullmatch(alias)
+            or not isinstance(physical_alias, str) or not ALIAS.fullmatch(physical_alias)):
         return None
     candidates = []
     for pid in os.listdir("/proc"):
@@ -93,8 +99,10 @@ def adapter_command(bundle: dict[str, Any], deadline: float) -> tuple[list[str],
             if os.stat(f"/proc/{pid}").st_uid != bundle["runtime_uid"]:
                 continue
             environment = process_environment(pid)
-            physical = environment.get("CAUCE_RUNTIME_KEY", environment.get("CAUCE_ALIAS"))
-            if (physical != bundle["alias"] or not ALIAS.fullmatch(environment.get("CAUCE_ALIAS", ""))
+            wire = environment.get("CAUCE_ALIAS")
+            physical = environment.get("CAUCE_RUNTIME_KEY", wire)
+            if (wire != alias or not isinstance(physical, str) or not ALIAS.fullmatch(physical)
+                    or physical != physical_alias
                     or environment.get("CAUCE_TENANT_ID", environment.get("CAUCE_TENANT")) != bundle["tenant_id"]
                     or environment.get("HOME") != bundle["home"]
                     or environment.get("CAUCE_STATE_DIR") != configuration["state_directory"]
@@ -120,7 +128,7 @@ def adapter_command(bundle: dict[str, Any], deadline: float) -> tuple[list[str],
             if (not workspace.startswith("/") or os.path.normpath(workspace) != workspace
                     or not os.path.isdir(workspace) or os.path.realpath(workspace) != workspace):
                 continue
-            command = [node, helper, "recovery-preview", "--alias", environment["CAUCE_ALIAS"],
+            command = [node, helper, "recovery-preview", "--alias", physical,
                        "--harness", bundle["harness"], "--workspace", workspace,
                        "--state", configuration["state_directory"]]
             candidates.append((command, environment))
