@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import argparse
 import json
 import pathlib
 import sys
 import time
 
-from context_client import ContextClient, ContextFailure, arguments, read_scoped, valid_path
+from context_client import ContextArgumentParser, ContextClient, ContextFailure, arguments, console_failure_message, read_scoped, valid_path
 
 
 def sync(client: ContextClient, tenant: str, alias: str, root: str, paths: list[str], removed: list[str], expected: int) -> dict:
@@ -29,7 +28,7 @@ def sync(client: ContextClient, tenant: str, alias: str, root: str, paths: list[
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Ingesta CAS de ficheros nativos explícitos, sin recorrer perfiles ni sesiones')
+    parser = ContextArgumentParser(prog='cauce context-native', description='Ingesta CAS de ficheros nativos explícitos, sin recorrer perfiles ni sesiones')
     arguments(parser)
     parser.add_argument('--root', required=True)
     parser.add_argument('--expected-version', type=int, required=True)
@@ -53,7 +52,7 @@ def main() -> int:
     except KeyboardInterrupt:
         return 0
     except ContextFailure as error:
-        print(str(error), file=sys.stderr)
+        print('cauce context-native: ' + console_failure_message(error), file=sys.stderr)
         return 1
     except (OSError, ValueError):
         print('La sincronización nativa se detuvo; revisa CAS, sesión, rutas y ficheros permitidos.', file=sys.stderr)

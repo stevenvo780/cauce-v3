@@ -108,7 +108,7 @@ test('HTTP rejections never echo the response body or console cookie', async t =
   const result = await execute(['other-company-id', ...context.options]);
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
-  assert.equal(result.stderr.trim(), 'diagnostic request rejected with HTTP 404');
+  assert.equal(result.stderr.trim(), 'La consola rechazó el diagnóstico (HTTP 404); revisa el identificador y la empresa activa.');
   assert.ok(!result.stderr.includes(secret) && !result.stderr.includes(cookie));
 });
 
@@ -120,7 +120,7 @@ test('redirects are rejected before a cookie can reach another origin', async t 
   });
   const result = await execute(['trace-fixture', ...context.options]);
   assert.equal(result.code, 1);
-  assert.equal(result.stderr.trim(), 'diagnostic request rejected with HTTP 302');
+  assert.equal(result.stderr.trim(), 'El gateway respondió con una redirección (HTTP 302); comprueba --gateway. No se envió la sesión a otro destino.');
   assert.deepEqual(receiver.requests, []);
 });
 
@@ -170,5 +170,5 @@ test('invalid session JSON and unreachable gateway are reported without raw erro
   const network = await execute(['trace-fixture', '--gateway', unavailable, '--origin', unavailable, '--session-file', context.session]);
   assert.equal(network.code, 1);
   assert.equal(network.stdout, '');
-  assert.equal(network.stderr.trim(), 'diagnostic gateway is unavailable');
+  assert.equal(network.stderr.trim(), 'No se pudo conectar con la consola; comprueba --gateway, la red y los certificados.');
 });

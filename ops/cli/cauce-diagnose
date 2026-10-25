@@ -19,9 +19,21 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class DiagnoseArgumentParser(argparse.ArgumentParser):
+    def format_help(self):
+        return super().format_help().replace('usage: ', 'Uso: ', 1)
+
+    def format_usage(self):
+        return super().format_usage().replace('usage: ', 'Uso: ', 1)
+
+    def error(self, _message):
+        self.print_usage(sys.stderr)
+        self.exit(2, 'Argumentos de diagnose inválidos; usa cauce diagnose --help.\n')
+
+
 def main():
-    parser = argparse.ArgumentParser(prog='cauce diagnose', description='Read a company-scoped diagnostic chain using a console session')
-    parser.add_argument('id', help='Trace, operation, session, delivery or backup identifier')
+    parser = DiagnoseArgumentParser(prog='cauce diagnose', description='Lee la cadena de diagnóstico de la empresa con la sesión de consola')
+    parser.add_argument('id', help='Identificador de traza, operación, sesión, entrega o copia')
     parser.add_argument('--gateway', required=True)
     parser.add_argument('--origin', required=True)
     parser.add_argument('--session-file', required=True)
@@ -49,13 +61,25 @@ def main():
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     except urllib.error.HTTPError as error:
-        print('diagnostic request rejected with HTTP ' + str(error.code), file=sys.stderr)
+        code = error.code
+        if code == 401:
+            print('La sesión o las credenciales fueron rechazadas (HTTP 401); vuelve a iniciar sesión con cauce login.', file=sys.stderr)
+        elif code == 403:
+            print('La consola rechazó el acceso al diagnóstico (HTTP 403); revisa los permisos y la empresa activa.', file=sys.stderr)
+        elif 300 <= code < 400:
+            print(f'El gateway respondió con una redirección (HTTP {code}); comprueba --gateway. No se envió la sesión a otro destino.', file=sys.stderr)
+        else:
+            print(f'La consola rechazó el diagnóstico (HTTP {code}); revisa el identificador y la empresa activa.', file=sys.stderr)
     except (urllib.error.URLError, TimeoutError):
-        print('diagnostic gateway is unavailable', file=sys.stderr)
+        print('No se pudo conectar con la consola; comprueba --gateway, la red y los certificados.', file=sys.stderr)
     except ContextFailure as error:
-        print(str(error), file=sys.stderr)
+        print({
+            'diagnostic identifier is unavailable': 'El identificador de diagnóstico no es válido; usa el id de la operación, la traza o el evento.',
+            'diagnostic response exceeds limit': 'La respuesta del diagnóstico supera el límite permitido.',
+            'diagnostic response is invalid': 'La respuesta del diagnóstico no es válida; revisa el gateway.',
+        }.get(str(error), 'No se pudo leer el diagnóstico; revisa la sesión y el destino.'), file=sys.stderr)
     except (OSError, ValueError):
-        print('diagnostic request could not be completed; check the console session and destination', file=sys.stderr)
+        print('No se pudo completar el diagnóstico; revisa la sesión de consola y el destino.', file=sys.stderr)
     return 1
 
 

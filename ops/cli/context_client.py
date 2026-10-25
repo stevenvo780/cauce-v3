@@ -29,6 +29,12 @@ class ContextFailure(ValueError):
 
 
 class ContextArgumentParser(argparse.ArgumentParser):
+    def format_help(self):
+        return super().format_help().replace('usage: ', 'Uso: ', 1)
+
+    def format_usage(self):
+        return super().format_usage().replace('usage: ', 'Uso: ', 1)
+
     def error(self, _message):
         self.print_usage(sys.stderr)
         self.exit(2, 'Argumentos inválidos; usa --help para consultar la operación de contexto o terminal.\n')
@@ -69,6 +75,12 @@ def console_failure_message(error: ContextFailure) -> str:
             'La sesión no permite cambios; vuelve a iniciar sesión con cauce login.',
         'console session file requires a valid csrf_token for mutations':
             'La sesión no permite cambios; vuelve a iniciar sesión con cauce login.',
+        'native context root must be a real directory':
+            'El directorio nativo debe ser un directorio real, sin enlaces.',
+        'context version changed; reload before syncing native files':
+            'La versión del contexto cambió; vuelve a leerla antes de sincronizar los archivos nativos.',
+        'an explicit native context file list is required':
+            'Indica los archivos nativos que quieres sincronizar, o usa --remove.',
     }.get(message, message)
 
 
