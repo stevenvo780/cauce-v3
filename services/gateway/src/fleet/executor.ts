@@ -14,6 +14,7 @@ export interface FleetExecution {
   global_desired_memberships?: { tenant_id: string; alias: string; room_id: string; role: string; enabled: boolean }[];
   snapshot?: Record<string, unknown>;
   trusted_accounts?: FleetProviderAccounts;
+  maintenance?: { release_sha256: string };
   fleet_scope?: {
     placement_role?: 'source' | 'destination';
     operation_id: string; host_id: string; scope_sha256: string; prepared_revision: number;
@@ -50,6 +51,8 @@ export function providerIdentityPending(execution: FleetExecution): boolean {
 export interface FleetExecutorOptions {
   worker: string; host: string; leaseMs?: number;
   signal?: AbortSignal;
+  prepare?(execution: FleetExecution, claim: FleetOperationClaim, signal: AbortSignal): Promise<boolean | 'prepared'>;
+  finish?(claim: FleetOperationClaim): Promise<void>;
   perform(step: FleetStepName, execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEffectResult>;
   compensate?(execution: FleetExecution, signal: AbortSignal, claim: FleetOperationClaim): Promise<FleetEvidence>;
 }
@@ -81,7 +84,9 @@ export class FleetExecutor {
       let execution = await this.repository.execution(claim);
       if (isAborted()) return true;
       if (execution.operation.status !== 'cancelling') {
-        await this.repository.prepare(claim);
+        const prepared = await this.options.prepare?.(execution, claim, abort.signal);
+        if (prepared === false) return true;
+        if (prepared !== 'prepared') await this.repository.prepare(claim);
         if (isAborted()) return true;
         execution = await this.repository.execution(claim);
         if (isAborted()) return true;
@@ -128,6 +133,15 @@ export class FleetExecutor {
         try { await this.repository.fail(claim, error); } catch { /* A replaced claim cannot settle the operation. */ }
       }
     } finally {
+      try { await this.options.finish?.(claim); }
+      catch (caught) {
+        const failure = caught instanceof Error ? caught : new Error(String(caught));
+        console.error(`fleet guard cleanup failed error=${failure.name}: ${redactExecutorStderr(failure.message)}`);
+        if (!abort.signal.aborted) {
+          try { await this.repository.fail(claim, { code: 'STEP_FAILED', retryable: true }); }
+          catch { /* A replaced claim cannot settle the operation. */ }
+        }
+      }
       stopping = true; abort.abort(); clearInterval(heartbeat);
       this.options.signal?.removeEventListener('abort', shutdown);
       await renewing;

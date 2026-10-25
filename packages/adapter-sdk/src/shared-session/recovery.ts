@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { open, readdir, realpath, stat } from 'node:fs/promises';
-import { dirname, join, normalize } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { assertCommandPins } from '../sdk/command-pins.js';
-import { readSessionsSecure } from '../sdk/durable-store/session-file.js';
+import { exactCodexLaunch } from './codex-resume.js';
 import { paneWorkspaceState } from './exact-launch.js';
 import { ensureSharedSession, type EnsureOptions, type SharedSessionSpec } from './session.js';
 import { paneCommandMatches, SESSION_ALIAS_OPTION, SESSION_HARNESS_OPTION } from './session/identity.js';
@@ -27,7 +25,6 @@ export interface SessionRecoveryInput {
 type Launch = Extract<ResumeLaunchPlan, { state: 'launch' }>;
 interface Observation { readonly outcome: SessionRecoveryOutcome; readonly plan?: Launch; readonly pane?: PaneHarnessIdentity; readonly dead?: boolean }
 const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
 const reply = (state: SessionRecoveryOutcome['state'], reason: string, resumable = false, fingerprint: string | null = null): SessionRecoveryOutcome =>
   ({ type: 'session', state, resumable, fingerprint, reason });
 const noTmuxServer = (code: number | null, stderr: string): boolean => code === 1 && /no server running|No such file or directory/u.test(stderr);
@@ -69,47 +66,8 @@ async function removeDeadPane(tmux: TmuxController, pane: PaneHarnessIdentity, s
   return result.branch === 'accepted' || await removedSession(tmux, pane);
 }
 
-async function secureDirectory(path: string): Promise<boolean> {
-  const info = await stat(path);
-  return normalize(path) === path && await realpath(path) === path && info.isDirectory()
-    && info.uid === process.geteuid?.() && (info.mode & 0o022) === 0;
-}
-
-async function codexLaunch(input: SessionRecoveryInput): Promise<ResumeLaunchPlan> {
-  const blocked: ResumeLaunchPlan = { state: 'blocked', detail: 'No se acreditó la conversación exacta de Codex.' };
-  if (!await secureDirectory(input.stateDirectory) || !await secureDirectory(input.configDirectory)) return blocked;
-  const store = await readSessionsSecure(join(input.stateDirectory, 'sessions.json'));
-  const pointer = store.sessions[`codex:${input.namespace}:shared:${input.namespace}`];
-  if (pointer?.initialized !== true || !uuid.test(pointer.native_id)) return blocked;
-  const root = join(input.configDirectory, 'sessions');
-  if (!await secureDirectory(root)) return blocked;
-  const names = await readdir(root, { recursive: true });
-  if (names.length > 20_000) return blocked;
-  const candidates = names.filter(name => name.endsWith(`-${pointer.native_id}.jsonl`));
-  if (candidates.length !== 1 || candidates[0] === undefined) return blocked;
-  const file = join(root, candidates[0]);
-  if (await realpath(file) !== file || !await secureDirectory(dirname(file))) return blocked;
-  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  try {
-    const info = await handle.stat();
-    if (!info.isFile() || info.uid !== process.geteuid?.() || info.nlink !== 1 || (info.mode & 0o022) !== 0) return blocked;
-    const buffer = Buffer.alloc(256 * 1024);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const text = buffer.subarray(0, bytesRead).toString('utf8');
-    const end = text.indexOf('\n');
-    if (end < 0) return blocked;
-    const value: unknown = JSON.parse(text.slice(0, end));
-    if (typeof value !== 'object' || value === null || !('type' in value) || value.type !== 'session_meta'
-      || !('payload' in value) || typeof value.payload !== 'object' || value.payload === null) return blocked;
-    const meta = value.payload;
-    if (!('id' in meta) || meta.id !== pointer.native_id || !('source' in meta) || meta.source !== 'cli'
-      || !('cwd' in meta) || meta.cwd !== input.spec.workspace) return blocked;
-    return { state: 'launch', args: ['resume', pointer.native_id], resumed: true };
-  } finally { await handle.close(); }
-}
-
 async function exactLaunch(input: SessionRecoveryInput): Promise<ResumeLaunchPlan> {
-  return input.spec.harness === 'codex' ? codexLaunch(input)
+  return input.spec.harness === 'codex' ? exactCodexLaunch({ ...input, workspace: input.spec.workspace })
     : input.spec.resume?.resolveLaunch?.() ?? { state: 'blocked', detail: 'No hay reanudación exacta disponible.' };
 }
 

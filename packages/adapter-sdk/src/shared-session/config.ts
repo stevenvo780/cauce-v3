@@ -25,9 +25,19 @@ export interface SharedSessionConfig {
   readonly unsetEnvironment?: readonly string[];
   readonly harnessArguments: readonly string[];
   readonly nativeId?: string; // CAUCE_SHARED_SESSION_NATIVE_ID: seeded on start while there is no pointer.
+  readonly namespace?: string;
+  readonly requireResume?: boolean;
 }
 
 const SHARED_SESSION_ENV = "CAUCE_SHARED_SESSION";
+const REQUIRE_RESUME_ENV = "CAUCE_SHARED_SESSION_REQUIRE_RESUME";
+
+function sharedSessionRequiresResume(environment: NodeJS.ProcessEnv): boolean {
+  const value = environment[REQUIRE_RESUME_ENV];
+  if (value === undefined || value === "" || value === "0") return false;
+  if (value === "1") return true;
+  throw new Error(`${REQUIRE_RESUME_ENV} debe ser 1, 0 o estar ausente`);
+}
 
 function sharedCommandPins(harness: SharedSessionHarness, environment: NodeJS.ProcessEnv): CommandPins | undefined {
   const pins = commandPinsFromEnvironment(environment);
@@ -168,6 +178,11 @@ export function cliSharedSessionSpec(
   environment: NodeJS.ProcessEnv = process.env,
   stateDirectory?: string,
 ): SharedSessionSpec {
+  const requireResume = sharedSessionRequiresResume(environment);
+  if (requireResume && (stateDirectory === undefined || !isAbsolute(stateDirectory))) {
+    throw new Error(`${REQUIRE_RESUME_ENV} requiere un directorio de estado absoluto`);
+  }
+  const namespace = harness === 'codex' && (environment.CAUCE_FLEET_OPERATION_ID || requireResume) ? alias : undefined;
   alias = physicalAlias(alias, environment);
   const configDirectory = harnessConfigDirectory(harness, home, environment, alias);
   const selection = sharedSelection(harness, home, alias, environment); const pins = sharedCommandPins(harness, environment);
@@ -184,7 +199,8 @@ export function cliSharedSessionSpec(
       harness,
       configDirectory,
       workspace,
-      stateDirectory === undefined ? undefined : { alias, stateDirectory },
+      stateDirectory === undefined ? undefined : { alias, stateDirectory,
+        ...(namespace === undefined ? {} : { namespace }), ...(requireResume ? { requireResume } : {}) },
     ),
   };
 }
@@ -196,8 +212,13 @@ export function loadSharedSessionConfig(
   stateDirectory: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): SharedSessionConfig | undefined {
+  const namespace = alias;
+  const requireResume = sharedSessionRequiresResume(environment);
   const flag = environment[SHARED_SESSION_ENV];
-  if (flag === undefined || flag === "" || flag === "0") return undefined;
+  if (flag === undefined || flag === "" || flag === "0") {
+    if (requireResume) throw new Error(`${REQUIRE_RESUME_ENV} requiere ${SHARED_SESSION_ENV}=1`);
+    return undefined;
+  }
   if (flag !== "1") {
     throw new Error(`${SHARED_SESSION_ENV} debe ser 1 o estar ausente`);
   }
@@ -222,6 +243,8 @@ export function loadSharedSessionConfig(
     if (!CANONICAL_UUID.test(nativeId)) throw new Error(`${SHARED_SESSION_NATIVE_ID_ENV} debe ser un UUID canónico`);
   }
   return {
+    ...(harnessId === 'codex' && (environment.CAUCE_FLEET_OPERATION_ID || requireResume) ? { namespace } : {}),
+    ...(requireResume ? { requireResume } : {}),
     ...(nativeId === undefined || nativeId === "" ? {} : { nativeId }),
     harness: harnessId,
     alias,

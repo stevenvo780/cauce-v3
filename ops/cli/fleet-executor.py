@@ -74,6 +74,7 @@ def main() -> int:
     action.add_argument('--binding', action='store_true')
     action.add_argument('--recovery-preview', action='store_true')
     action.add_argument('--recovery-preflight', action='store_true')
+    action.add_argument('--maintenance-guard', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
     action.add_argument('--quota', action='store_true')
@@ -91,6 +92,12 @@ def main() -> int:
             from quota_runtime import capabilities as quota_capabilities
             receipt['quota_environments'] = quota_capabilities(policy)
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
+        return 0
+    if args.maintenance_guard:
+        from fleet_executor_maintenance import run as maintenance_guard
+        for termination in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            signal.signal(termination, cancelled)
+        maintenance_guard(policy, sys.stdin.buffer, sys.stdout)
         return 0
     encoded = sys.stdin.buffer.read(1024 * 1024 + 1)
     if len(encoded) > 1024 * 1024:

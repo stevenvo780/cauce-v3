@@ -7,6 +7,7 @@ import { museConversationHistoryState, museSessionIsSecure } from "./muse.js";
 import { rolloutDirectory } from "./rollout.js";
 import { SharedTuiPointerStore } from "./native-pointer.js";
 import { transcriptDirectoryIn } from "./session.js";
+import { exactCodexLaunch } from './codex-resume.js';
 import type {
   ResumeLaunchPlan,
   ResumeSpec,
@@ -27,6 +28,8 @@ const O_CLOEXEC = Number((fsConstants as unknown as Record<string, unknown>).O_C
 export interface SharedSessionResumeBinding {
   readonly alias: string;
   readonly stateDirectory: string;
+  readonly namespace?: string;
+  readonly requireResume?: boolean;
 }
 
 export function sharedSessionResume(
@@ -35,19 +38,33 @@ export function sharedSessionResume(
   workspace: string,
   binding?: SharedSessionResumeBinding,
 ): ResumeSpec {
+  const requireResume = binding?.requireResume === true;
   switch (harness) {
     case "codex":
+      if (binding !== undefined && (binding.namespace !== undefined || requireResume)) {
+        const namespace = binding.namespace ?? binding.alias;
+        return { resolveLaunch: async () => {
+          try { return await exactCodexLaunch({ ...binding, namespace, configDirectory, workspace }, !requireResume); }
+          catch { return { state: 'blocked', detail: 'Codex exact resume state could not be inspected' }; }
+        } };
+      }
       return {
         args: ["resume", "--last"],
         hasPreviousConversation: () => codexHasPreviousConversation(configDirectory, workspace),
       };
     case "claude":
-      return { resolveLaunch: () => resolveClaudeLaunch(configDirectory, workspace, binding) };
+      return { resolveLaunch: () => requiredResumePlan(resolveClaudeLaunch(configDirectory, workspace, binding), requireResume) };
     case "grok":
-      return { resolveLaunch: () => resolveGrokLaunch(configDirectory, workspace, binding) };
+      return { resolveLaunch: () => requiredResumePlan(resolveGrokLaunch(configDirectory, workspace, binding), requireResume) };
     case "muse":
-      return { resolveLaunch: () => resolveMuseLaunch(configDirectory, workspace, binding) };
+      return { resolveLaunch: () => requiredResumePlan(resolveMuseLaunch(configDirectory, workspace, binding), requireResume) };
   }
+}
+
+async function requiredResumePlan(plan: Promise<ResumeLaunchPlan>, required: boolean): Promise<ResumeLaunchPlan> {
+  const resolved = await plan;
+  return required && resolved.state === 'launch' && !resolved.resumed
+    ? { state: 'blocked', detail: 'La actualización requiere una conversación exacta existente.' } : resolved;
 }
 
 /** muse resumes by EXACT id (`muse resume <id>`; root flags may go on either side of `resume`); unpointed history blocks, like grok. Muse has no flag to choose the id of a NEW conversation: with no history it starts bare and the native witness names it after its first turn. */

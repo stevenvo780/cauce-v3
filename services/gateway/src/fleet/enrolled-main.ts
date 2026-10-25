@@ -18,6 +18,7 @@ import { hostProviderAuthPolicyFault } from './host-provider-auth.js';
 import { AgentQuotaExecutor, HostChannelAgentQuotaRepository } from './agent-quota-executor.js';
 import { performAgentQuotaHostCommand } from './agent-quota-host-command.js';
 import type { FleetHostConfig } from './main.js';
+import { HostMaintenance } from './host-maintenance.js';
 
 const QuotaCapabilities = z.object({ providers: z.array(z.enum(['claude','codex','gemini','grok','muse','agy'])),
   actions: z.record(z.string(), z.array(z.enum(['create','authenticate','query','update_cli','delete']))),
@@ -53,6 +54,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   if (channel.identity.host_id !== config.host) throw new Error('Enrolled computer differs from its worker identity');
   const abort = new AbortController();
   const source = new HostChannelFleetSource(channel);
+  const maintenance = new HostMaintenance(channel, config);
   const quotaSource = new HostChannelQuotaRepository(channel, config.host);
   const agentQuota = new AgentQuotaExecutor(new HostChannelAgentQuotaRepository(channel, config.host), {
     worker: `host-${config.host}`, host: config.host, signal: abort.signal, leaseMs: config.leaseMs,
@@ -80,10 +82,15 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   let auxiliaryTurn = 0;
   const worker = new FleetHostWorker(source, { worker: `host-${config.host}`, host: config.host,
     pollMs: config.pollMs, leaseMs: config.leaseMs,
-    perform: (step, execution, signal) => performHostCommand(config.command, step, execution, signal),
+    perform: async (step, execution, signal, claim) => {
+      if (step === 'stop') await maintenance.stop(execution, claim);
+      return performHostCommand(config.command, step, execution, signal);
+    },
     compensate: (execution, signal) => performHostCompensation(config.command, execution, signal),
+    prepare: (execution, claim, signal) => maintenance.prepare(execution, claim, signal),
+    finish: claim => maintenance.finish(claim),
     runQuotaOnce: async signal => {
-      const tasks = [() => quota?.runOnce() ?? Promise.resolve(false),
+      const tasks = [() => maintenance.runOnce(signal), () => quota?.runOnce() ?? Promise.resolve(false),
         () => agentQuota.runOnce(), () => backups.runOnce(signal)];
       const start = auxiliaryTurn++ % tasks.length;
       for (let offset = 0; offset < tasks.length && !signal.aborted; offset++) {
@@ -100,6 +107,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
         cli_version: '4.0.0', platform: `${platform()}/${arch()}`, docker_version: null, status: 'reachable',
       });
       await channel.request('POST', `/v3/fleet/hosts/${config.host}/channel`, await capabilityReport(config, abort.signal));
+      maintenance.requestScan();
     })().finally(() => { activeReport = undefined; });
     return activeReport;
   };

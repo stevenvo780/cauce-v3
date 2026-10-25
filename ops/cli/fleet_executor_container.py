@@ -478,6 +478,7 @@ def process_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, bo
         raw = docker('exec', '--user', agent['runtime_user'], identity['container_id'], '/bin/cat', f'/proc/{observed["pid"]}/environ')
         environment = {item.split(b'=', 1)[0].decode(): item.split(b'=', 1)[1].decode()
                        for item in raw.split(b'\0') if item.startswith((b'CAUCE_BOOTSTRAP=', b'CAUCE_FLEET_OPERATION_ID=',
+                                                                 b'CAUCE_SHARED_SESSION_REQUIRE_RESUME=',
                            b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT=',
                            b'CAUCE_SHARED_HUMAN_IDS=', b'CAUCE_SHARED_SESSION=', b'CAUCE_SHARED_SESSION_WORKSPACE=', b'TMUX_TMPDIR='))}
         namespace_proof(environment, bootstrap, operation_id)

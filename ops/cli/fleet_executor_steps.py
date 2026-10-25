@@ -149,7 +149,14 @@ class Executor:
         return {'extensions_receipt': receipt}
 
     def agent(self):
-        return approve_agent(self.policy, target_agent(self.context))
+        agent = approve_agent(self.policy, target_agent(self.context))
+        if self.context['request']['kind'] == 'update' and placement_role(self.context) is None:
+            previous = [row for row in self.context['previous_agents']
+                        if row.get('tenant_id') == agent['tenant_id'] and row.get('alias') == agent['alias']]
+            selection = ('runtime_key', 'harness_id', 'primary_account_id', 'model_id', 'reasoning_effort')
+            if len(previous) == 1 and all(previous[0].get(key) == agent.get(key) for key in selection):
+                agent['_require_shared_resume'] = True
+        return agent
 
     def stop_placement(self, row: dict):
         entry = self.journal.get('native_decommission', {}).get(row['runtime_key'])

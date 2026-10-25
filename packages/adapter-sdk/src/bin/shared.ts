@@ -197,6 +197,8 @@ function sharedSessionSpec(shared: SharedSessionConfig): SharedSessionSpec {
     ...(shared.requiredArguments === undefined ? {} : { requiredArguments: shared.requiredArguments }),
     resume: sharedSessionResume(shared.harness, shared.configDirectory, shared.workspace, {
       alias: shared.alias, stateDirectory: shared.stateDirectory,
+      ...(shared.namespace === undefined ? {} : { namespace: shared.namespace }),
+      ...(shared.requireResume === undefined ? {} : { requireResume: shared.requireResume }),
     }),
   };
 }

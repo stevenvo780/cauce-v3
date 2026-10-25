@@ -60,9 +60,10 @@ try:
     verify_controller(document)
     if document['pid'] not in descendants(document['controllerPid']):
         raise RuntimeError('previous adapter controller ancestry differs')
-    wanted={'CAUCE_BOOTSTRAP','CAUCE_FLEET_OPERATION_ID','CAUCE_ROOM','CAUCE_INSTANCE_ID','CAUCE_SPACE_ROOT',
+    wanted={'HOME','CODEX_HOME','CLAUDE_CONFIG_DIR','GROK_HOME','XDG_CONFIG_HOME','XDG_DATA_HOME',
+        'CAUCE_BOOTSTRAP','CAUCE_FLEET_OPERATION_ID','CAUCE_ROOM','CAUCE_INSTANCE_ID','CAUCE_SPACE_ROOT',
         'CAUCE_RELAY_URL','CAUCE_MODEL_ID','CAUCE_REASONING_EFFORT','CAUCE_SHARED_HUMAN_IDS',
-        'CAUCE_SHARED_SESSION','CAUCE_SHARED_SESSION_WORKSPACE','TMUX_TMPDIR','CAUCE_ALIAS',
+        'CAUCE_SHARED_SESSION','CAUCE_SHARED_SESSION_WORKSPACE','CAUCE_SHARED_SESSION_REQUIRE_RESUME','TMUX_TMPDIR','CAUCE_ALIAS',
         'CAUCE_RUNTIME_KEY','CAUCE_TENANT_ID','CAUCE_TENANT','CAUCE_STATE_DIR','CAUCE_CONTROL_DIR',
         'CAUCE_CONTAINER_ID','CAUCE_CONTAINER_GENERATION'}
     with matched_fs_credentials(document['runtimeUid'],document['runtimeGid']):
@@ -119,15 +120,21 @@ def source(filename: str) -> bytes:
         os.close(parent)
 
 
-def current_program(*, observe: bool = False) -> tuple[str, bytes]:
+def current_program(*, observe: bool = False, maintenance: bool = False) -> tuple[str, bytes]:
+    if observe and maintenance:
+        raise SafeFailure('current lifecycle entry is ambiguous')
     modules = {name: base64.b64encode(source(name + '.py')).decode('ascii') for name in MODULES}
-    entry = OBSERVATION.encode() if observe else source('cauce-container-runtime.py')
+    if maintenance:
+        from fleet_executor_maintenance import MAINTENANCE_ENTRY
+        entry = MAINTENANCE_ENTRY.encode()
+    else:
+        entry = OBSERVATION.encode() if observe else source('cauce-container-runtime.py')
     raw = json.dumps({'modules': modules, 'entry': base64.b64encode(entry).decode('ascii')}, separators=(',', ':')).encode()
     if len(raw) > 1048576:
         raise SafeFailure('current lifecycle sources exceed their bound')
     return hashlib.sha256(raw).hexdigest(), raw
 
 
-def command(python: str, *arguments: str, observe: bool = False) -> tuple[list[str], bytes]:
-    pin, raw = current_program(observe=observe)
+def command(python: str, *arguments: str, observe: bool = False, maintenance: bool = False) -> tuple[list[str], bytes]:
+    pin, raw = current_program(observe=observe, maintenance=maintenance)
     return [python, '-I', '-B', '-c', BOOTSTRAP, pin, *arguments], raw

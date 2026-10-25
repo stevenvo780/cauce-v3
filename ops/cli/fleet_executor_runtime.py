@@ -212,6 +212,8 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
         values.update(CAUCE_SHARED_SESSION='1',
             CAUCE_SHARED_SESSION_WORKSPACE=str(path(agent['state_directory']) / 'space' / 'projects'),
             TMUX_TMPDIR=agent['state_directory'])
+        if agent.get('_require_shared_resume') is True:
+            values['CAUCE_SHARED_SESSION_REQUIRE_RESUME'] = '1'
     model = agent.get('model_id')
     if model is not None:
         if not isinstance(model, str) or not 1 <= len(model) <= 128 or any(ord(char) < 32 for char in model) \
@@ -286,6 +288,7 @@ def native_proof(policy: dict, agent: dict, identity: dict, bundle: dict, *, boo
                 raw = pathlib.Path(f'/proc/{document["pid"]}/environ').read_bytes()
             environment = {item.split(b'=', 1)[0].decode(): item.split(b'=', 1)[1].decode()
                            for item in raw.split(b'\0') if item.startswith((b'CAUCE_BOOTSTRAP=', b'CAUCE_FLEET_OPERATION_ID=',
+                                                                     b'CAUCE_SHARED_SESSION_REQUIRE_RESUME=',
                                b'CAUCE_ROOM=', b'CAUCE_INSTANCE_ID=', b'CAUCE_SPACE_ROOT=', b'CAUCE_RELAY_URL=', b'CAUCE_MODEL_ID=', b'CAUCE_REASONING_EFFORT=',
                                b'CAUCE_SHARED_HUMAN_IDS=', b'CAUCE_SHARED_SESSION=', b'CAUCE_SHARED_SESSION_WORKSPACE='))}
             namespace_proof(environment, bootstrap, operation_id)
