@@ -241,6 +241,33 @@ def prepare(request: dict) -> dict:
             record({'state': 'pin_metrics_failed', 'when': when, 'path': path, 'error_type': type(error).__name__})
     def pin(path):
         sample_pin(path, 'before')
+        if TRACE is not None and OWNER == 'h8f-tiempos-muse-grok-1025' and path == '/usr/local/bin/muse':
+            checkpoint = state + '/cauce-h8f-hash-' + uuid.uuid4().hex + '.json'
+            script = (ROOT / 'tests/e2e/v4-terminal-v4-image-real-browser.hash.py').read_text()
+            expected = 'decefc0fb33c48ee43419c3e72ac2dbc781743868611074c7292807f5960dfcf'
+            started = time.monotonic()
+            try:
+                output = container.docker('exec', '--user', 'node', request['name'], '/usr/bin/python3', '-I', '-B', '-c',
+                    script, '--path', path, '--mode', 'gnu', '--timeout', '40', '--expected-sha256', expected,
+                    '--output-json', checkpoint)
+                result = json.loads(output)
+                if not result.get('benchmark_accepted'):
+                    raise ValueError('native hash measurement did not complete within its original deadline')
+                return result['result']['digest']
+            finally:
+                outer_elapsed_ms = (time.monotonic() - started) * 1000
+                collect = ('import json,os,pathlib,stat,sys;p=pathlib.Path(sys.argv[1]);s=p.lstat();'
+                           'assert stat.S_ISREG(s.st_mode) and s.st_uid==os.geteuid() and s.st_nlink==1 and s.st_size<=131072;'
+                           'out=p.read_text();p.unlink();print(out)')
+                try:
+                    saved = json.loads(container.checked_command([container.DOCKER, 'exec', '--user', 'node', request['name'],
+                        '/usr/bin/python3', '-I', '-B', '-c', collect, checkpoint], timeout=5))
+                    record({'state': 'native_hash_child_measurement', 'path': path,
+                            'outer_elapsed_ms': outer_elapsed_ms, 'measurement': saved})
+                except Exception as error:
+                    record({'state': 'native_hash_child_measurement_unavailable', 'path': path,
+                            'error_type': type(error).__name__})
+                sample_pin(path, 'after')
         timer = threading.Timer(3, sample_pin, args=(path, 'during')) if TRACE is not None else None
         if timer:
             timer.start()

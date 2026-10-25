@@ -71,7 +71,29 @@ async function safeScreenshot(page: V4Page, name: string): Promise<void> {
 }
 function publicUrl(value: string) {
   const url = new URL(value);
-  return { origin: url.origin, path: ['localhost', '127.0.0.1', '::1'].includes(url.hostname) ? url.pathname : '[external path omitted]' };
+  return { origin: url.origin, path: ['localhost', '127.0.0.1', '::1'].includes(url.hostname) ? url.pathname.slice(0, 1_024) : '[external path omitted]',
+    ...(url.pathname.length > 1_024 ? { path_truncated: true } : {}),
+    ...(url.search ? { query_sha256: digest(url.search) } : {}) };
+}
+interface ProtocolEvent {
+  requestId?: string; frameId?: string; loaderId?: string; timestamp?: number; wallTime?: number; type?: string; name?: string;
+  request?: { url: string; method: string };
+  response?: { url: string; status: number; mimeType: string; timing?: Record<string, number> };
+  frame?: { id: string; parentId?: string; loaderId: string; url: string };
+  errorText?: string; canceled?: boolean; encodedDataLength?: number;
+}
+interface ProtocolSession {
+  on(event: string, handler: (value: ProtocolEvent) => void): void;
+  send(method: string, parameters?: Record<string, unknown>): Promise<unknown>;
+  detach(): Promise<void>;
+}
+async function protocolBudget<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { reject(new Error('diagnostic protocol timeout')); }, 3_000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 function vmSample() {
   const sample: Record<string, string[] | { error_type: string }> = {};
@@ -87,6 +109,16 @@ function vmSample() {
 }
 function observePage(page: V4Page, harness: string, width: number) {
   let phase = 'page-created';
+  const requestIds = new WeakMap<object, number>();
+  let requestCount = 0;
+  let navigation = 0;
+  let session: ProtocolSession | undefined;
+  let protocolClosed = false;
+  const protocolEvents: Record<string, unknown>[] = [];
+  const pending = new Map<string, Record<string, unknown>>();
+  const snapshots: Record<string, unknown>[] = [];
+  const limits = { events: 4_000, pending: 1_024, snapshots: 8 };
+  const truncated = { events: 0, pending: 0, snapshots: 0 };
   const record = (event: string, fields: Record<string, unknown> = {}) => {
     if (diagnostics) appendFileSync(join(evidence, `${harness}-${String(width)}-browser.jsonl`),
       JSON.stringify({ at: new Date().toISOString(), phase, event, ...fields }) + '\n', { mode: 0o600 });
@@ -95,7 +127,8 @@ function observePage(page: V4Page, harness: string, width: number) {
     observeUiBootstrap(page);
     for (const event of ['request', 'requestfinished', 'requestfailed']) page.on(event, (value: unknown) => {
       const request = value as { url(): string; method(): string; resourceType(): string; failure(): { errorText: string } | null };
-      record(event, { ...publicUrl(request.url()), method: request.method(), resource_type: request.resourceType(),
+      if (!requestIds.has(request)) requestIds.set(request, ++requestCount);
+      record(event, { request_id: requestIds.get(request), ...publicUrl(request.url()), method: request.method(), resource_type: request.resourceType(),
         ...(event === 'requestfailed' ? { code: request.failure()?.errorText.match(/net::ERR_[A-Z_]+/u)?.[0] ?? 'unknown' } : {}) });
     });
     page.on('response', (value: unknown) => {
@@ -104,15 +137,89 @@ function observePage(page: V4Page, harness: string, width: number) {
     });
     for (const event of ['domcontentloaded', 'load', 'crash', 'close']) page.on(event, () => { record(event); });
   }
-  return { record, mark: (name: string) => { phase = name; record('phase', diagnostics ? { vm: vmSample() } : {}); } };
+  const protocolRecord = (event: string, fields: Record<string, unknown>) => {
+    if (protocolEvents.length === limits.events) { protocolEvents.shift(); truncated.events++; }
+    protocolEvents.push({ at: new Date().toISOString(), phase, navigation, event, ...fields });
+  };
+  const ready = (async () => {
+    if (!diagnostics) return;
+    try {
+      const browserContext = page.context() as ReturnType<V4Page['context']> & {
+        newCDPSession?: (target: unknown) => Promise<ProtocolSession>;
+      };
+      if (!browserContext.newCDPSession) { record('protocol-unavailable'); return; }
+      const attachment = browserContext.newCDPSession(page);
+      void attachment.then(value => { if (protocolClosed) void value.detach().catch(() => undefined); }, () => undefined);
+      session = await protocolBudget(attachment);
+      session.on('Network.requestWillBeSent', event => {
+        if (!event.requestId || !event.request) return;
+        const entry = { request_id: event.requestId, frame_id: event.frameId, loader_id: event.loaderId, resource_type: event.type,
+          timestamp: event.timestamp, wall_time_seconds: event.wallTime, method: event.request.method, ...publicUrl(event.request.url), navigation };
+        if (!pending.has(event.requestId) && pending.size === limits.pending) {
+          const oldest = pending.keys().next().value;
+          if (oldest !== undefined) pending.delete(oldest);
+          truncated.pending++;
+        }
+        pending.set(event.requestId, entry);
+        protocolRecord('request', entry);
+      });
+      session.on('Network.responseReceived', event => {
+        if (!event.requestId || !event.response) return;
+        const timing: Record<string, number> = {};
+        for (const [key, value] of Object.entries(event.response.timing ?? {})) if (Number.isFinite(value)) timing[key] = value;
+        const response = { status: event.response.status, mime_type: event.response.mimeType, timing,
+          response_timestamp: event.timestamp, frame_id: event.frameId, loader_id: event.loaderId };
+        const entry = pending.get(event.requestId);
+        if (entry) Object.assign(entry, response);
+        protocolRecord('response', { request_id: event.requestId, ...publicUrl(event.response.url), ...response });
+      });
+      for (const eventName of ['Network.loadingFinished', 'Network.loadingFailed']) session.on(eventName, event => {
+        if (!event.requestId) return;
+        protocolRecord(eventName, { request_id: event.requestId, timestamp: event.timestamp, encoded_bytes: event.encodedDataLength,
+          canceled: event.canceled, ...(event.errorText ? { code: /net::ERR_[A-Z_]+/u.exec(event.errorText)?.[0] ?? 'unknown' } : {}) });
+        pending.delete(event.requestId);
+      });
+      session.on('Page.frameNavigated', event => {
+        if (event.frame) protocolRecord('frame-navigated', { frame_id: event.frame.id, parent_id: event.frame.parentId,
+          loader_id: event.frame.loaderId, ...publicUrl(event.frame.url) });
+      });
+      session.on('Page.lifecycleEvent', event => {
+        protocolRecord('lifecycle', { name: event.name, frame_id: event.frameId, loader_id: event.loaderId, timestamp: event.timestamp });
+      });
+      await protocolBudget(Promise.all([session.send('Network.enable'), session.send('Page.enable'),
+        session.send('Page.setLifecycleEventsEnabled', { enabled: true })]));
+      record('protocol-ready');
+    } catch (error) {
+      protocolClosed = true;
+      record('protocol-setup-failed', { error_type: error instanceof Error ? error.name : 'unknown' });
+    }
+  })();
+  return { record, ready,
+    mark: (name: string) => { phase = name; if (name.endsWith('navigation')) navigation++; record('phase', diagnostics ? { vm: vmSample() } : {}); },
+    snapshot: (outcome: string) => {
+      const requests = [...pending.values()].map(entry => ({ ...entry }));
+      if (snapshots.length === limits.snapshots) { snapshots.shift(); truncated.snapshots++; }
+      snapshots.push({ at: new Date().toISOString(), phase, navigation, outcome, pending: requests,
+        truncated_pending: truncated.pending,
+        document_scripts_styles: requests.filter(entry => ['Document', 'Script', 'Stylesheet'].includes(String(entry.resource_type))) });
+    },
+    close: async () => {
+      protocolClosed = true;
+      await ready;
+      if (session) await protocolBudget(session.detach()).catch(() => { record('protocol-detach-failed'); });
+      if (diagnostics) await writeFile(join(evidence, `${harness}-${String(width)}-protocol.json`),
+        JSON.stringify({ limits, truncated, events: protocolEvents, navigation_snapshots: snapshots }, null, 2), { mode: 0o600 });
+    } };
 }
 async function navigate(page: V4Page, url: string, trace: ReturnType<typeof observePage>, phase: string) {
   trace.mark(phase);
   const started = performance.now();
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+    trace.snapshot('domcontentloaded');
     trace.record('navigation-finished', { ...publicUrl(url), status: response?.status(), elapsed_ms: performance.now() - started });
   } catch (error) {
+    trace.snapshot('navigation-failed');
     trace.record('navigation-failed', { ...publicUrl(url), error_type: error instanceof Error ? error.name : 'unknown', elapsed_ms: performance.now() - started,
       ...(diagnostics ? { vm: vmSample() } : {}) });
     throw error;
@@ -134,6 +241,7 @@ describe.sequential('TUI del launcher real con adaptador e imagen V4 reales', ()
         const page = asV4Page(await runtime.page(width));
         const trace = observePage(page, harness, width);
         try {
+          await trace.ready;
           await navigate(page, runtime.baseUrl, trace, 'initial-navigation');
           trace.mark('console-login');
           await page.getByLabel('Correo', { exact: true }).fill(runtime.email);
@@ -195,7 +303,7 @@ describe.sequential('TUI del launcher real con adaptador e imagen V4 reales', ()
           await writeFile(join(evidence, `${harness}-launcher.log`), runtime.launcherLog());
           await writeFile(join(evidence, `${harness}-adapter.log`), await runtime.adapterLog());
           throw error;
-        } finally { await page.context().close(); }
+        } finally { try { await trace.close(); } finally { await page.context().close(); } }
       }
     } finally {
       try {
