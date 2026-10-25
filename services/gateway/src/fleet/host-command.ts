@@ -23,6 +23,12 @@ export async function performHostRetirement(config: HostCommandConfig, execution
 }
 const ReceiptSchema = z.object({ evidence: FleetEvidenceSchema, awaiting_auth: z.boolean().optional(),
   account_identity: z.string().min(1).max(256).regex(/^[^\p{Cc}]+$/u).refine(value => !value.startsWith('unverified:')).optional() }).strict();
+const CheckpointDigest = z.string().regex(/^[a-f0-9]{64}$/u);
+const MaintenanceCheckpoint = z.object({ snapshot_sha256: CheckpointDigest, original_container_id: CheckpointDigest,
+  checkpoint_sha256: CheckpointDigest, generation: CheckpointDigest }).strict();
+export async function performHostMaintenanceCheckpoint(config: HostCommandConfig, execution: FleetExecution, signal: AbortSignal, requireExisting = false) {
+  return runHostReceipt(config, 'maintenance-checkpoint', execution, signal, output => MaintenanceCheckpoint.parse(output), requireExisting);
+}
 const MAX_RECEIPT_BYTES = 8192;
 function unverified(): Error { return new Error('Host effect could not be verified'); }
 function absolute(value: string): boolean { return value.startsWith('/') && !/[\p{Cc}]/u.test(value) && !value.split('/').includes('..'); }
@@ -62,6 +68,19 @@ export async function performHostLoginStop(config: HostCommandConfig, execution:
 async function runHostCommand(
   config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop' | 'retire-replacement', execution: FleetExecution, signal: AbortSignal,
 ): Promise<FleetEffectResult> {
+  return runHostReceipt(config, step, execution, signal, (output, runtimeStderr) => {
+    const receipt = ReceiptSchema.parse(output);
+    const probe = step === 'authenticate' ? providerProbeFailure(runtimeStderr) : undefined;
+    return { evidence: receipt.evidence,
+      ...(probe === undefined || !receipt.awaiting_auth ? {} : { probe_failure: probe.reason }),
+      ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }),
+      ...(receipt.account_identity === undefined ? {} : { account_identity: receipt.account_identity }) };
+  });
+}
+async function runHostReceipt<T>(
+  config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop' | 'retire-replacement' | 'maintenance-checkpoint',
+  execution: FleetExecution, signal: AbortSignal, parse: (output: unknown, runtimeStderr: string) => T, requireExistingCheckpoint = false,
+): Promise<T> {
   const timeoutMs = config.timeoutMs ?? 150_000;
   const isAborted = () => signal.aborted;
   if (![config.python, config.executable, config.policyFile].every(absolute)
@@ -77,7 +96,7 @@ async function runHostCommand(
     ...(execution.fleet_scope === undefined ? {} : { fleet_scope: execution.fleet_scope }),
     ...(execution.snapshot === undefined ? {} : { snapshot: execution.snapshot }) });
   if (Buffer.byteLength(encoded) > 1_048_576) throw unverified();
-  const specification = await fleetHostSpawn(config, step);
+  const specification = await fleetHostSpawn(config, step, { requireExistingCheckpoint });
   if (isAborted()) throw unverified();
   return new Promise((resolve, reject) => {
     const child = spawn(specification.executable, specification.arguments, {
@@ -124,11 +143,7 @@ async function runHostCommand(
       if (probe) process.stderr.write(`provider auth helper failed: ${probe.detail} operation_id=${execution.operation.id}\n`);
       if (code !== 0 || failed) { reject(failure()); return; }
       try {
-        const receipt = ReceiptSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        resolve({ evidence: receipt.evidence,
-          ...(probe === undefined || !receipt.awaiting_auth ? {} : { probe_failure: probe.reason }),
-          ...(receipt.awaiting_auth === undefined ? {} : { awaiting_auth: receipt.awaiting_auth }),
-          ...(receipt.account_identity === undefined ? {} : { account_identity: receipt.account_identity }) });
+        resolve(parse(JSON.parse(Buffer.concat(chunks).toString('utf8')), runtimeStderr));
       }
       catch { reject(failure()); }
     });

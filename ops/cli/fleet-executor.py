@@ -79,6 +79,8 @@ def main() -> int:
     action.add_argument('--recovery-preflight', action='store_true')
     action.add_argument('--maintenance-guard', action='store_true')
     action.add_argument('--maintenance-resume-proof', action='store_true')
+    action.add_argument('--maintenance-checkpoint', action='store_true')
+    parser.add_argument('--require-existing-checkpoint', action='store_true')
     action.add_argument('--retire-replacement', action='store_true')
     parser.add_argument('--prepare-login', action='store_true')
     action.add_argument('--capabilities', action='store_true')
@@ -89,6 +91,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.prepare_login and not args.binding:
         raise SafeFailure('login preparation requires a binding request')
+    if args.require_existing_checkpoint and not args.maintenance_checkpoint:
+        raise SafeFailure('checkpoint replay requires the maintenance checkpoint action')
     policy = load_policy(args.policy)
     if args.capabilities:
         if policy.get('execution_scope') == 'backups':
@@ -142,7 +146,10 @@ def main() -> int:
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     with image_operation(context['operation_id'], legacy_target=context['request']['target']['resource'] == 'agent'):
-        if args.binding:
+        if args.maintenance_checkpoint:
+            from fleet_executor_maintenance_checkpoint import checkpoint
+            receipt = checkpoint(policy, context, require_existing=args.require_existing_checkpoint)
+        elif args.binding:
             agent = approve_agent(policy, target_agent(context))
             if args.prepare_login and agent['runtime_mode'] == 'container':
                 with executor_lock(policy):

@@ -49,9 +49,13 @@ export async function fleetSshArguments(input: FleetSshTransport, options: { cle
   if (transport.identity_file) arguments_.push('-i', transport.identity_file);
   return arguments_;
 }
-export async function fleetHostSpawn(config: { python: string; executable: string; policyFile: string; transport?: FleetSshTransport }, step: string) {
+export async function fleetHostSpawn(config: { python: string; executable: string; policyFile: string; transport?: FleetSshTransport },
+  step: string, checkpointOptions: { requireExistingCheckpoint?: boolean } = {}) {
+  if (checkpointOptions.requireExistingCheckpoint && step !== 'maintenance-checkpoint') throw new Error('Checkpoint replay requires its dedicated command');
   const arguments_ = ['-B', config.executable, '--policy', config.policyFile,
-    ...(step === 'retire-replacement' ? ['--retire-replacement'] : ['--step', step])];
+    ...(step === 'retire-replacement' ? ['--retire-replacement']
+      : step === 'maintenance-checkpoint' ? ['--maintenance-checkpoint', ...(checkpointOptions.requireExistingCheckpoint ? ['--require-existing-checkpoint'] : [])]
+        : ['--step', step])];
   if (!config.transport) return { executable: config.python, arguments: arguments_ };
   const options = await fleetSshArguments(config.transport);
   return { executable: config.transport.executable, arguments: [...options, config.transport.destination,

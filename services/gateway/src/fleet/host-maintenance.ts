@@ -5,6 +5,8 @@ import type { FleetExecution } from './executor.js';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { SignedHostChannel } from './signed-source.js';
 import type { FleetHostConfig } from './main.js';
+import { performHostMaintenanceCheckpoint } from './host-command.js';
+import { replacementCompensationSnapshot } from './replacement-compensation.js';
 
 const maintenance = (execution: FleetExecution) => execution.operation.actor.actor_subject?.startsWith('host:') === true;
 export class HostMaintenance {
@@ -86,13 +88,22 @@ export class HostMaintenance {
       if (!finished) await guard.finish(false);
     }
   }
-  async stop(execution: FleetExecution, claim: FleetOperationClaim): Promise<void> {
+  async stop(execution: FleetExecution, claim: FleetOperationClaim, signal: AbortSignal): Promise<void> {
     if (!maintenance(execution)) return;
     const held = this.held;
     if (held?.operation !== execution.operation.id
         || held.claimToken !== claim.claim_token || held.epoch !== claim.epoch
         || !this.currentStop(execution, claim)) {
       throw new Error('Maintenance stop requires its current durable host claim and running step');
+    }
+    const snapshot = replacementCompensationSnapshot(execution);
+    if (snapshot === undefined) throw new Error('Maintenance stop requires its durable compensation snapshot');
+    const runtime = held.guard.first;
+    const checkpoint = await performHostMaintenanceCheckpoint(this.config.command, execution, signal, runtime.state === 'stopped');
+    if (signal.aborted || checkpoint.snapshot_sha256 !== snapshot.snapshot_sha256
+        || runtime.state === 'ready' && (checkpoint.original_container_id !== runtime.container_id || checkpoint.generation !== runtime.generation)
+        || runtime.state !== 'ready' && runtime.state !== 'stopped') {
+      throw new Error('Maintenance checkpoint differs from its retained runtime and snapshot');
     }
     this.held = undefined;
     await held.guard.finish(true);

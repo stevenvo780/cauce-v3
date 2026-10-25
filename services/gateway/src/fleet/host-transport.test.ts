@@ -63,6 +63,15 @@ afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 describe('fleet SSH transport with a real private fixture daemon', () => {
+  it('quotes the dedicated maintenance checkpoint and existing-only replay flags through the same transport', async () => {
+    const capture = await fleetHostSpawn(config, 'maintenance-checkpoint');
+    const replay = await fleetHostSpawn(config, 'maintenance-checkpoint', { requireExistingCheckpoint: true });
+    expect(capture.arguments.at(-1)).toContain("'--maintenance-checkpoint'");
+    expect(capture.arguments.at(-1)).not.toContain('--require-existing-checkpoint');
+    expect(replay.arguments.at(-1)).toContain("'--maintenance-checkpoint' '--require-existing-checkpoint'");
+    expect(replay.arguments.at(-1)).not.toContain('--step');
+    await expect(fleetHostSpawn(config, 'stop', { requireExistingCheckpoint: true })).rejects.toThrow('dedicated command');
+  });
   it('transmits structured stdin and quotes every approved remote argument', async () => {
     try {
       expect(await performHostCommand({ ...config, timeoutMs: 5000 }, 'stop', execution, new AbortController().signal))

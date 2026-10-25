@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readdir, writeFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { performHostCommand, performHostCompensation, performHostLoginStop, performHostRetirement } from './host-command.js';
+import { performHostCommand, performHostCompensation, performHostLoginStop, performHostRetirement, performHostMaintenanceCheckpoint } from './host-command.js';
 import type { FleetExecution } from './executor.js';
 import { FleetErrorSchema, FleetExecutionReasonSchema, FleetOperationRequestSchema, sha256Hex } from '@cauce/protocol';
 import { fleetExecutionFailure } from './recovery-host-command.js';
@@ -15,6 +15,19 @@ async function helper(body: string) {
   return { python: '/usr/bin/python3', executable, policyFile: join(directory, 'policy.json'), timeoutMs: 1000 };
 }
 describe('host effect transport', () => {
+  it('runs the dedicated maintenance checkpoint command with exact fenced inputs and a strict identity receipt', async () => {
+    const receipt = { snapshot_sha256: 'a'.repeat(64), original_container_id: 'b'.repeat(64),
+      checkpoint_sha256: 'c'.repeat(64), generation: 'd'.repeat(64) };
+    const config = await helper(`import json,sys\nx=json.load(sys.stdin)\nassert '--maintenance-checkpoint' in sys.argv and '--step' not in sys.argv\nassert x['operation_id']==${JSON.stringify(execution.operation.id)}\nassert x['previous_agents'][0]['runtime_key']=='physical-one'\nprint(${JSON.stringify(JSON.stringify(receipt))})`);
+    expect(await performHostMaintenanceCheckpoint(config, execution, new AbortController().signal)).toEqual(receipt);
+    const replay = await helper(`import json,sys\njson.load(sys.stdin)\nassert '--maintenance-checkpoint' in sys.argv and '--require-existing-checkpoint' in sys.argv\nassert '--step' not in sys.argv\nprint(${JSON.stringify(JSON.stringify(receipt))})`);
+    expect(await performHostMaintenanceCheckpoint(replay, execution, new AbortController().signal, true)).toEqual(receipt);
+    for (const changed of [{ ...receipt, generation: null }, { ...receipt, checkpoint_sha256: undefined },
+      { ...receipt, evidence: { authority_verified: true } }]) {
+      const unchecked = await helper(`print(${JSON.stringify(JSON.stringify(changed))})`);
+      await expect(performHostMaintenanceCheckpoint(unchecked, execution, new AbortController().signal)).rejects.toThrow('Host effect could not be verified');
+    }
+  });
   it('uses the separate retirement command and binds its receipt to the durable configuration commitment', async () => {
     const body = { version: 1, decision: 'configuration_committed', operation_id: execution.operation.id, company_id: 'company', host_id: 'old-host',
       snapshot_sha256: 'a'.repeat(64), request_sha256: 'b'.repeat(64), target_slice_sha256: 'c'.repeat(64), applied_revision: 4,

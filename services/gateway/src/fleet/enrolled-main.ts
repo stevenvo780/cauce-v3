@@ -90,7 +90,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const worker = new FleetHostWorker(source, { worker: `host-${config.host}`, host: config.host,
     pollMs: config.pollMs, leaseMs: config.leaseMs,
     perform: async (step, execution, signal, claim) => {
-      if (step === 'stop') await maintenance.stop(execution, claim);
+      if (step === 'stop') await maintenance.stop(execution, claim, signal);
       return performHostCommand(config.command, step, execution, signal);
     },
     compensate: (execution, signal) => performHostCompensation(config.command, execution, signal),
