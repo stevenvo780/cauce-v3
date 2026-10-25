@@ -55,6 +55,20 @@ class PlacementTemplateSelectionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unique'):
             self.subject.resolve_profile(self.policy, self.agent)
 
+    def test_dynamic_account_with_trusted_accounts_resolves_profile_and_fails_without_them(self):
+        self.templates()
+        self.subject.validate_templates(self.policy)
+        self.assertNotIn('account', self.policy['profiles'])
+        agent = dict(self.agent, container_name='container-one', _trusted_accounts_present=True)
+        profile = self.subject.resolve_profile(self.policy, agent)
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile['provider'], 'codex')
+        self.assertEqual(profile['identity'], 'identity')
+        self.assertTrue(profile['path'].startswith('/profiles/physical-one/'))
+        without_trusted = dict(agent, _trusted_accounts=[], _trusted_accounts_present=False)
+        with self.assertRaisesRegex(self.subject.SafeFailure, 'provider account has no current authorized durable binding'):
+            self.subject.resolve_profile(self.policy, without_trusted)
+
     def test_new_descriptor_joins_the_templates_without_code_and_leaves_without_install(self):
         from fleet_executor_runtime import bundle_digest
         root = pathlib.Path(self.policy['bundles']['codex']['directory'])

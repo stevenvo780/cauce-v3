@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import pathlib
@@ -127,9 +128,12 @@ class DockerAgentQuotaTest(AgentQuotaPacketTest):
 import json,os,pathlib,sys,time
 assert os.getuid()==65534 and os.getgid()==65534
 assert os.environ['HOME']=='/nonexistent'
-assert sys.argv[1:]==['/nonexistent/.codex']
+assert sys.argv[1].startswith('/nonexistent/.codex')
 assert 'CODEX_HOME' not in os.environ and 'CLAUDE_CONFIG_DIR' not in os.environ
-document=json.loads(pathlib.Path('/nonexistent/.codex/fixture.json').read_text())
+fixture_file=pathlib.Path(sys.argv[1])/'fixture.json'
+if not fixture_file.is_file():
+    fixture_file=pathlib.Path('/nonexistent/.codex/fixture.json')
+document=json.loads(fixture_file.read_text())
 if document.get('mode')=='missing_identity': document['extra']={}
 if document.get('mode')=='invalid':
     print(document['private']);print(document['private'],file=sys.stderr);sys.exit(2)
@@ -177,7 +181,7 @@ print(json.dumps(document,ensure_ascii=False))
         finally:
             super().tearDown()
 
-    def configure_canary(self, raw=None, harness='codex'):
+    def configure_canary(self, raw=None, harness='codex', dynamic_account=None):
         sys.path.insert(0, str(fixtures.OPS / 'cli'))
         from fleet_executor_container import create_container
         from fleet_executor_policy import approve_agent
@@ -187,6 +191,15 @@ print(json.dumps(document,ensure_ascii=False))
             runtime_key='quota-' + uuid.uuid4().hex[:12], runtime_mode='container', container_name=name,
             runtime_user='nobody', home_directory='/nonexistent')
         self.agent['state_directory'] = '/tmp/cauce-state/' + self.agent['runtime_key']
+        self.agent['primary_account_id'] = dynamic_account
+        if dynamic_account is not None:
+            if 'profile_templates' not in self.policy:
+                self.policy['profile_templates'] = []
+            self.policy['profile_templates'].append({
+                'provider': harness, 'runtime_user': 'nobody', 'path_root': '/nonexistent/.codex',
+                'runtime_mode': 'container', 'container_name': name,
+                'command': '/usr/local/bin/fake-quota-reader', 'command_sha256': 'a' * 64,
+            })
         self.policy['containers'][name] = {'image': self.image, 'runtime_user': 'nobody',
             'systemd_user': self.user, 'home_directory': '/nonexistent', 'state_root': '/tmp/cauce-state',
             'profile_root': '/nonexistent/.codex', 'python': '/usr/local/bin/python3.12'}
@@ -205,6 +218,11 @@ print(json.dumps(document,ensure_ascii=False))
         program = ('import json,os,pathlib,sys;p=pathlib.Path("/nonexistent/.codex");'
             'p.chmod(448);os.chown(p,65534,65534);f=p/"fixture.json";'
             'f.write_text(sys.stdin.read());f.chmod(384);os.chown(f,65534,65534)')
+        if dynamic_account is not None:
+            account_hash = hashlib.sha256(dynamic_account.encode()).hexdigest()
+            program += (f';sub=p/"{self.agent["runtime_key"]}"/"{account_hash}";'
+                'sub.mkdir(parents=True,exist_ok=True);sub.chmod(448);os.chown(sub,65534,65534);'
+                'f2=sub/"fixture.json";f2.write_text(f.read_text());f2.chmod(384);os.chown(f2,65534,65534)')
         subprocess.run(['docker', 'exec', '-i', '--user', '0', name, '/usr/local/bin/python3.12', '-B', '-c', program],
             input=json.dumps(observation), capture_output=True, text=True, timeout=plazo(15), check=True)
         return self.quota_packet()

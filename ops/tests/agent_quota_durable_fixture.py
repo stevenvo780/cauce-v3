@@ -16,7 +16,8 @@ def main():
         initialized = True
         fixture.policy['host_id'] = config['host_id']
         fixture.agent.update(tenant_id=config['tenant_id'], host_id=config['host_id'])
-        packets = [fixture.configure_canary(), fixture.configure_canary()]
+        dynamic_account = config.get('dynamic_account')
+        packets = [fixture.configure_canary(dynamic_account=dynamic_account), fixture.configure_canary()]
         packets.append(fixture.configure_canary(harness='openclaw'))
         print(json.dumps({'policy_file': str(fixture.policy_file), 'agents': [packet['agent'] for packet in packets]}), flush=True)
         if sys.stdin.readline().strip() != 'close':
