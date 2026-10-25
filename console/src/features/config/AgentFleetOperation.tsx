@@ -268,6 +268,7 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
         <p className="m-0">Revisión esperada: {operation.expected_revision} · Revisión deseada: {operation.desired_revision ?? 'Sin publicar'} · Revisión aplicada: {operation.applied_revision ?? 'Sin acreditar'}</p>
         <p className="m-0">Objetivo: <code>{JSON.stringify(operation.target)}</code> · Actor: {operationActor(operation)}</p>
         {error ? <p className="m-0">Código: <code>{error.code}</code>{error.step ? <> · Paso: <code>{error.step}</code></> : null} · Reintentable: {error.retryable ? 'sí' : 'no'}</p> : null}
+        {error?.reason ? <p className="m-0">Causa: <code>{error.reason}</code> · {human?.message}</p> : null}
         {operation.steps.some((step) => step.evidence) ? <pre className="m-0 overflow-auto whitespace-pre-wrap">{JSON.stringify(operation.steps.map((step) => ({ paso: step.name, estado: step.status, evidencia: step.evidence ?? null })), null, 2)}</pre> : null}
       </div>
     </details>

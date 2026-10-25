@@ -1,4 +1,5 @@
 import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
+import { FLEET_FAILURE_TEXT } from './fleet-failure-text';
 
 export const STATUS = { queued: 'En cola', running: 'En ejecución', awaiting_auth: 'Esperando autenticación',
   cancelling: 'Cancelación en curso', cancelled: 'Cancelada', failed: 'Fallida', succeeded: 'Completada' };
@@ -107,6 +108,7 @@ export function guidedDriftHeadline(): string {
 
 /** Human message and next action for an operation error. The raw code never belongs here. */
 export function operationErrorHuman(error: NonNullable<FleetOperation['error']>): OperationErrorHuman {
+  if (error.reason) return FLEET_FAILURE_TEXT[error.reason];
   const fallback = ERRORS[error.code];
   if (error.code === 'STEP_FAILED' && !error.retryable) {
     return { message: fallback, next: 'No se puede reintentar: cancela y lanza una operación nueva.' };

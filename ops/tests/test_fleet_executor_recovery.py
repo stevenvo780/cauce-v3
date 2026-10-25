@@ -143,9 +143,11 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
         self.assert_read_only()
 
     def test_ready_preview_preserves_exact_runtime_session_and_uses_only_read_command(self):
-        for state in ('present', 'absent', 'conflict', 'failed'):
+        for state in ('present', 'absent', 'conflict', 'failed', 'unsupported'):
             with self.subTest(state=state):
                 session = {**self.session, 'state': state}
+                if state == 'unsupported':
+                    session.update(resumable=False, fingerprint=None)
                 with mock.patch.object(recovery, 'observe', return_value=(self.identity,
                         {'CAUCE_SHARED_SESSION': '1'}, self.policy['bundles']['codex'])), \
                         mock.patch.object(recovery, 'run_helper', return_value=session) as helper:
@@ -153,6 +155,7 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
                 self.assertEqual(result['status'], 'ready')
                 self.assertEqual(result['recovery']['identity'], self.identity)
                 self.assertEqual(result['recovery']['session'], session)
+                self.assertNotIn('next_action', result)
                 self.assertFalse(result['recovery']['recreates_container'])
                 self.assertEqual(helper.call_args.args[-1], 'recovery-preview')
                 self.assert_read_only()

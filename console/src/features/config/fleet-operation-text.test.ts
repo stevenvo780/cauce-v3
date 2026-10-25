@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FleetOperation } from '@cauce/protocol/fleet-operation';
-import { operationHeadline, stepProgress, STEPS } from './fleet-operation-text';
+import { FleetExecutionReasonSchema } from '@cauce/protocol/fleet-operation';
+import { operationErrorHuman, operationHeadline, stepProgress, STEPS } from './fleet-operation-text';
 
 const base = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -22,6 +23,11 @@ function operation(steps: FleetOperation['steps'], status: FleetOperation['statu
 }
 
 describe('fleet operation step labels', () => {
+  it.each(FleetExecutionReasonSchema.options)('explica la causa cerrada %s con una siguiente acción', reason => {
+    const human = operationErrorHuman({ code: 'STEP_FAILED', step: 'stop', retryable: true, reason });
+    expect(human.message).not.toBe('El ejecutor no pudo completar este paso.');
+    expect(human.message.length).toBeGreaterThan(20); expect(human.next.length).toBeGreaterThan(20);
+  });
   it('names every step by what happens to the agent, never by the executor internals', () => {
     expect(Object.values(STEPS)).not.toContain('Artefactos');
     expect(Object.values(STEPS)).not.toContain('Credenciales');

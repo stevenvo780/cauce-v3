@@ -56,7 +56,10 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const [releido, setReleido] = useState<ConfigurationSnapshot>();
   const [intent, setIntent] = useState<SheetIntent & { ref: string }>();
   const [openRef, setOpenRef] = useAgentParam();
-  const sheetTab = new URLSearchParams(useRouteSearch()).get('ficha') === 'operacion' ? 'operacion' : 'resumen';
+  const route = new URLSearchParams(useRouteSearch());
+  const sheetTab = route.get('ficha') === 'operacion' ? 'operacion' : 'resumen';
+  const action = route.get('accion');
+  const sheetKind = action === 'start' || action === 'stop' ? action : undefined;
   const createTrigger = useRef<HTMLButtonElement>(null);
   // A write rereads the configuration on its own: whichever read is newer is the one painted.
   const snapshot = typeof releido?.revision === 'number'
@@ -163,7 +166,7 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
       </div>
     </SectionCard>
     {shown && sheetRef ? <AgentSheet key={sheetRef} agent={shown} retired={shown === sheetRetired} snapshot={snapshot} hosts={fleet.hosts}
-      intent={intent?.ref === sheetRef ? intent : { tab: sheetTab }} ctx={ctx} finalFocus={finalFocus}
+      intent={intent?.ref === sheetRef ? intent : { tab: sheetTab, kind: sheetKind }} ctx={ctx} finalFocus={finalFocus}
       onReloaded={reloaded} onDeleted={setRegistryNotice} onClose={() => { setOpenRef(undefined); }} /> : null}
     {ctx && !shown ? <TeamFormDialog ctx={ctx} /> : null}
   </div>;

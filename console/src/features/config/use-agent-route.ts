@@ -1,8 +1,9 @@
 import { useCallback } from 'react';
 import { redirect, useRouteSearch } from '../../router';
 
-export function prepareAgentHref(tenantId: string, alias: string): string {
+export function prepareAgentHref(tenantId: string, alias: string, action?: 'start' | 'stop'): string {
   const params = new URLSearchParams({ seccion: 'agentes', agente: `${tenantId}/${alias}`, ficha: 'operacion' });
+  if (action) params.set('accion', action);
   return `/config?${params.toString()}`;
 }
 
@@ -13,6 +14,7 @@ export function useAgentParam(): [string | undefined, (ref: string | undefined) 
   const set = useCallback((ref: string | undefined) => {
     const params = new URLSearchParams(window.location.search);
     if (ref) params.set('agente', ref); else params.delete('agente');
+    params.delete('accion');
     if (!params.has('seccion')) params.set('seccion', 'agentes');
     redirect(`${window.location.pathname}?${params.toString()}`);
   }, []);

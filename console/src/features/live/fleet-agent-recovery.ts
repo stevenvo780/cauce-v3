@@ -1,7 +1,10 @@
 import { type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { FleetRecoveryReasonSchema, type FleetRecoveryReason } from '@cauce/protocol/fleet-recovery';
 import { ConsoleFleetOperationSchema as FleetOperationSchema, type ConsoleFleetOperation as FleetOperation } from '@cauce/protocol/console-fleet-operation';
 import { type NativeRuntimeIdentity, type AgentSessionOutcome } from '@cauce/protocol/native-admin';
 import { fleetRequestHash, type FleetOperationsClient } from '../../api/client/fleet-operations-client';
+import { isUnresolved, operationErrorHuman, STEPS } from '../config/fleet-operation-text';
+import { recoveryProblem } from './recovery-problem';
 
 export interface FleetRecoveryTarget { tenant_id: string; alias: string }
 export interface FleetRecoveryPreview {
@@ -11,7 +14,40 @@ export interface FleetRecoveryPreview {
   expected_revision: number;
 }
 type Parameters = Extract<FleetOperationRequest, { kind: 'recover' }>['parameters'];
-const uncertain = (id: string) => new Error(`La operación ${id} sigue registrada. Consulta su historial antes de intentar otro reinicio.`);
+const uncertain = (id: string) => new Error(`No se ha confirmado el resultado de la operación ${id}. Consulta su historial antes de intentar otro reinicio.`);
+
+export class FleetRecoveryFailure extends Error {
+  constructor(message: string, readonly reason?: FleetRecoveryReason) {
+    super(message);
+  }
+}
+
+function terminalFailure(operation: FleetOperation): Error | undefined {
+  if (operation.status === 'failed') {
+    const reason = FleetRecoveryReasonSchema.safeParse(operation.error?.reason);
+    if (reason.success) {
+      const problem = recoveryProblem(reason.data);
+      return new FleetRecoveryFailure(`El reinicio falló. ${problem.reason}`, reason.data);
+    }
+    const cause = operation.error ? operationErrorHuman(operation.error).message : 'El ejecutor no pudo completar el reinicio.';
+    const step = operation.error?.step;
+    return new Error(`El reinicio falló${step ? ` en «${STEPS[step]}»` : ''}. ${cause} Vuelve a comprobar el estado para conocer la acción disponible.`);
+  }
+  if (operation.status === 'cancelled') return new Error('El reinicio se canceló. Vuelve a comprobar el estado antes de intentarlo otra vez.');
+  if (operation.status === 'awaiting_auth') return new Error('El reinicio necesita completar la autenticación. Abre su operación en el historial para continuar.');
+  return undefined;
+}
+
+export async function unresolvedFleetRecovery(api: FleetOperationsClient, target: FleetRecoveryTarget): Promise<FleetOperation | undefined> {
+  const operations = await api.listFleetOperations({ resource: 'agent', ...target });
+  for (const row of operations) {
+    const operation = FleetOperationSchema.parse(row);
+    if (operation.target.resource !== 'agent' || operation.target.tenant_id !== target.tenant_id || operation.target.alias !== target.alias) {
+      throw new Error('El historial no acredita las operaciones de este agente.');
+    }
+  }
+  return operations.find(isUnresolved);
+}
 
 function pause(signal: AbortSignal) {
   signal.throwIfAborted();
@@ -58,6 +94,8 @@ export async function executeFleetRecovery(api: FleetOperationsClient, target: F
     operation = exact(await api.getFleetOperation(operation.id), input, hash, operation);
   }
   signal.throwIfAborted();
+  const failure = terminalFailure(operation);
+  if (failure) throw failure;
   const runtime = operation.steps.find(step => step.name === 'runtime')?.evidence;
   const verified = operation.steps.find(step => step.name === 'verify')?.evidence;
   const recovery = verified?.recovery;

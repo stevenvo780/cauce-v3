@@ -264,12 +264,8 @@ def preflight(policy: dict, document: dict) -> dict:
             return {'status': 'update_required', 'reason_code': 'runtime_without_shared_tui',
                     'reason': REASONS['runtime_without_shared_tui'], 'next_action': 'update'}
         recovery = observed_preview(agent, identity, values, bundle)
-        if recovery['session']['state'] != 'unsupported':
-            return {'status': 'ready', 'recovery': recovery}
-        unsupported = 'runtime_without_shared_tui'
-    reason = 'La sesión de esta ejecución no ofrece una TUI compartida que se pueda reanudar. Puedes usar Detener y Arrancar.' \
-        if unsupported == 'runtime_without_shared_tui' else REASONS[unsupported]
-    return {'status': 'unsupported', 'reason_code': unsupported, 'reason': reason, 'next_action': 'stop_start'}
+        return {'status': 'ready', 'recovery': recovery}
+    return {'status': 'unsupported', 'reason_code': unsupported, 'reason': REASONS[unsupported], 'next_action': 'stop_start'}
 
 
 def perform(policy: dict, context: dict, step: str) -> dict:

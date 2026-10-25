@@ -1,14 +1,20 @@
 import { AgentSessionOutcomeSchema, NativeRuntimeIdentitySchema, type AgentSessionOutcome, type NativeRuntimeIdentity } from '@cauce/protocol/native-admin';
+import { FleetRecoveryPreviewSchema } from '@cauce/protocol/fleet-recovery';
+import type { ConsoleFleetOperation } from '@cauce/protocol/console-fleet-operation';
 import { RotateCcw } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useOptionalConsoleAccess } from '../../api/console-access';
 import { useApi } from '../../api/context';
+import { ApiError } from '../../api/client/core';
 import { Button, Notice } from '../../components/kit';
 import { cn } from '../../cn';
 import { permissionState, type PermissionState } from '../../lib';
 import { navigate } from '../../router';
+import { prepareAgentHref } from '../config/use-agent-route';
 import { terminalRequest } from '../terminal/api';
-import { executeFleetRecovery } from './fleet-agent-recovery';
+import { executeFleetRecovery, FleetRecoveryFailure, unresolvedFleetRecovery } from './fleet-agent-recovery';
+import { recoveryError, recoveryProblem, type RecoveryProblem } from './recovery-problem';
+import { UnresolvedRecovery } from './UnresolvedRecovery';
 
 interface Props {
   tenantId: string;
@@ -53,6 +59,8 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
   const revision = useRef(0);
   const pending = useRef<AbortController | undefined>(undefined);
   const [preview, setPreview] = useState<RecoveryPreview>();
+  const [problem, setProblem] = useState<RecoveryProblem>();
+  const [unresolved, setUnresolved] = useState<ConsoleFleetOperation>();
   const [busy, setBusy] = useState<'reading' | 'recovering'>();
   const [error, setError] = useState('');
   const [outcome, setOutcome] = useState('');
@@ -63,7 +71,7 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
       revision.current += 1;
       pending.current?.abort();
       pending.current = undefined;
-      setPreview(undefined); setBusy(undefined); setError(''); setOutcome('');
+      setPreview(undefined); setProblem(undefined); setUnresolved(undefined); setBusy(undefined); setError(''); setOutcome('');
     }
     clear();
     const unsubscribe = api.onAuthGenerationChange(clear);
@@ -74,21 +82,31 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
     if (pending.current || busy || permission === 'denied') return;
     const token = ++revision.current;
     const controller = new AbortController(); pending.current = controller;
-    setBusy('reading'); setPreview(undefined); setError(''); setOutcome('');
+    setBusy('reading'); setPreview(undefined); setProblem(undefined); setUnresolved(undefined); setError(''); setOutcome('');
     try {
+      let blocking: ConsoleFleetOperation | undefined;
+      try { blocking = await unresolvedFleetRecovery(api, { tenant_id: tenantId, alias }); }
+      catch (failure) { if (!(failure instanceof ApiError && failure.status === 404)) throw failure; }
+      if (token !== revision.current) return;
+      if (blocking) { setUnresolved(blocking); return; }
       const measured = record(await terminalRequest<unknown>(path, { signal: controller.signal }, api));
       let result: RecoveryPreview;
       if (measured.transport === 'fleet') {
-        if (measured.tenant_id !== tenantId || measured.alias !== alias || !Number.isSafeInteger(measured.expected_revision)
-          || Number(measured.expected_revision) < 0 || !Number.isSafeInteger(measured.in_flight) || Number(measured.in_flight) < 0) {
+        const checked = FleetRecoveryPreviewSchema.safeParse(measured);
+        if (!checked.success || checked.data.tenant_id !== tenantId || checked.data.alias !== alias) {
           throw new Error('La consulta no acreditó el agente y la revisión de su empresa.');
         }
-        const probe = await executeFleetRecovery(api, { tenant_id: tenantId, alias }, Number(measured.expected_revision), { action: 'probe' }, controller.signal);
-        result = { ...probe, in_flight: Number(measured.in_flight) };
+        const state = checked.data;
+        if (state.status !== 'ready') {
+          if (token === revision.current) setProblem(recoveryProblem(state.reason_code, state.next_action));
+          return;
+        }
+        result = { identity: state.recovery.identity, session: state.recovery.session,
+          in_flight: state.in_flight, expected_revision: state.expected_revision };
       } else result = recoveryPreview(measured, tenantId, alias);
       if (token === revision.current) setPreview(result);
     } catch (failure) {
-      if (token === revision.current) setError(failure instanceof Error ? failure.message : 'No se pudo comprobar la conversación.');
+      if (token === revision.current) setError(recoveryError(failure, 'No se pudo comprobar la conversación.'));
     } finally { if (token === revision.current) { pending.current = undefined; setBusy(undefined); } }
   }
 
@@ -101,7 +119,7 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
     const original = preview;
     const token = ++revision.current;
     const controller = new AbortController(); pending.current = controller;
-    setBusy('recovering'); setPreview(undefined); setError(''); setOutcome('');
+    setBusy('recovering'); setPreview(undefined); setProblem(undefined); setError(''); setOutcome('');
     try {
       const result = original.expected_revision === undefined ? recoveryPreview(await terminalRequest<unknown>(path, { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ identity: original.identity, expected_fingerprint: original.session.fingerprint,
@@ -118,14 +136,33 @@ function RecoveryControl({ tenantId, alias, permission, className, onRecovered }
       if (onRecovered) onRecovered();
       else navigate(`/terminal/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}?modo=tui`);
     } catch (failure) {
-      if (token === revision.current) setError(failure instanceof Error ? failure.message : 'No se confirmó la recuperación.');
+      if (token === revision.current) {
+        setError(recoveryError(failure, 'No se confirmó la recuperación.'));
+        if (failure instanceof FleetRecoveryFailure && failure.reason) setProblem(recoveryProblem(failure.reason));
+        if (failure instanceof Error && failure.message === 'target already has an unresolved fleet operation') {
+          const blocking = await unresolvedFleetRecovery(api, { tenant_id: tenantId, alias }).catch(() => undefined);
+          if (token === revision.current) setUnresolved(blocking);
+        }
+      }
     } finally { if (token === revision.current) { pending.current = undefined; setBusy(undefined); } }
   }
 
   return <section aria-label={`Recuperación de ${alias}`} className={cn('grid min-w-0 gap-2 text-[13px]', className)}>
-    <Button size="sm" disabled={busy !== undefined} aria-expanded={preview !== undefined} onClick={() => { void inspect(); }}>
+    <Button size="sm" disabled={busy !== undefined} aria-expanded={preview !== undefined || problem !== undefined || unresolved !== undefined} onClick={() => { void inspect(); }}>
       <RotateCcw size={13} aria-hidden="true" />{busy === 'reading' ? 'Comprobando conversación…' : 'Reiniciar agente'}
     </Button>
+    {unresolved ? <UnresolvedRecovery operation={unresolved} tenantId={tenantId} alias={alias} onClose={() => { setUnresolved(undefined); }} /> : null}
+    {problem ? <div role="region" aria-labelledby={titleId} className="grid gap-2 rounded-lg border border-line bg-subtle p-3">
+      <h2 id={titleId} className="m-0 text-sm font-semibold">Reiniciar {alias}</h2>
+      <Notice tone="warn" role="alert">{problem.reason}</Notice>
+      <div className="flex flex-wrap gap-2">
+        {problem.next_action === 'update'
+          ? <Button size="sm" onClick={() => { navigate(prepareAgentHref(tenantId, alias)); }}>Actualizar ejecución</Button>
+          : <><Button size="sm" onClick={() => { navigate(prepareAgentHref(tenantId, alias, 'stop')); }}>Detener</Button>
+            <Button size="sm" onClick={() => { navigate(prepareAgentHref(tenantId, alias, 'start')); }}>Arrancar</Button></>}
+        <Button size="sm" onClick={() => { setProblem(undefined); }}>Cancelar</Button>
+      </div>
+    </div> : null}
     {preview ? <div role="region" aria-labelledby={titleId} className="grid gap-2 rounded-lg border border-line bg-subtle p-3">
       <h2 id={titleId} className="m-0 text-sm font-semibold">Reiniciar {alias}</h2>
       {ready ? <p className="m-0 text-fg-2">{preview.session.state === 'present'
