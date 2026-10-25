@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { CauceRepository, ContextRuntimeUnsupportedError, type ContextApplicationRuntime, type ContextRuntimeReadiness,
+import { CauceRepository, ContextRuntimeUnsupportedError, supportsVersionedContextApplication, type ContextApplicationRuntime, type ContextRuntimeReadiness,
   type ContextTarget, type ContextVersion, type DatabasePool } from '@cauce/store';
-import { supportsVersionedContextApplication } from '../../../packages/store/src/context-version-reevaluation.js';
 
 function requestUuid(hash: string): string {
   return `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
