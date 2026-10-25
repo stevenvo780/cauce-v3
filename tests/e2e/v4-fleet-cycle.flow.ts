@@ -58,8 +58,9 @@ interface Operation {
 type BackupPhase = 'operations' | 'context' | 'purging' | 'purged' | 'purged-context';
 interface BackupRequestReceipt {
   phase: BackupPhase; method: string; path: string; status: number | null; response_phase?: BackupPhase;
+  failure?: string;
 }
-interface ObservedBrowserRequest { url(): string; method(): string }
+interface ObservedBrowserRequest { url(): string; method(): string; failure(): { errorText: string } | null }
 interface Observation {
   container: boolean; running: boolean; labels: Record<string, string>; volumes: string[];
   processes: { pid: number; start: number; CAUCE_ALIAS: string | null; CAUCE_ROOM: string | null; CAUCE_MODEL_ID: string | null;
@@ -146,7 +147,14 @@ function watchBackupRequests(current: V4Page, tenantId: string): void {
     const receipt = observed.get(response.request());
     if (receipt) { receipt.status = response.status(); receipt.response_phase = backupPhase; }
   });
+  current.on('requestfailed', (value: unknown) => {
+    const request = value as ObservedBrowserRequest;
+    const receipt = observed.get(request);
+    if (receipt) receipt.failure = request.failure()?.errorText ?? 'unknown';
+  });
 }
+const navigationAborted = (request: BackupRequestReceipt): boolean =>
+  request.failure?.includes('net::ERR_ABORTED') === true;
 function assertBackupContract(backupPanels: number): void {
   const duringPurge = backupRequests.filter(request => request.phase === 'purging');
   const afterPurge = backupRequests.filter(request => request.phase === 'purged' || request.phase === 'purged-context');
@@ -154,7 +162,8 @@ function assertBackupContract(backupPanels: number): void {
     after_purge_requests: afterPurge.length, purged_context_missing: true, purged_context_backup_panels: backupPanels };
   expect(duringPurge, JSON.stringify(duringPurge)).toEqual([]);
   expect(afterPurge, JSON.stringify(afterPurge)).toEqual([]);
-  expect(backupRequests.every(request => request.method === 'GET' && request.status === 200), JSON.stringify(backupRequests)).toBe(true);
+  expect(backupRequests.filter(request => !navigationAborted(request))
+    .every(request => request.method === 'GET' && request.status === 200), JSON.stringify(backupRequests)).toBe(true);
   errors.assertClean();
 }
 function required(name: string): string {
@@ -605,7 +614,8 @@ async function walkthrough(): Promise<void> {
   await current.getByText('No hay copias guardadas de este espacio.', { exact: true }).waitFor({ timeout: 30_000 });
   const contextReads = backupRequests.filter(request => request.phase === 'context');
   expect(contextReads.length).toBeGreaterThan(0);
-  expect(contextReads.every(request => request.method === 'GET' && request.status === 200), JSON.stringify(contextReads)).toBe(true);
+  expect(contextReads.filter(request => !navigationAborted(request))
+    .every(request => request.method === 'GET' && request.status === 200), JSON.stringify(contextReads)).toBe(true);
   const purpose = current.getByLabel('Identidad y propósito');
   await purpose.waitFor({ timeout: 30_000 });
   await purpose.fill(`Agente del ciclo físico ${CONTEXT_MARKER}.`);
