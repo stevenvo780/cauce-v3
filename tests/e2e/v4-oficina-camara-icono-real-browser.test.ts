@@ -361,6 +361,15 @@ describe('Oficina: cámara observable y previsualización sin persistir', () => 
         const motionBefore = await preview.evaluate(node => ({ animation: getComputedStyle(node).animationName, duration: getComputedStyle(node).animationDuration, filter: getComputedStyle(node).filter }));
         await states.getByRole('button', { name: label, exact: true }).click();
         await expect.poll(() => preview.evaluate(node => node.getAttribute('data-state'))).toBe(state);
+        await preview.evaluate(node => { node.scrollIntoView({ block: 'nearest', inline: 'center' }); });
+        const intersection = await preview.evaluate(node => new Promise<number>(resolve => {
+          const observer = new IntersectionObserver(entries => {
+            observer.disconnect();
+            resolve(entries[0]?.intersectionRatio ?? 0);
+          });
+          observer.observe(node);
+        }));
+        expect(intersection).toBeGreaterThanOrEqual(0.99);
         expect(state).not.toBe(previous);
         expect(await pressed(states.getByRole('button', { name: label, exact: true }))).toBe('true');
         if (state === 'down') expect(await preview.evaluate(node => getComputedStyle(node).filter)).toContain('grayscale');
@@ -369,7 +378,7 @@ describe('Oficina: cámara observable y previsualización sin persistir', () => 
         expect(writes).toEqual([]);
         expect(await savedLook()).toEqual(before);
         expect(await webLook(page)).toEqual(webBefore);
-        observations.push({ viewport, action: 'preview-state', state, previous, motionBefore, motionAfter, writes: [...writes] });
+        observations.push({ viewport, action: 'preview-state', state, previous, intersection, motionBefore, motionAfter, writes: [...writes] });
         await shot(page, `preview-${state}`);
       }
       await dialog.getByRole('button', { name: 'Emoji o letra', exact: true }).click();
