@@ -15,7 +15,7 @@ import { createSelfSignedCert } from '../terminal-pty/certs.mjs';
 import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, saludDePostgresDePrueba } from '../helpers/contenedor-de-prueba.js';
 import { runCli, type CliResult } from './v4-rupturas-terminal-cli.fixtures.js';
 
-export const PHYSICAL_OWNER = 'e2e-a9-cli-1025b';
+export const PHYSICAL_OWNER = 'e2e-a9-commit-1025';
 export const PHYSICAL_RECEIPTS = join(process.cwd(), '.delegados/v4/recibos', PHYSICAL_OWNER, 'physical');
 const execute = promisify(execFile);
 

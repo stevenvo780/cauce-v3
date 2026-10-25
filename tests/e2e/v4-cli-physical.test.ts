@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { COMPUTER_RUNTIME, FIXTURE_PROVIDER_IDENTITY, docker, dockerInventory, hostEnrollments, startComputerHarness,
@@ -94,8 +94,11 @@ describe.sequential('CLI physical execution and context application in the real 
 
   it('installs a signed executor and creates, edits and retires a CLI space with persistent Docker effects', async () => {
     let computer: ComputerHarness | undefined;
+    let workDirectory = '';
     try {
-      computer = await startComputerHarness({ prefix, consoleOrigins: ['http://localhost'], workRoot: '/tmp', resourceOwner: PHYSICAL_OWNER });
+      workDirectory = await mkdtemp('/datos/zz-canary-');
+      await chmod(workDirectory, 0o755);
+      computer = await startComputerHarness({ prefix, consoleOrigins: ['http://localhost'], workRoot: workDirectory, resourceOwner: PHYSICAL_OWNER });
       const current = computer;
       const company = `zz-physical-${run}`;
       const host = `${company}-pc`;
@@ -110,7 +113,13 @@ describe.sequential('CLI physical execution and context application in the real 
         'import json,pathlib,sys; print(json.dumps({"untouched":all(not pathlib.Path(path).exists() for path in sys.argv[1:])}))',
         dryRun.release, dryRun.policy_file, dryRun.unit]);
       expect(checkedJson(untouched)).toEqual({ untouched: true });
-      expect(checkedJson(await hostCli(['setup', '--install-root', current.installRoot])))
+      const installed = await hostCli(['setup', '--install-root', current.installRoot]);
+      if (installed.code !== 0) {
+        const diagnostic = await current.onComputer(['python3', `${dryRun.release}/ops/cli/fleet-executor.py`, '--policy', dryRun.policy_file, '--capabilities']);
+        await physicalReceipt('host-setup-failure', { run, code: installed.code, diagnostic_code: diagnostic.code,
+          missing_module: /ModuleNotFoundError: No module named '([a-z_]+)'/u.exec(diagnostic.stderr)?.[1] ?? null });
+      }
+      expect(checkedJson(installed))
         .toMatchObject({ service_active: true, release_installed: true, templates: 1, image_loaded: true });
       await expect.poll(async () => (await hostEnrollments(current, session)).enrollments.some(row => row.host_id === host && row.executor_ready),
         { timeout: 90_000 }).toBe(true);
@@ -186,11 +195,13 @@ describe.sequential('CLI physical execution and context application in the real 
           ? "host-release: [Errno 2] No such file or directory: '/usr/bin/docker'" : 'physical CLI failed; see suite log' });
       throw error;
     } finally {
-      if (computer) {
-        const after = await computer.close();
-        await physicalReceipt('cleanup', { run, prefix, after });
-        expect(after).toEqual({ containers: '', volumes: '', images: '' });
-      }
+      try {
+        if (computer) {
+          const after = await computer.close();
+          await physicalReceipt('cleanup', { run, prefix, after });
+          expect(after).toEqual({ containers: '', volumes: '', images: '' });
+        }
+      } finally { if (workDirectory) await rm(workDirectory, { recursive: true, force: true }); }
     }
   }, 1_200_000);
 });
