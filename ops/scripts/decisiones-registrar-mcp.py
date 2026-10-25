@@ -164,7 +164,7 @@ def main() -> None:
     print(json.dumps(entrada, ensure_ascii=False, indent=2) if entrada is not None else f"quitar {NOMBRE}")
     print(f"{ruta}: {cambios} líneas cambian")
     if not opciones.aplicar:
-        print("\nsimulación: nada escrito. Repetí con --aplicar para escribir.")
+        print("\nsimulación: nada escrito. Repite con --aplicar para escribir.")
         return
     if nuevo == texto:
         return

@@ -12,7 +12,7 @@ RAIZ=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BIN=${1:-$HOME/.local/bin}
 AVISO_ATTACH=$HOME/.config/cauce-v3/attach-aviso.json
 if [ ! -e "$AVISO_ATTACH" ] && [ -z "${CAUCE_DESTINO_AVISO_INICIAL:-}" ]; then
-  printf 'aviso de attach sin destino: configura %s o reinstalá con CAUCE_DESTINO_AVISO_INICIAL=<destino>\n' "$AVISO_ATTACH" >&2
+  printf 'aviso de attach sin destino: configura %s o reinstala con CAUCE_DESTINO_AVISO_INICIAL=<destino>\n' "$AVISO_ATTACH" >&2
   exit 1
 fi
 PYCACHE=$(mktemp -d)
