@@ -7,6 +7,7 @@ import { expect } from 'vitest';
 import { createSelfSignedCert } from '../terminal-pty/certs.mjs';
 import { FIXTURE_PROVIDER_IDENTITY, command, docker, dockerInventory, enrollComputer, startComputerHarness,
   type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { HostSetupConfigSchema } from '../../services/gateway/src/fleet/host-setup.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { type CancelFixture } from './v4-fleet-cancel.helpers.js';
@@ -29,7 +30,7 @@ export interface CancelDeployFixture extends CancelFixture {
   deploymentImages: Map<string, string>;
 }
 
-export async function startCancelDeployFixture(): Promise<CancelDeployFixture> {
+export async function startCancelDeployFixture(options: { runtimeBundle?: typeof cancelDeployRuntime; initialSharedTui?: boolean } = {}): Promise<CancelDeployFixture> {
   await mkdir(cancelDeployReceipts, { recursive: true, mode: 0o700 });
   if (process.env.DOCKER_HOST !== 'unix:///var/run/docker.sock' || process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1'
       || !process.env.HOME?.startsWith(`/tmp/cauce-e2e-home-${CANCEL_DEPLOY_OWNER}-`)) {
@@ -69,11 +70,12 @@ export async function startCancelDeployFixture(): Promise<CancelDeployFixture> {
   };
   try {
     computer = await startComputerHarness({ prefix: cancelDeployPrefix, consoleOrigins: [baseUrl], workRoot: '/datos',
-      resourceOwner: CANCEL_DEPLOY_OWNER, runtimeBundle: cancelDeployRuntime,
+      resourceOwner: CANCEL_DEPLOY_OWNER, runtimeBundle: options.runtimeBundle ?? cancelDeployRuntime,
       extraSourceFiles: ['packages/store/src/repository/fleet-operation-recovery.ts', 'packages/protocol/src/context-retirement.ts', 'ops/cli/fleet_executor_probe_cache.py',
         'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
         'packages/protocol/src/fleet-recovery.ts', 'services/gateway/src/fleet/recovery-host-command.ts',
         'services/gateway/src/fleet/agent-recovery-preflight.ts',
+        'ops/cli/fleet_executor_container_tui.py',
         'ops/cli/fleet_provider_capability_probe.py', 'ops/cli/fleet_executor_terminal.py',
         'packages/store/src/device-authorization.ts', 'packages/store/src/device-authorization-authority.ts',
         'services/gateway/src/device-authorization.ts', 'services/gateway/src/fleet/space-backup.failure.ts',
@@ -99,6 +101,14 @@ export async function startCancelDeployFixture(): Promise<CancelDeployFixture> {
     await page.goto('about:blank', { waitUntil: 'domcontentloaded' });
     const installed = await installCancelDeploySetup(computer, baseUrl, owner.company.slug, hostId);
     computer = installed.computer;
+    if (options.initialSharedTui !== undefined) {
+      const current = installed.setup.approvedConfiguration();
+      const bundle = current.policy.bundles.codex;
+      if (!bundle) throw new Error('the initial signed policy lacks the Codex bundle');
+      installed.setup.publish(HostSetupConfigSchema.parse({ ...current,
+        policy: { ...current.policy, bundles: { ...current.policy.bundles, codex: { ...bundle, shared_tui: options.initialSharedTui } } },
+      }));
+    }
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
     const login = await computer.app.inject({ method: 'POST', url: '/v3/auth/login', headers: { origin: baseUrl },

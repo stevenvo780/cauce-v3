@@ -12,7 +12,7 @@ export interface CancelDeployActor {
 }
 export interface CancelDeployObservation {
   id: string; image: string; running: boolean; release: string; volumes: string[];
-  bundleDigest: string | null; pid: number | null; adapterAlive: boolean; credentialGeneration: string | null; normalProcesses: number;
+  bundleDigest: string | null; pid: number | null; starttime: number | null; adapterAlive: boolean; credentialGeneration: string | null; normalProcesses: number;
 }
 export async function waitCancelDeployEnabled(locator: V4Locator): Promise<void> {
   await expect.poll(() => locator.isDisabled(), { timeout: 30_000 }).toBe(false);
@@ -105,10 +105,11 @@ for entry in pathlib.Path('/proc').iterdir():
  except (OSError,ValueError):pass
 credential=pathlib.Path('/run/cauce-credentials')/runtime/'normal/inventory/desired-fleet.json'
 print(json.dumps({'bundleDigest':metadata['bundleDigest'] if metadata else None,'pid':metadata['pid'] if metadata else None,
+ 'starttime':metadata['starttime'] if metadata else None,
  'adapterAlive':alive,'normalProcesses':normal,'credentialGeneration':json.loads(credential.read_text())['generation'] if credential.exists() else None}))
 `;
   const raw = JSON.parse(await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c', script, actor.runtime])) as
-    Pick<CancelDeployObservation, 'bundleDigest' | 'pid' | 'adapterAlive' | 'credentialGeneration' | 'normalProcesses'>;
+    Pick<CancelDeployObservation, 'bundleDigest' | 'pid' | 'starttime' | 'adapterAlive' | 'credentialGeneration' | 'normalProcesses'>;
   return { id: inspected.Id, image: inspected.Image, running: inspected.State.Running,
     release: dirname(dirname(helper.Source)), volumes: inspected.Mounts.filter(row => row.Type === 'volume').map(row => row.Name ?? '').sort(), ...raw };
 }

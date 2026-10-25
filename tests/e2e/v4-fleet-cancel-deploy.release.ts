@@ -30,7 +30,7 @@ async function requireUnusedImage(reference: string): Promise<void> {
 }
 
 export async function deployCancelRelease(fixture: CancelDeployFixture, setup: CancelDeploySetup, phase: string,
-  options: { image: string; newImage: boolean; sourceStage?: string }): Promise<CancelDeployment> {
+  options: { image: string; newImage: boolean; sourceStage?: string; sharedTui?: boolean }): Promise<CancelDeployment> {
   const work = dirname(fixture.computer.installRoot);
   const stage = join(work, `${phase}-stage`);
   await cp(options.sourceStage ?? join(work, 'stage'), stage, { recursive: true });
@@ -71,7 +71,8 @@ export async function deployCancelRelease(fixture: CancelDeployFixture, setup: C
       sha256: manifest.release.sha256, size: manifest.release.size },
     image: { name: 'agent-image', path: join(directory, manifest.image.file), sha256: manifest.image.sha256,
       size: manifest.image.size, id: manifest.image.id },
-    policy: { ...current.policy, bundles: { ...current.policy.bundles, codex: { ...bundle, digest: adapter } },
+    policy: { ...current.policy, bundles: { ...current.policy.bundles, codex: { ...bundle, digest: adapter,
+      ...(options.sharedTui === undefined ? {} : { shared_tui: options.sharedTui }) } },
       container_templates: current.policy.container_templates.map(template => ({ ...template, image: manifest.image?.id })) },
   });
   setup.publish(configuration);

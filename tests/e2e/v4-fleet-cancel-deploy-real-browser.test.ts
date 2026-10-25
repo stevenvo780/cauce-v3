@@ -6,6 +6,7 @@ import { cancelOperations } from './v4-fleet-cancel.helpers.js';
 import { bodySnippet } from './v4-console-real-browser.helpers.js';
 import { assertCancelDeployLive } from './v4-fleet-cancel-deploy.delivery.js';
 import { runStopDeployScenario } from './v4-fleet-stop-deploy.flow.js';
+import { cancelDeployTuiRuntime, runSharedPolicyDeployScenario } from './v4-fleet-cancel-deploy.tui.js';
 import { createCancelDeployActor, runCancelDeployScenario } from './v4-fleet-cancel-deploy.flow.js';
 import { cancelDeployCapture, cancelDeployPrefix, cancelDeployReceipts, cancelDeployRun, startCancelDeployFixture,
   type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
@@ -50,14 +51,15 @@ async function collectReceipt(fixture: CancelDeployFixture, name: string, observ
   observed.operations = operations; observed.adapterLogs = logs;
 }
 
-async function runCase(name: string, run: (fixture: CancelDeployFixture, observed: Record<string, unknown>) => Promise<void>): Promise<void> {
+async function runCase(name: string, run: (fixture: CancelDeployFixture, observed: Record<string, unknown>) => Promise<void>,
+  options: Parameters<typeof startCancelDeployFixture>[0] = {}): Promise<void> {
   await mkdir(cancelDeployReceipts, { recursive: true, mode: 0o700 });
   const observed: Record<string, unknown> = { case: name };
   evidence[name] = observed;
   const failures: unknown[] = [];
   let fixture: CancelDeployFixture | undefined;
   try {
-    fixture = await startCancelDeployFixture();
+    fixture = await startCancelDeployFixture(options);
     observed.source = { archive: fixture.setup.initialConfiguration.release.sha256, signer: fixture.setup.signerFingerprint };
     await run(fixture, observed);
     fixture.errors.assertClean();
@@ -82,6 +84,23 @@ async function runCase(name: string, run: (fixture: CancelDeployFixture, observe
 }
 
 describe('cancelación con despliegue aprobado durante una actualización', () => {
+  it('actualiza desde una política sin TUI compartida a la aprobación con TUI y entrega real', async () => {
+    await runCase('shared-policy', async (fixture, observed) => {
+      await runSharedPolicyDeployScenario(fixture, observed, async (actor, phase) => {
+        const live: Record<string, unknown> = {};
+        observed[phase] = live;
+        await assertCancelDeployLive(actor, phase, live);
+        if (!Array.isArray(live.delivery) || live.delivery.length !== 1) throw new Error('the policy phase must finish one durable delivery');
+        const delivery: unknown = live.delivery[0];
+        if (!delivery || typeof delivery !== 'object' || !('id' in delivery) || typeof delivery.id !== 'string' ||
+          !/^[a-f0-9-]{36}$/u.test(delivery.id) || !('status' in delivery) || delivery.status !== 'done') {
+          throw new Error('the policy phase lacks its completed durable delivery identity');
+        }
+        return delivery.id;
+      });
+    }, { runtimeBundle: cancelDeployTuiRuntime, initialSharedTui: false });
+  }, 900_000);
+
   it('arranca el SDK real y procesa una entrega durable desde Chromium', async () => {
     await runCase('sdk', async (fixture, observed) => {
       const created = await createCancelDeployActor(fixture, '');
@@ -111,4 +130,5 @@ describe('cancelación con despliegue aprobado durante una actualización', () =
       });
     });
   }, 900_000);
+
 });
