@@ -44,7 +44,7 @@ export function RegistrationForm({ onLogin, onCancel }: {
     {error ? <Notice tone="warn" role="alert">{error} Inicia sesión con el correo registrado.</Notice> : null}
     <Button onClick={onCancel}>Ir a iniciar sesión</Button></div>;
   return <form aria-label="Registro de persona y empresa" className="grid gap-3" onSubmit={event => { void submit(event); }}>
-    <h1>Creá tu empresa en Cauce</h1>
+    <h1>Crea tu empresa en Cauce</h1>
     <label>Tu nombre<input required maxLength={120} autoComplete="name" value={draft.name} disabled={busy} onChange={event => { edit('name', event.target.value); }} /></label>
     <label>Correo<input type="email" required maxLength={254} autoComplete="email" value={draft.email} disabled={busy} onChange={event => { edit('email', event.target.value); }} /></label>
     <label>Contraseña<input type="password" required minLength={12} maxLength={1024} autoComplete="new-password" value={draft.password} disabled={busy} onChange={event => { edit('password', event.target.value); }} /></label>

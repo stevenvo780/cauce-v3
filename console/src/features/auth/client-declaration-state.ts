@@ -16,7 +16,7 @@ export function selectedConnection(page: ClientConnectionsPage | undefined, refe
 
 export function verifiedConnection(page: ClientConnectionsPage | undefined, reference: string): ClientConnection {
   try { clientDeclarationReference(reference); } catch { throw new Error('La connection_ref debe ser exactamente 64 caracteres hexadecimales en minúsculas.'); }
-  if (!page) throw new Error('Recargá la lista antes de verificar la referencia.');
+  if (!page) throw new Error('Recarga la lista antes de verificar la referencia.');
   const matches = page.items.filter(item => item.connection_ref === reference);
   if (matches.length > 1) throw new Error('La referencia es ambigua en la lista actual. No se seleccionó ninguna conexión.');
   if (!matches.length) throw new Error(page.truncated
@@ -42,12 +42,12 @@ export function grantActive(connection: ClientConnection, now = Date.now()): boo
 
 export function prepareDeclaration(operation: ClientDeclarationCommand['operation'], connection: ClientConnection | undefined,
   label: string, requestId: string): ClientDeclarationCommand {
-  if (!connection) throw new Error('Elegí una referencia exacta de la lista actual.');
+  if (!connection) throw new Error('Elige una referencia exacta de la lista actual.');
   clientDeclarationUuid(requestId);
-  if (operation !== 'revoke' && !grantActive(connection)) throw new Error('El grant venció o fue revocado. Recargá las conexiones.');
+  if (operation !== 'revoke' && !grantActive(connection)) throw new Error('El grant venció o fue revocado. Recarga las conexiones.');
   const input = { request_id: requestId };
   if (operation === 'create') {
-    if (connection.binding_id !== null) throw new Error('La conexión ya tiene una declaración. Recargá la lista.');
+    if (connection.binding_id !== null) throw new Error('La conexión ya tiene una declaración. Recarga la lista.');
     return Object.freeze({ operation, input: Object.freeze({ ...input,
       connection_ref: clientDeclarationReference(connection.connection_ref), label: clientDeclarationLabel(label) }) });
   }
@@ -73,10 +73,10 @@ export function uncertainDeclaration(cause: unknown): boolean {
 
 export function declarationError(cause: unknown): string {
   if (cause instanceof ApiError) {
-    if (cause.status === 401) return 'La sesión venció. Volvé a iniciar sesión.';
+    if (cause.status === 401) return 'La sesión venció. Vuelve a iniciar sesión.';
     if (cause.status === 403) return 'El servidor no autoriza esta declaración para la cuenta actual.';
-    if (cause.status === 404) return 'La conexión o esta función no está disponible. Recargá la lista; no se elegirá otra conexión.';
-    if (cause.status === 409) return 'La declaración cambió. Recargá y revisá la conexión antes de una nueva acción.';
+    if (cause.status === 404) return 'La conexión o esta función no está disponible. Recarga la lista; no se elegirá otra conexión.';
+    if (cause.status === 409) return 'La declaración cambió. Recarga y revisa la conexión antes de una nueva acción.';
   }
   return cause instanceof Error ? cause.message : 'No se pudo confirmar la operación.';
 }

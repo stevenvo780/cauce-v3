@@ -69,7 +69,7 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
       const applied = await runner.run(next, dryRun);
       if (applied && !dryRun) onApplied?.();
     } catch (error) {
-      setValidationError(error instanceof Error ? error.message : 'Revisá los campos de configuración.');
+      setValidationError(error instanceof Error ? error.message : 'Revisa los campos de configuración.');
     }
   }
 
@@ -93,7 +93,7 @@ export function ConfigCollectionForm({ definition, target, snapshot, runner, bus
     <h3>{title}</h3>
     {target.action === 'delete' ? <p className="notice" role="note">
       Se solicita eliminar este registro de configuración. El servidor comprueba sus dependencias y puede rechazarlo.
-      Revisá el dry-run antes de confirmar.
+      Revisa el dry-run antes de confirmar.
     </p> : null}
     {target.action === 'retire' ? <p className="notice" role="note">El retiro lógico cierra este registro para nuevas entregas. El servidor comprueba las dependencias antes de aplicar.</p> : null}
     {target.action === 'restore' ? <p className="notice" role="note">La restauración recupera el estado de habilitación previo al retiro, según el registro durable del servidor.</p> : null}

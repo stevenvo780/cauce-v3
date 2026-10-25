@@ -40,7 +40,7 @@ const LEDE = 'Esta consola opera la flota entera: publica mensajes, cancela entr
 const FINEPRINT = (
   <p className="m-0 text-xs text-muted">
     Tu sesión queda guardada solo en este navegador y el servidor la valida en cada paso.
-    No tenés que configurar nada: si algo no coincide, te lo pedimos de nuevo acá mismo.
+    No tienes que configurar nada: si algo no coincide, te lo pedimos de nuevo acá mismo.
   </p>
 );
 
@@ -157,7 +157,7 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
       <Lede>{error.message}</Lede>
       <p className="m-0 text-xs text-muted">
         Un gateway que no contesta <strong className="text-fg">no es una autorización</strong>: la consola se queda
-        cerrada hasta poder comprobar quién sos.
+        cerrada hasta poder comprobar quién eres.
       </p>
       <Button variant="primary" className="min-h-10" onClick={onRetry}>Reintentar</Button>
     </AuthScreen>

@@ -37,12 +37,12 @@ export function Stepper({ step }: { step: CreateStep }) {
 
 export function ModeChoice({ mode, onChange, disabled }: { mode: CreateMode; onChange: (mode: CreateMode) => void; disabled: boolean }) {
   return <fieldset className="m-0 grid gap-2 border-0 p-0 sm:grid-cols-2">
-    <legend className="mb-2 p-0 text-[13px] font-semibold text-fg">¿Qué querés hacer?</legend>
+    <legend className="mb-2 p-0 text-[13px] font-semibold text-fg">¿Qué quieres hacer?</legend>
     <label className={MODE_CARD}>
       <input type="radio" name="create-mode" className="sr-only" checked={mode === 'register'} disabled={disabled}
         onChange={() => { onChange('register'); }} />
       <span className="text-[13px] font-semibold text-fg">Registrar el agente</span>
-      <span className={HINT}>Lo da de alta en el registro, deshabilitado. Después podés prepararlo en una computadora.</span>
+      <span className={HINT}>Lo da de alta en el registro, deshabilitado. Después puedes prepararlo en una computadora.</span>
     </label>
     <label className={MODE_CARD}>
       <input type="radio" name="create-mode" className="sr-only" checked={mode === 'prepare'} disabled={disabled}
@@ -106,7 +106,7 @@ export function PlacementStep({ draft, edit, disabled, harnesses, hosts, hostRea
           </option>)}
         </select>
       </label>
-      <span id="create-host-hint" className={HINT}>Donde va a correr. Podés asignarla más tarde desde la ficha del agente.</span>
+      <span id="create-host-hint" className={HINT}>Donde va a correr. Puedes asignarla más tarde desde la ficha del agente.</span>
     </div>
     {hostReason ? <Notice role="alert" className="sm:col-span-2">{hostReason}</Notice> : null}
     <details className="grid gap-2 sm:col-span-2">
@@ -132,7 +132,7 @@ export function PlacementStep({ draft, edit, disabled, harnesses, hosts, hostRea
 
 export function GroupsStep({ draft, edit, disabled, rooms }: StepProps & { rooms: { id: string; label: string }[] }) {
   return <div className="grid gap-3">
-    <p className="m-0 text-[13px] text-fg-2">Un grupo reúne a los agentes que trabajan juntos. Podés dejarlo sin grupo y sumarlo después.</p>
+    <p className="m-0 text-[13px] text-fg-2">Un grupo reúne a los agentes que trabajan juntos. Puedes dejarlo sin grupo y sumarlo después.</p>
     <div className={SECTION}>
       <label>Grupo inicial (opcional)
         <select value={draft.roomId} onChange={(event) => { edit({ roomId: event.target.value }); }} disabled={disabled || !rooms.length}>

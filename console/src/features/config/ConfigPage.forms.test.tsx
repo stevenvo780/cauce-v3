@@ -95,7 +95,7 @@ it.each(editableRows)('presenta edición y eliminación visibles para %s', async
   expect(form.getByRole('button', { name: 'Confirmar eliminación' })).toBeDisabled();
 });
 
-it('ofrece sólo edición del singleton de cadena con sus límites numéricos', async () => {
+it('ofrece solo edición del singleton de cadena con sus límites numéricos', async () => {
   const changes: ChangeRequest[] = [];
   serveChanges(changes);
   const user = userEvent.setup();

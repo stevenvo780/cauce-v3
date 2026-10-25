@@ -50,13 +50,13 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     const email = values.email.trim();
     if (!values.display_name.trim() || values.display_name.trim().length > 120 || email.length > 254
         || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
-      setError('Escribí un correo válido y un nombre de 1 a 120 caracteres.'); return;
+      setError('Escribe un correo válido y un nombre de 1 a 120 caracteres.'); return;
     }
     if (!tenants.some(row => row.id === values.tenant_id)) {
-      setError('Elegí un espacio del inventario actual.'); return;
+      setError('Elige un espacio del inventario actual.'); return;
     }
     if (values.alias !== '' && !aliases.some(row => row.alias === values.alias)) {
-      setError('Elegí una identidad del inventario o creá una nueva para este correo.'); return;
+      setError('Elige una identidad del inventario o crea una nueva para este correo.'); return;
     }
     const alias = values.alias || aliasFromEmail(email, taken);
     if ((!person || password.length > 0) && (password.length < 12 || password.length > 1024)) {
@@ -75,7 +75,7 @@ export function PeopleAdminForm({ person, snapshot, occupied = [], busy, save, c
     <label>Permiso web<select value={values.role} disabled={busy} onChange={event => { edit({ role: event.target.value as ManagedPerson['role'] }); }}>
       <option value="reader">Lector</option><option value="operator">Operador</option></select></label>
     <label>Espacio de la persona<select value={values.tenant_id} disabled={busy} onChange={event => { edit({ tenant_id: event.target.value, alias: '' }); }}>
-      <option value="">Elegí un espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {String(row.id)}</option>)}
+      <option value="">Elige un espacio existente</option>{tenants.map(row => <option key={String(row.id)} value={String(row.id)}>{String(row.display_name ?? row.id)} · {String(row.id)}</option>)}
       {person && !tenants.some(row => row.id === person.tenant_id) ? <option value={person.tenant_id} disabled>{person.tenant_id} · no habilitado</option> : null}
     </select></label>
     <label>Identidad de la persona<select value={values.alias} disabled={busy} onChange={event => { edit({ alias: event.target.value }); }}>

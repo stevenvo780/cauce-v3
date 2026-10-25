@@ -52,7 +52,7 @@ it('un 401 en una llamada de datos lleva al login SIN esperar el poll de 60 s', 
   expect(sesiones()).toBe(2);
 });
 
-it('un 500 en los datos NO desloguea: sólo el 401 pregunta de nuevo por la sesión', async () => {
+it('un 500 en los datos NO desloguea: solo el 401 pregunta de nuevo por la sesión', async () => {
   const sesiones = sesion(() => HttpResponse.json({
     authenticated: true, subject: 'steven@elenxos.com', csrf_token: 'x'.repeat(32),
   }));

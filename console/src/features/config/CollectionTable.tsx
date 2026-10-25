@@ -351,7 +351,7 @@ function ConfirmacionDeAccion({ pendiente, busy, onConfirmar, onCancelar }: {
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-scrim" />
         <Dialog.Popup initialFocus={confirmar}
           className="fixed top-1/2 left-1/2 z-50 grid max-h-[85dvh] w-[min(92vw,560px)] -translate-x-1/2 -translate-y-1/2 gap-3 overflow-y-auto rounded-xl border border-line bg-surface p-5 shadow-pop">
-          <Dialog.Title className="m-0 text-[15px] font-normal">Confirmá el cambio: <strong>{pendiente.accion.descripcion}</strong>.</Dialog.Title>
+          <Dialog.Title className="m-0 text-[15px] font-normal">Confirma el cambio: <strong>{pendiente.accion.descripcion}</strong>.</Dialog.Title>
           <details className="text-[13px]">
             <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver la mutación exacta que se va a enviar</summary>
             <pre className={cn(PREVIEW, 'mt-2')} aria-label="Mutación a aplicar">{JSON.stringify(pendiente.accion.mutation, null, 2)}</pre>

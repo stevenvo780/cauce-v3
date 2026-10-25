@@ -31,7 +31,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
           touched, even if the mutation that was sent was partial. The operator cannot deduce that from a button labeled
           "Rollback", and the difference could cost them a teammate's change. */}
       <Notice role="note">
-        Deshacer restituye la FILA COMPLETA que había antes de esa revisión, no sólo el campo que se
+        Deshacer restituye la FILA COMPLETA que había antes de esa revisión, no solo el campo que se
         tocó: si otro operador cambió otro campo de la misma fila después, ese cambio también se
         revierte.
       </Notice>

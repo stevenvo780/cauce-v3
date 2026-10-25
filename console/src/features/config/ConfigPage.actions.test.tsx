@@ -69,7 +69,7 @@ it('distingue el 409 por revisión vencida y pide volver a previsualizar', async
   const alert = await screen.findByRole('alert');
   expect(alert).toHaveTextContent(/conflicto de revisión/i);
   expect(alert).toHaveTextContent(/revisión 1 y el servidor ya va por la 4/i);
-  expect(alert).toHaveTextContent(/volvé a previsualizar/i);
+  expect(alert).toHaveTextContent(/vuelve a previsualizar/i);
   expect(screen.queryByLabelText(/resultado de preview/i)).not.toBeInTheDocument();
 });
 
@@ -83,11 +83,11 @@ it('rechaza agents.role_brief localmente y no emite ni preview ni apply', async 
 
   fireEvent.change(screen.getByLabelText('Mutación JSON'), { target: { value: JSON.stringify({
     resource: 'agent', action: 'update', tenant_id: 'Steven', alias: 'kant',
-    value: { role_brief: 'Sos kant.' },
+    value: { role_brief: 'Eres kant.' },
   }) } });
 
   await user.click(screen.getByRole('button', { name: /preview \/ dry-run/i }));
-  expect(await screen.findByRole('alert')).toHaveTextContent(/proyección diagnóstica de sólo lectura/i);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/proyección diagnóstica de solo lectura/i);
   expect(screen.getByRole('alert')).toHaveTextContent(/«Perfil y contexto»/);
   await user.click(screen.getByRole('button', { name: /aplicar atómico/i }));
   expect(changes).toEqual([]);
@@ -117,7 +117,7 @@ it('centraliza cuentas, techos y bindings en /accounts: no repite tablas ni acep
   expect(changes).toEqual([]);
 });
 
-it('bloquea fail-closed el rollback de cuentas y sólo ejecuta una revisión no-account', async () => {
+it('bloquea fail-closed el rollback de cuentas y solo ejecuta una revisión no-account', async () => {
   const rollbackRequests: string[] = [];
   servirConfig(() => ({
     ...snapshotDeConfig(9),

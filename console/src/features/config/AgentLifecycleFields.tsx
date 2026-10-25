@@ -50,7 +50,7 @@ export function AgentLifecycleFields({ draft, snapshot, capability, target, disa
       <label>Clave física de ejecución<input value={draft.runtimeKey} disabled={immutableRuntime}
         onChange={(event) => { edit({ runtimeKey: event.target.value, ...derivedFrom(event.target.value) }); }} /></label>
       <p>La clave física runtime_key queda fija. El alias visible conserva su identidad dentro del espacio de trabajo.
-        {templateIndex >= 0 ? ' Si la cambiás, el directorio de estado y el contenedor de la plantilla se recalculan.' : ''}</p>
+        {templateIndex >= 0 ? ' Si la cambias, el directorio de estado y el contenedor de la plantilla se recalculan.' : ''}</p>
       <label>Arnés operativo<select value={draft.harnessId} onChange={(event) => { edit({ harnessId: event.target.value }); }}>
         <option value="">Elige un arnés registrado</option>{options('harness_definitions')}
       </select></label>

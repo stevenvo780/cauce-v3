@@ -62,7 +62,7 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
         command = prepareDeclaration(operation, selectedConnection(page, reference), label, crypto.randomUUID());
       }
     } catch {
-      setError('Elegí una conexión vigente y una etiqueta ASCII de 1 a 128 caracteres, con extremos alfanuméricos.');
+      setError('Elige una conexión vigente y una etiqueta ASCII de 1 a 128 caracteres, con extremos alfanuméricos.');
       return;
     }
     const current = ++generation.current;
@@ -90,7 +90,7 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
           await load();
           if (reloadGeneration !== generation.current) return;
         }
-        setError('No se pudo confirmar el resultado. Reintentá el mismo intento; se conservarán su referencia, etiqueta e identificador.');
+        setError('No se pudo confirmar el resultado. Reintenta el mismo intento; se conservarán su referencia, etiqueta e identificador.');
       } else {
         setPending(undefined);
         setPage(undefined);
@@ -123,7 +123,7 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
         <Button variant="primary" className="whitespace-normal" disabled={busy || disabled || needsReload}
           onClick={() => { void mutate(pending.operation, true); }}>Reintentar mismo intento</Button></div> : null}
       {page?.truncated ? <p role="status">Lista limitada a 100 conexiones, sin paginación. Si tu referencia no aparece, no se puede seleccionar desde este panel.</p> : null}
-      {page ? <fieldset className="m-0 grid min-w-0 gap-2 rounded-lg border border-line p-2" disabled={busy || disabled || Boolean(pending)}><legend className="max-w-full px-1 text-xs">Elegí la referencia exacta; no seleccionamos una automáticamente</legend>
+      {page ? <fieldset className="m-0 grid min-w-0 gap-2 rounded-lg border border-line p-2" disabled={busy || disabled || Boolean(pending)}><legend className="max-w-full px-1 text-xs">Elige la referencia exacta; no seleccionamos una automáticamente</legend>
         <label className="min-w-0" htmlFor={`${id}-reference`}>connection_ref verificada
           <input id={`${id}-reference`} className="font-mono" value={referenceInput} autoComplete="off" spellCheck={false}
             aria-describedby={`${id}-reference-help`} onChange={event => {
@@ -136,7 +136,7 @@ export function ClientConnectionsPanel({ active, disabled }: { active: boolean; 
               } catch (cause) { setError(declarationError(cause)); }
             }} />
         </label>
-        <p id={`${id}-reference-help`}>Pegá la connection_ref verificada por cauce_connection_identity. Debe coincidir exactamente con una sola conexión de la lista actual.</p>
+        <p id={`${id}-reference-help`}>Pega la connection_ref verificada por cauce_connection_identity. Debe coincidir exactamente con una sola conexión de la lista actual.</p>
         {page.items.length === 0 ? <p>No hay conexiones visibles para esta cuenta.</p> : null}
         <div className="grid max-h-[min(25dvh,240px)] gap-2 overflow-y-auto overscroll-contain">{page.items.map((item, position) => <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 has-[:checked]:border-brand has-[:checked]:bg-brand-soft" key={`${item.connection_ref}:${String(position)}`}>
           <input type="radio" name={id} value={item.connection_ref} checked={reference === item.connection_ref}

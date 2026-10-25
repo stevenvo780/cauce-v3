@@ -79,7 +79,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
       tone: fallo ? 'parcial' : 'success',
       text: `${TITULOS_ALTA[recurso]}: creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
         + ` (${desenlace.result.summary ?? 'sin resumen del servidor'}).${textoRecarga(desenlace.recarga)}`
-        + (recurso === 'membership' ? ' Si esa persona o ese agente todavía no existe, dalo de alta en Agentes y elegí esta sala.' : ''),
+        + (recurso === 'membership' ? ' Si esa persona o ese agente todavía no existe, dalo de alta en Agentes y elige esta sala.' : ''),
     });
     // The resource ALREADY exists: leaving the fields filled reassembles "Create" on top of it
     // and the second click earns a 409 for a duplicate row. The form returns to empty with no
@@ -156,7 +156,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     </details>
 
     {recurso === 'membership' ? <Notice tone="warn" role="note">
-      Añade a una persona o a un agente a una sala que ya existe. No crea el agente: si todavía no está en Agentes, dalo de alta allí y elegí esta misma sala.
+      Añade a una persona o a un agente a una sala que ya existe. No crea el agente: si todavía no está en Agentes, dalo de alta allí y elige esta misma sala.
     </Notice> : null}
 
     <div className="flex flex-wrap gap-2">
@@ -173,7 +173,7 @@ export function AltaRapida({ soloLectura, busy, onChange }: {
     {invalido
       ? tocado
         ? <Outcome tone="error">{invalido}</Outcome>
-        : <p className="m-0 text-xs text-muted">Completá el formulario para habilitar el alta: {invalido}</p>
+        : <p className="m-0 text-xs text-muted">Completa el formulario para habilitar el alta: {invalido}</p>
       : null}
     <ConfigChangeReceipt preview={preview} label="Dry-run del alta" />
     {aviso ? <Outcome tone={aviso.tone}>{aviso.text}</Outcome> : null}

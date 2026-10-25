@@ -8,7 +8,7 @@ import { renderWithApi } from '../../test/render';
 
 const SESSION = 'http://localhost/v3/auth/session';
 
-it('sin sesión no se renderiza NADA de la consola, sólo la pantalla de login', async () => {
+it('sin sesión no se renderiza NADA de la consola, solo la pantalla de login', async () => {
   server.use(http.get(SESSION, () => HttpResponse.json({ authenticated: false })));
   renderWithApi(<App />);
 

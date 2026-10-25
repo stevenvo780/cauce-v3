@@ -13,7 +13,7 @@ Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcryp
 const actor = { tenant_id: 'Miguel', alias: 'janus', is_hub: false, can_control: true };
 const roomCapability = { resource: 'room', actions: ['create', 'update'], scope: 'tenant', tenant_id: 'Miguel' };
 
-it('bloquea eliminar cuando capabilities sólo acredita creación y edición', async () => {
+it('bloquea eliminar cuando capabilities solo acredita creación y edición', async () => {
   servirConfig(() => ({ ...snapshotDeConfig(1), capabilities: { actor, resources: [roomCapability] } }));
   renderWithApi(<ConfigPage />);
   expect(await screen.findByRole('button', { name: 'Editar sala/grupo Miguel/grp.miguel' })).toBeEnabled();

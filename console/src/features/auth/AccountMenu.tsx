@@ -140,8 +140,8 @@ function AccountPopover({ gate, routeKey }: { gate: AuthGateState; routeKey: str
                 </Button>
                 {confirmSwitch ? (
                   <div className="grid gap-2 rounded-lg bg-subtle p-3 [&_p]:m-0 [&_p]:text-xs [&_p]:text-fg-2">
-                    <p ref={switchHeading} tabIndex={-1} className="outline-none">Se cerrará esta sesión y se descartarán los borradores locales. Después podés entrar con otra cuenta existente.</p>
-                    {state?.login_mode !== 'password' ? <p>El proveedor de acceso puede volver a usar la misma cuenta; elegí otra allí si ocurre.</p> : null}
+                    <p ref={switchHeading} tabIndex={-1} className="outline-none">Se cerrará esta sesión y se descartarán los borradores locales. Después puedes entrar con otra cuenta existente.</p>
+                    {state?.login_mode !== 'password' ? <p>El proveedor de acceso puede volver a usar la misma cuenta; elige otra allí si ocurre.</p> : null}
                     <div className="flex flex-wrap gap-2">
                       <Button disabled={busy} onClick={() => { setConfirmSwitch(false); switchTrigger.current?.focus({ preventScroll: true }); }}>Cancelar cambio</Button>
                       <Button variant="danger" disabled={busy} onClick={() => { void gate.logout(); }}>{busy ? 'Cerrando…' : 'Cerrar sesión y continuar'}</Button>
