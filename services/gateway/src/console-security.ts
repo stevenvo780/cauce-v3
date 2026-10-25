@@ -41,7 +41,8 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
   return async function consoleSecurity(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const path = routedPath(request.url);
     const consoleRoute = path.startsWith('/v3/console/');
-    const browserAuthRoute = BROWSER_AUTH_ROUTES.includes(path);
+    const deviceRoute = path === '/v3/auth/device' || path.startsWith('/v3/auth/device/');
+    const browserAuthRoute = BROWSER_AUTH_ROUTES.includes(path) || deviceRoute;
     // The OIDC callback is intentionally excluded: its one-time state, PKCE verifier and Lax
     // transient cookie authenticate the cross-site top-level redirect from the identity provider.
     if (!consoleRoute && !browserAuthRoute) return;
@@ -58,7 +59,8 @@ export function createConsoleSecurityHook(options: ConsoleSecurityOptions = {}) 
       return;
     }
     const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
-    if (unsafe && !machineSelfReload(request, path) && (origin === undefined || !allowed.has(origin))) {
+    const anonymousDevice = path === '/v3/auth/device' || path === '/v3/auth/device/token';
+    if (unsafe && !anonymousDevice && !machineSelfReload(request, path) && (origin === undefined || !allowed.has(origin))) {
       await reply.code(403).send({ error: 'forbidden', message: 'same-origin Origin is required for console mutations' });
       return;
     }

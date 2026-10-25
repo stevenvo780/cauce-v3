@@ -121,7 +121,23 @@ export async function registerAndLogin(context: WalkContext, state: CanaryState)
     assertCanary(state, authority.acting_company);
     return undefined;
   });
+  if (current) await deviceAuthorizationGuards(context, state, session);
   return current ? session : undefined;
+}
+
+async function deviceAuthorizationGuards(context: WalkContext, state: CanaryState, session: ExternalSession): Promise<void> {
+  const approval = { user_code: 'ABCD-EFGH', decision: 'approve' };
+  await step(context, 'device-without-cookie', state, 'GET', '/v3/auth/device/ABCD-EFGH', {}, [401]);
+  await step(context, 'device-approval-without-cookie', state, 'POST', '/v3/auth/device/approve', { json: approval }, [401]);
+  await step(context, 'device-approval-without-csrf', state, 'POST', '/v3/auth/device/approve',
+    { session, csrf: false, json: approval }, [403]);
+  for (const route of ['/v3/auth/device', '/v3/auth/device/token', '/v3/auth/device/approve']) {
+    await step(context, 'device-foreign-origin', state, 'POST', route,
+      { session, headers: { origin: 'https://foreign.example.invalid' }, json: approval }, [403]);
+  }
+  await step(context, 'device-public-issuance', state, 'POST', '/v3/auth/device', { json: { client_name: 'Cauce CLI canario' } }, [200]);
+  await step(context, 'device-token-without-cookie', state, 'POST', '/v3/auth/device/token',
+    { json: { device_code: 'a'.repeat(43) } }, [400]);
 }
 
 async function config(context: WalkContext, state: CanaryState, session: ExternalSession, name: string, mutation: Record<string, unknown>): Promise<boolean> {

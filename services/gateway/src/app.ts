@@ -25,6 +25,7 @@ import {
 } from './config.js';
 import { OidcBffAuthProvider, registerOidcBff } from './oidc-bff.js';
 import { PasswordAuthProvider, registerPasswordAuth } from './password-auth.js';
+import { registerDeviceAuthorization } from './device-authorization.js';
 import { PostgresConsoleCompanyAuthority } from './console-user-authority.js';
 import { registerHostEnrollmentRoutes } from './console/host-enrollment.routes.js';
 import { registerHostChannelRoutes } from './fleet/host-channel.routes.js';
@@ -371,6 +372,7 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   if (options.authProvider instanceof PasswordAuthProvider) {
     options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
+    registerDeviceAuthorization(app, options.authProvider, options.pool, options.consoleOrigins);
     registerDiagnoseRoute(app, options.authProvider, options.pool);
     registerCompanyRegistrationRoute(app, options.pool);
     registerCompanyOfficeRoutes(app, options.authProvider, options.pool);

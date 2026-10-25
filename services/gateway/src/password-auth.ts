@@ -527,7 +527,7 @@ export class PasswordAuthProvider implements AuthProvider {
     await reply.header('Cache-Control', 'no-store').send({ name: saved });
   }
 
-  private issue(user: ConsoleUser): { token: string; claims: ConsoleSessionClaims } {
+  private issue(user: ConsoleUser, company?: string): { token: string; claims: ConsoleSessionClaims } {
     const issuedAtMs = this.now();
     const claims: ConsoleSessionClaims = {
       iss: JWT_ISSUER,
@@ -537,9 +537,35 @@ export class PasswordAuthProvider implements AuthProvider {
       csrf: randomBytes(32).toString('base64url'),
       iat: Math.floor(issuedAtMs / 1_000),
       exp: Math.floor((issuedAtMs + this.sessionTtlMs) / 1_000),
-      credential_stamp: createConsoleCredentialStamp(this.signingKey, credentialSnapshot(user))
+      credential_stamp: createConsoleCredentialStamp(this.signingKey, credentialSnapshot(user)),
+      ...(company === undefined ? {} : { cmp: company }),
     };
     return { token: signConsoleSession(this.signingKey, claims), claims };
+  }
+
+  async completeDeviceLogin(reply: FastifyReply, grant: {
+    humanId: string; tenantId: string; actorAlias: string; activeCompany: string; credentialStamp: string;
+  }): Promise<void> {
+    const user = await this.users.findById(grant.humanId);
+    if (!user?.active || user.tenant_id !== grant.tenantId || user.alias !== grant.actorAlias
+        || !this.verifyCredentialStamp(grant.credentialStamp, credentialSnapshot(user))) throw new AuthError('access_denied');
+    const authority = await this.companyAuthority?.resolve(user, grant.activeCompany);
+    if (authority === undefined || authority.scope === 'none' || authority.acting_company !== grant.activeCompany) {
+      throw new AuthError('access_denied');
+    }
+    await this.sendLogin(reply, user, authority);
+  }
+
+  private async sendLogin(reply: FastifyReply, user: ConsoleUser, authority?: ConsoleSessionAuthority): Promise<void> {
+    const { token, claims } = this.issue(user, authority?.platform_override ? authority.acting_company : undefined);
+    try {
+      await this.users.recordLogin(user.id, new Date(this.now()));
+    } catch {
+      // The last-login marker must not prevent session issuance.
+    }
+    await reply.header('Cache-Control', 'no-store')
+      .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
+      .code(200).send(this.sessionState(claims, user, authority));
   }
 
   /**
@@ -596,17 +622,7 @@ export class PasswordAuthProvider implements AuthProvider {
       return;
     }
     this.throttle.recordSuccess(throttleKey);
-    const { token, claims } = this.issue(user);
-    try {
-      await this.users.recordLogin(user.id, new Date(now));
-    } catch {
-      // The last-login marker is informational: losing it must never cost the login itself.
-    }
-    await reply
-      .header('Cache-Control', 'no-store')
-      .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
-      .code(200)
-      .send(this.sessionState(claims, user));
+    await this.sendLogin(reply, user);
   }
 
   /**
@@ -640,7 +656,8 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
     // nor needs one, and requiring it would leave it unable to publish anything.
     const path = routedPath(request.url);
     if (!path.startsWith('/v3/') || !isUnsafe(request.method)) return;
-    if (path === '/v3/auth/login' || path === '/v3/auth/register') return;
+    if (path === '/v3/auth/login' || path === '/v3/auth/register'
+        || path === '/v3/auth/device' || path === '/v3/auth/device/token') return;
     if (!provider.handles(request)) return;
     try {
       await provider.requireCsrf(request);
