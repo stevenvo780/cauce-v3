@@ -4,11 +4,11 @@ import { dirname, join } from 'node:path';
 import { expect } from 'vitest';
 import { approvedAgentQuotaHarnesses } from '../../packages/store/src/agent-quota-operations-model.js';
 import { command, docker, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
-import { cancelDeployReceipts, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
+import { CANCEL_DEPLOY_OWNER, cancelDeployReceipts, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import type { SessionRelease } from './v4-sesion-tras-despliegue.release.js';
 
-export const AUTO_SESSION_OWNER = 'h13b-v4-1025';
+export const AUTO_SESSION_OWNER = /^h13[bc]-v4-1025$/u.test(CANCEL_DEPLOY_OWNER) ? CANCEL_DEPLOY_OWNER : 'h13b-v4-1025';
 export const AUTO_SESSION_MODEL = 'gpt-5.4';
 const readerName = 'v4-sesion-tras-despliegue-quota.py';
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
