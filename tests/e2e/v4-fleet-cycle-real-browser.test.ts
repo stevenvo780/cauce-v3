@@ -160,7 +160,15 @@ async function startConsole(frontendPort: number, proxy: Record<string, unknown>
 
 async function prepareLocal(frontendPort: number, pki: { key: string; cert: string }): Promise<CycleTarget> {
   const origin = `https://localhost:${String(frontendPort)}`;
-  const computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos' });
+  const previousBackupDirectory = process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
+  process.env.CAUCE_SPACE_BACKUP_DIRECTORY = join(directory, 'space-backups');
+  let computer: ComputerHarness;
+  try {
+    computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos' });
+  } finally {
+    if (previousBackupDirectory === undefined) delete process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
+    else process.env.CAUCE_SPACE_BACKUP_DIRECTORY = previousBackupDirectory;
+  }
   harness = computer;
   const baseUrl = await startConsole(frontendPort, { target: computer.gatewayUrl, changeOrigin: false, ws: true }, pki);
   trusted = await startTrustedBrowser(join(directory, 'ca.crt'), directory, [frontendPort, Number(new URL(computer.gatewayUrl).port)]);
@@ -405,6 +413,7 @@ async function walkthrough(): Promise<void> {
   // 4. Context: with the agent stopped, the person rewrites its identity and purpose and prepares it for the next start;
   // the start applies it inside the container and only admits the runtime once its ACK measures the same documents.
   await current.goto(`${baseUrl}/messages/${encodeURIComponent(tenantId)}/${encodeURIComponent(ALIAS)}?view=context`, { waitUntil: 'domcontentloaded' });
+  await current.getByText('No hay copias guardadas de este espacio.', { exact: true }).waitFor({ timeout: 30_000 });
   const purpose = current.getByLabel('Identidad y propósito');
   await purpose.waitFor({ timeout: 30_000 });
   await purpose.fill(`Agente del ciclo físico ${CONTEXT_MARKER}.`);
