@@ -146,6 +146,74 @@ describe('search_path of the functions that name relations', () => {
     expect(await lines((await at(latest)).adminPool, UNPINNED)).toEqual([]);
   });
 
+  it('pins the catalog guard on grants replay without changing authority and rolls back exactly', async () => {
+    const catalogVersion = '090_runtime_catalog_guard.sql';
+    const database = await at('089_device_authorizations.sql');
+    const original = await lines(database.adminPool, CATALOG);
+    const originalLedger = await ledger(database.adminPool);
+    const guard = async () => (await database.adminPool.query<{
+      body: string; config: string[]; acl: string | null; definer: boolean;
+    }>(`SELECT prosrc AS body,proconfig AS config,proacl::text AS acl,prosecdef AS definer
+      FROM pg_proc WHERE oid='cauce_platform_write_guard()'::regprocedure`)).rows;
+    const before = await guard();
+    expect(before.map(row => row.config)).toEqual([['search_path=pg_catalog']]);
+    expect(await lines(database.adminPool, UNPINNED)).toEqual(['cauce_platform_write_guard()']);
+    await applyMigrationsThrough(database.adminPool, catalogVersion);
+    const pinned = before.map(row => ({ ...row, config: PINNED }));
+    expect(await guard()).toEqual(pinned);
+    const runtime = await login(database, 'cauce_gateway', 'cauce_runtime');
+    const observer = await login(database, 'cauce_observer_login', 'cauce_observer');
+    const grants = async () => (await database.adminPool.query<{
+      definer: boolean; runtime: boolean; observer: boolean; platform: boolean; public: boolean;
+    }>(`SELECT p.prosecdef AS definer,
+      has_function_privilege('cauce_runtime',p.oid,'EXECUTE') AS runtime,
+      has_function_privilege('cauce_observer',p.oid,'EXECUTE') AS observer,
+      has_function_privilege('cauce_platform',p.oid,'EXECUTE') AS platform,
+      EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) entry WHERE entry.grantee=0) AS public
+      FROM pg_proc p WHERE p.oid='cauce_runtime_grants_090()'::regprocedure`)).rows;
+    const expectedGrants = [{ definer: false, runtime: false, observer: false, platform: true, public: false }];
+    expect(await grants()).toEqual(expectedGrants);
+    for (const statement of [
+      'SELECT cauce_runtime_grants_090()', 'ALTER FUNCTION cauce_platform_write_guard() SET search_path=pg_temp',
+      'CREATE TABLE runtime_catalog_unsafe(id integer)', 'UPDATE harness_definitions SET enabled=enabled',
+      'DELETE FROM fleet_operation_events', 'DELETE FROM config_revisions',
+    ]) expect({ [statement]: await attempt(runtime, [statement]) }).toEqual({ [statement]: '42501' });
+    expect(await attempt(observer, ['SELECT cauce_runtime_grants_090()'])).toBe('42501');
+    await database.adminPool.query(`ALTER FUNCTION cauce_platform_write_guard() SET search_path=pg_catalog;
+      REVOKE ALL ON FUNCTION cauce_runtime_grants_090() FROM cauce_platform;
+      GRANT EXECUTE ON FUNCTION cauce_runtime_grants_090() TO PUBLIC`);
+    await database.adminPool.query('SELECT cauce_apply_runtime_grants()');
+    await database.adminPool.query('SELECT cauce_apply_runtime_grants()');
+    expect(await guard()).toEqual(pinned);
+    expect(await grants()).toEqual(expectedGrants);
+    const applied = await lines(database.adminPool, CATALOG);
+    const rollback = await readFile(new URL(`../migrations/down/${catalogVersion}`, import.meta.url), 'utf8');
+    const client = await database.adminPool.connect();
+    try {
+      for (const [statement, message] of [
+        ["INSERT INTO schema_migrations(version) VALUES('091_later.sql')", 'later migration is present'],
+        [`DELETE FROM schema_migration_ledger WHERE version='${catalogVersion}'`, 'atomic ledger state'],
+        [`UPDATE schema_migration_ledger SET source_sha256=repeat('0',64) WHERE version='${catalogVersion}'`, 'atomic ledger state'],
+      ] as const) {
+        await client.query('BEGIN');
+        await client.query(statement);
+        expect(await failure(client.query(rollback))).toContain(message);
+        await client.query('ROLLBACK');
+      }
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+    expect(await lines(database.adminPool, CATALOG)).toEqual(applied);
+    await database.adminPool.query(rollback);
+    expect(await lines(database.adminPool, CATALOG)).toEqual(original);
+    expect(await ledger(database.adminPool)).toEqual(originalLedger);
+    await database.adminPool.query(rollback);
+    expect(await lines(database.adminPool, CATALOG)).toEqual(original);
+    await applyMigrationsThrough(database.adminPool, catalogVersion);
+    expect(await lines(database.adminPool, CATALOG)).toEqual(applied);
+  });
+
   it('no runtime source creates temporary objects', async () => {
     const root = new URL('../../../', import.meta.url);
     const pattern = /\bCREATE\s+(?:GLOBAL\s+|LOCAL\s+)?TEMP(?:ORARY)?\b|\bINTO\s+TEMP(?:ORARY)?\b|\bpg_temp\./iu;
