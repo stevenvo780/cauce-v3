@@ -15,12 +15,12 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a7-cuotas-1025b/console', run);
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a7-commit-1025/console', run);
 const ownerA = syntheticPerson('a', run);
 const ownerB = syntheticPerson('b', run);
 for (const [label, person] of [['a', ownerA], ['b', ownerB]] as const) {
-  person.email = `zz-canary-e2e-a7-cuotas-1025b-${label}-${run}@example.invalid`;
-  person.company.slug = `zz-canary-e2e-a7-cuotas-1025b-${label}-${run}`;
+  person.email = `zz-canary-e2e-a7-commit-1025-${label}-${run}@example.invalid`;
+  person.company.slug = `zz-canary-e2e-a7-commit-1025-${label}-${run}`;
 }
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
 const readerErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, {
