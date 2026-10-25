@@ -43,6 +43,7 @@ async function verify(repo: FleetOperationsRepository, value: FleetOperationClai
     ['authenticate', { provider_verified: true }], ['profile', { profile_verified: true }],
     ['verify', { bootstrap_verified: true, roundtrip_verified: true }],
     ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }]] as [FleetStepName, FleetEvidence][]) {
+    if (!value.operation.steps.some(step => step.name === name)) continue;
     await repo.startStep(value, name); await repo.completeStep(value, name, evidence);
   }
 }
@@ -54,6 +55,54 @@ const disabled = [
   ['harness', "UPDATE harness_definitions SET enabled=false WHERE id='codex'"],
 ] as const;
 describe('fleet admission current configuration', () => {
+  it.each(['admission', 'unchanged', 'unrelated', 'disabled', 'disabled-batch'] as const)('keeps generic configuration on the same revision CAS before fleet admission: %s', async mode => {
+    if (mode === 'admission') {
+      const repo = new FleetOperationsRepository(pool); const value = await claim(repo); await repo.prepare(value); await verify(repo, value);
+      const config = new ConfigurationRepository(pool);
+      const result = await config.apply('Steven', 'admission_operator', { resource: 'room', action: 'update', tenant_id: 'Isa',
+        id: 'admission-room', value: { enabled: false } }, false, 1,
+      client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'admission_operator', humanId: subject.slice('console:'.length) }));
+      expect(result.revision).toBe(2);
+      await expect(repo.settle(value)).rejects.toMatchObject({ code: 'conflict' });
+      expect((await pool.query("SELECT enabled FROM agents WHERE alias='admitted_agent'")).rows[0]).toEqual({ enabled: false });
+      return;
+    }
+    const repo = new FleetOperationsRepository(pool); const initial = await claim(repo);
+    await repo.prepare(initial); await verify(repo, initial); await repo.settle(initial);
+    const input = create(); if (input.kind !== 'create') throw new Error('creation fixture absent');
+    await repo.enqueue('Steven', 'admission_operator', { ...input, kind: 'update', expected_revision: 2, idempotency_key: 'cancelled-intent' }, subject);
+    const update = await repo.claim('update-worker', 'admission-host'); if (!update) throw new Error('update claim absent');
+    await repo.prepare(update); await repo.startStep(update, 'stop');
+    const failed = await repo.fail(update, { code: 'STEP_FAILED', step: 'stop', retryable: true });
+    await repo.cancel('Steven', 'admission_operator', failed.id, failed.version, subject);
+    const cleanup = await repo.claim('cleanup-worker', 'admission-host'); if (!cleanup) throw new Error('cleanup claim absent');
+    const cancelled = await repo.compensate(cleanup); let revision = cancelled.desired_revision ?? 0;
+    if (mode !== 'unchanged') {
+      const mutation = mode === 'unrelated'
+        ? { resource: 'room' as const, action: 'update' as const, tenant_id: 'Steven', id: 'admission-control', value: { display_name: 'Unrelated room' } }
+        : { resource: 'membership' as const, action: 'update' as const, tenant_id: 'Isa', room_id: 'admission-room', alias: 'admitted_agent', value: { enabled: false } };
+      const changed = await new ConfigurationRepository(pool).apply('Steven', 'admission_operator',
+        mode === 'disabled-batch' ? { resource: 'batch', action: 'apply', mutations: [mutation] } : mutation, false, revision,
+        client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'admission_operator', humanId: subject.slice('console:'.length) }));
+      revision = changed.revision;
+    }
+    await repo.enqueue('Steven', 'admission_operator', { kind: 'start', target: input.target, parameters: {},
+      expected_revision: revision, idempotency_key: 'start-cancelled-intent' }, subject);
+    const start = await repo.claim('start-worker', 'admission-host'); if (!start) throw new Error('start claim absent');
+    if (mode === 'disabled' || mode === 'disabled-batch') await expect(repo.prepare(start)).rejects.toMatchObject({ code: 'conflict' });
+    else {
+      await repo.prepare(start);
+      expect((await repo.execution(start)).desired_memberships.map(member => [member.room_id, member.enabled])).toEqual([
+        ['admission-optional', false], ['admission-room', true]]);
+    }
+    expect((await pool.query("SELECT 1 FROM memberships WHERE tenant_id='Isa' AND alias='admitted_agent' AND enabled")).rowCount).toBe(0);
+    expect((await pool.query<{ enabled: boolean }>("SELECT enabled FROM agents WHERE tenant_id='Isa' AND alias='admitted_agent'")).rows[0]?.enabled).toBe(false);
+    if (mode === 'unchanged' || mode === 'unrelated') {
+      await verify(repo, start); await repo.settle(start);
+      expect((await pool.query("SELECT room_id,enabled FROM memberships WHERE tenant_id='Isa' AND alias='admitted_agent' ORDER BY room_id")).rows)
+        .toEqual([{ room_id: 'admission-optional', enabled: false }, { room_id: 'admission-room', enabled: true }]);
+    }
+  });
   it('rejects preview and enqueue without the verified human even for an operator in the hub', async () => {
     const repo = new FleetOperationsRepository(pool);
     await expect(repo.preview('Steven', 'admission_operator', create())).rejects.toMatchObject({ code: 'forbidden' });
@@ -89,16 +138,6 @@ describe('fleet admission current configuration', () => {
   ])('rejects changed %s instead of admitting different routing intent', async (_name, sql) => {
     const repo = new FleetOperationsRepository(pool); const value = await claim(repo); await repo.prepare(value); await verify(repo, value);
     await pool.query(sql);
-    await expect(repo.settle(value)).rejects.toMatchObject({ code: 'conflict' });
-    expect((await pool.query("SELECT enabled FROM agents WHERE alias='admitted_agent'")).rows[0]).toEqual({ enabled: false });
-  });
-  it('keeps generic configuration on the same revision CAS before fleet admission', async () => {
-    const repo = new FleetOperationsRepository(pool); const value = await claim(repo); await repo.prepare(value); await verify(repo, value);
-    const config = new ConfigurationRepository(pool);
-    const result = await config.apply('Steven', 'admission_operator', { resource: 'room', action: 'update', tenant_id: 'Isa',
-      id: 'admission-room', value: { enabled: false } }, false, 1,
-    client => lockCompanyAuthority(client, { tenant: 'Steven', alias: 'admission_operator', humanId: subject.slice('console:'.length) }));
-    expect(result.revision).toBe(2);
     await expect(repo.settle(value)).rejects.toMatchObject({ code: 'conflict' });
     expect((await pool.query("SELECT enabled FROM agents WHERE alias='admitted_agent'")).rows[0]).toEqual({ enabled: false });
   });

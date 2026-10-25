@@ -6,7 +6,7 @@ import { FleetOperationError, publicFleetOperation, type FleetOperationClaim, ty
 import { prepareFleetDesired, previousFleetAgents, settleFleetDesired } from './fleet-operation-desired.js';
 import { lockPreparedFleetRevision, sealFleetTargetSlice } from './fleet-operation-slice.js';
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
-import { canRestoreFleetUpdate } from './fleet-operation-compensation.js';
+import { cancelledFleetMembershipIntent, canRestoreFleetUpdate } from './fleet-operation-compensation.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
 import { fleetRecoveryEvidence, isFleetRecoveryProbe, lockFleetRecoveryConnection, restoreFleetRecovery } from './fleet-operation-recovery.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
@@ -106,7 +106,7 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
       await lockFleetRecoveryConnection(client, row);
       const previous = await previousFleetAgents(client, row);
-      const intent = await fleetMembershipIntent(client, row);
+      const intent = await cancelledFleetMembershipIntent(client, row, previous, await fleetMembershipIntent(client, row));
       const targets = await prepareFleetDesired(client, row, this.controllerHost, this.coordinatorEnabled, this.coordinatorHosts);
       row.desired_revision = isFleetRecoveryProbe(row.request) ? row.expected_revision : await recordFleetRevision(client, row, 'prepare');
       const scopedAgents = row.request.kind === 'create' || row.request.kind === 'update'
