@@ -104,7 +104,7 @@ el ACK terminal y vacíe su WAL antes del corte; no basta con conservar la TUI o
 
 ## Quién entra en la TUI compartida
 
-Con `SHARED_SESSION=1` hay UNA conversación por alias: la TUI que la consola muestra. Un turno humano
+Con `SHARED_SESSION=1` hay UNA conversación por alias: la TUI que la consola muestra. Codex entra en esa TUI con `--yolo --no-daemon` y se reanuda igual, sin daemon de fondo. Un turno humano
 entra en ella (`shared:<alias>`, sin aislamiento de emisión) sólo si quien escribe ya ve y maneja esa
 TUI: el dueño (`OWNER_HUMAN_ID`, de su propio tenant) o una entrada exacta `tenant:uuid` de
 `SHARED_HUMANS` en el `.env` del alias (el supervisor la valida y la exporta como

@@ -74,6 +74,7 @@ Cada vista declara su **objeto principal** con `data-objeto-principal`. En `/liv
 **En pausa**. En un ancho estrecho el panel lateral se pliega con **Ocultar panel** y **Mostrar panel**,
 y el filtro de estados con **Estados**. El hilo de `/messages` es `hilo` y la terminal es `escenario`.
 El detalle de un mensaje sigue el corte `max-[1100px]` / `min-[1101px]` (`MessageDetail.tsx`).
+`GET /v3/console/messages/:id` abre una línea que la sala ya te muestra si tu sesión es la humana que la inició, en el mismo tenant. Cubre una copia de un lote de consola y un aviso proactivo de Telegram (`origin.metadata.proactive`). Otra persona del mismo alias, otra sala y otro tenant reciben HTTP 404 `not_found`. La respuesta no trae el texto y no usa `forbidden`, para no confirmar que el mensaje existe.
 El gate histórico de maquetado (`qa/layout-gate.mjs`, más abajo) mide que ese objeto quede sobre el
 pliegue; la tira de tabla de flota a 1101 px ya no es la maquetación de `/live`. Ese recorrido es
 referencia histórica y no el gate de publicación de V4.

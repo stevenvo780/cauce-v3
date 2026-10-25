@@ -21,7 +21,7 @@ El login ya no cae en un genérico «no se pudo verificar». La sesión de prove
 | `IDENTITY_MISMATCH` | La cuenta conectada no es la identidad autorizada. |
 | `FUNCTIONAL_CHECK_FAILED` | La cuenta aún no pasó una llamada funcional. |
 | `LOGIN_FAILED` | El CLI del proveedor rechazó el inicio de sesión. |
-| `SESSION_EXPIRED` | La ventana de login caducó. |
+| `SESSION_EXPIRED` | La ventana de login caducó. No es la sesión del proveedor que caduca en mitad de un turno: esa es `PROVIDER_LOGIN_REQUIRED`, más abajo. |
 
 Motivos de deriva (`reason`, solo con `RUNTIME_DRIFT` o `STOP_UNCONFIRMED`):
 
@@ -77,6 +77,14 @@ El gateway configura `CAUCE_FLEET_AUTHORITY_SOCKET`, `CAUCE_FLEET_AUTHORITY_OWNE
 
 La acción `ready` comprueba el emisor fijado, su política y el par de claves sin emitir credenciales. Las capacidades de creación dependen de esa disponibilidad; las de lectura de cuotas son independientes.
 
+## Sesión del proveedor caducada en un turno
+
+No es `SESSION_EXPIRED`. Ese código es la ventana del login de una operación. Aquí la TUI muestra la sesión caducada y el adaptador falla con `PROVIDER_LOGIN_REQUIRED`. El texto fijo es «La sesión del proveedor caducó: vuelve a iniciar sesión».
+
+En la oficina y en el chat el agente queda bloqueado con esa frase. El chat muestra el aviso «Sesión del proveedor caducada» y, si el arnés tiene receta de login, el botón **Iniciar sesión**. La línea de la entrega repite la misma frase. En Claude hacen falta las dos líneas del panel: `Login expired · Please run /login` (también con viñeta `●` o `⏺`) y `Paste code here if prompted >`. Sin las dos, no cuenta.
+
+Pulsa **Iniciar sesión** y completa otra vez el login del proveedor. No borres el volumen de perfiles para esto.
+
 ## Diagnóstico de login de agente para operadores
 
 ### Dónde mirar, en este orden
@@ -98,7 +106,8 @@ La acción `ready` comprueba el emisor fijado, su política y el par de claves s
 | `SESSION_CONFLICT` | Hay otra sesión viva o una liberación en curso sobre el mismo perfil. | Espera a que termine la otra sesión o su liberación y reintenta. No abras dos logins del mismo agente a la vez. |
 | `IDENTITY_MISMATCH` | Entraste con otra cuenta del proveedor. | Cancela la conexión, inicia sesión de nuevo y entra con la cuenta principal del agente. |
 | `FUNCTIONAL_CHECK_FAILED` | La identidad coincide pero el CLI aún no responde a una llamada real. | Espera unos segundos y pulsa **Verificar conexión** otra vez. Si persiste, la cuenta puede tener la sesión incompleta: cancela y repite el login completo. |
-| `SESSION_EXPIRED` | Pasó la ventana del login. | Vuelve a pulsar **Iniciar sesión** y completa el recorrido sin dejarlo a medias. |
+| `SESSION_EXPIRED` | Pasó la ventana del login de la operación. | Vuelve a pulsar **Iniciar sesión** y completa el recorrido sin dejarlo a medias. |
+| «La sesión del proveedor caducó: vuelve a iniciar sesión» | El turno vio la TUI caducada (`PROVIDER_LOGIN_REQUIRED`). En Claude, el panel muestra `Login expired · Please run /login` y `Paste code here if prompted >`. | Pulsa **Iniciar sesión** en el aviso del chat o en la ficha y completa el login del proveedor. No borres el volumen de perfiles. |
 | `AUTHORITY_REVOKED` | La autoridad de la operación ya no es válida. | Cancela la operación y vuelve a lanzarla desde la configuración actual. |
 | `LOGIN_FAILED` | El proveedor rechazó el inicio de sesión. | Repite el login siguiendo lo que pida el propio CLI en el terminal. Si el proveedor pide un paso en su página, complétalo allí antes de verificar. |
 

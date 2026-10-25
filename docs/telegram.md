@@ -17,6 +17,8 @@ Para contexto arquitectónico véase [arquitectura.md](arquitectura.md); para op
 
 Idempotente mediante tabla `telegram_egress_effects` que registra cada chunk como `sent` o `ambiguous`.
 
+Un aviso proactivo que la sala de la consola ya lista se abre en el detalle del mensaje solo para la persona que inició esa línea. Otra persona, otra sala u otro tenant obtienen 404. El corte está en [la consola](consola.md).
+
 - Texto limitado a 65 536 caracteres, dividido en mensajes de hasta 4 096 caracteres.
 - Cada chunk transita por estados durables: `prepared → sending → sent | ambiguous | dead`.
 - ACK global `sent` se rechaza salvo que **todos** los chunks estén confirmados como `sent`.

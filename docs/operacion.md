@@ -442,6 +442,14 @@ Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/au
 
 El gateway añade a cada fila de un arnés con TUI compartida (OpenClaw, claude, codex, grok y muse) del snapshot de flota los dueños y admins activos de la empresa del agente (`tenant:uuid`, hasta 32; nunca de otra empresa). `export-fleet-snapshot.py` los valida y los escribe en `sharedHumanIds` de `flota.json`; el ejecutor los publica como `CAUCE_SHARED_HUMAN_IDS` en el contenedor y los incluye en la prueba de entorno (`sdk_environment_proof`). La lista debe coincidir también cuando no se espera ninguna: si se retira al último admin la lista queda vacía y el contenedor con la lista vieja deja de ser admitido, así que se recrea. Con sesión compartida el adaptador anuncia `human_message_initiator_v1`; sin eso el gateway no envía el iniciador y la lista nunca casa. Un humano de la lista habla en la TUI compartida; en claude y codex, un humano fuera de la lista usa su sesión humana aislada, y en grok, muse y OpenClaw recibe `UNSUPPORTED_HUMAN_ISOLATION`.
 
+La TUI compartida de Codex arranca y se reanuda con `--no-daemon`: la sesión compartida pasa `--yolo --no-daemon`, y `cauce-attach` reanuda con `codex --yolo --no-daemon resume` más el id nativo. No se engancha a un daemon de fondo. No tienes un paso aparte.
+
+### Parar o reiniciar con texto sin enviar
+
+Si la TUI compartida tiene texto sin enviar, la parada no se cumple. El runtime del contenedor, al recibir SIGTERM, SIGINT o SIGHUP, mira el compositor. Si hay texto visible después del prompt, escribe `RESTART_HOLD_COMPOSER_NOT_EMPTY` en su error estándar y sigue. No mata el proceso: el texto se queda en la caja. Un resto atenuado de la barra de estado no cuenta como texto. También retiene la parada `RESTART_HOLD_TURN_OR_PASTE_ACTIVE` (un turno o un pegado: «esc to interrupt», «ctrl+c» para cancelar, «[Pasted text» o «paste again to expand») y el resto de códigos `RESTART_HOLD_*` (identidad, tmux o un líder aún no publicado). La consola no traduce esos códigos.
+
+Para soltar un borrador, envíalo o bórralo hasta dejar la caja vacía y vuelve a parar o a reiniciar. Si el motivo es un turno o un pegado, espera a que termine y repite la parada. Los otros `RESTART_HOLD_*` no se quitan borrando la caja: el proceso sigue y el código queda en el error estándar del runtime.
+
 ### Detener e iniciar desde la web
 
 - Un adaptador nuevo que recibe `TAKEOVER_REJECTED` porque el arriendo de la instancia detenida sigue vigente reintenta con espera creciente hasta `lease_expires_at`, en lugar de salir. El gateway sigue admitiendo un solo dueño.

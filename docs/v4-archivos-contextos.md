@@ -158,7 +158,9 @@ En producción, con una versión de prueba de un agente `zz-canary-` y el prefli
 
 ### Documento nativo desde la versión aplicada
 
-`packages/store/test/context-adoption-chain-postgres.test.ts` recorre en local la cadena completa con PostgreSQL y Git reales: una persona edita y crea la versión N+1, el broker la publica con la persona como autora y el broker como committer, el siguiente turno natural la recibe, el engine real del SDK regenera `AGENTS.md` con `Version N+1; digest …` antes de ejecutar y el ACK con testigo de consumo deja `applied_version`, `applied_digest` y `context.adopted` con versión, digest y turno nativo. El proveedor es un runner de prueba: el turno con Claude o Codex reales sigue pendiente.
+`packages/store/test/context-adoption-chain-postgres.test.ts` recorre en local la cadena completa con PostgreSQL y Git reales: una persona edita y crea la versión N+1, el broker la publica con la persona como autora y el broker como committer, el siguiente turno natural la recibe, el engine real del SDK regenera `AGENTS.md` con `Version N+1; digest …` antes de ejecutar y el ACK con testigo de consumo deja `applied_version`, `applied_digest` y `context.adopted` con versión, digest y turno nativo. El proveedor de esa cadena es un runner de prueba.
+
+En la consola, **Versiones y aplicación** muestra el número en **Usado por el agente**. No muestra `applied_at`. El número y `applied_at` (`clock_timestamp()` en el estado y en el outbox) avanzan juntos, y solo cuando una entrega `done` trae adopción y consumo del mismo `input_sha256`, la versión y el digest coinciden con lo adjuntado a esa entrega (o con una cadena nativa posterior del propio agente) y la versión deseada ya es al menos esa. Un turno que no acredita eso no los mueve. Guardar la versión N+1 no los mueve: los mueve el ACK del turno siguiente que la consumió.
 
 ## Copias durables y recuperación
 
