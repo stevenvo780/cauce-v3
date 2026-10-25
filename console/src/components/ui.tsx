@@ -206,7 +206,7 @@ export function RefreshButton({ onClick, loading = false, compact = false, annou
 
 export function PermissionBadge({ access, permission }: { access?: ConsoleAccess; permission: ConsolePermission }) {
   const state = permissionState(access, permission);
-  const label = state === 'allowed' ? 'ALLOW' : state === 'denied' ? 'DENY' : 'UNKNOWN';
+  const label = state === 'allowed' ? 'PERMITIDO' : state === 'denied' ? 'DENEGADO' : 'SIN DATO';
   return (
     <span className="flex flex-wrap items-center gap-2 text-xs">
       <span>RBAC <span className="mono">{permission}</span></span>

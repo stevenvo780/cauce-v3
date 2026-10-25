@@ -98,7 +98,7 @@ async function ensureRecipientMembership(page: BrowserPage) {
   await page.getByText('Opciones de alta:', { exact: false }).click();
   await page.getByLabel('Rol de permisos', { exact: true }).fill('agent');
   await page.getByRole('button', { name: 'Previsualizar el alta' }).click();
-  await page.getByRole('status').filter({ hasText: 'La previsualización fue aceptada' }).waitFor({ timeout: 20_000 });
+  await page.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Crear', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
 }

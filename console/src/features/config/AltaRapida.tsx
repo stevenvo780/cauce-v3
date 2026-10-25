@@ -80,7 +80,7 @@ export function AltaRapida({ soloLectura, busy, onChange, snapshot }: {
     const fallo = desenlace.recarga && !desenlace.recarga.releido;
     setAviso({
       tone: fallo ? 'parcial' : 'success',
-      text: `${TITULOS_ALTA[recurso]}: creado en la revisión ${String(desenlace.result.revision ?? 'UNKNOWN')}`
+      text: `${TITULOS_ALTA[recurso]}: creado en la revisión ${String(desenlace.result.revision ?? 'desconocida')}`
         + `: ${configMutationSummary(mutation, snapshot)}.${textoRecarga(desenlace.recarga)}`
         + (recurso === 'membership' ? ' Si esa persona o ese agente todavía no existe, dalo de alta en Agentes y elige esta sala.' : ''),
     });

@@ -61,7 +61,7 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             <h2 tabIndex={-1} className="m-0 truncate text-[15px] font-semibold tracking-tight outline-none">{agent.alias}</h2>
-            <StatePill state={state} title={`${reason ?? meta.hint} · Lease: ${LEASE_LABEL[agent.leaseState]}`} data-live-state={state} />
+            <StatePill state={state} title={`${reason ?? meta.hint} · Conexión: ${LEASE_LABEL[agent.leaseState]}`} data-live-state={state} />
           </div>
           <p className="m-0 truncate text-xs text-muted">{agent.tenantId}</p>
         </div>
@@ -126,11 +126,11 @@ export function ChatHeader({ agent, state, reason, salud, lane, sending, loading
                 {state === 'unprepared' ? <PrepareAgentLink tenantId={agent.tenantId} alias={agent.alias} className="font-medium text-brand-ink underline" /> : null}
               </p>
               <p className="m-0 text-fg-2">
-                Lease {LEASE_LABEL[agent.leaseState]} · epoch {agent.presence?.epoch ?? 'UNKNOWN'} · vence <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} />
+                Conexión {LEASE_LABEL[agent.leaseState]} · generación {agent.presence?.epoch ?? 'sin dato'} · vence <Time value={agent.presence?.lease_expires_at ?? agent.presence?.lease_until} />
               </p>
             </Section>
             <Section title="Envío">
-              <p className="m-0 text-fg-2" data-room-origin>Room de origen: <span className="font-mono">{roomId || 'UNKNOWN'}</span> · derivado de tu topología, no escrito a mano.</p>
+              <p className="m-0 text-fg-2" data-room-origin>Sala de origen: <span className="font-mono">{roomId || 'sin dato'}</span> · derivado de tu topología, no escrito a mano.</p>
               <p className="m-0 text-fg-2">Carril: {LANES.find((option) => option.value === lane)?.label}</p>
             </Section>
             <Section title="Cola">

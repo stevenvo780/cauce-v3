@@ -172,11 +172,11 @@ describe('administración real de cuentas y asignaciones', () => {
     const inventory = (JSON.parse(response.body) as { provider_accounts: Record<string, unknown>[] }).provider_accounts;
     for (const [label, count] of [
       ['Cuentas visibles', inventory.length],
-      ['Publicadas al pool', inventory.filter((row) => row.shared_with_pool === true).length],
+      ['Compartidas', inventory.filter((row) => row.shared_with_pool === true).length],
       ['Habilitadas', inventory.filter((row) => row.enabled === true).length],
       ['Pagadas por otra empresa', inventory.filter((row) => row.payer_tenant_id !== active.tenant).length],
     ] as const) {
-      const card = page.getByRole('group', { name: 'Indicadores', exact: true }).getByRole('article').filter({ hasText: label });
+      const card = page.getByRole('group', { name: 'Indicadores', exact: true }).getByRole('article').filter({ hasText: new RegExp(`^${label}`, 'u') });
       expect(await card.locator('strong').innerText()).toBe(String(count));
     }
     await screenshot(page, 'inventory-1440');
@@ -198,10 +198,10 @@ describe('administración real de cuentas y asignaciones', () => {
     expect((await accountState())?.label).toBe('Etiqueta persistente');
 
     for (const [verb, field, expected] of [
-      ['Publicar', 'shared_with_pool', true], ['Despublicar', 'shared_with_pool', false],
+      ['Compartir', 'shared_with_pool', true], ['Dejar de compartir', 'shared_with_pool', false],
       ['Deshabilitar', 'enabled', false], ['Habilitar', 'enabled', true],
     ] as const) {
-      const name = field === 'shared_with_pool' ? `${verb} «${accountId}» ${expected ? 'al' : 'del'} pool` : `${verb} «${accountId}»`;
+      const name = `${verb} «${accountId}»`;
       await page.getByRole('button', { name, exact: true }).click();
       await apply(page, 'edición de cuenta');
       expect((await accountState())?.[field]).toBe(expected);
@@ -320,12 +320,12 @@ describe('administración real de cuentas y asignaciones', () => {
     await assignment(page, 'grant-ceiling');
     await page.getByRole('combobox', { name: 'Agente', exact: true }).selectOption(`Isa/${active.readerAlias}`);
     await page.getByRole('button', { name: 'Previsualizar cambio' }).click();
-    await page.getByRole('alert').filter({ hasText: 'NO está publicada al pool' }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'NO está compartida' }).waitFor();
     expect(await disabled(page, 'Aplicar')).toBe(true);
     await screenshot(page, 'assign-private-borrow-rejected-390');
     await page.getByRole('dialog').getByRole('button', { name: 'Cerrar', exact: true }).click();
     await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
-    await page.getByRole('button', { name: `Publicar «${accountId}» al pool`, exact: true }).click();
+    await page.getByRole('button', { name: `Compartir «${accountId}»`, exact: true }).click();
     await apply(page, 'edición de cuenta');
     await page.getByRole('tab', { name: 'Asignaciones', exact: true }).click();
     await assignment(page, 'grant-ceiling');
@@ -343,9 +343,9 @@ describe('administración real de cuentas y asignaciones', () => {
     expect(borrowed.rows).toEqual([{ priority: 0, enabled: true }]);
     await screenshot(page, 'assign-borrowed-consent-390');
     await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
-    await page.getByRole('button', { name: `Despublicar «${accountId}» del pool`, exact: true }).click();
+    await page.getByRole('button', { name: `Dejar de compartir «${accountId}»`, exact: true }).click();
     await page.getByRole('button', { name: 'Previsualizar cambio' }).click();
-    await page.getByRole('alert').filter({ hasText: 'No se puede despublicar' }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'No se puede dejar de compartir' }).waitFor();
     expect(await disabled(page, 'Aplicar')).toBe(true);
     expect((await accountState())?.shared_with_pool).toBe(true);
     await screenshot(page, 'inventory-borrowed-unpublish-rejected-390');
@@ -360,7 +360,7 @@ describe('administración real de cuentas y asignaciones', () => {
     );
     expect(revoked.rows).toEqual([]);
     await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
-    await page.getByRole('button', { name: `Despublicar «${accountId}» del pool`, exact: true }).click();
+    await page.getByRole('button', { name: `Dejar de compartir «${accountId}»`, exact: true }).click();
     await apply(page, 'edición de cuenta');
     expect((await accountState())?.shared_with_pool).toBe(false);
   }, 4 * 60_000);
@@ -418,7 +418,7 @@ describe('administración real de cuentas y asignaciones', () => {
     expect(body).not.toContain(active.foreignCredentialLocator);
     expect(body).not.toContain(active.foreignPrivateAccountId);
     for (const name of [`Editar «${active.foreignPoolAccountId}»`, `Deshabilitar «${active.foreignPoolAccountId}»`,
-      `Despublicar «${active.foreignPoolAccountId}» del pool`, `Retirar o rotar «${active.foreignPoolAccountId}»`]) {
+      `Dejar de compartir «${active.foreignPoolAccountId}»`, `Retirar o rotar «${active.foreignPoolAccountId}»`]) {
       expect(await disabled(page, name)).toBe(true);
     }
     await screenshot(page, 'inventory-reader-390');

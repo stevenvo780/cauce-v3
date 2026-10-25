@@ -419,7 +419,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await page.getByRole('button', { name: `Editar «${accountId}»`, exact: true }).click();
       const dialog = page.getByRole('dialog');
       await dialog.getByLabel('Etiqueta').fill(accountEditedLabel);
-      await dialog.getByLabel('Publicada al pool').click();
+      await dialog.getByLabel('Compartida con otros espacios').click();
       await previewAndApply(page, dialog, 'edición de cuenta');
       await page.reload({ waitUntil: 'domcontentloaded' });
       await page.getByRole('tab', { name: 'Inventario', exact: true }).click();
@@ -530,7 +530,7 @@ describe('matriz CRUD V4 en navegador Chromium real, gateway y PostgreSQL reales
       await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
       const form = sheet.getByRole('form', { name: `Eliminar registro de ${hubA}/${agentAlias}`, exact: true });
       await form.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
-      await sheet.getByRole('status').filter({ hasText: 'Vista previa lista.' }).waitFor({ timeout: 20_000 });
+      await sheet.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
       await expect.poll(async () => form.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).isDisabled(), { timeout: 20_000 }).toBe(false);
       expect((await apiGet(page, '/v3/console/config')).body.revision).toBe(before);
       expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, agentAlias])).rowCount).toBe(1);

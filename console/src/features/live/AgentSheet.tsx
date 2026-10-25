@@ -176,14 +176,14 @@ function Connection({ view, status }: { view: LiveAgentView; status: Resource<Sy
     ?.find((lease) => lease.tenant_id === view.tenantId && lease.alias === view.alias)?.capabilities;
   return (
     <Rows rows={[
-      ['Epoch', <span className="font-mono text-xs" key="e"><Unknown value={presence?.epoch} /></span>],
+      ['Generación', <span className="font-mono text-xs" key="e"><Unknown value={presence?.epoch} /></span>],
       ['Instancia', <span className="font-mono text-xs" key="i"><Unknown value={presence?.instance_id} /></span>],
-      ['Último latido', <Time value={presence?.last_heartbeat_at} key="h" />],
-      ['Lease vence', <Time value={presence?.lease_until} key="l" />],
+      ['Último pulso', <Time value={presence?.last_heartbeat_at} key="h" />],
+      ['La conexión vence', <Time value={presence?.lease_until} key="l" />],
       ['Salas', view.rooms.length > 0 ? view.rooms.join(', ') : none('el servidor no informa las salas')],
       ['Habilitado', <Unknown value={view.agent.agent_enabled} key="en" />],
       ['En el registro', view.agent.registered === false
-        ? none('no: apareció por entregas o por lease')
+        ? none('no: apareció por entregas o por una conexión')
         : <Unknown value={view.agent.registered} key="r" />],
       ['Capacidades', status.error && !status.data
         ? none(`no se pudo leer /v3/status: ${status.error.message}`)

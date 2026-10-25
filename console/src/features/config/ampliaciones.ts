@@ -56,7 +56,7 @@ export const EXTENSION_CATALOG: CatalogEntry[] = [
   { type: 'resources', label: 'Recursos', allows: 'Más memoria, CPU o procesos que el perfil base', riskLabel: 'Bajo', tone: 'ok' },
   { type: 'gpu', label: 'GPU', allows: 'Acceso a todas las GPU del ordenador (--gpus all)', riskLabel: 'Medio', tone: 'warn' },
   { type: 'ssh', label: 'SSH saliente', allows: 'Clave propia del agente para entrar en otros equipos; la privada nunca sale del perfil', riskLabel: 'Alto', tone: 'danger' },
-  { type: 'docker', label: 'Docker', allows: 'Leer los metadatos y el entorno de todos los contenedores del ordenador; con control, operar Docker mediante un proxy propio', riskLabel: 'Alto (control equivale a root en el host)', tone: 'danger' },
+  { type: 'docker', label: 'Docker', allows: 'Leer los metadatos y el entorno de todos los contenedores del ordenador; con control, operar Docker mediante un proxy propio', riskLabel: 'Alto (control equivale a ser administrador del ordenador)', tone: 'danger' },
   { type: 'browser', label: 'Navegador', allows: 'Navegador Chromium propio o túnel SSH a un navegador remoto (CDP)', riskLabel: 'Medio', tone: 'warn' },
   { type: 'mcp', label: 'Servidor MCP', allows: 'Registrar un servidor MCP en la configuración del arnés, dentro del perfil', riskLabel: 'Según el MCP', tone: 'warn' },
   { type: 'tools', label: 'Herramientas', allows: 'Instalar paquetes npm o pip con versión fija, sin root, en el volumen de estado', riskLabel: 'Medio', tone: 'warn' },
@@ -97,7 +97,7 @@ export function extensionSummary(ext: AgentExtension): string {
     }
     case 'gpu': return 'Todas las GPU';
     case 'ssh': return (ext.hosts ?? []).join(', ') || 'Sin destinos';
-    case 'docker': return ext.access === 'control' ? 'Control (equivale a root en el host)' : 'Solo lectura';
+    case 'docker': return ext.access === 'control' ? 'Control (equivale a ser administrador del ordenador)' : 'Solo lectura';
     case 'browser': return ext.mode === 'ssh_tunnel' ? `Túnel SSH a ${text(ext.host, '?')}:${ext.port === undefined ? '' : String(ext.port)}` : 'Chromium propio (sidecar)';
     case 'mcp': return [ext.name, ext.command, ...(ext.args ?? [])].filter(Boolean).join(' ') || 'Sin detalle';
     case 'tools': return (ext.packages ?? []).join(', ') || 'Sin paquetes';

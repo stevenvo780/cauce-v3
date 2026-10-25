@@ -159,7 +159,7 @@ export function ChatAttachmentsComposer({
         </p>
       ) : null}
       {roomChoiceRequired ? (
-        <label className="flex items-center gap-2 px-1 text-xs text-muted">Room de origen
+        <label className="flex items-center gap-2 px-1 text-xs text-muted">Sala de origen
           <select value={roomId} disabled={sending} onChange={(event) => { onRoomChange(event.target.value); }}
             className="m-0 h-7 w-auto min-w-36 rounded-md border border-line bg-surface py-0 pr-7 pl-2 text-xs text-fg">
             <option value="" disabled>Elige la sala de origen</option>

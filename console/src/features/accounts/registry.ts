@@ -427,15 +427,15 @@ function borrowersOf(context: RegistryContext, accountId: string, payerTenant: s
  * which one is being broken, it is pointed out. A cause that cannot be sustained is never made up.
  */
 function constraintCause(mutation: ConfigMutation, context: RegistryContext): string {
-  const prefix = 'El servidor rechazó el cambio con 409 y no publica qué restricción falló.';
+  const prefix = 'El servidor rechazó el cambio porque choca con otro dato y no dice con cuál.';
 
   if (mutation.resource === 'provider_account' && mutation.action === 'delete') {
     const id = String(mutation.id);
     const refs = context.ceiling.filter((entry) => entry.accountId === id);
     if (refs.length > 0) {
-      return `No se puede borrar la cuenta «${id}»: todavía pertenece al techo de ${refs.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}. El foreign key de alias_routing_ceiling impide dejar esos alias apuntando a una cuenta inexistente; revoca primero esos techos y vuelve a previsualizar.`;
+      return `No se puede borrar la cuenta «${id}»: todavía figura en el límite de ${refs.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}. Retirarla dejaría a esos agentes apuntando a una cuenta que no existe; quita primero esos límites y vuelve a revisar el cambio.`;
     }
-    return `${prefix} Un borrado de cuenta solo puede chocar con un techo que todavía la referencia. El snapshot local no lo muestra: actualiza antes de repetir el retiro o la rotación.`;
+    return `${prefix} Un borrado de cuenta solo puede chocar con un techo que todavía la referencia. Esta vista no lo muestra: actualiza antes de repetir el retiro o la rotación.`;
   }
 
   if (mutation.resource === 'provider_account' && mutation.action === 'update') {
@@ -445,11 +445,11 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
       const account = context.accounts.find((entry) => entry.id === id);
       const borrowers = borrowersOf(context, id, account?.payerTenant ?? null);
       const detail = borrowers.length
-        ? ` Techos vigentes que todavía la usan: ${borrowers.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
-        : ' El snapshot local no muestra el techo que la retiene: actualiza para verlo.';
-      return `No se puede despublicar la cuenta «${id}» del pool: otro tenant la tiene en el techo de alguno de sus alias, y el FK alias_routing_ceiling_borrow_requires_pool lo impide. Es la única restricción durable que un update de cuenta puede violar. Primero hay que revocar ese techo —lo que cascadea su binding— y recién después despublicarla.${detail}`;
+        ? ` Límites vigentes que todavía la usan: ${borrowers.map((entry) => `${entry.tenantId}/${entry.alias}`).join(', ')}.`
+        : ' Esta vista no muestra el límite que la retiene: actualiza para verlo.';
+      return `No se puede dejar de compartir la cuenta «${id}»: otra empresa la tiene en el límite de alguno de sus agentes. Primero quita ese límite, lo que también quita su orden de consulta, y después deja de compartirla.${detail}`;
     }
-    return `${prefix} Un update de cuenta solo toca label, shared_with_pool y enabled, así que la única restricción durable alcanzable es alias_routing_ceiling_borrow_requires_pool (despublicar mientras otro tenant la usa). Actualiza el snapshot y vuelve a previsualizar.`;
+    return `${prefix} Este cambio solo toca la etiqueta, si se comparte y si está habilitada, así que lo único que puede chocar es dejar de compartir una cuenta que otra empresa está usando. Actualiza la vista y vuelve a revisar el cambio.`;
   }
 
   if (mutation.resource === 'provider_account' && mutation.action === 'create') {
@@ -461,12 +461,12 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
       ? context.accounts.find((entry) => entry.provider === provider && entry.externalAccountId === external)
       : undefined;
     if (duplicate) {
-      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'un cliente que el servidor no informó'}. UNIQUE (company_id, provider, external_account_id) exige una sola cuenta por suscripción dentro de la empresa. La misma suscripción puede registrarse en otra empresa.`;
+      return `Esa suscripción externa ya está registrada como «${duplicate.id}» y la paga ${duplicate.payerTenant ?? 'un cliente que el servidor no informó'}. Dentro de una empresa solo puede haber una cuenta por suscripción; la misma suscripción sí puede registrarse en otra empresa.`;
     }
     if (payer !== undefined && context.tenantIds.length > 0 && !context.tenantIds.includes(payer)) {
-      return `El tenant pagador «${payer}» no existe en la configuración visible, y payer_tenant_id es un foreign key contra tenants. Crea el tenant antes de registrar la cuenta.`;
+      return `El cliente pagador «${payer}» no existe en la configuración visible. Créalo antes de registrar la cuenta.`;
     }
-    return `${prefix} Un alta de cuenta puede violar tres: UNIQUE (company_id, provider, external_account_id) —la suscripción ya está registrada en esta empresa—, el foreign key de payer_tenant_id contra tenants, o el CHECK provider_accounts_credential_ref_shape sobre el locator. El snapshot local no muestra ninguna incumplida, así que el choque está del lado del servidor: actualiza y vuelve a previsualizar.`;
+    return `${prefix} Un alta de cuenta puede chocar por tres motivos: la suscripción ya está registrada en esta empresa, el cliente pagador no existe o la referencia de la credencial no tiene el formato esperado. Esta vista no muestra ninguno, así que el choque está en el servidor: actualiza y vuelve a revisar el cambio.`;
   }
 
   if (mutation.resource === 'alias_routing_ceiling' && mutation.action === 'create') {
@@ -479,15 +479,15 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
       && account.payerTenant !== tenantId;
     const causes: string[] = [];
     if (!agent) {
-      causes.push(`el alias ${tenantId}/${alias} no está registrado en \`agents\`, y alias_routing_ceiling_agent_fk lo exige`);
+      causes.push(`el agente ${tenantId}/${alias} no está registrado`);
     }
     if (borrowed && account.sharedWithPool === false) {
-      causes.push(`la cuenta «${accountId}» la paga ${account.payerTenant ?? 'UNKNOWN'} y NO está publicada al pool: prestar una suscripción lo decide su pagador con shared_with_pool, y alias_routing_ceiling_borrow_requires_pool lo verifica en Postgres`);
+      causes.push(`la cuenta «${accountId}» la paga ${account.payerTenant ?? 'un cliente que el servidor no informó'} y NO está compartida: prestar una suscripción lo decide quien la paga`);
     }
     if (causes.length) {
       return `No se pudo otorgar el techo porque ${causes.join('; y ')}.`;
     }
-    return `${prefix} Un alta de techo solo puede violar dos: alias_routing_ceiling_agent_fk (el alias no está en \`agents\`) y alias_routing_ceiling_borrow_requires_pool (la cuenta es de otro pagador y no está publicada al pool). El snapshot local no muestra ninguna de las dos incumplida, así que cambió en el servidor: actualiza y vuelve a previsualizar.`;
+    return `${prefix} Un límite nuevo solo puede chocar por dos motivos: el agente no está registrado, o la cuenta es de otro pagador y no está compartida. Esta vista no muestra ninguno, así que cambió en el servidor: actualiza y vuelve a revisar el cambio.`;
   }
 
   if (mutation.resource === 'agent_account_binding' && mutation.action !== 'delete') {
@@ -501,12 +501,12 @@ function constraintCause(mutation: ConfigMutation, context: RegistryContext): st
         && entry.accountId !== accountId && entry.enabled === true && entry.priority === priority)
       : undefined;
     if (clash) {
-      return `La prioridad ${String(priority)} ya la usa la cuenta «${clash.accountId}» habilitada para ${tenantId}/${alias}. El índice único agent_account_bindings_order_idx existe para que el orden de fallback de un alias sea total: elige otra prioridad o deshabilita la otra cuenta.`;
+      return `La prioridad ${String(priority)} ya la usa la cuenta «${clash.accountId}» habilitada para ${tenantId}/${alias}. El orden de consulta de un agente no admite dos cuentas con la misma prioridad: elige otra prioridad o deshabilita la otra cuenta.`;
     }
-    return `${prefix} Un binding solo puede violar dos: el índice único agent_account_bindings_order_idx (dos cuentas habilitadas con la misma prioridad para el mismo alias) o agent_account_bindings_ceiling_fk (la cuenta no está en el techo del alias, y el binding referencia al techo, no a provider_accounts). Otorga primero el techo o cambia la prioridad.`;
+    return `${prefix} Un acceso solo puede chocar por dos motivos: dos cuentas habilitadas con la misma prioridad para el mismo agente, o que la cuenta no esté en el límite de ese agente. Concede primero el límite o cambia la prioridad.`;
   }
 
-  return `${prefix} Mutación rechazada por una restricción durable de Postgres; el snapshot local no permite atribuirla a una sola. Actualiza el snapshot y vuelve a previsualizar.`;
+  return `${prefix} El servidor rechazó el cambio por una restricción que esta vista no puede atribuir a una sola causa. Actualiza y vuelve a revisar el cambio.`;
 }
 
 /**
@@ -546,13 +546,13 @@ export function describeRegistryError(
   if (error.status === 403) {
     return {
       conflict: false,
-      message: `Rechazado con 403. Este cambio no está autorizado para tu rol y alcance de empresa. Revisa los permisos para este recurso. Respuesta del servidor: «${error.message}».`,
+      message: `El servidor lo rechazó (403). Este cambio no está autorizado para tu rol y alcance de empresa. Revisa los permisos para este recurso. Respuesta del servidor: «${error.message}».`,
     };
   }
   if (error.status === 409 && IMMUTABLE_ACCOUNT.test(error.message)) {
     return {
       conflict: false,
-      message: 'El proveedor, el id externo, el tenant pagador y el locator de la credencial son inmutables después del alta: el id de cuenta está referenciado desde los techos, y repuntarlo cambiaría retroactivamente qué significa cada préstamo existente. Rotar es dar de baja y volver a crear, no editar.',
+      message: 'El proveedor, el id externo, el cliente pagador y la referencia de la credencial no se pueden cambiar después del alta, porque otros datos ya apuntan a la cuenta y cambiarlos alteraría los préstamos existentes. Para rotar, da de baja la cuenta y vuelve a crearla; no se edita.',
     };
   }
   if (error.status === 409 && DURABLE_CONSTRAINT.test(error.message)) {

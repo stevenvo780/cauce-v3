@@ -59,7 +59,7 @@ describe('el room de origen cuando hay más de uno', () => {
     renderChat();
 
     const hilo = await openConversation('argos');
-    const selector = await within(hilo).findByRole('combobox', { name: /room de origen/i });
+    const selector = await within(hilo).findByRole('combobox', { name: /sala de origen/i });
     expect(within(selector).getAllByRole('option').map((opcion) => opcion.textContent))
       .toEqual(['Elige la sala de origen', 'grp.steven', 'ops.infra']);
     expect(selector).toHaveValue('');
@@ -78,9 +78,9 @@ describe('el room de origen cuando hay más de uno', () => {
     renderChat();
 
     const hilo = await openConversation('argos');
-    expect(within(hilo).queryByRole('combobox', { name: /room de origen/i })).toBeNull();
+    expect(within(hilo).queryByRole('combobox', { name: /sala de origen/i })).toBeNull();
     expect((await openConversationInfo(user)).querySelector('[data-room-origin]')).toHaveTextContent(
-      /Room de origen: grp\.steven · derivado de tu topología/,
+      /Sala de origen: grp\.steven · derivado de tu topología/,
     );
   }, 25_000);
 });
@@ -127,7 +127,7 @@ describe('el compositor', () => {
     renderChat();
 
     const hilo = await openConversation('kratos');
-    expect(await within(hilo).findByText('Lease vencido · envío en cola')).toBeVisible();
+    expect(await within(hilo).findByText('Conexión caducada · envío en cola')).toBeVisible();
 
     await user.type(within(hilo).getByRole('textbox', { name: /mensaje para kratos/i }), 'sigues ahí?');
     expect(within(hilo).getAllByRole('note').some((nota) => nota.textContent.includes('envío en cola')))

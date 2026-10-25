@@ -39,7 +39,7 @@ export function TablasDeSeccion({ ctx, seccion, omitir = [] }: {
         ? {
           tone: 'error',
           text: `La confirmación de «${pedido.accion.descripcion}» se anuló sola: la configuración `
-            + `pasó a la revisión ${String(snapshotRevision ?? 'UNKNOWN')} mientras estaba pendiente, así `
+            + `pasó a la revisión ${String(snapshotRevision ?? 'desconocida')} mientras estaba pendiente, así `
             + 'que lo que ibas a firmar ya no describe la fila que hay. Vuelve a pedir el cambio '
             + 'sobre el dato de ahora.',
         }

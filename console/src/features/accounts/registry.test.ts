@@ -155,7 +155,7 @@ it('explica que despublicar está bloqueado por el techo de otro tenant, y nombr
   const described = describeRegistryError(conflict(DURABLE), mutation, context);
 
   expect(described.conflict).toBe(false);
-  expect(described.message).toMatch(/alias_routing_ceiling_borrow_requires_pool/);
+  expect(described.message).toMatch(/dejar de compartir la cuenta/);
   expect(described.message).toMatch(/Miguel\/iza/);
   expect(described.message).not.toMatch(/durable constraint/);
 });
@@ -170,25 +170,22 @@ it('explica que no se puede prestar una cuenta que su pagador no publicó al poo
   const mutation = ceilingMutation('create', 'Steven', 'kant', 'minimax-pablo');
   const described = describeRegistryError(conflict(DURABLE), mutation, context);
 
-  expect(described.message).toMatch(/la paga Pablo y NO está publicada al pool/);
-  expect(described.message).toMatch(/shared_with_pool/);
+  expect(described.message).toMatch(/la paga Pablo y NO está compartida/);
 });
 
 it('atribuye el rechazo al alias ausente del registro cuando el techo apunta a un agente que no existe', () => {
   const mutation = ceilingMutation('create', 'Steven', 'fantasma', 'codex-steven');
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
-  expect(described.message).toMatch(/no está registrado en `agents`/);
-  expect(described.message).toMatch(/alias_routing_ceiling_agent_fk/);
+  expect(described.message).toMatch(/no está registrado/);
 });
 
 it('enumera las dos únicas causas posibles cuando el snapshot local no muestra ninguna incumplida', () => {
   const mutation = ceilingMutation('create', 'Steven', 'kant', 'codex-steven');
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
-  expect(described.message).toMatch(/alias_routing_ceiling_agent_fk/);
-  expect(described.message).toMatch(/alias_routing_ceiling_borrow_requires_pool/);
-  expect(described.message).toMatch(/actualiza y vuelve a previsualizar/i);
+  expect(described.message).toMatch(/el agente no está registrado, o la cuenta es de otro pagador/);
+  expect(described.message).toMatch(/actualiza y vuelve a revisar el cambio/i);
 });
 
 it('nombra la cuenta que ya ocupa esa prioridad en el orden de fallback', () => {
@@ -196,7 +193,7 @@ it('nombra la cuenta que ya ocupa esa prioridad en el orden de fallback', () => 
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
   expect(described.message).toMatch(/prioridad 50 ya la usa la cuenta «minimax-pablo»/);
-  expect(described.message).toMatch(/agent_account_bindings_order_idx/);
+  expect(described.message).toMatch(/no admite dos cuentas con la misma prioridad/);
 });
 
 it('señala la suscripción externa ya registrada en vez de repetir el error genérico', () => {
@@ -211,7 +208,7 @@ it('señala la suscripción externa ya registrada en vez de repetir el error gen
   const described = describeRegistryError(conflict(DURABLE), mutation, contextFrom());
 
   expect(described.message).toMatch(/ya está registrada como «codex-steven»/);
-  expect(described.message).toMatch(/UNIQUE \(company_id, provider, external_account_id\)/);
+  expect(described.message).toMatch(/solo puede haber una cuenta por suscripción/);
 });
 
 it('explica que un alias de cuota no es la tarjeta de Mis cuotas', () => {
@@ -245,8 +242,8 @@ it('explica la inmutabilidad en vez de dejar pasar el mensaje del store', () => 
     updateAccountMutation('codex-steven', { label: 'x', sharedWithPool: true, enabled: true }),
     contextFrom(),
   );
-  expect(described.message).toMatch(/inmutables/);
-  expect(described.message).toMatch(/dar de baja y volver a crear/);
+  expect(described.message).toMatch(/no se pueden cambiar/);
+  expect(described.message).toMatch(/da de baja la cuenta y vuelve a crearla/);
 });
 
 it('deja intacto el mensaje de choque optimista de revisión', () => {

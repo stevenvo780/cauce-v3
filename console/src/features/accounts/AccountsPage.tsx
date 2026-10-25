@@ -54,7 +54,7 @@ function AccountsPageContent() {
 
   return <div>
     <PageHeader
-      eyebrow="Pool de suscripciones"
+      eyebrow="Suscripciones compartidas"
       title="Cuentas"
       description="Qué cuentas de IA existen, quién las paga y qué agentes pueden usarlas. El saldo de cada cuenta se consulta en «Mis cuotas»."
       notes={

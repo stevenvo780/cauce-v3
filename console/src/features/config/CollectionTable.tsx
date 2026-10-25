@@ -93,7 +93,7 @@ export function CollectionTable({
     {editor}
     {/* Clave ausente y lista vacía NO son lo mismo: un gateway anterior a una migración no publica
         su tabla, y decir «sin registros» ahí sería mentir. */}
-    {!rows ? <EmptyState>UNKNOWN: este gateway no publica esta colección ({key}).</EmptyState>
+    {!rows ? <EmptyState>No disponible: el servidor no publica esta lista. No se muestra nada porque no hay dato.</EmptyState>
       : !filas.length ? <EmptyState>Sin registros.</EmptyState>
         : <>
           {/* El desenlace de un interruptor se anuncia acá arriba, en un `role="status"` que el
@@ -193,7 +193,7 @@ export function CollectionTable({
           {/* El JSON crudo no se borra: es la única forma de ver un campo que la tabla no tiene
               columna para mostrar. Lo que cambia es que ya no es lo primero que se ve. */}
           <details className="text-[13px]">
-            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Ver crudo ({filas.length} {filas.length === 1 ? 'fila' : 'filas'} tal cual {filas.length === 1 ? 'la publica' : 'las publica'} el servidor)</summary>
+            <summary className="flex cursor-pointer items-center gap-1.5 text-muted"><Braces size={13} aria-hidden="true" /> Detalles técnicos ({filas.length} {filas.length === 1 ? 'fila' : 'filas'} tal como llegan del servidor)</summary>
             <ul className="m-0 mt-2 grid max-h-80 list-none gap-1.5 overflow-auto p-0">
               {filas.map((fila, indice) => <li key={claveDeFila(key, fila, indice)} className="rounded-md bg-subtle p-2"><code className="text-xs break-all">{JSON.stringify(fila)}</code></li>)}
             </ul>

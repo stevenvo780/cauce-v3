@@ -28,17 +28,17 @@ it('una sala elegida que desaparece no se sustituye ni permite publicar el borra
   const input = props();
   const route = { ...input.route, sourceRoomIds: ['grp.steven', 'ops.infra'] };
   const { rerender } = renderWithApi(<ConversationPane {...input} route={route} />);
-  const select = screen.getByRole('combobox', { name: 'Room de origen' });
+  const select = screen.getByRole('combobox', { name: 'Sala de origen' });
   expect(select).toHaveValue('');
   await user.selectOptions(select, 'ops.infra');
   await user.type(screen.getByRole('textbox'), 'Solo para la sala elegida');
   rerender(<ApiProvider api={testApi}><ConversationPane {...input} /></ApiProvider>);
   expect(screen.getByRole('option', { name: 'ops.infra · no disponible' })).toBeDisabled();
-  expect(screen.getByRole('combobox', { name: 'Room de origen' })).toHaveValue('ops.infra');
+  expect(screen.getByRole('combobox', { name: 'Sala de origen' })).toHaveValue('ops.infra');
   expect(screen.getByRole('alert')).toHaveTextContent('ya no está disponible');
   expect(screen.getByRole('textbox')).toHaveValue('Solo para la sala elegida');
   expect(screen.getByRole('button', { name: 'Enviar' })).toBeDisabled();
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Room de origen' }), 'grp.steven');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Sala de origen' }), 'grp.steven');
   expect(screen.getByRole('button', { name: 'Enviar' })).toBeEnabled();
 });
 

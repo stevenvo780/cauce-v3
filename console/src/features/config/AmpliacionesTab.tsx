@@ -35,7 +35,7 @@ function DraftFields({ type, fields, disabled, onChange }: {
   if (type === 'ssh') return <label className="grid gap-1">Destinos (uno por línea, usuario@host[:puerto])
     <textarea rows={3} value={fields.hosts ?? ''} placeholder={'usuario@servidor.example.invalid:22'} disabled={disabled} onChange={set('hosts')} /></label>;
   if (type === 'docker') return <label>Acceso<select value={fields.access ?? 'read'} disabled={disabled} onChange={set('access')}>
-    <option value="read">Solo lectura</option><option value="control">Control (equivale a root en el host)</option></select></label>;
+    <option value="read">Solo lectura</option><option value="control">Control (equivale a ser administrador del ordenador)</option></select></label>;
   if (type === 'browser') return <div className="grid gap-3 sm:grid-cols-2">
     <label>Modo<select value={fields.mode ?? 'sidecar'} disabled={disabled} onChange={set('mode')}>
       <option value="sidecar">Chromium propio (sidecar)</option><option value="ssh_tunnel">Túnel SSH a navegador remoto</option></select></label>

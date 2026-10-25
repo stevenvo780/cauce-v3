@@ -137,7 +137,7 @@ export function operatorRouteForAgent(
       reason: `ACL ${actor.tenantId} → ${agent.tenantId} no concede ruta; destino bloqueado.`,
     };
   }
-  return { allowed: true, sourceRoomIds, membership: true, reason: 'Room de origen y ACL de ruta verificados.' };
+  return { allowed: true, sourceRoomIds, membership: true, reason: 'Sala de origen y ACL de ruta verificados.' };
 }
 
 /** Projects authoritative server messages into a recipient-scoped, non-durable UI session. */

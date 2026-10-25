@@ -39,55 +39,55 @@ export const ARNESES_REALES: readonly ArnesReal[] = [
     label: 'Codex',
     aporta: 'El agente ya corre Codex. Esta tarjeta no lo cambia: dice qué manual lee.',
     directiva: '<HOME>/.codex/AGENTS.md',
-    detalle: 'Si el proceso lleva `CODEX_HOME`, la directiva es la de ESA carpeta. Hay alias con las '
-      + 'dos, del mismo tamaño, y la de `~/.codex` es la que abriría un resolutor ingenuo.',
+    detalle: 'Si el agente se ejecuta con una carpeta de configuración propia, el manual es el de ESA carpeta, '
+      + 'no el de la carpeta personal. Hay agentes con las dos y se parecen mucho: no los confundas.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» del agente, con el entorno del proceso medido. Su '
-      + '`config.toml` sigue de solo lectura: un TOML mal formado deja al bot sin arrancar.',
+      + 'archivo de configuración sigue de solo lectura: si se escribiera mal, el agente no podría arrancar.',
   },
   {
     id: 'openclaw',
     label: 'OpenClaw',
     aporta: 'El agente ya corre OpenClaw. El manual está en su espacio de trabajo, no en la carpeta personal.',
     directiva: '<WORKSPACE_OPENCLAW>/AGENTS.md',
-    detalle: 'El perfil canónico se proyecta en ficheros Markdown separados del workspace. '
-      + '`openclaw.json` conserva auth, secrets y configuración sensible y no se sirve en el navegador.',
+    detalle: 'El perfil canónico se proyecta en ficheros Markdown separados del espacio de trabajo. '
+      + 'El archivo de configuración de OpenClaw guarda credenciales y ajustes sensibles, y no se muestra en el navegador.',
     editableDesdeAjustes: false,
     dondeSeToca: 'En «Perfil y contexto» se editan los campos canónicos que Cauce proyecta. La configuración '
-      + 'sensible de `openclaw.json` no se edita desde la consola.',
+      + 'sensible del archivo de configuración de OpenClaw no se edita desde la consola.',
   },
   {
     id: 'grok',
     label: 'Grok',
     aporta: 'El agente ya corre Grok. El manual solo cuenta si la ejecución comprobó su espacio de trabajo.',
     directiva: '<WORKSPACE_GROK>/AGENTS.md',
-    detalle: 'El inventario solo acredita el manual con `grok_workspace` comprobado durante la ejecución. '
-      + 'La carpeta de autenticación de Grok no demuestra cuál es el proyecto del agente.',
+    detalle: 'Solo se da por bueno el manual cuando la ejecución comprueba el espacio de trabajo. '
+      + 'La carpeta de acceso de Grok no demuestra cuál es el proyecto del agente.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
-      + 'parte del contexto canónico y se aplica como un lote.',
+    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el espacio de trabajo comprobado. El manual forma '
+      + 'parte del contexto canónico y se aplica en un solo paso.',
   },
   {
     id: 'muse',
     label: 'Muse',
     aporta: 'El agente ya corre Muse. El manual solo cuenta si la ejecución comprobó su espacio de trabajo.',
     directiva: '<WORKSPACE_MUSE>/AGENTS.md',
-    detalle: 'El inventario solo acredita el manual con `muse_workspace` comprobado durante la ejecución. '
-      + 'Un proceso Muse en modo puente sin workspace no acredita una ruta de manual.',
+    detalle: 'Solo se da por bueno el manual cuando la ejecución comprueba el espacio de trabajo. '
+      + 'Un Muse en modo puente, sin espacio de trabajo, no demuestra la ruta de su manual.',
     editableDesdeAjustes: false,
-    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el workspace medido. El manual forma '
-      + 'parte del contexto canónico y se aplica como un lote.',
+    dondeSeToca: 'En «Perfil y contexto» del agente, sobre el espacio de trabajo comprobado. El manual forma '
+      + 'parte del contexto canónico y se aplica en un solo paso.',
   },
   {
     id: 'hermes',
     label: 'Hermes',
     aporta: 'El agente ya corre Hermes. Puede leer un manual; el perfil por lote no se le aplica.',
     directiva: '<HOME>/AGENTS.md',
-    detalle: 'El inventario puede resolver ese manual con hechos medidos, pero el perfil canónico '
-      + 'por lote no declara soporte para Hermes. Son capacidades distintas.',
+    detalle: 'Se puede localizar ese manual con datos comprobados, pero el perfil canónico '
+      + 'no se aplica en bloque a Hermes. Son cosas distintas.',
     editableDesdeAjustes: false,
-    dondeSeToca: '«Perfil y contexto» concentra el manual cuando la ejecución acredita su ruta. No promete '
-      + 'aplicar el perfil canónico por lote a Hermes.',
+    dondeSeToca: '«Perfil y contexto» reúne el manual cuando la ejecución demuestra su ruta. No promete '
+      + 'aplicar a Hermes el perfil canónico en bloque.',
   },
 ];
 
@@ -104,7 +104,7 @@ export function arnesesEnLaConsola(
       label: descriptor.harness,
       aporta: 'Programa que esta consola todavía no ficha. La tarjeta muestra el manual declarado, sin inventar una ruta.',
       directiva: document === undefined || document === 'none' || document === '' ? '' : document,
-      detalle: 'El descriptor declara este manual. La carpeta exacta se comprueba durante la ejecución; esta ficha no inventa una ruta.',
+      detalle: 'La definición declara este manual. La carpeta exacta se comprueba durante la ejecución; esta ficha no inventa una ruta.',
       editableDesdeAjustes: false,
       dondeSeToca: 'En «Perfil y contexto» del agente, cuando la ejecución acredita la ruta.',
     });

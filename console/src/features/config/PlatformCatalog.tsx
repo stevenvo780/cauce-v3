@@ -196,7 +196,7 @@ export function HarnessCatalogPanel({ ctx }: { ctx: ConfigWrites }) {
     actions={rows ? <span className="text-xs text-muted tabular-nums">{rows.length} {rows.length === 1 ? 'fila' : 'filas'}</span> : undefined}>
     {soloLectura(catalog, 'definiciones de arnés')}
     {!catalog.snapshot ? catalogoNoLeido() : rows === undefined
-      ? <EmptyState>UNKNOWN: este gateway no publica las definiciones de arnés.</EmptyState>
+      ? <EmptyState>No disponible: el servidor no publica las definiciones de arnés.</EmptyState>
       : <>
         {catalog.canWrite ? <div className="flex flex-wrap gap-2">
           <Button variant="primary" disabled={catalog.busy || available.length === 0} onClick={openCreate}>
@@ -364,7 +364,7 @@ export function RolePoliciesPanel({ ctx }: { ctx: ConfigWrites }) {
     {soloLectura(catalog, 'políticas de rol')}
     <p className="m-0 max-w-prose text-[13px] text-fg-2">{GUIA_DE_ROLES}</p>
     {!catalog.snapshot ? catalogoNoLeido() : rows === undefined
-      ? <EmptyState>UNKNOWN: este gateway no publica las políticas de rol.</EmptyState>
+      ? <EmptyState>No disponible: el servidor no publica las políticas de rol.</EmptyState>
       : <>
         {catalog.canWrite ? <div className="flex flex-wrap gap-2">
           <Button variant="primary" disabled={catalog.busy} onClick={openCreate}>Crear política de rol</Button>

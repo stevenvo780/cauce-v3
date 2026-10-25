@@ -423,7 +423,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await page.setViewportSize({ width: 1440, height: 900 });
       for (const title of ['Espacio', 'Sala', 'Membresía']) {
         await wizard.getByRole('button', { name: 'Previsualizar paso', exact: true }).click();
-        await wizard.getByRole('status').filter({ hasText: `Previsualización de ${title} aceptada` }).waitFor({ timeout: 20_000 });
+        await wizard.getByRole('status').filter({ hasText: "Vista previa aceptada" }).waitFor({ timeout: 20_000 });
         await wizard.getByRole('button', { name: 'Aplicar paso', exact: true }).click();
         await wizard.getByRole('status').filter({ hasText: `${title} aplicado en revisión` }).waitFor({ timeout: 20_000 });
       }
@@ -456,7 +456,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await alta.getByLabel('Sala', { exact: true }).fill(extraRoomId);
       await alta.getByLabel('Nombre', { exact: true }).fill(`Sala suelta ${run}`);
       await alta.getByRole('button', { name: 'Previsualizar el alta', exact: true }).click();
-      await alta.getByRole('status').filter({ hasText: 'La previsualización fue aceptada' }).waitFor({ timeout: 20_000 });
+      await alta.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
       expect((await pool().query('SELECT 1 FROM rooms WHERE tenant_id=$1 AND id=$2', [tenantId, extraRoomId])).rowCount).toBe(0);
       await alta.getByRole('button', { name: 'Crear', exact: true }).click();
       await alta.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
@@ -467,7 +467,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await alta.getByLabel('Sala', { exact: true }).fill(roomId);
       await alta.getByLabel('Identificador', { exact: true }).fill(otherAlias);
       await alta.getByRole('button', { name: 'Previsualizar el alta', exact: true }).click();
-      await alta.getByRole('status').filter({ hasText: 'La previsualización fue aceptada' }).waitFor({ timeout: 20_000 });
+      await alta.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
       await alta.getByRole('button', { name: 'Crear', exact: true }).click();
       await alta.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });
 
@@ -479,7 +479,7 @@ describe('ordenadores y espacios desde Chromium, gateway y PostgreSQL reales', (
       await alta.getByLabel('Hacia el espacio', { exact: true }).fill(hub);
       await alta.getByRole('checkbox', { name: 'Puede mandar mensajes', exact: true }).check();
       await alta.getByRole('button', { name: 'Previsualizar el alta', exact: true }).click();
-      await alta.getByRole('status').filter({ hasText: 'La previsualización fue aceptada' }).waitFor({ timeout: 20_000 });
+      await alta.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 });
       expect((await pool().query('SELECT 1 FROM acl_edges WHERE from_tenant=$1 AND to_tenant=$2', [tenantId, hub])).rowCount).toBe(0);
       await alta.getByRole('button', { name: 'Crear', exact: true }).click();
       await alta.getByRole('status').filter({ hasText: 'creado en la revisión' }).waitFor({ timeout: 20_000 });

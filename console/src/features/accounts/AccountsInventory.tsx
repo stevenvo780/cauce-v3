@@ -144,7 +144,7 @@ export function AccountsInventory({ config, access, registry }: {
     <KpiGrid label="Indicadores">
       <Kpi label="Cuentas visibles" value={accounts.available ? accounts.items.length : null} detail={accounts.available ? 'propias y compartidas' : 'el servidor no publica el inventario'} />
       <Kpi label="Compartidas" value={pooled} detail="prestadas por su pagador" />
-      <Kpi label="Habilitadas" value={enabled} detail="las que el despacho puede usar" />
+      <Kpi label="Habilitadas" value={enabled} detail="las que se pueden usar" />
       <Kpi label="Pagadas por otra empresa" value={foreign} tone={foreign ? 'warning' : 'neutral'} detail={foreignDetail(foreign, foreignNames)} />
     </KpiGrid>
 
@@ -186,7 +186,7 @@ export function AccountsInventory({ config, access, registry }: {
                       </td>
                       <td data-label="Compartida">{account.sharedWithPool === null
                         ? <Badge tone="unknown">SIN DATO</Badge>
-                        : <Badge tone={account.sharedWithPool ? 'info' : 'offline'}>{account.sharedWithPool ? 'PUBLICADA' : 'PRIVADA'}</Badge>}</td>
+                        : <Badge tone={account.sharedWithPool ? 'info' : 'offline'}>{account.sharedWithPool ? 'COMPARTIDA' : 'PRIVADA'}</Badge>}</td>
                       <td data-label="Estado">{account.enabled === null
                         ? <Badge tone="unknown">SIN DATO</Badge>
                         : <Badge tone={account.enabled ? 'online' : 'offline'}>{account.enabled ? 'HABILITADA' : 'DESHABILITADA'}</Badge>}</td>
@@ -234,7 +234,7 @@ export function AccountsInventory({ config, access, registry }: {
       description="Solo la etiqueta, si se comparte y el estado son editables: proveedor, id externo y pagador no se cambian porque los accesos ya usan este id.">
       {form?.kind === 'edit' ? <>
         <div className="grid gap-3">
-          <label>Etiqueta <span className={HINT}>vacío guarda null</span>
+          <label>Etiqueta <span className={HINT}>si lo dejas vacío, se quita</span>
             <input {...writeProps} value={form.edit.label} onChange={(event) => { patchEdit({ label: event.target.value }); }} />
           </label>
           <label className={CHECK}><input {...writeProps} type="checkbox" checked={form.edit.sharedWithPool} onChange={(event) => { patchEdit({ sharedWithPool: event.target.checked }); }} /> Compartida con otros espacios</label>

@@ -49,7 +49,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
             const id = revision.id;
             return <tr key={id ?? index}>
               <td data-label="Rev"><Badge tone="info"><Unknown value={id} /></Badge></td>
-              <td data-label="Actor"><Unknown value={`${revision.actor_tenant ?? 'UNKNOWN'}:${revision.actor_alias ?? 'UNKNOWN'}`} /></td>
+              <td data-label="Actor"><Unknown value={`${revision.actor_tenant ?? 'sin dato'}:${revision.actor_alias ?? 'sin dato'}`} /></td>
               <td data-label="Resumen">{configHistorySummary(revision.operation, config.data)}{revision.summary ? <details><summary>Detalles técnicos</summary><span className="text-xs wrap-anywhere">{revision.summary}</span></details> : null}</td>
               <td data-label="Fecha"><Time value={revision.created_at} /></td>
               <td data-label="Deshacer">{id && policy.allowed
@@ -77,7 +77,7 @@ export function AvanzadoSection({ ctx }: { ctx: ConfigWrites }) {
         <Notice role="note">{PLATFORM_CLI_REASON}</Notice>
         {chainReason ? <Notice role="note">Política de cadena: {chainReason}</Notice> : null}
         {editorReason ? <Notice role="note">{editorReason}</Notice> : null}
-        <p className="m-0 text-xs text-muted">Revisión esperada: {String(canalEditor.expectedRevision ?? 'UNKNOWN')}</p>
+        <p className="m-0 text-xs text-muted">Revisión esperada: {String(canalEditor.expectedRevision ?? 'desconocida')}</p>
         <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); }}>
           <div className={FORM_GRID}>
             <label>Recurso<select disabled={soloLectura || busy} value={ctx.resource} onChange={(event) => { ctx.selectTemplate(event.target.value as ConfigResource, ctx.action); }}>{Object.keys(templates).map((item) => <option key={item} value={item} disabled={Boolean(mutationResourceReason(item, config.data))}>{CONFIG_RESOURCE_LABELS[item as ConfigResource]}</option>)}</select></label>

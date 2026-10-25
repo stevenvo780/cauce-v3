@@ -163,7 +163,7 @@ function TerminalGrantsEditor() {
     </div>
     <p className="m-0 text-sm text-muted">
       Quién puede abrir la terminal de cada agente, por persona y modo. Estas concesiones conviven con el
-      archivo <code>grants.json</code>: cualquiera de las dos fuentes que conceda basta, y revocar aquí no
+      archivo de concesiones del servidor: cualquiera de las dos fuentes que conceda basta, y revocar aquí no
       revoca una fila del archivo. Revocar cierra las sesiones abiertas de esa concesión.
     </p>
     {grants.loading ? <p role="status">Leyendo concesiones…</p> : null}

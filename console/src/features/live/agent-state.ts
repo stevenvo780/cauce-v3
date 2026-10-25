@@ -119,7 +119,7 @@ export function liveState(
   if (!sinRegistro) return decidido;
   return {
     ...decidido,
-    reason: `${decidido.reason} No está en el registro de agentes: apareció por entregas o por lease.`,
+    reason: `${decidido.reason} No está en el registro de agentes: apareció por entregas o por una conexión.`,
   };
 }
 

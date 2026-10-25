@@ -262,7 +262,7 @@ describe('Chat V4: bordes reales del compositor', () => {
       );
       try {
         const { page, editor, errors } = await conversation(tenant, width);
-        const choose = page.getByRole('combobox', { name: 'Room de origen', exact: true });
+        const choose = page.getByRole('combobox', { name: 'Sala de origen', exact: true });
         await choose.waitFor({ timeout: 20_000 });
         expect(await choose.inputValue()).toBe('');
         expect(await editor.isDisabled()).toBe(true);

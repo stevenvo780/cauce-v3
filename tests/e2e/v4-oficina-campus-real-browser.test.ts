@@ -258,7 +258,7 @@ describe('Oficina V4: campus, HUD y ficha en Chromium real', () => {
       await expect.poll(() => detail.locator('[data-fatigue]').first().evaluate((element) => (element as HTMLElement).dataset.fatigue)).toBe('available');
       expect(await detail.locator('[data-fatigue] span').first().evaluate((element) => element.className)).toContain('border');
       await sheet.getByRole('tab', { name: 'Conexión', exact: true }).click();
-      await sheet.getByText('Epoch', { exact: true }).waitFor();
+      await sheet.getByText('Generación', { exact: true }).waitFor();
       await sheet.getByRole('tab', { name: /Entregas/u }).click();
       await sheet.getByText('Ninguna entrega en vuelo.', { exact: true }).waitFor();
       await sheet.getByRole('tab', { name: 'Ahora', exact: true }).click();

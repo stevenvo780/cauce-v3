@@ -184,7 +184,7 @@ describe('la ficha del agente', () => {
 
     const ficha = await screen.findByRole('dialog', { name: 'kant' });
     await user.click(within(ficha).getByRole('tab', { name: 'Conexión' }));
-    for (const rotulo of ['Epoch', 'Instancia', 'Último latido', 'Lease vence', 'Capacidades']) {
+    for (const rotulo of ['Generación', 'Instancia', 'Último pulso', 'La conexión vence', 'Capacidades']) {
       expect(within(ficha).getByText(rotulo)).toBeInTheDocument();
     }
   });

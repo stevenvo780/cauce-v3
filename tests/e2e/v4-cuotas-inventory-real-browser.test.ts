@@ -216,7 +216,7 @@ describe('inventario y lecturas reales de cuentas sin respuestas simuladas', () 
         await page.setViewportSize({ width: 390, height: 844 });
         await row.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
         const badgeGeometry = [];
-        for (const column of ['Pool', 'Estado']) {
+        for (const column of ['Compartida', 'Estado']) {
           const geometry = await row.locator(`td[data-label="${column}"]`).getByText('SIN DATO', { exact: true }).evaluate(element => {
             const rect = element.getBoundingClientRect();
             const painted = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -230,10 +230,10 @@ describe('inventario y lecturas reales de cuentas sin respuestas simuladas', () 
         expect(badgeGeometry.every(badge => badge.visible)).toBe(true);
         await screenshot('inventory-null-fault-390');
         const modalGeometry = [];
-        for (const name of [`Editar «${secondAccountId}»`, `Publicar «${secondAccountId}» al pool`, `Habilitar «${secondAccountId}»`]) {
+        for (const name of [`Editar «${secondAccountId}»`, `Compartir «${secondAccountId}»`, `Habilitar «${secondAccountId}»`]) {
           await row.getByRole('button', { name, exact: true }).click();
           const dialog = page.getByRole('dialog');
-          await dialog.getByRole('note').filter({ hasText: 'El snapshot no trae shared_with_pool y/o enabled' }).waitFor();
+          await dialog.getByRole('note').filter({ hasText: 'El servidor no informa si la cuenta está habilitada y compartida' }).waitFor();
           expect(await dialog.getByRole('button', { name: 'Previsualizar cambio', exact: true }).isDisabled()).toBe(true);
           expect(await dialog.getByRole('button', { name: 'Aplicar', exact: true }).isDisabled()).toBe(true);
           const geometry = await dialog.evaluate(element => {

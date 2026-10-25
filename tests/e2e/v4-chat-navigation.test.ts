@@ -130,8 +130,8 @@ describe('V4 chat navigation with real Chromium, gateway and PostgreSQL', () => 
         'SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2', [tenant.tenant, tenant.target],
       );
       expect(lease.rowCount).toBe(0);
-      await page.getByText('Lease sin dato · envío en cola', { exact: true }).waitFor({ timeout: 20_000 });
-      await page.getByRole('button', { name: /^Ver detalles:.*Lease sin dato/u }).click();
+      await page.getByText('Conexión sin dato · envío en cola', { exact: true }).waitFor({ timeout: 20_000 });
+      await page.getByRole('button', { name: /^Ver detalles:.*Conexión sin dato/u }).click();
       const notices = page.getByRole('region', { name: 'Detalles de los avisos', exact: true });
       await notices.waitFor({ timeout: 10_000 });
       expect(await notices.innerText()).toContain(`El servidor no informa el lease de ${tenant.target}`);

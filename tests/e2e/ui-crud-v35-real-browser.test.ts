@@ -251,7 +251,7 @@ describe('CRUD UI durable con Chromium, PasswordAuth y PostgreSQL', () => {
     const deletionPreview = await observer.click(page.getByRole('button', { name: 'Previsualizar eliminación', exact: true }));
     expect(deletionPreview.status).toBe(200); expect(deletionPreview.request).toMatchObject({ dry_run: true, mutation: { resource: 'agent', action: 'delete', tenant_id: tenant, alias } });
     expect(deletionPreview.receipt).toMatchObject({ revision: deleteBefore, applied: false, dry_run: true });
-    await page.getByRole('status').filter({ hasText: 'Vista previa lista.' }).waitFor({ timeout: 20_000 }); expect(await revision()).toBe(deleteBefore);
+    await page.getByRole('status').filter({ hasText: 'Vista previa aceptada' }).waitFor({ timeout: 20_000 }); expect(await revision()).toBe(deleteBefore);
     expect(await page.evaluate(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === 'Confirmar eliminación del registro')?.disabled)).toBe(false);
     await assertRecord(page, 'agents', { display_name: 'CRUD agente editado', ...emptyRuntime }); await assertRecord(page, 'memberships', { role: 'agent', enabled: false });
     await writeFile(join(evidence, 'agent-delete-membership-dry-run.json'), JSON.stringify({ ...deletionPreview, revisionBefore: deleteBefore, revisionAfter: await revision(), writes: 0 }, null, 2) + '\n', { mode: 0o600 });

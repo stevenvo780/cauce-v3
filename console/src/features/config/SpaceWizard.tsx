@@ -180,7 +180,7 @@ export function SpaceWizard({ canWrite, busy, onChange, snapshot }: {
     const falloLaRelectura = outcome.recarga !== undefined && !outcome.recarga.releido;
     setNotice({
       tone: falloLaRelectura ? 'parcial' : 'success',
-      text: `${stepTitles[pending.step]} aplicado en revisión ${String(outcome.result.revision ?? 'UNKNOWN')}.`
+      text: `${stepTitles[pending.step]} aplicado en revisión ${String(outcome.result.revision ?? 'desconocida')}.`
         + textoRecarga(outcome.recarga),
     });
   }

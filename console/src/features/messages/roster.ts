@@ -118,7 +118,7 @@ export function fueraDeLaTopologia(agente: AgenteDeMensajeria): boolean {
 export function motivoDeAgenteSuelto(agente: AgenteDeMensajeria): string | undefined {
   if (!fueraDeLaTopologia(agente)) return undefined;
   if (agente.registrado === false) {
-    return 'Sin sala y fuera del registro de agentes: apareció por entregas o por lease. Se muestra porque tiene historia, no porque el servidor lo declare agente.';
+    return 'Sin sala y fuera del registro de agentes: apareció por entregas o por una conexión. Se muestra porque tiene historia, no porque el servidor lo declare agente.';
   }
   if (agente.origenes.includes('registro')) {
     return 'Está en el registro de agentes y en NINGUNA sala. Los mensajes se leen igual; para escribirle hace falta una membresía habilitada.';

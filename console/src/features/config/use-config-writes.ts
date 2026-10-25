@@ -22,7 +22,7 @@ import { configMutationSummary } from './config-change-summary';
 
 /** A table-action notice holds only for its collection AND the snapshot revision it was produced under. */
 export function alcanceDeAccion(coleccion: string, revision: number | undefined): string {
-  return `${coleccion}@${String(revision ?? 'UNKNOWN')}`;
+  return `${coleccion}@${String(revision ?? 'desconocida')}`;
 }
 
 /** The pending confirmation plus the revision it was requested on; a moved snapshot invalidates it. */
