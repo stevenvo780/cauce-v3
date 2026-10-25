@@ -79,7 +79,15 @@ export async function startCompleteGateway(release: Pick<CompleteRelease, 'setup
     const setup = { ...release.setupConfig, files: [{ name: 'fleet-ca', path: ca }], policy: { ...release.setupConfig.policy,
       transport: { bootstrap_url: bootstrapUrl, gateway_url: bootstrapUrl, ca_certificate: '@install@/files/fleet-ca', network: 'host' },
       authority: { identity_directory: '@identity@', host_id: '@host@', ca_certificate: '@install@/files/fleet-ca' } } };
-    const packager = new HostSetupPackager(await resolveHostSetup(setup), release.signingKey);
+    const resolved = await resolveHostSetup(setup);
+    const packager = new HostSetupPackager(resolved, release.signingKey);
+    const setContainerTemplatePrefix = (prefix: string) => {
+      const template = resolved.policy.container_templates[0];
+      if (!template || typeof template.prefix !== 'string') throw new Error('laboratory container template is unavailable');
+      const previous = template.prefix;
+      template.prefix = prefix;
+      return previous;
+    };
     const port = Number(new URL(fixture.gatewayUrl).port);
     await fixture.app.close();
     if (!auth) throw new Error('laboratory password authority was not captured');
@@ -88,7 +96,7 @@ export async function startCompleteGateway(release: Pick<CompleteRelease, 'setup
       consoleOrigins: [fixture.baseUrl], https: { key: await readFile(fixture.pki.server.key), cert: await readFile(fixture.pki.server.cert),
         ca: await readFile(fixture.pki.ca.cert), requestCert: true, rejectUnauthorized: true } });
     await app.listen({ host: '127.0.0.1', port });
-    return { ...fixture, app, bootstrapUrl, authorityCa: ca, close };
+    return { ...fixture, app, bootstrapUrl, authorityCa: ca, setContainerTemplatePrefix, close };
   } catch (error) {
     try { await close(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'complete gateway setup and cleanup failed'); }
     throw error;

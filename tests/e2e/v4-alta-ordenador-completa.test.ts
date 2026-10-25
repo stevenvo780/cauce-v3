@@ -11,11 +11,11 @@ import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { newTrustedPage } from './console-functional-browser.fixtures.js';
 import { asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, syntheticPerson, type V4Page } from './v4-console-real-browser.helpers.js';
 import { startCompleteComputer, type CompleteComputer, type ComputerCommandResult } from './v4-alta-ordenador-completa.host.js';
-import { buildCompleteRelease, COMPLETE_RELEASE_PROVIDER_IDENTITY, COMPLETE_RELEASE_REVISION } from './v4-alta-ordenador-completa.release.js';
+import { buildCompleteRelease, COMPLETE_RELEASE_PROVIDER_IDENTITY } from './v4-alta-ordenador-completa.release.js';
 import { startCompleteGateway } from './v4-alta-ordenador-completa.gateway.js';
 
 const execute = promisify(execFile);
-const task = 'h11-alta-ordenador-completa-1025';
+const task = 'h11b-rechazo-setup-tres-vm-1025';
 const runId = randomUUID().slice(0, 8);
 const person = syntheticPerson('h11', runId);
 const hostId = `${person.company.slug}-host`;
@@ -27,6 +27,7 @@ let release: Awaited<ReturnType<typeof buildCompleteRelease>> | undefined;
 let gateway: Awaited<ReturnType<typeof startCompleteGateway>> | undefined;
 let computer: CompleteComputer | undefined;
 let page: V4Page;
+let signerFingerprint = '';
 const secrets = [person.password];
 interface Configuration {
   revision: number; capabilities: { actor: { tenant_id: string; alias: string } };
@@ -85,7 +86,7 @@ async function capture(name: string) {
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 async function diagnoseSetup() {
-  const script = `import json,pathlib,re,sys
+  const script = `import json,os,pathlib,re,subprocess,sys
 root=pathlib.Path.home()/'.local/share/cauce-v3/hosts'
 policies=list(root.glob('*/*/executor-policy.json'))
 releases=list(root.glob('*/*/release/*/ops/cli/fleet-executor.py'))
@@ -93,6 +94,10 @@ result={'policy_count':len(policies),'release_count':len(releases)}
 if len(policies)==1 and len(releases)==1:
  sys.path.insert(0,str(releases[0].parent))
  try:
+  from host_setup import executor_diagnostic
+  observation=subprocess.run([sys.executable,'-B',str(releases[0]),'--policy',str(policies[0]),'--capabilities'],capture_output=True,timeout=180,env={**os.environ,'CAUCE_FLEET_SETUP_DIAGNOSTICS':'1'})
+  result['executor_exit']=observation.returncode
+  result['executor_diagnostic']=executor_diagnostic(observation.stderr)
   from fleet_executor_policy import load_policy
   from fleet_executor_templates import fleet_harnesses,runtime_candidates
   from fleet_executor_authority import signed_call
@@ -102,11 +107,12 @@ if len(policies)==1 and len(releases)==1:
   except Exception as error:
    text=str(error);result['authority_error']=text if re.fullmatch(r'signed authority (?:effect is unverified|rejected request: HTTP [0-9]{3} \\([A-Z_]+\\))',text) else type(error).__name__
  except Exception as error:
-  text=str(error);result['policy_error']=text if re.fullmatch(r'(?:invalid|unsafe|ambiguous|approved|executor|central|provider|harness)[a-z -]{0,180}',text) else type(error).__name__
+  result['policy_error']=type(error).__name__
 print(json.dumps(result))`;
-  const diagnostic = await host().user(['python3', '-I', '-B', '-c', script], { timeout: 120_000 });
-  await record('setup-diagnostic', { exit: diagnostic.code,
-    result: diagnostic.code === 0 ? JSON.parse(diagnostic.stdout) as unknown : { unavailable: true } });
+  const diagnostic = await host().user(['python3', '-I', '-B', '-c', script], { timeout: 240_000 });
+  const result = diagnostic.code === 0 ? JSON.parse(diagnostic.stdout) as unknown : { unavailable: true };
+  await record('setup-diagnostic', { exit: diagnostic.code, result });
+  return result;
 }
 async function operation(request: FleetOperationRequest) {
   const preview = await api<FleetOperationPreview>('POST', '/v3/console/fleet/operations/preview', request);
@@ -133,14 +139,41 @@ async function operation(request: FleetOperationRequest) {
   return result;
 }
 
+async function installAndEnroll() {
+  if (!release) throw new Error('committed host release unavailable');
+  console.info('H11_STAGE invite');
+  const invitation = await api<{ invitation_token: string; setup_signer_fingerprint: string }>('POST',
+    '/v3/console/fleet/hosts/enrollments', { host_id: hostId, display_name: `Ordenador H11 ${runId}` }, 201);
+  secrets.push(invitation.invitation_token);
+  expect(invitation.setup_signer_fingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  signerFingerprint = invitation.setup_signer_fingerprint;
+  await host().copyIn(active().pki.ca.cert, '/usr/local/share/ca-certificates/h11-gateway.crt');
+  await host().copyIn(active().authorityCa, '/usr/local/share/ca-certificates/h11-authority.crt');
+  checked(await host().root(['update-ca-certificates']), 'install public laboratory CAs');
+  checked(await host().user(['systemctl', '--user', 'set-environment',
+    'NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt']), 'trust public laboratory CAs in the Node executor');
+  const manifest = JSON.parse(await readFile(join(release.releaseDirectory, 'host-release.json'), 'utf8')) as { release: { file: string } };
+  await host().copyIn(join(release.releaseDirectory, manifest.release.file), '/home/cauce/h11-release.tar');
+  checked(await host().root(['chmod', '0644', '/home/cauce/h11-release.tar']), 'public release readability');
+  checked(await host().user(['mkdir', '-p', '/home/cauce/h11-installer']), 'installer directory');
+  checked(await host().user(['tar', '-xf', '/home/cauce/h11-release.tar', '-C', '/home/cauce/h11-installer']), 'extract committed installer');
+  checked(await host().user(['env', `CAUCE_DESTINO_AVISO_INICIAL=${alias}`, 'bash',
+    '/home/cauce/h11-installer/ops/scripts/install-cauce-cli.sh', '/home/cauce/.local/bin']), 'install released CLI');
+  console.info('H11_STAGE enroll');
+  const enrolled = JSON.parse(checked(await host().user(['cauce', 'hosts', 'enroll', '--gateway', active().baseUrl,
+    '--invitation-stdin'], { input: JSON.stringify(invitation) }), 'released CLI enrollment')) as { host_id: string };
+  expect(enrolled.host_id).toBe(hostId);
+}
+
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL || process.env.VITE_USE_MOCKS === 'true') throw new Error('complete host requires isolated PostgreSQL and real routes');
   await mkdir(evidence, { recursive: true, mode: 0o700 });
   work = await mkdtemp(join(tmpdir(), 'h11-complete-'));
-  const revision = COMPLETE_RELEASE_REVISION;
-  expect((await execute('git', ['rev-parse', revision])).stdout.trim()).toBe(revision);
+  const revision = (await execute('git', ['rev-parse', 'HEAD'])).stdout.trim();
+  expect(revision).toMatch(/^[a-f0-9]{40}$/u);
   const inputs = [...['test.ts', 'host.ts', 'gateway.ts', 'release.ts', 'Dockerfile'].map(part => `tests/e2e/v4-alta-ordenador-completa.${part}`),
-    'console/src/features/config/ComputadoraCard.tsx'];
+    'console/src/features/config/ComputadoraCard.tsx', 'ops/cli/host_setup.py', 'ops/cli/host_enrollment.py',
+    'ops/cli/fleet_executor_templates.py'];
   await record('source', { revision, inputs: Object.fromEntries(await Promise.all(inputs.map(async filename => {
     return [filename, createHash('sha256').update(await readFile(filename)).digest('hex')] as const;
   }))) });
@@ -162,6 +195,7 @@ beforeAll(async () => {
   await fillRegistration(registration, person);
   await registration.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
   await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
+  await installAndEnroll();
 }, 1_800_000);
 
 afterAll(async () => {
@@ -193,30 +227,36 @@ afterAll(async () => {
   if (failures.length) throw new AggregateError(failures, 'complete computer teardown failed');
 }, 240_000);
 
-describe('complete computer installation through the released CLI and signed host setup', () => {
+describe.sequential('complete computer installation through the released CLI and signed host setup', () => {
+  it('rejects an invalid template prefix with its executor code and field and retains the enrollment', async () => {
+    const privateValue = `INVALID-${runId}/private-value`;
+    secrets.push(privateValue);
+    const prefix = active().setContainerTemplatePrefix(privateValue);
+    try {
+      const rejected = await host().user(['cauce', 'hosts', 'setup'], { timeout: 600_000 });
+      if (secrets.some(secret => rejected.stderr.includes(secret)) || /\/(?:home|tmp)\//u.test(rejected.stderr)) {
+        throw new Error('negative setup diagnostic exposed private fixture material');
+      }
+      expect(rejected.code).toBe(1);
+      expect(rejected.stderr).toBe('cauce: La política se guardó, pero el executor la rechazó: '
+        + 'policy_template_prefix_invalid en container_templates[0].prefix. Revisa ese componente y repite cauce hosts setup. '
+        + 'No se inició el servicio. Identidad local conservada.\n');
+      expect(await diagnoseSetup()).toMatchObject({ executor_exit: 2,
+        executor_diagnostic: 'policy_template_prefix_invalid: container_templates[0].prefix' });
+      const status = await host().user(['cauce', 'hosts', 'status']);
+      expect(status.code).toBe(3);
+      const local = JSON.parse(status.stdout) as Record<string, unknown>;
+      expect(local).toMatchObject({ host_id: hostId, executor_ready: false, service_active: false });
+      await record('negative-setup', { exit: rejected.code, diagnostic: rejected.stderr.trim(),
+        field: 'container_templates[0].prefix', code: 'policy_template_prefix_invalid',
+        executor_ready: local.executor_ready, service_active: local.service_active, enrollment_retained: local.host_id === hostId });
+    } finally {
+      active().setContainerTemplatePrefix(prefix);
+    }
+  }, 600_000);
+
   it('installs a user executor, runs an agent in its own dockerd, purges it and deregisters the host', async () => {
     if (!release) throw new Error('committed host release unavailable');
-    console.info('H11_STAGE invite');
-    const invitation = await api<{ invitation_token: string; setup_signer_fingerprint: string }>('POST',
-      '/v3/console/fleet/hosts/enrollments', { host_id: hostId, display_name: `Ordenador H11 ${runId}` }, 201);
-    secrets.push(invitation.invitation_token);
-    expect(invitation.setup_signer_fingerprint).toMatch(/^[a-f0-9]{64}$/u);
-    await host().copyIn(active().pki.ca.cert, '/usr/local/share/ca-certificates/h11-gateway.crt');
-    await host().copyIn(active().authorityCa, '/usr/local/share/ca-certificates/h11-authority.crt');
-    checked(await host().root(['update-ca-certificates']), 'install public laboratory CAs');
-    checked(await host().user(['systemctl', '--user', 'set-environment',
-      'NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt']), 'trust public laboratory CAs in the Node executor');
-    const manifest = JSON.parse(await readFile(join(release.releaseDirectory, 'host-release.json'), 'utf8')) as { release: { file: string } };
-    await host().copyIn(join(release.releaseDirectory, manifest.release.file), '/home/cauce/h11-release.tar');
-    checked(await host().root(['chmod', '0644', '/home/cauce/h11-release.tar']), 'public release readability');
-    checked(await host().user(['mkdir', '-p', '/home/cauce/h11-installer']), 'installer directory');
-    checked(await host().user(['tar', '-xf', '/home/cauce/h11-release.tar', '-C', '/home/cauce/h11-installer']), 'extract committed installer');
-    checked(await host().user(['env', `CAUCE_DESTINO_AVISO_INICIAL=${alias}`, 'bash',
-      '/home/cauce/h11-installer/ops/scripts/install-cauce-cli.sh', '/home/cauce/.local/bin']), 'install released CLI');
-    console.info('H11_STAGE enroll');
-    const enrolled = JSON.parse(checked(await host().user(['cauce', 'hosts', 'enroll', '--gateway', active().baseUrl,
-      '--invitation-stdin'], { input: JSON.stringify(invitation) }), 'released CLI enrollment')) as { host_id: string };
-    expect(enrolled.host_id).toBe(hostId);
     console.info('H11_STAGE setup');
     const installed = await host().user(['cauce', 'hosts', 'setup'], { timeout: 600_000 });
     if (installed.code !== 0) await diagnoseSetup();
@@ -229,7 +269,7 @@ describe('complete computer installation through the released CLI and signed hos
     expect(checked(await host().user(['systemctl', '--user', 'is-active', unit]), 'executor systemd state')).toBe('active');
     const status = JSON.parse(checked(await host().user(['cauce', 'hosts', 'status']), 'released CLI status')) as Record<string, unknown>;
     expect(status).toMatchObject({ host_id: hostId, service_active: true, executor_ready: true, linger: true });
-    await record('installed', { host_id: hostId, unit, status, signer_fingerprint: invitation.setup_signer_fingerprint });
+    await record('installed', { host_id: hostId, unit, status, signer_fingerprint: signerFingerprint });
     const readyHost = (await until('signed host heartbeat', hosts, list => list.some(item => item.host_id === hostId
       && item.status === 'reachable' && item.status_source === 'controller' && item.approved))).find(item => item.host_id === hostId);
     await record('host-online', readyHost);

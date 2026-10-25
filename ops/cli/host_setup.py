@@ -494,9 +494,63 @@ def write_if_changed(filename: pathlib.Path, content: str, mode: int) -> bool:
     return True
 
 
+def setup_diagnostic(value: str) -> tuple[str, str] | None:
+    fields = {
+        'policy_template_prefix_invalid': r'container_templates\[(?:0|[1-9][0-9]?)\]\.prefix',
+        'policy_template_invalid': r'container_templates',
+        'policy_profile_invalid': r'profile_templates',
+        'policy_file_unsafe': r'policy',
+        'policy_schema_invalid': r'schemaVersion',
+        'policy_identity_mismatch': r'identity',
+        'policy_roots_invalid': r'roots',
+        'executor_templates_unavailable': r'runtimes',
+        'executor_transport_missing': r'transport',
+        'executor_hook_missing': r'hooks\.(?:authenticate|profile|verify|revoke)',
+        'executor_authority_unavailable': r'authority',
+        'executor_unconfigured': r'capabilities',
+        'unsupported_schema': r'schemaVersion',
+        'executor_diagnostic_unavailable': r'capabilities',
+    }
+    code, separator, field = value.partition(': ')
+    if separator and code in fields and re.fullmatch(fields[code], field):
+        return code, field
+    return None
+
+
+def executor_diagnostic(stderr: bytes) -> str | None:
+    if len(stderr) > 8192:
+        return None
+    static = {
+        'invalid bounded container templates': 'policy_template_invalid: container_templates',
+        'invalid approved container template': 'policy_template_invalid: container_templates',
+        'ambiguous approved container template': 'policy_template_invalid: container_templates',
+        'invalid bounded provider profile templates': 'policy_profile_invalid: profile_templates',
+        'invalid approved provider profile template': 'policy_profile_invalid: profile_templates',
+        'unsafe policy ownership or mode': 'policy_file_unsafe: policy',
+        'invalid executor policy schema': 'policy_schema_invalid: schemaVersion',
+        'executor host or execution user differs': 'policy_identity_mismatch: identity',
+        'invalid executor roots': 'policy_roots_invalid: roots',
+        'executor roots must be distinct': 'policy_roots_invalid: roots',
+        'executor roots must not overlap': 'policy_roots_invalid: roots',
+    }
+    matches = []
+    for line in stderr.decode('utf-8', 'replace').splitlines():
+        if line.startswith('fleet effect failed: '):
+            value = line.removeprefix('fleet effect failed: ')
+            value = static.get(value, value)
+        elif line.startswith('CAUCE_SETUP_DIAGNOSTIC='):
+            value = line.removeprefix('CAUCE_SETUP_DIAGNOSTIC=')
+        else:
+            continue
+        if setup_diagnostic(value):
+            matches.append(value)
+    return matches[0] if len(matches) == 1 else None
+
+
 def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dict:
     try:
-        result = runner([shutil.which('python3') or sys.executable, '-B', str(release / 'ops/cli/fleet-executor.py'),
+        result = runner(['/usr/bin/env', 'CAUCE_FLEET_SETUP_DIAGNOSTICS=1', shutil.which('python3') or sys.executable,
+            '-B', str(release / 'ops/cli/fleet-executor.py'),
             '--policy', str(policy_file), '--capabilities'], CAPABILITIES_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         raise HostFailure(f'la verificación de capacidades del executor superó {CAPABILITIES_TIMEOUT_SECONDS} segundos; '
@@ -505,10 +559,17 @@ def capabilities_report(release: pathlib.Path, policy_file: pathlib.Path) -> dic
         report = json.loads(result.stdout) if result.returncode == 0 else {}
     except ValueError:
         report = {}
+    stderr = result.stderr if isinstance(result.stderr, bytes) else b''
+    available = bool(isinstance(report, dict) and report.get('available') is True)
+    diagnostic = executor_diagnostic(stderr) if not available else None
     placements = report.get('placements') if isinstance(report, dict) else None
     templates = sum(len(item.get('runtimes', [])) for item in placements or [] if isinstance(item, dict))
-    return {'available': bool(isinstance(report, dict) and report.get('available') is True), 'templates': templates,
-        'reason': report.get('reason') if isinstance(report, dict) else 'executor_unreadable',
+    reason = report.get('reason') if isinstance(report, dict) else None
+    reason = {'executor_unconfigured': 'executor_unconfigured: capabilities',
+        'unsupported_schema': 'unsupported_schema: schemaVersion'}.get(reason) if isinstance(reason, str) else None
+    return {'available': available, 'templates': templates,
+        'reason': diagnostic or reason
+            or (None if available else 'executor_diagnostic_unavailable: capabilities'),
         'quota_environments': report.get('quota_environments') if isinstance(report, dict) else None}
 
 

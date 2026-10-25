@@ -9,7 +9,7 @@ import { plazo } from '../helpers/plazos.js';
 import { createNetworkWithFallback } from './docker-network-subnet.js';
 import { connectXOuterDocker } from './v4-agentes-x-docker-isolation.js';
 
-const OWNER = 'h11-alta-ordenador-completa-1025';
+const OWNER = 'h11b-rechazo-setup-tres-vm-1025';
 const SOCKET = 'unix:///var/run/docker.sock';
 const USER = 'cauce';
 const UID = 1500;

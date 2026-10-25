@@ -135,6 +135,16 @@ def failure_reason(error: Exception) -> str:
 
 def host_failure_message(error: HostFailure) -> str:
     message = str(error)
+    rejected = re.fullmatch(
+        r'executor policy was written but the executor rejects it \(([^\r\n]{1,2048})\); service not started', message)
+    if rejected:
+        from host_setup import setup_diagnostic
+        detail = setup_diagnostic(rejected[1])
+        if detail is not None:
+            return ('La política se guardó, pero el executor la rechazó: ' + detail[0] + ' en ' + detail[1]
+                + '. Revisa ese componente y repite cauce hosts setup. No se inició el servicio.')
+        return ('La política se guardó, pero el executor la rechazó: executor_diagnostic_unavailable en capabilities. '
+            'No se recibió una causa verificable. No se inició el servicio.')
     known = {
         'invitation exceeds its limit': 'La invitación supera el tamaño permitido; copia el JSON completo desde la consola.',
         'paste the complete pending invitation JSON from the console': 'Copia desde la consola el JSON completo de una invitación pendiente.',
@@ -212,8 +222,6 @@ def host_failure_message(error: HostFailure) -> str:
             'La descarga no coincide con el SHA-256 firmado; solicita un paquete nuevo y repite cauce hosts setup. No se instaló nada.'),
         (r'la verificación de capacidades del executor superó [0-9]{1,6} segundos; revisa el servicio, las plantillas y la conexión con la autoridad de flota; identidad local conservada',
             'La verificación de capacidades del executor superó el tiempo límite; revisa el servicio, las plantillas y la conexión con la autoridad de flota.'),
-        (r'executor policy was written but the executor rejects it \([^\r\n]{0,2048}\); service not started',
-            'La política se guardó, pero el executor la rechazó; revisa las plantillas y la autoridad de flota. No se inició el servicio.'),
         (r'could not start the user service; check XDG_RUNTIME_DIR and `systemctl --user status cauce-v3-host-executor-[A-Za-z0-9_.-]{1,257}\.service`',
             'No se pudo iniciar el servicio de usuario; revisa XDG_RUNTIME_DIR y consulta systemctl --user status cauce-v3-host-executor-*.'),
     )
