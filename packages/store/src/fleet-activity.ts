@@ -127,7 +127,7 @@ WITH visible_tenants AS (
    WHERE ${fleetReadableSql('$1::text', 't.id')}
 ),
 open_deliveries AS (
-  -- Sólo estados abiertos. Las terminadas (done/failed/dead) no dicen nada sobre qué está
+  -- Solo estados abiertos. Las terminadas (done/failed/dead) no dicen nada sobre qué está
   -- haciendo el agente AHORA y son el 99% de la tabla.
   SELECT d.id, d.message_id, d.recipient_tenant, d.recipient_alias, d.status,
          d.attempt, d.claimed_at, d.ack_deadline_at, d.available_at
@@ -170,7 +170,7 @@ work AS (
    GROUP BY o.recipient_tenant, o.recipient_alias
 ),
 ack_activity AS (
-  -- LA señal de vida. Sólo ACKs APLICADOS: applied=false es un frame duplicado o fuera de orden
+  -- LA señal de vida. Solo ACKs APLICADOS: applied=false es un frame duplicado o fuera de orden
   -- y no prueba ningún progreso; contarlo haría pasar por sano justo al agente que reintenta
   -- el mismo ACK en loop. Acotada a $3 segundos para que el scan no recorra delivery_acks entera.
   SELECT d.recipient_tenant AS tenant_id, d.recipient_alias AS alias,
@@ -272,7 +272,7 @@ SELECT p.tenant_id,
                CASE WHEN raiz.humana THEN NULL ELSE m.actor_alias END AS from_alias,
                raiz.humana          AS from_human,
                m.lane,
-               -- Sólo el ADAPTADOR (identificador acotado a 64 chars: 'telegram', 'bus'); en la raíz
+               -- Solo el ADAPTADOR (identificador acotado a 64 chars: 'telegram', 'bus'); en la raíz
                -- humana sin adaptador, el canal ('console', 'human-mcp'). Nunca conversation_id.
                CASE WHEN raiz.humana THEN COALESCE(m.origin->>'adapter', m.auth_channel)
                     ELSE m.origin->>'adapter' END AS origin_adapter,
@@ -305,7 +305,7 @@ SELECT p.tenant_id,
       ) top
   ) inflight ON true
   LEFT JOIN LATERAL (
-    -- Sólo membresías HABILITADAS: una membresía deshabilitada no coloca al alias en esa sala,
+    -- Solo membresías HABILITADAS: una membresía deshabilitada no coloca al alias en esa sala,
     -- y dibujarlo dentro afirmaría una pertenencia que el control plane ya retiró.
     SELECT array_agg(mem.room_id ORDER BY mem.room_id) AS rooms
       FROM memberships mem

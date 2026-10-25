@@ -215,7 +215,7 @@ test("un diálogo abierto no se confunde con una línea a medio escribir", async
   const error = await expectSharedTuiUnavailable(execute(adapter));
   assert.equal(tmux.pasted, undefined, "no se pega NADA dentro de un diálogo");
   assert.match(error.message, /modal_blocking/u);
-  assert.match(error.message, /contestá el diálogo/u);
+  assert.match(error.message, /contesta el diálogo/u);
   assert.doesNotMatch(error.message, /input_busy/u);
   const degradation = (await readDegradations(state))[0];
   assert.equal(degradation?.reason, "modal_blocking");

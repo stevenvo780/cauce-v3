@@ -384,8 +384,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const pointer = pasteSafeText(correlateEnvelopePrompt([
       `Pedido de Cauce demasiado largo para pegarlo en la terminal (${String(bytes)} bytes).`,
       `Está COMPLETO en el fichero ${file}.`,
-      "Antes de hacer cualquier otra cosa, leelo ENTERO con tu herramienta de lectura de ficheros (todas sus líneas)"
-        + " y seguí sus instrucciones al pie de la letra: son el pedido de este turno y su protocolo de respuesta.",
+      "Antes de hacer cualquier otra cosa, léelo ENTERO con tu herramienta de lectura de ficheros (todas sus líneas)"
+        + " y sigue sus instrucciones al pie de la letra: son el pedido de este turno y su protocolo de respuesta.",
     ].join("\n"), correlationId, mcpEmission));
     return { file, pointer };
   }

@@ -93,15 +93,15 @@ export function degradationNotice(
     || degradation.reason === "session_harness_mismatch"
     || degradation.reason === "session_identity_unverified";
   const remedio = degradation.reason === "modal_blocking"
-    ? `Para restablecerlo: contestá el diálogo abierto en el panel de \`cauce ${alias}\``
+    ? `Para restablecerlo: contesta el diálogo abierto en el panel de \`cauce ${alias}\``
       + ` (mecanismo: ${mecanismo}).`
     : degradation.reason === "tui_generating"
       ? `No hay nada roto: la terminal de \`cauce ${alias}\` seguía ocupada con otro turno; el pedido`
         + ` se reintenta solo cuando se libere (mecanismo: ${mecanismo}).`
     : identityFailure
-      ? `Para restablecerlo: revisá y drená/archivá la sesión incompatible de \`cauce ${alias}\``
+      ? `Para restablecerlo: revisa y drena/archiva la sesión incompatible de \`cauce ${alias}\``
         + ` antes de crear la correcta; el adaptador la conservó intacta (mecanismo: ${mecanismo}).`
-      : `Para restablecerlo: abrí \`cauce ${alias}\` (mecanismo: ${mecanismo}).`;
+      : `Para restablecerlo: abre \`cauce ${alias}\` (mecanismo: ${mecanismo}).`;
   return [
     DEGRADED_MARK,
     `Este turno NO pasó por la terminal de ${alias}: ${REASON_TEXT[degradation.reason]}`
@@ -110,7 +110,7 @@ export function degradationNotice(
       ? "El modelo no recibió este pedido y no se usó ningún ejecutor ni conversación alternativa."
         + (degradation.reason === "tui_generating"
           ? " No hay que restablecer nada."
-          : " Restablecé la terminal canónica antes de volver a enviarlo.")
+          : " Restablece la terminal canónica antes de volver a enviarlo.")
       : "Se respondió por el camino de siempre, así que este intercambio NO aparece en el panel"
         + " del dueño y el agente no lo verá en la conversación de la terminal.",
     remedio,
