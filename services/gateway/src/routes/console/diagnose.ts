@@ -217,6 +217,7 @@ async function chain(client: DatabaseClient, authority: CompanyAuthority, id: st
   if (read.rows[0]?.allowed !== true) throw new AuthorizationError();
   const tenant = authority.scope === 'tenant' ? authority.homeTenant : null;
   let frontier = ['trace', 'operation', 'session', 'delivery', 'backup', 'message'].map(type => normalizedReference(`${type}:${id}`));
+  if (/^(?:0|[1-9][0-9]{0,18})$/u.test(id)) frontier.push(normalizedReference(`audit:${id}`));
   const known = new Set(frontier); const nodes = new Map<string, ChainRow>();
   let truncated = false;
   for (let round = 0; round < MAX_ROUNDS && frontier.length > 0; round += 1) {

@@ -134,6 +134,22 @@ describe('company scoped diagnosis through a signed human session and real Postg
     const id = chain().operation.toUpperCase(); assertChain(await diagnose(id),id);
     expect((await diagnose(chain().trace.toUpperCase())).statusCode).toBe(404);
   });
+  it('reconstruye la cadena desde el id de un evento de auditoría y oculta el de otra empresa', async () => {
+    const own = (await admin().query<{ id: string }>(`SELECT id::text FROM audit_events
+      WHERE company_id=$1 AND action='context.sync' ORDER BY id LIMIT 1`, [chain().company_id])).rows[0]?.id;
+    if (!own) throw new Error('own audit event unavailable');
+    const response = await diagnose(own); expect(response.statusCode).toBe(200);
+    const body = response.json<Diagnosis>();
+    expect(body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'audit', id: own, action: 'context.sync' }),
+      expect.objectContaining({ type: 'context', error_code: 'context_git_authentication_failed' }),
+    ]));
+    expect(body.items.every(item => item.company_id === chain().company_id)).toBe(true);
+    const foreign = (await admin().query<{ id: string }>(`SELECT id::text FROM audit_events
+      WHERE company_id=$1 AND action='context.sync' ORDER BY id LIMIT 1`, [chain(1).company_id])).rows[0]?.id;
+    if (!foreign) throw new Error('foreign audit event unavailable');
+    expect((await diagnose(foreign)).statusCode).toBe(404);
+  });
   it('rejects every foreign company identifier without disclosing existence', async () => {
     for (const kind of ['trace','operation','session','delivery','backup'] as const) expect((await diagnose(chain(1)[kind])).statusCode).toBe(404);
     expect((await diagnose(randomUUID())).statusCode).toBe(404);
