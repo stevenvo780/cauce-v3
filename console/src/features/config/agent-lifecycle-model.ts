@@ -68,7 +68,14 @@ export function agentLifecycleRequest(
     if (row?.runtime_key !== null) return { error: 'La clave física no está publicada; relee el registro antes de prepararlo.' };
   }
   const rooms = lifecycleOptions(snapshot, 'rooms', draft.tenantId);
-  if (draft.memberships.some((member) => !rooms.some((room) => room.id === member.room_id))) return { error: 'Una membresía apunta a grupos ausentes del inventario.' };
+  const memberships = draft.memberships.filter((member) => !(kind === 'update' && target?.resource === 'agent'
+    && !member.enabled && member.room_id !== draft.primaryRoomId
+    && !rooms.some((room) => room.id === member.room_id)
+    && snapshot.retired?.rooms.some((room) => room.tenant_id === draft.tenantId && room.id === member.room_id)
+    && snapshot.memberships?.some((row) => row.tenant_id === target.tenant_id
+      && (typeof row.alias === 'string' ? row.alias : row.agent_alias) === target.alias
+      && row.room_id === member.room_id && row.role === member.role && row.enabled === false)));
+  if (memberships.some((member) => !rooms.some((room) => room.id === member.room_id))) return { error: 'Una membresía apunta a grupos ausentes del inventario.' };
   if (!lifecycleOptions(snapshot, 'harness_definitions').some((option) => option.id === draft.harnessId)) return { error: 'El arnés debe existir en el inventario actual.' };
   if (draft.primaryAccountId && !lifecycleOptions(snapshot, 'provider_accounts').some((option) => option.id === draft.primaryAccountId)) return { error: 'La cuenta principal ya no está publicada.' };
   const host = capability.placements.find((placement) => placement.host_id === draft.hostId);
@@ -83,7 +90,7 @@ export function agentLifecycleRequest(
     expected_revision: snapshot.revision, idempotency_key: key,
     parameters: {
       runtime_key: draft.runtimeKey, harness_id: draft.harnessId, display_name: draft.displayName || null,
-      primary_room_id: draft.primaryRoomId, memberships: draft.memberships,
+      primary_room_id: draft.primaryRoomId, memberships,
       placement: { host_id: draft.hostId, mode: draft.mode, runtime_user: draft.runtimeUser,
         home_directory: draft.homeDirectory, state_directory: draft.stateDirectory,
         ...(draft.mode === 'container' ? { container_name: draft.containerName } : {}),

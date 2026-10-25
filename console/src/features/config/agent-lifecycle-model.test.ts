@@ -61,6 +61,65 @@ describe('agent lifecycle intent', () => {
     expect(draft.memberships).toEqual([{ room_id: ' Sala ', role: 'rol con espacios', enabled: true }]);
     expect(draft.primaryRoomId).toBe(' Sala ');
   });
+  it('omits disabled memberships to retired rooms from the desired update while preserving their history', () => {
+    const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+    const historical = { tenant_id: 'A', alias: 'one', room_id: 'retired-room', role: 'agent', enabled: false };
+    const current = { ...snapshot, memberships: [...(snapshot.memberships ?? []), historical,
+      { tenant_id: 'A', alias: 'one', room_id: 'Sala', role: 'operator', enabled: false }],
+    retired: { tenants: [], memberships: [], agents: [], rooms: [{ tenant_id: 'A', id: 'retired-room', enabled: false }] } };
+    const original = structuredClone(current);
+    const draft = agentLifecycleDraft(current, target);
+    const originalDraft = structuredClone(draft);
+    const result = agentLifecycleRequest(draft, current, capability, 'update', 'request_key', target);
+    expect(result.error).toBeUndefined();
+    expect(result.request).toMatchObject({ target, parameters: { primary_room_id: ' Sala ', memberships: [
+      { room_id: ' Sala ', role: 'rol con espacios', enabled: true },
+      { room_id: 'Sala', role: 'operator', enabled: false },
+    ] } });
+    expect(draft.memberships).toContainEqual({ room_id: 'retired-room', role: 'agent', enabled: false });
+    expect(draft).toEqual(originalDraft);
+    expect(current).toEqual(original);
+  });
+  it.each([
+    { label: 'enabled membership to an absent room', enabled: true, retiredTenant: undefined },
+    { label: 'enabled membership to a retired room', enabled: true, retiredTenant: 'A' },
+    { label: 'disabled membership without retirement evidence', enabled: false, retiredTenant: undefined },
+    { label: 'disabled membership whose room is retired only in another tenant', enabled: false, retiredTenant: 'B' },
+  ])('rejects $label', ({ enabled, retiredTenant }) => {
+    const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+    const current = { ...snapshot, memberships: [...(snapshot.memberships ?? []),
+      { tenant_id: 'A', alias: 'one', room_id: 'absent-room', role: 'agent', enabled }],
+    retired: { tenants: [], memberships: [], agents: [], rooms: retiredTenant ? [{ tenant_id: retiredTenant, id: 'absent-room', enabled: false }] : [] } };
+    const result = agentLifecycleRequest(agentLifecycleDraft(current, target), current, capability, 'update', 'request_key', target);
+    expect(result.request).toBeUndefined();
+    expect(result.error).toMatch(/Una membresía apunta a grupos ausentes del inventario/);
+  });
+  it.each(['create', 'missing-target', 'unpublished-membership', 'changed-role'] as const)(
+    'rejects treating a disabled retired-room membership as historical for %s', (scenario) => {
+      const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+      const current = { ...snapshot, memberships: [...(snapshot.memberships ?? []),
+        ...(scenario === 'unpublished-membership' ? [] : [{ tenant_id: 'A', alias: 'one',
+          room_id: 'retired-room', role: 'agent', enabled: false }])],
+      retired: { tenants: [], memberships: [], agents: [], rooms: [{ tenant_id: 'A', id: 'retired-room', enabled: false }] } };
+      const draft = agentLifecycleDraft(current, target);
+      if (scenario === 'unpublished-membership') draft.memberships.push({ room_id: 'retired-room', role: 'agent', enabled: false });
+      if (scenario === 'changed-role') draft.memberships = draft.memberships.map(member =>
+        member.room_id === 'retired-room' ? { ...member, role: 'operator' } : member);
+      const result = agentLifecycleRequest(draft, current, capability, scenario === 'create' ? 'create' : 'update',
+        'request_key', scenario === 'missing-target' ? undefined : target);
+      expect(result.request).toBeUndefined();
+      expect(result.error).toMatch(/grupos ausentes/);
+    });
+  it('rejects a retired primary room even when its historical membership is disabled', () => {
+    const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+    const current = { ...snapshot, agents: [{ ...snapshot.agents?.[0], primary_room_id: 'retired-room' }],
+      memberships: [...(snapshot.memberships ?? []),
+        { tenant_id: 'A', alias: 'one', room_id: 'retired-room', role: 'agent', enabled: false }],
+      retired: { tenants: [], memberships: [], agents: [], rooms: [{ tenant_id: 'A', id: 'retired-room', enabled: false }] } };
+    const result = agentLifecycleRequest(agentLifecycleDraft(current, target), current, capability, 'update', 'request_key', target);
+    expect(result.request).toBeUndefined();
+    expect(result.error).toMatch(/grupos ausentes/);
+  });
   it('requires explicit capability and approved host/user/paths before preparing an inactive agent', () => {
     const draft = { ...agentLifecycleDraft(snapshot), tenantId: 'A', alias: 'new-agent', runtimeKey: 'new-agent',
       harnessId: 'codex', hostId: 'test-host', mode: 'native' as const, runtimeUser: 'runner', homeDirectory: '/home/runner',
