@@ -160,6 +160,29 @@ class HostSetupTests(unittest.TestCase):
         self.assertEqual(rejected.returncode, 2)
         self.assertIn(b'backup-only executor policy grants another execution scope', rejected.stderr)
 
+    def test_signed_release_with_a_terminal_launcher_requires_automatic_provisioning(self):
+        release = self.home / 'release'
+        launcher = release / 'ops/pty-agent/cauce-pty-launcher.sh'
+        launcher.parent.mkdir(parents=True)
+        package = {'policy': {'authority': {'identity_directory': '@identity@'}}}
+        self.assertNotIn('terminal', host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity))
+        launcher.write_text('#!/bin/sh\n')
+        policy = host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity)
+        self.assertEqual(policy['terminal'], {'required': True})
+        self.assertNotIn('terminal', package['policy'])
+
+    def test_terminal_approval_is_preserved_and_a_release_without_authority_cannot_add_it(self):
+        release = self.home / 'release'
+        launcher = release / 'ops/pty-agent/cauce-pty-launcher.sh'
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text('#!/bin/sh\n')
+        self.assertNotIn('terminal', host_setup.compose_policy({'policy': {}}, 'local-a', self.home / 'install', release, self.identity))
+        for required in (False, True):
+            with self.subTest(required=required):
+                package = {'policy': {'authority': {'identity_directory': '@identity@'}, 'terminal': {'required': required}}}
+                policy = host_setup.compose_policy(package, 'local-a', self.home / 'install', release, self.identity)
+                self.assertEqual(policy['terminal'], {'required': required})
+
     def artifacts(self) -> list[dict]:
         items = [{'name': 'release', 'kind': 'release', 'sha256': hashlib.sha256(self.archive).hexdigest(), 'size': len(self.archive)}]
         if self.image:

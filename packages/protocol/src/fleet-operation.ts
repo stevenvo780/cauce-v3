@@ -109,6 +109,7 @@ export const FleetEvidenceSchema = z.object({
   provider_verified: z.boolean().optional(), hello_verified: z.boolean().optional(),
   bootstrap_verified: z.boolean().optional(),
   profile_verified: z.boolean().optional(), roundtrip_verified: z.boolean().optional(),
+  terminal_verified: z.boolean().optional(), terminal_certificate_sha256: Sha256HexSchema.optional(),
   stopped_verified: z.boolean().optional(), revocation_verified: z.boolean().optional(),
   native_decommissioned: z.boolean().optional(),
   removed: z.array(z.object({
@@ -123,7 +124,7 @@ export const FleetRecoveryReasonSchema = z.enum(['runtime_mounts_differ', 'share
   'harness_unsupported', 'runtime_without_shared_tui']);
 export const FleetExecutionReasonSchema = z.enum([...FleetRecoveryReasonSchema.options,
   'runtime_identity_mismatch', 'runtime_security_mismatch', 'runtime_bundle_changed',
-  'runtime_stop_unverified', 'provider_functional_proof_failed']);
+  'runtime_stop_unverified', 'provider_functional_proof_failed', 'terminal_provision_failed']);
 export type FleetExecutionReason = z.infer<typeof FleetExecutionReasonSchema>;
 export const FleetErrorSchema = z.object({
   code: z.enum(['AUTHORITY_REVOKED', 'REVISION_CONFLICT', 'HOST_UNAVAILABLE', 'DEPENDENCIES_PRESENT',

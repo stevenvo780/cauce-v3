@@ -19,4 +19,6 @@ export const FLEET_FAILURE_TEXT: Record<NonNullable<FleetError['reason']>, { mes
     next: 'Comprueba la detención en la ficha de Ejecución antes de arrancar o volver a intentarlo.' },
   provider_functional_proof_failed: { message: 'El proveedor no superó la comprobación funcional del agente.',
     next: 'Revisa su cuenta y su autenticación; después vuelve a comprobar la operación.' },
+  terminal_provision_failed: { message: 'No se pudo preparar y comprobar la terminal del agente.',
+    next: 'Revisa el canal de terminal del equipo y reintenta la operación antes de utilizar el agente.' },
 };

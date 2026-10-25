@@ -7,7 +7,9 @@ El nombre cauce-<alias> por si solo nunca acredita identidad porque puede reutil
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import pwd
 import subprocess
 import unittest
 
@@ -260,6 +262,47 @@ class DynamicDescriptorTest(unittest.TestCase):
         self.assertIn("TMUX_PANE_CWD_FOUND=''", publish[:explicit_guard])
         self.assertLess(explicit_guard, derive)
         self.assertLess(derive, facts)
+
+
+class FleetPhysicalIdentityTest(unittest.TestCase):
+    def labels(self, labels, owner=None):
+        text = LAUNCHER.read_text(encoding="utf-8")
+        start = text.index("read_adapter_generation() {")
+        function = text[start:text.index("\n}\n", start) + len("\n}\n")]
+        prelude = r'''
+set -euo pipefail
+alias_name=physical-one
+wire_alias=logical_alias
+tenant=Steven
+container_id=fixture
+container_started=fixture-start
+CAUCE_PTY_FLEET_RUNTIME_KEY=physical-one
+CAUCE_PTY_FLEET_HOST=host-a
+die() { printf '%s\n' "$1" >&2; exit "${2:-2}"; }
+docker_control() {
+  [[ $1 == inspect ]] || { printf 'unexpected effect\n'; exit 99; }
+  if [[ $3 == *cauce.fleet.owner* ]]; then printf '%s\n' "$FIXTURE_OWNER";
+  else printf '%s\n' "$FIXTURE_LABELS"; fi
+}
+'''
+        return subprocess.run(["bash", "-c", prelude + function + '\nread_adapter_generation\nprintf "%s\\n" "$TMUX_PHYSICAL_ALIAS"\n'],
+            env={"PATH": "/usr/bin:/bin", "FIXTURE_LABELS": labels,
+                 "FIXTURE_OWNER": owner or "host-a " + pwd.getpwuid(os.geteuid()).pw_name},
+            capture_output=True, text=True, check=False)
+
+    def test_verified_fleet_uses_the_physical_tmux_alias_with_a_distinct_wire_alias(self):
+        result = self.labels('logical_alias Steven physical-one')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'physical-one\n')
+
+    def test_foreign_labels_hold_before_any_legacy_exec_fallback(self):
+        cases = [('foreign Steven physical-one', None), ('logical_alias Foreign physical-one', None),
+                 ('logical_alias Steven foreign', None), ('logical_alias Steven physical-one', 'foreign other')]
+        for labels, owner in cases:
+            with self.subTest(labels=labels, owner=owner):
+                result = self.labels(labels, owner)
+                self.assertEqual(result.returncode, 78)
+                self.assertNotIn('unexpected effect', result.stdout)
 
 
 if __name__ == "__main__":  # pragma: no cover

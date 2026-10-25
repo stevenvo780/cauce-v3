@@ -81,13 +81,13 @@ def reap_container(policy: dict, agent: dict, entry: dict, save) -> None:
         checked_command,
         identity_for,
         inspect_container,
+        teardown_agent,
         user_identity,
-        validate_container,
     )
     observed = inspect_container(agent['container_name'])
     if observed is None or observed['State']['Running'] is not True:
         return
-    validate_container(policy, agent, observed, teardown=True)
+    agent = teardown_agent(policy, agent, observed)
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
     source = pathlib.Path(__file__).resolve().parents[1] / 'pty-agent/reap_orphan_agent.py'
@@ -151,13 +151,16 @@ def relay_absence(agent: dict, journal: dict) -> dict:
     return entry
 
 
-def observe(agent: dict, home: pathlib.Path, journal: dict, *, require_container: bool = False) -> dict:
+def observe(agent: dict, home: pathlib.Path, journal: dict, *, require_container: bool = False, selector: str | None = None) -> dict:
+    selector = agent['alias'] if selector is None else selector
+    if selector not in {agent['alias'], agent['runtime_key']}:
+        raise SafeFailure('terminal storage selector is outside its physical and wire identity')
     config = home / '.config/cauce-v3'
-    envs = [config / name / (agent['alias'] + '.env') for name in ('pty', 'pty-host')]
-    metadata = config / 'pty' / (agent['alias'] + '.migration.json')
-    pki = config / 'pty-pki' / agent['alias']
+    envs = [config / name / (selector + '.env') for name in ('pty', 'pty-host')]
+    metadata = config / 'pty' / (selector + '.migration.json')
+    pki = config / 'pty-pki' / selector
     root = home / '.config/systemd/user'
-    units = [prefix + agent['alias'] + '.service' for prefix in UNIT_PREFIXES]
+    units = [prefix + selector + '.service' for prefix in UNIT_PREFIXES]
     candidates = [*envs, metadata, pki, *(root / (unit + '.d') for unit in units),
                   *(root / 'default.target.wants' / unit for unit in units), *(root / unit for unit in units)]
     observed = {}
@@ -171,12 +174,12 @@ def observe(agent: dict, home: pathlib.Path, journal: dict, *, require_container
             return {'identity': {key: agent[key] for key in ('tenant_id', 'alias', 'runtime_key')},
                     'files': {}, 'templates': {}, 'units': list(observed), 'observed_units': [], 'dropins': [],
                     'pki': str(pki), 'pki_present': False, 'fingerprints': authority.get('terminal_fingerprints', []),
-                    'bundle_paths': ['/var/tmp/.cauce-pty-bundle-' + agent['alias'] + '.json',
-                                     '/run/cauce-pty-' + agent['alias'] + '/bundle.json'], 'removed': []}
+                    'selector': selector, 'bundle_paths': ['/var/tmp/.cauce-pty-bundle-' + selector + '.json',
+                                     '/run/cauce-pty-' + selector + '/bundle.json'], 'removed': []}
         return {}
     authority = relay_absence(agent, journal)
     files, templates, dropins, observed_units = {}, {}, [], []
-    bundle_paths = ['/var/tmp/.cauce-pty-bundle-' + agent['alias'] + '.json']
+    bundle_paths = ['/var/tmp/.cauce-pty-bundle-' + selector + '.json']
     for filename in (*envs, metadata):
         if os.path.lexists(filename):
             files[str(filename)] = file_pin(filename, private=True)
@@ -196,7 +199,7 @@ def observe(agent: dict, home: pathlib.Path, journal: dict, *, require_container
                 if 'CONTAINER_RUNTIME_DIR' in config_values:
                     if config_values['CONTAINER_RUNTIME_DIR'] != '/run':
                         raise SafeFailure('terminal container bundle is outside its approved runtime directory')
-                    bundle_paths.append('/run/cauce-pty-' + agent['alias'] + '/bundle.json')
+                    bundle_paths.append('/run/cauce-pty-' + selector + '/bundle.json')
     certificate = None
     if os.path.lexists(pki):
         names = private_directory(pki)
@@ -246,7 +249,7 @@ def observe(agent: dict, home: pathlib.Path, journal: dict, *, require_container
             'templates': templates, 'units': units, 'observed_units': observed_units, 'dropins': dropins, 'pki': str(pki),
             'pki_present': os.path.lexists(pki),
             'fingerprints': [certificate] if certificate else authority.get('terminal_fingerprints', []),
-            'bundle_paths': list(dict.fromkeys(bundle_paths)), 'removed': []}
+            'selector': selector, 'bundle_paths': list(dict.fromkeys(bundle_paths)), 'removed': []}
 
 
 def verify_stopped(entry: dict, root: pathlib.Path) -> None:
@@ -256,7 +259,7 @@ def verify_stopped(entry: dict, root: pathlib.Path) -> None:
             raise SafeFailure('terminal unit is still running or enabled')
 
 
-def purge_terminal(policy: dict, agent: dict, journal: dict | None, save) -> dict:
+def purge_selector(policy: dict, agent: dict, journal: dict | None, save, selector: str, journal_key: str) -> dict:
     alias = agent.get('alias')
     if not isinstance(alias, str) or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', alias) is None:
         raise SafeFailure('terminal purge alias is invalid')
@@ -264,14 +267,14 @@ def purge_terminal(policy: dict, agent: dict, journal: dict | None, save) -> dic
         relay_absence(agent, journal or {})
     home = pathlib.Path(pwd.getpwuid(os.geteuid()).pw_dir)
     entries = (journal or {}).get('terminal_decommission', {})
-    entry = entries.get(agent['runtime_key'])
+    entry = entries.get(journal_key)
     if entry is None:
-        entry = observe(agent, home, journal or {}, require_container='authority' in policy and agent['runtime_mode'] == 'container')
+        entry = observe(agent, home, journal or {}, require_container='authority' in policy and agent['runtime_mode'] == 'container', selector=selector)
         if not entry:
             return {'removed': []}
         if journal is None or save is None:
             raise SafeFailure('terminal purge requires a durable operation receipt')
-        journal.setdefault('terminal_decommission', {})[agent['runtime_key']] = entry
+        journal.setdefault('terminal_decommission', {})[journal_key] = entry
         save()
     if entry.get('identity') != {key: agent[key] for key in ('tenant_id', 'alias', 'runtime_key')} \
             or agent.get('systemd_user') != policy['executor_user'] \
@@ -283,8 +286,8 @@ def purge_terminal(policy: dict, agent: dict, journal: dict | None, save) -> dic
         verify_stopped(entry, root)
         reap_container(policy, agent, entry, save)
         config = home / '.config/cauce-v3'
-        candidates = [config / kind / (alias + '.env') for kind in ('pty', 'pty-host')]
-        candidates += [config / 'pty' / (alias + '.migration.json'), pathlib.Path(entry['pki']),
+        candidates = [config / kind / (selector + '.env') for kind in ('pty', 'pty-host')]
+        candidates += [config / 'pty' / (selector + '.migration.json'), pathlib.Path(entry['pki']),
                        *(root / (unit + '.d') for unit in entry['units']), *(root / unit for unit in entry['units'])]
         if any(os.path.lexists(filename) for filename in candidates):
             raise SafeFailure('terminal artifacts reappeared after observed removal')
@@ -326,3 +329,29 @@ def purge_terminal(policy: dict, agent: dict, journal: dict | None, save) -> dic
     entry['complete'] = True
     save()
     return {'removed': entry['removed']}
+
+
+def purge_terminal(policy: dict, agent: dict, journal: dict | None, save) -> dict:
+    key, alias = agent['runtime_key'], agent['alias']
+    if key == alias:
+        return purge_selector(policy, agent, journal, save, alias, key)
+    home = pathlib.Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    config = home / '.config/cauce-v3'
+    selectors = [(key, key + ':physical')]
+    metadata = config / 'pty' / (alias + '.migration.json')
+    certificate = config / 'pty-pki' / alias / 'client.crt'
+    legacy = False
+    if os.path.lexists(metadata):
+        document = json.loads(checked_file(metadata, private=True))
+        legacy = isinstance(document, dict) and all(document.get(name) == value for name, value in
+            {'schema_version': 1, 'tenant': agent['tenant_id'], 'alias': alias, 'runtime_key': key}.items())
+    elif os.path.lexists(certificate):
+        authority = relay_absence(agent, journal or {})
+        pin = hashlib.sha256(ssl.PEM_cert_to_DER_cert(checked_file(certificate).decode('ascii'))).hexdigest()
+        legacy = pin in authority.get('terminal_fingerprints', [])
+    if legacy or key in (journal or {}).get('terminal_decommission', {}):
+        selectors.append((alias, key))
+    removed = []
+    for selector, journal_key in selectors:
+        removed.extend(purge_selector(policy, agent, journal, save, selector, journal_key)['removed'])
+    return {'removed': removed}

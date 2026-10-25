@@ -577,12 +577,19 @@ class Executor:
         except NamespaceMismatch:
             stop(self.policy, agent)
             evidence = start(self.policy, agent, bootstrap=False, operation_id=self.context['operation_id'])
+        terminal = {}
         try:
             normal = invoke(self.policy, self.context, agent, 'verify', phase='normal')
             if any(normal.get(field) is not True for field in ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')):
                 raise SafeFailure('normal runtime provider, profile, hello or nonce roundtrip was not demonstrated')
             from fleet_executor_replacement import record_normal_verification
             record_normal_verification(self, agent, normal, evidence['runtime_digest'])
+            if self.policy.get('terminal', {}).get('required') is True:
+                from fleet_executor_terminal_provision import ensure_terminal
+                proof = ensure_terminal(self.policy, self.context, agent, generation, self.journal, self.save)
+                if proof.get('terminal_verified') is not True:
+                    raise SafeFailure('terminal provisioning failed')
+                terminal = {key: proof[key] for key in ('terminal_verified', 'terminal_certificate_sha256')}
             publish_applied(self.state, receipt['generation'], self.journal.get('expected_applied'))
         except BaseException:
             stop(self.policy, agent)
@@ -590,7 +597,7 @@ class Executor:
         self.journal['admission'] = {'generation': receipt['generation'], 'runtime': evidence['runtime_digest']}
         evidence.update(self.record_extension_receipt())
         self.save()
-        return {'artifact_sha256': receipt['generation'], **evidence}
+        return {'artifact_sha256': receipt['generation'], **evidence, **terminal}
 
     def admit_memberships(self):
         if self.context['request']['kind'] != 'restore':
@@ -648,6 +655,9 @@ class Executor:
             self.stop_placement(row)
         self.journal['stopped'] = True
         self.save()
+        if self.journal.get('terminal_provision'):
+            from fleet_executor_terminal_provision import rollback_terminal
+            rollback_terminal(self.policy, self.context, self.agent(), self.journal, self.save)
         if placement_role(self.context) == 'source':
             from fleet_executor_authority import call, inventory, scope_for
             for row in rows:

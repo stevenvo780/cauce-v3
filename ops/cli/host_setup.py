@@ -381,6 +381,8 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
                 or any(key in supplied for key in ('authority', 'transport', 'terminal', 'legacy_credentials', 'quota_environments', 'extensions_allowed')):
             raise HostFailure('backup-only setup policy grants another execution scope')
         base['native'] = []
+    if 'terminal' not in supplied and 'authority' in supplied and (release / 'ops/pty-agent/cauce-pty-launcher.sh').is_file():
+        supplied['terminal'] = {'required': True}
     for harness, bundle in supplied.get('bundles', {}).items():
         if harness in {'claude', 'codex', 'grok', 'muse'}:
             bundle.setdefault('shared_tui', True)
