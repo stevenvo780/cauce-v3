@@ -164,7 +164,15 @@ def visible_case(case):
     try:
         shutil.copytree(case.root, temporary.name, dirs_exist_ok=True)
         def relocated(value):
-            return json.loads(json.dumps(value).replace(previous, temporary.name))
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    value[key] = relocated(item)
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    value[index] = relocated(item)
+            elif isinstance(value, str):
+                return value.replace(previous, temporary.name)
+            return value
         for name in ('root', 'bundle', 'worker', 'policy_file'):
             setattr(case, name, pathlib.Path(str(getattr(case, name)).replace(previous, temporary.name)))
         case.roots = {name: pathlib.Path(str(path).replace(previous, temporary.name)) for name, path in case.roots.items()}
