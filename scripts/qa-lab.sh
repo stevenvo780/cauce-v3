@@ -23,8 +23,8 @@ tunnel_pid=''
 waiter_pid=''
 labels=(--label "cauce.e2e.owner=$OWNER" --label "cauce.qa.name=$name")
 
-lab() { docker --context "$ctx" "$@" 7>&- 9>&-; }
-remote() { ssh -o BatchMode=yes "$host" "$(printf '%q ' "$@")" 7>&- 9>&-; }
+lab() { docker --context "$ctx" "$@" 7>&- 8>&- 9>&-; }
+remote() { ssh -o BatchMode=yes "$host" "$(printf '%q ' "$@")" 7>&- 8>&- 9>&-; }
 read_context() {
   [[ -f $receipt/context ]] || return 1
   read -r ctx < "$receipt/context"
@@ -35,7 +35,7 @@ read_context() {
 }
 assert_vm() {
   local actual
-  actual=$(timeout 20 docker --context "$ctx" info --format '{{.Name}}' 7>&- 9>&-)
+  actual=$(timeout 20 docker --context "$ctx" info --format '{{.Name}}' 7>&- 8>&- 9>&-)
   [[ $actual =~ ^docker-lab(-[23])?$ ]] || { printf 'El contexto no apunta a docker-lab\n' >&2; return 1; }
 }
 stop_and_reclaim() {
@@ -88,7 +88,7 @@ assert_empty() {
 }
 sync_receipts() {
   [[ $ctx != lab ]] || return 0
-  rsync -a "$host:$vmroot/.delegados/v4/recibos/$OWNER/$name/" "$receipt/" 7>&- 9>&-
+  rsync -a "$host:$vmroot/.delegados/v4/recibos/$OWNER/$name/" "$receipt/" 7>&- 8>&- 9>&-
 }
 choose_context() {
   local candidate slot limit free_space
@@ -131,14 +131,14 @@ for path in sys.stdin.buffer.read().split(b"\0"):
     if not path or any(p in (b"private",b"credentials",b"secrets",b"tokens",b"sessions",b".delegados",b"auth.json",b"settings.local.json") or p.startswith(b".env") for p in parts): continue
     sys.stdout.buffer.write(path+b"\0")' > "$list"
   remote mkdir -p "$vmroot"
-  rsync -a --from0 --files-from="$list" "$ROOT/" "$host:$vmroot/" 7>&- 9>&-
-  rsync -a "$ROOT/.git" "$host:$vmroot/" 7>&- 9>&-
+  rsync -a --from0 --files-from="$list" "$ROOT/" "$host:$vmroot/" 7>&- 8>&- 9>&-
+  rsync -a "$ROOT/.git" "$host:$vmroot/" 7>&- 8>&- 9>&-
   local -a modules=()
   mapfile -t modules < <(cd "$ROOT" && git ls-files -- package.json '*/package.json' | xargs -n1 dirname | sort -u | while read -r directory; do
     [[ ! -d $directory/node_modules ]] || printf '%s/node_modules\n' "$directory"
     [[ ! -d $directory/dist ]] || printf '%s/dist\n' "$directory"
   done)
-  (cd "$ROOT" && rsync -a -R -- "${modules[@]}" "$host:$vmroot/" 7>&- 9>&-)
+  (cd "$ROOT" && rsync -a -R -- "${modules[@]}" "$host:$vmroot/" 7>&- 8>&- 9>&-)
 }
 supervise() {
   local runner=$prefix-runner daemon=$prefix-daemon network=$prefix-network data=$prefix-data
@@ -197,7 +197,7 @@ supervise() {
   if [[ $ctx != lab ]]; then
     local local_port
     local_port=$(python3 -I -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-    ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -N -L "127.0.0.1:$local_port:127.0.0.1:$port" "$host" 7>&- 9>&- &
+    ssh -o BatchMode=yes -o ExitOnForwardFailure=yes -N -L "127.0.0.1:$local_port:127.0.0.1:$port" "$host" 7>&- 8>&- 9>&- &
     tunnel_pid=$!
     url=https://localhost:$local_port
   fi
@@ -219,7 +219,7 @@ supervise() {
     --workdir "$vmroot" "$prefix:runner" node --import tsx --import ./tests/e2e/qa-lab-context.mjs \
     tests/e2e/qa-lab.fixture.ts > "$receipt/runner.id"
   completed=1
-  docker --context "$ctx" wait "$runner" 7>&- 9>&- > "$receipt/runner.exit" &
+  docker --context "$ctx" wait "$runner" 7>&- 8>&- 9>&- > "$receipt/runner.exit" &
   waiter_pid=$!
   wait "$waiter_pid"
   [[ $(cat "$receipt/runner.exit") == 0 ]]
@@ -230,6 +230,8 @@ case $action in
   up)
     exec 9>"$receipt/command.lock"
     flock -n 9 || { printf 'Otra orden usa este nombre\n' >&2; exit 75; }
+    exec 8>"$receipt/lifecycle.lock"
+    flock -n 8 || { printf 'El laboratorio sigue activo o limpiándose; espera su cierre\n' >&2; exit 75; }
     if read_context && [[ -n $(lab ps -q --filter "name=^/$prefix-runner$" --filter "label=cauce.e2e.owner=$OWNER") ]]; then
       printf 'El laboratorio ya existe; usa status o down\n' >&2; exit 1
     fi

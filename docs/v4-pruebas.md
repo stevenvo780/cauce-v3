@@ -6,13 +6,11 @@ Esta tabla enumera archivos y comandos presentes en el checkout. Los conteos cor
 
 ## Laboratorio para exploración manual
 
-`scripts/qa-lab.sh up <nombre>` reserva un cupo en `lab`, `lab2` o `lab3` y mantiene PostgreSQL migrado, gateway, consola HTTPS, terminal-relay y un ordenador con ejecutor sobre un Docker dedicado. Imprime la URL accesible desde la torre y el correo `zz-canary-qa-<nombre>@example.test`. La contraseña sintética queda únicamente en `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/password`, con permisos 0600. El nombre admite letras minúsculas, números y guiones, empieza por letra y tiene hasta 20 caracteres. `CAUCE_QA_CONTEXT=lab2` permite elegir un contexto explícito.
-
-Usa `scripts/qa-lab.sh status <nombre>` para comprobar la disponibilidad y `scripts/qa-lab.sh down <nombre>` para cerrar y verificar la retirada de sus recursos. Los recursos creados llevan el prefijo `zz-canary-qa-` y etiquetas de tarea e instancia; cada laboratorio usa un daemon independiente. En `lab2` y `lab3` se prepara un espejo temporal del código y las dependencias, sin archivos privados ni variables de entorno del operador. La consola usa una autoridad TLS efímera del laboratorio; el navegador debe confiar en esa autoridad para el recorrido.
-
-El lanzador exige 8 GB libres en los sistemas de archivos de `/tmp` y `/var/lib/docker` de la VM. Reserva un cupo de E2E hasta cerrar el laboratorio; reintenta la reserva dieciocho veces, con pausas de diez segundos. En `lab2` y `lab3` mantiene un túnel SSH y anuncia una URL local. La sonda de `status` comprueba PostgreSQL, el ordenador y la presencia del relay, verificando la CA guardada en `ca.crt` junto al recibo.
-
-El arranque reutiliza los fixtures de las pruebas reales y el SDK con un proveedor sintético: no necesita cuentas de proveedores. No ejecuta un recorrido de aceptación. El agente que lo explore debe guardar sus capturas y contrastar cada acción con PostgreSQL y el Docker dedicado. `ready.json` identifica el contenedor y la base sin publicar credenciales. El adaptador de contexto permite cargar los fixtures fuera de Vitest y rechaza registrar hooks de pruebas.
+1. Arranca: `CAUCE_QA_CONTEXT=lab scripts/qa-lab.sh up <nombre>`; nombre de hasta 20 minúsculas, números o guiones, empezando por letra.
+2. URL: la imprime `up` y queda en `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/url`; usuario: `zz-canary-qa-<nombre>@example.test`.
+3. Contraseña: úsala desde `.delegados/v4/recibos/qa0-entorno-exploracion-1025/<nombre>/password` (0600), sin imprimirla ni guardarla en logs.
+4. Comprueba disponibilidad y URL: `scripts/qa-lab.sh status <nombre>`.
+5. Cierra y verifica que no queden recursos propios: `scripts/qa-lab.sh down <nombre>`.
 
 ## Inventario por categoría
 

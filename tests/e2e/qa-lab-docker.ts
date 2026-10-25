@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmod, chown, lstat, unlink } from 'node:fs/promises';
 import { createServer, request, type IncomingMessage, type ServerResponse } from 'node:http';
 import { isAbsolute, join } from 'node:path';
-import type { Socket } from 'node:net';
+import { createConnection, type Socket } from 'node:net';
 
 const OWNER = 'qa0-entorno-exploracion-1025';
 type JsonObject = Record<string, unknown>;
@@ -126,23 +126,18 @@ export async function startQaDocker(prefix: string, directory: string): Promise<
   });
   server.on('connection', track);
   server.on('upgrade', (incoming, client, head) => {
-    const upstream = request({ socketPath: raw, path: incoming.url, method: incoming.method, headers: incoming.headers });
-    upstream.on('socket', track);
-    upstream.on('error', () => { client.destroy(); });
-    upstream.on('upgrade', (response, remote, remoteHead) => {
-      client.write(`HTTP/${response.httpVersion} ${String(response.statusCode)} ${response.statusMessage ?? ''}\r\n`);
-      for (let index = 0; index < response.rawHeaders.length; index += 2) {
-        client.write(`${response.rawHeaders[index] ?? ''}: ${response.rawHeaders[index + 1] ?? ''}\r\n`);
-      }
-      client.write('\r\n');
-      if (remoteHead.length) client.write(remoteHead);
+    const remote = createConnection({ path: raw });
+    track(remote);
+    remote.on('error', () => { client.destroy(); });
+    client.once('close', () => { remote.destroy(); });
+    remote.once('close', () => { client.destroy(); });
+    remote.once('connect', () => {
+      const headers = incoming.rawHeaders.reduce((result, value, index) =>
+        result + (index % 2 === 0 ? `${value}: ` : `${value}\r\n`), '');
+      remote.write(`${incoming.method ?? 'POST'} ${incoming.url ?? '/'} HTTP/${incoming.httpVersion}\r\n${headers}\r\n`);
       if (head.length) remote.write(head);
-      client.once('close', () => { remote.destroy(); });
-      remote.once('close', () => { client.destroy(); });
       client.pipe(remote).pipe(client);
     });
-    upstream.on('response', response => { response.resume(); client.destroy(); });
-    upstream.end();
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
