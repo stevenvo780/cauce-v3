@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OWNER = 'e2e-a9-sigue-1025'
+OWNER = 'e2e-cli-cross-machine-1025'
 CONFIG = ROOT / '.delegados/v4/runtime' / f'{OWNER}-cross-machine.json'
 IMAGE = 'python:3.13-slim'
 SOURCE_IP = '10.88.88.43'

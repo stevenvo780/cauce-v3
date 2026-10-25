@@ -8,7 +8,7 @@ import { expect, it } from 'vitest';
 import { runDynamicCli, startDynamicTerminalFixture } from './v4-cli-dynamic-terminal.fixtures.js';
 
 const execute = promisify(execFile);
-const owner = 'e2e-a9-sigue-1025';
+const owner = 'e2e-cli-cross-machine-1025';
 interface LabConfiguration {
   endpoint: string; certFile: string; keyFile: string; relayHost: string;
   sourceDaemonHash: string; destinationDaemonHash: string;
@@ -21,7 +21,11 @@ interface RemoteStatus { process_alive: boolean; marker_sha256: string | null; p
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
 it('keeps nominal CLI access and transferred state when a real PTY moves from lab to the independent lab2 machine', async () => {
-  const config = JSON.parse(await readFile(join(process.cwd(), '.delegados/v4/runtime', `${owner}-cross-machine.json`), 'utf8')) as LabConfiguration;
+  const configPath = join(process.cwd(), '.delegados/v4/runtime', `${owner}-cross-machine.json`);
+  const rawConfig = await readFile(configPath, 'utf8').catch(() => {
+    throw new Error('cross-machine lab not prepared: run bash tests/e2e/v4-cli-cross-machine.lab.sh to provision lab/lab2 and run this suite');
+  });
+  const config = JSON.parse(rawConfig) as LabConfiguration;
   expect([config.sourceContext, config.destinationContext]).toEqual(['lab', 'lab2']);
   expect(config.sourceMachineHash).toMatch(/^[a-f0-9]{64}$/u);
   expect(config.destinationMachineHash).toMatch(/^[a-f0-9]{64}$/u);
