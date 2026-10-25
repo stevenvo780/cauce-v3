@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { plazo } from '../helpers/plazos.js';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES,
@@ -7,6 +10,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/people');
 function registration(label: string): V4Person {
   const person = syntheticPerson(`people-${label}`, run);
   const slug = `zz-canary-people-${label}-${run}`;
@@ -83,6 +87,22 @@ function active() {
 
 function base() { return active().baseUrl; }
 
+async function capture(page: V4Page, name: string): Promise<void> {
+  await mkdir(evidence, { recursive: true });
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => {
+      const target = document.querySelector('.people-admin [role="alert"]')
+        ?? document.querySelector('.people-admin-confirm') ?? document.querySelector('.people-admin-form')
+        ?? document.querySelector('.people-admin');
+      target?.scrollIntoView({ block: 'center' });
+    });
+    await page.screenshot({ path: join(evidence, `${name}-${String(viewport.width)}.png`), fullPage: false });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 function ownerAView() {
   if (!ownerPageA) throw new Error('owner A has no browser page');
   return ownerPageA;
@@ -107,7 +127,7 @@ function unauthorizedCreatePayload() {
 }
 
 async function freshPage(label: string): Promise<V4Page> {
-  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
   errors.watch(page, label);
   return page;
 }
@@ -123,12 +143,12 @@ async function registerOwner(page: V4Page, owner: V4Person): Promise<void> {
   const form = await openRegistration(page, base());
   await fillRegistration(form, owner);
   await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: plazo(30_000) });
 }
 
 async function openSection(page: V4Page, section: string): Promise<void> {
   await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: plazo(20_000) });
 }
 
 async function openPeopleAdmin(page: V4Page): Promise<void> {
@@ -139,7 +159,7 @@ async function openPeopleAdmin(page: V4Page): Promise<void> {
 }
 
 async function fillPersonForm(page: V4Page, email: string, password: string, displayName = employee.displayName): Promise<void> {
-  const form = page.getByRole('form', { name: 'Crear persona', exact: true });
+  const form = page.getByRole('form', { name: 'Invitar persona', exact: true });
   await form.getByLabel('Correo de acceso', { exact: true }).fill(email);
   await form.getByLabel('Nombre de persona', { exact: true }).fill(displayName);
   const selects = form.locator('select');
@@ -198,19 +218,19 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); }, 180_000);
 
 describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () => {
-  // Defecto real: el campo type=email bloquea onSubmit y no deja mostrar el mensaje propio en español.
-  it.fails('correo mal formado: el formulario muestra el rechazo en español', async () => {
+  it('correo mal formado: el formulario muestra el rechazo en español', async () => {
     const page = ownerAView();
     await step(page, 'invalid person email', async () => {
       await openPeopleAdmin(page);
-      await page.getByRole('button', { name: 'Crear persona', exact: true }).click();
-      const form = page.getByRole('form', { name: 'Crear persona', exact: true });
+      await page.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).click();
+      const form = page.getByRole('form', { name: 'Invitar persona', exact: true });
       await fillPersonForm(page, 'correo-invalido', employee.password);
       await form.getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
       expect(await form.getByLabel('Correo de acceso', { exact: true }).evaluate(element => element.validity.valid)).toBe(false);
       const alert = form.getByRole('alert');
       expect(await alert.count()).toBeGreaterThan(0);
       expect((await alert.innerText()).toLocaleLowerCase()).toMatch(/correo|direcci[oó]n/u);
+      await capture(page, 'people-invalid-email');
     });
   });
 
@@ -218,9 +238,9 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
     const page = ownerAView();
     await step(page, 'short person password', async () => {
       await openPeopleAdmin(page);
-      await page.getByRole('button', { name: 'Crear persona', exact: true }).click();
+      await page.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).click();
       await fillPersonForm(page, employee.email, 'corta');
-      const form = page.getByRole('form', { name: 'Crear persona', exact: true });
+      const form = page.getByRole('form', { name: 'Invitar persona', exact: true });
       await form.getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
       expect(await form.getByRole('alert').innerText()).toContain('La contraseña debe tener entre 12 y 1024 caracteres.');
       expect((await active().database.pool.query('SELECT 1 FROM console_users WHERE email=$1', [employee.email])).rowCount).toBe(0);
@@ -231,14 +251,15 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
     const owner = ownerAView();
     await step(owner, 'create person from owner UI', async () => {
       await openPeopleAdmin(owner);
-      await owner.getByRole('button', { name: 'Crear persona', exact: true }).click();
+      await owner.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).click();
       await fillPersonForm(owner, employee.email, employee.password);
-      await owner.getByRole('form', { name: 'Crear persona', exact: true })
+      await owner.getByRole('form', { name: 'Invitar persona', exact: true })
         .getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
       await owner.getByText('Persona creada. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
       const row = owner.getByRole('row').filter({ hasText: employee.email });
       await row.waitFor({ timeout: 15_000 });
       expect(await row.innerText()).toContain('Operador');
+      await capture(owner, 'people-created-operator');
     });
 
     const inventory = await apiGet(owner, '/v3/console/people');
@@ -261,8 +282,8 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
 
       expectHttpError('/v3/console/people', 403, 3);
       await openPeopleAdmin(personPage);
-      expect(await personPage.getByRole('alert').innerText()).toContain('Esta cuenta no tiene autoridad para administrar personas.');
-      expect(await personPage.getByRole('button', { name: 'Crear persona', exact: true }).isDisabled()).toBe(true);
+      expect(await personPage.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('alert').innerText()).toContain('Esta cuenta no tiene autoridad para administrar personas.');
+      expect(await personPage.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).isDisabled()).toBe(true);
       expect(await apiMutation(personPage, '/v3/console/people', 'POST', unauthorizedCreatePayload())).toBe(403);
       expect((await active().database.pool.query('SELECT 1 FROM console_users WHERE email=$1',
         [`zz-canary-forbidden-${run}@example.test`])).rowCount).toBe(0);
@@ -299,8 +320,8 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
 
       expectHttpError('/v3/console/people', 403, 3);
       await openPeopleAdmin(personPage);
-      expect(await personPage.getByRole('alert').innerText()).toContain('Esta cuenta no tiene autoridad para administrar personas.');
-      expect(await personPage.getByRole('button', { name: 'Crear persona', exact: true }).isDisabled()).toBe(true);
+      expect(await personPage.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('alert').innerText()).toContain('Esta cuenta no tiene autoridad para administrar personas.');
+      expect(await personPage.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).isDisabled()).toBe(true);
       expect(await apiMutation(personPage, '/v3/console/people', 'POST', unauthorizedCreatePayload())).toBe(403);
       expect((await active().database.pool.query('SELECT 1 FROM console_users WHERE email=$1',
         [`zz-canary-forbidden-${run}@example.test`])).rowCount).toBe(0);
@@ -311,6 +332,7 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       await row.getByRole('button', { name: `Retirar persona ${employee.email}`, exact: true }).click();
       const confirmation = owner.getByRole('region', { name: 'Confirmar cambio de acceso', exact: true });
       expect(await confirmation.innerText()).toContain('Se revocan sesiones y accesos anteriores.');
+      await capture(owner, 'people-retire-confirmation');
       await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
       await owner.getByText('Acceso de persona retirado. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
     });
@@ -384,7 +406,8 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       expect(await row.innerText()).toContain('Retirada');
       await row.getByRole('button', { name: `Purgar persona ${purgeEmail}`, exact: true }).click();
       const confirmation = owner.getByRole('region', { name: 'Confirmar cambio de acceso', exact: true });
-      expect(await confirmation.innerText()).toContain('El registro se elimina definitivamente');
+      expect(await confirmation.innerText()).toContain('El registro se borra solo si no quedan históricos ni dependencias.');
+      await capture(owner, 'people-purge-confirmation');
       await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
       await owner.getByText('Registro de persona purgado. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
       expect(await owner.getByText(purgeEmail, { exact: true }).count()).toBe(0);
@@ -399,9 +422,9 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
     const owner = ownerAView();
     await step(owner, 'create a separate platform guard actor inside the company', async () => {
       await openPeopleAdmin(owner);
-      await owner.getByRole('button', { name: 'Crear persona', exact: true }).click();
+      await owner.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).click();
       await fillPersonForm(owner, guardAdmin.email, guardAdmin.password, guardAdmin.displayName);
-      await owner.getByRole('form', { name: 'Crear persona', exact: true })
+      await owner.getByRole('form', { name: 'Invitar persona', exact: true })
         .getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
       await owner.getByText('Persona creada. Inventario releído.', { exact: true }).waitFor({ timeout: 20_000 });
       expect(await owner.getByRole('row').filter({ hasText: guardAdmin.email }).innerText()).toContain('Operador');
@@ -437,13 +460,13 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       await identitySelect.selectOption(personAlias);
       expectHttpError(`/v3/console/people/${ownerAId}`, 409);
       await form.getByRole('button', { name: 'Guardar persona', exact: true }).click();
-      const alert = platform.getByRole('alert');
+      const alert = platform.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('alert');
       await alert.waitFor({ timeout: 15_000 });
       expect(await alert.innerText()).toContain('último administrador');
       await platform.reload({ waitUntil: 'domcontentloaded' });
       await openPeopleAdmin(platform);
       const afterReload = platform.getByRole('row').filter({ hasText: ownerA.email });
-      expect(await afterReload.innerText()).toContain('Operador');
+      expect(await afterReload.innerText()).toContain('Dueño de empresa');
       expect(await afterReload.innerText()).toContain('Habilitada');
     });
     const afterDegrade = await active().database.pool.query<{ role: string; active: boolean }>(
@@ -457,7 +480,7 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       expect(await confirmation.innerText()).toContain('Se revocan sesiones y accesos anteriores.');
       expectHttpError(`/v3/console/people/${ownerAId}`, 409);
       await confirmation.getByRole('button', { name: 'Confirmar cambio de persona', exact: true }).click();
-      const alert = platform.getByRole('alert');
+      const alert = platform.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('alert');
       await alert.waitFor({ timeout: 15_000 });
       expect(await alert.innerText()).toContain('último administrador');
       await platform.reload({ waitUntil: 'domcontentloaded' });
@@ -484,7 +507,8 @@ describe('personas V4 en navegador real contra gateway y PostgreSQL reales', () 
       expectHttpError(purgePath, 409);
       const denied = await apiDelete(platform, purgePath, { expected_revision: lastOwner.revision });
       expect(denied.status).toBe(409);
-      expect(denied.body.message).toContain('último administrador');
+      expect(denied.body.reason).toBe('still_active');
+      expect(denied.body.message).toBe('Primero retira la cuenta. Purgar solo aplica a una persona ya retirada.');
       await platform.reload({ waitUntil: 'domcontentloaded' });
       await openPeopleAdmin(platform);
       const afterReload = platform.getByRole('row').filter({ hasText: ownerA.email });

@@ -1,5 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { plazo } from '../helpers/plazos.js';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, bodySnippet, fillRegistration, HERMETIC_INSTANCE_RULES,
@@ -7,6 +10,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/people');
 function registration(label: string): V4Person {
   const person = syntheticPerson(`admins-${label}`, run);
   const slug = `zz-canary-admins-${label}-${run}`;
@@ -110,6 +114,23 @@ function active() {
 
 function base() { return active().baseUrl; }
 
+async function capture(page: V4Page, name: string): Promise<void> {
+  await mkdir(evidence, { recursive: true });
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(() => {
+      const target = document.querySelector('[aria-label="Conflicto de versión"]')
+        ?? document.querySelector('[aria-label="Confirmar revocación de autoridad"]')
+        ?? document.querySelector('[aria-label="Asignar autoridad de empresa"]')
+        ?? document.querySelector('[aria-label="Autoridad de empresa"]');
+      target?.scrollIntoView({ block: 'center' });
+    });
+    await page.screenshot({ path: join(evidence, `${name}-${String(viewport.width)}.png`), fullPage: false });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 function ownerView() {
   if (!ownerPage) throw new Error('owner has no browser page');
   return ownerPage;
@@ -118,7 +139,7 @@ function ownerView() {
 function pool() { return active().database.pool; }
 
 async function freshPage(label: string): Promise<V4Page> {
-  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
   errors.watch(page, label);
   return page;
 }
@@ -134,18 +155,19 @@ async function registerOwner(page: V4Page): Promise<void> {
   const form = await openRegistration(page, base());
   await fillRegistration(form, owner);
   await form.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
-  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: 30_000 });
+  await page.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: plazo(30_000) });
 }
 
 async function openSection(page: V4Page, section: string): Promise<void> {
   await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
-  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: plazo(20_000) });
 }
 
 async function openAuthority(page: V4Page): Promise<V4Locator> {
   await openSection(page, 'general');
   const panel = page.getByRole('region', { name: 'Autoridad de empresa', exact: true });
-  if (await panel.count() === 0) await page.getByRole('button', { name: 'Autoridad de empresa', exact: true }).click();
+  if (await panel.count() === 0) await page.locator('li').filter({ hasText: owner.company.name })
+    .getByRole('button', { name: 'Autoridad de empresa', exact: true }).click();
   await panel.waitFor({ timeout: 20_000 });
   return panel;
 }
@@ -209,8 +231,8 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
       await openSection(ownerBrowser, 'acceso');
       await ownerBrowser.getByRole('heading', { name: 'Personas', exact: true }).waitFor({ timeout: 15_000 });
       await ownerBrowser.getByRole('button', { name: 'Administrar personas', exact: true }).click();
-      await ownerBrowser.getByRole('button', { name: 'Crear persona', exact: true }).click();
-      const form = ownerBrowser.getByRole('form', { name: 'Crear persona', exact: true });
+      await ownerBrowser.getByRole('region', { name: 'Administración de personas', exact: true }).getByRole('button', { name: 'Invitar persona', exact: true }).click();
+      const form = ownerBrowser.getByRole('form', { name: 'Invitar persona', exact: true });
       await form.getByLabel('Correo de acceso', { exact: true }).fill(delegate.email);
       await form.getByLabel('Nombre de persona', { exact: true }).fill(delegate.name);
       const selects = form.locator('select');
@@ -233,6 +255,7 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
       await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
       await panel.getByText('Autoridad de empresa guardada.', { exact: true }).waitFor({ timeout: 20_000 });
       await panel.getByText(`${delegate.name} · ${delegate.email} · Administrador`, { exact: true }).waitFor({ timeout: 15_000 });
+      await capture(ownerBrowser, 'company-admin-granted');
     });
     expect(await storedAdmins()).toEqual(grantedRows());
 
@@ -256,6 +279,7 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
       const form = panel.getByRole('form', { name: 'Asignar autoridad de empresa', exact: true });
       expect(await form.locator('select').nth(0).isDisabled()).toBe(true);
       expect(await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).isDisabled()).toBe(true);
+      await capture(delegateBrowser, 'company-admin-read-only');
       expect(await delegateBrowser.getByText('Selecciona esta empresa en el menú de cuenta', { exact: false }).count()).toBe(0);
     });
     const visible = await readAdmins(delegateBrowser);
@@ -275,7 +299,7 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
       await selects.nth(1).selectOption('admin');
       await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
       await expect.poll(async () => panel.getByRole('alert').innerText(), { timeout: 20_000 })
-        .toContain('company owner authority is required');
+        .toContain('solo un dueño de esta empresa puede asignarla');
       expect(await panel.getByRole('button', { name: `Revocar autoridad de ${owner.name}`, exact: true }).isDisabled()).toBe(true);
     });
     expect(await storedAdmins()).toEqual(grantedRows());
@@ -284,6 +308,11 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
       const panel = await openAuthority(ownerBrowser);
       await panel.getByRole('button', { name: `Revocar autoridad de ${delegate.name}`, exact: true }).click();
       const confirmation = panel.getByRole('region', { name: 'Confirmar revocación de autoridad', exact: true });
+      await capture(ownerBrowser, 'company-admin-revoke-confirmation');
+      await confirmation.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      expect(await confirmation.count()).toBe(0);
+      expect(await storedAdmins()).toEqual(grantedRows());
+      await panel.getByRole('button', { name: `Revocar autoridad de ${delegate.name}`, exact: true }).click();
       await confirmation.getByRole('button', { name: 'Confirmar revocación', exact: true }).click();
       await panel.getByText('Autoridad de empresa revocada.', { exact: true }).waitFor({ timeout: 20_000 });
       expect(await panel.getByText(delegate.email, { exact: true }).count()).toBe(0);
@@ -311,6 +340,120 @@ describe('administradores de empresa V4 en navegador real contra gateway y Postg
     });
     expect(await storedAdmins()).toEqual([{ email: owner.email, role: 'owner', version: '1' }]);
   }, 240_000);
+
+  it('explica personas no elegibles y la plataforma asigna dueños con resolución explícita de conflictos', async () => {
+    for (const [label, role, enabled] of [['reader', 'reader', true], ['retired', 'operator', false]] as const) {
+      await openSection(ownerView(), 'acceso');
+      await ownerView().getByRole('button', { name: 'Administrar personas', exact: true }).click();
+      const people = ownerView().getByRole('region', { name: 'Administración de personas', exact: true });
+      await people.getByRole('button', { name: 'Invitar persona', exact: true }).click();
+      const form = ownerView().getByRole('form', { name: 'Invitar persona', exact: true });
+      await form.getByLabel('Correo de acceso', { exact: true }).fill(`zz-canary-${label}-${run}@example.test`);
+      await form.getByLabel('Nombre de persona', { exact: true }).fill(`zz-canary-${label}-${run}`);
+      await form.getByRole('combobox', { name: /^Permiso web/u }).selectOption(role);
+      await form.getByRole('combobox', { name: /^Espacio de la persona/u }).selectOption(hub);
+      await form.getByLabel('Contraseña inicial', { exact: true }).fill(syntheticPerson(label, run).password);
+      if (!enabled) await form.getByLabel('Habilitar acceso al crear', { exact: true }).uncheck();
+      await form.getByRole('button', { name: 'Crear cuenta de persona', exact: true }).click();
+      await ownerView().getByText('Persona creada. Inventario releído.', { exact: true }).waitFor();
+    }
+    await pool().query('INSERT INTO platform_admins(human_id) SELECT id FROM console_users WHERE email=$1', [owner.email]);
+    const platform = await freshPage('platform');
+    await login(platform, base(), owner);
+    const panel = await openAuthority(platform);
+    await panel.getByRole('button', { name: 'Releer autoridad', exact: true }).click();
+    const form = panel.getByRole('form', { name: 'Asignar autoridad de empresa', exact: true });
+    await expect.poll(async () => form.locator('select').nth(0).isDisabled(), { timeout: plazo(15_000) }).toBe(false);
+    expect(await authorityChoices(platform)).toEqual(['Administrador de empresa', 'Dueño de empresa']);
+    const options = await platform.evaluate(() => Array.from(document.querySelectorAll('form[aria-label="Asignar autoridad de empresa"] select:first-of-type option'))
+      .map(option => ({ text: option.textContent, disabled: (option as HTMLOptionElement).disabled })));
+    expect(options).toEqual(expect.arrayContaining([
+      { text: `zz-canary-reader-${run} · zz-canary-reader-${run}@example.test — lectora: no puede recibir autoridad`, disabled: true },
+      { text: `zz-canary-retired-${run} · zz-canary-retired-${run}@example.test — cuenta retirada: no puede recibir autoridad`, disabled: true },
+    ]));
+    await form.locator('select').nth(0).selectOption({ label: `${delegate.name} · ${delegate.email}` });
+    await form.locator('select').nth(1).selectOption('owner');
+    await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
+    await panel.getByText(`${delegate.name} · ${delegate.email} · Dueño`, { exact: true }).waitFor();
+    await capture(platform, 'company-owner-granted-eligible-options');
+    const other = await freshPage('platform-concurrent');
+    await login(other, base(), owner);
+    const otherPanel = await openAuthority(other);
+    const otherForm = otherPanel.getByRole('form', { name: 'Asignar autoridad de empresa', exact: true });
+    await otherForm.locator('select').nth(0).selectOption({ label: `${delegate.name} · ${delegate.email}` });
+    await otherForm.locator('select').nth(1).selectOption('admin');
+    await otherForm.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
+    await otherPanel.getByText(`${delegate.name} · ${delegate.email} · Administrador`, { exact: true }).waitFor();
+    errors.expectHttpError(`/v3/console/companies/${owner.company.slug}/admins`, 409);
+    await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
+    const conflict = panel.getByRole('group', { name: 'Conflicto de versión', exact: true });
+    await conflict.waitFor();
+    await capture(platform, 'company-admin-cas-conflict');
+    await conflict.getByRole('button', { name: 'Descartar mis cambios', exact: true }).click();
+    expect(await form.locator('select').nth(1).inputValue()).toBe('admin');
+    await form.locator('select').nth(1).selectOption('owner');
+    await otherForm.locator('select').nth(1).selectOption('owner');
+    await otherForm.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
+    await otherPanel.getByText(`${delegate.name} · ${delegate.email} · Dueño`, { exact: true }).waitFor();
+    errors.expectHttpError(`/v3/console/companies/${owner.company.slug}/admins`, 409);
+    await form.getByRole('button', { name: 'Guardar autoridad', exact: true }).click();
+    await conflict.waitFor();
+    await conflict.getByRole('button', { name: 'Releer y reintentar con mis cambios', exact: true }).click();
+    await expect.poll(storedAdmins, { timeout: plazo(15_000) }).toEqual([
+      { email: delegate.email, role: 'owner', version: '6' },
+      { email: owner.email, role: 'owner', version: '1' },
+    ]);
+    const reread = await readAdmins(platform);
+    expect(reread.body?.items).toEqual(expect.arrayContaining([expect.objectContaining({ email: delegate.email, role: 'owner', version: 6 })]));
+  }, 240_000);
+
+  it('explica la selección de otra empresa y bloquea asignar autoridad hasta cambiar la empresa de sesión', async () => {
+    const otherOwner = registration('other-company');
+    const registered = await freshPage('other-company-owner');
+    const registrationForm = await openRegistration(registered, base());
+    await fillRegistration(registrationForm, otherOwner);
+    await registrationForm.getByRole('button', { name: 'Crear cuenta y empresa', exact: true }).click();
+    await registered.getByRole('navigation', { name: 'Navegación principal', exact: true }).waitFor({ timeout: plazo(30_000) });
+    const platform = await freshPage('platform-other-company');
+    await login(platform, base(), owner);
+    await openSection(platform, 'general');
+    await platform.locator('li').filter({ hasText: otherOwner.company.name })
+      .getByRole('button', { name: 'Autoridad de empresa', exact: true }).click();
+    const panel = platform.getByRole('region', { name: 'Autoridad de empresa', exact: true });
+    await panel.getByText(`${otherOwner.name} · ${otherOwner.email} · Dueño`, { exact: true }).waitFor();
+    await panel.getByText('Selecciona esta empresa en el menú de cuenta para asignar autoridad a sus personas.', { exact: true }).waitFor();
+    const assignment = panel.getByRole('form', { name: 'Asignar autoridad de empresa', exact: true });
+    expect(await assignment.locator('select').nth(0).isDisabled()).toBe(true);
+    expect(await assignment.getByRole('button', { name: 'Guardar autoridad', exact: true }).isDisabled()).toBe(true);
+    expect((await apiGet(platform, '/v3/auth/session')).body.authority).toMatchObject({ acting_company: owner.company.slug });
+    const response = await apiGet(platform, `/v3/console/companies/${otherOwner.company.slug}/admins`);
+    expect(response.status).toBe(200);
+    expect(response.body.items).toEqual([expect.objectContaining({ email: otherOwner.email, role: 'owner' })]);
+    const stored = await pool().query<{ email: string; role: string }>(`SELECT person.email,admin.role
+      FROM company_admins admin JOIN console_users person ON person.id=admin.human_id WHERE admin.company_id=$1`, [otherOwner.company.slug]);
+    expect(stored.rows).toEqual([{ email: otherOwner.email, role: 'owner' }]);
+    await capture(platform, 'company-admin-other-selected-company-notice');
+  }, 120_000);
+
+  it('bloquea controles mientras relee la autoridad real y recupera las personas elegibles al terminar', async () => {
+    const platform = await freshPage('platform-loading-authority');
+    await login(platform, base(), owner);
+    const panel = await openAuthority(platform);
+    await panel.getByText(`${delegate.name} · ${delegate.email} · Dueño`, { exact: true }).waitFor();
+    const blocker = await active().database.adminPool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE company_admins IN ACCESS EXCLUSIVE MODE');
+      await panel.getByRole('button', { name: 'Releer autoridad', exact: true }).click();
+      await panel.getByText('Leyendo autoridad…', { exact: true }).waitFor();
+      expect(await panel.getByRole('button', { name: 'Guardar autoridad', exact: true }).isDisabled()).toBe(true);
+      await capture(platform, 'company-admin-loading-disabled-controls');
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+    await expect.poll(async () => panel.getByRole('form', { name: 'Asignar autoridad de empresa', exact: true }).locator('select').nth(0).isDisabled(), { timeout: plazo(15_000) }).toBe(false);
+    expect((await readAdmins(platform)).body?.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ email: delegate.email, role: 'owner' }),
+    ]));
+  }, 120_000);
 
   it('no quedan errores inesperados del navegador', () => {
     process.stdout.write(`V4 company admins e2e tolerated console messages: ${JSON.stringify(Object.fromEntries(errors.ignored))}\n`);
