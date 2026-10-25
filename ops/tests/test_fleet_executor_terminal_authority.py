@@ -67,6 +67,7 @@ class TerminalRequiredAuthorityTest(unittest.TestCase):
     tearDown = authority_fixture.CentralAuthorityAdapterTest.tearDown
 
     def test_purge_without_terminal_authority_does_not_prepare_or_revoke(self):
+        self.registries.pop('pty')
         journal = {}
         with self.assertRaisesRegex(authority_fixture.SafeFailure, 'requires the configured terminal relay authority'):
             authority_fixture.adapter.revoke(self.policy, {**self.context, 'request': {'kind': 'purge'}},

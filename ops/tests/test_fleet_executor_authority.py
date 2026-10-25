@@ -48,11 +48,12 @@ class CentralAuthorityAdapterTest(unittest.TestCase):
             directory.mkdir(mode=0o700)
             roots[name] = str(directory)
         self.registries = {}
-        for name in adapter.AUTHORITIES:
+        for name in (*adapter.AUTHORITIES, 'pty'):
             directory = self.root / name
             directory.mkdir(mode=0o700)
-            filename = directory / ('mtls_identities.json' if name.endswith('mtls') else 'token_hashes.json')
-            filename.write_text(json.dumps({'version': 1, 'identities': []}))
+            filename = directory / ('pty_agent_identities.json' if name == 'pty' else
+                                    'mtls_identities.json' if name.endswith('mtls') else 'token_hashes.json')
+            filename.write_text(json.dumps({'version': 1, 'agents' if name == 'pty' else 'identities': []}))
             filename.chmod(0o600)
             self.registries[name] = str(filename)
         self.central = {'version': 1, 'state_root': roots['central'], 'registries': self.registries,
