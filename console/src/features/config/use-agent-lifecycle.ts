@@ -52,6 +52,10 @@ export function useAgentLifecycle(open: boolean, target?: FleetTarget, onTermina
       setReadError('El servidor devolvió un estado distinto del recibo o una versión anterior.');
       return false;
     }
+    if (previous?.id !== value.id) {
+      sequence.current += 1;
+      setBusy(false);
+    }
     accepted.current = value;
     if (previous?.id === value.id && previous.status !== value.status && TERMINAL.includes(value.status)) terminalRef.current?.();
     if (previous?.id !== value.id || previous.version !== value.version) setStale(false);

@@ -7,7 +7,7 @@ import { useConsoleAccess } from '../../api/console-access';
 import type { ConfigurationSnapshot } from '../../api/types';
 import { AgentLifecycleFields } from './AgentLifecycleFields';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine, OperationStatusPill } from './AgentFleetOperation';
-import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, isStaleResume, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, isStaleResume, isUnpreparedMaintenance, isUnresolved, needsAttention, operationHeadline, operationTitle, partitionOperations } from './fleet-operation-text';
 import { focusPrimaryMembershipCheckbox, isPrimaryMembershipError, translateFleetOperationError } from './fleet-operation-error-translations';
 import { agentLifecycleDraft, agentLifecycleRequest, fleetScopeGap, FLEET_ACTION_LABELS, isRegistryDraftRow, type AgentLifecycleDraft } from './agent-lifecycle-model';
 import { lifecycleLabel } from './agent-view';
@@ -58,7 +58,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   currentFingerprint.current = JSON.stringify(input);
   const samePreview = !!input && !!validated && JSON.stringify(input) === JSON.stringify(validated.input);
   const busy = sending || flow.busy;
-  const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
+  const inProgress = isUnresolved(flow.operation) && !isUnpreparedMaintenance(flow.operation);
   const blocked = !!blockingOperation(flow.operation, kind);
   const aliasConfirmed = kind !== 'purge' || target?.resource !== 'agent' || typedAlias === target.alias;
   const confirmationTarget = target?.resource === 'agent' ? JSON.stringify([target.tenant_id, target.alias]) : '';
@@ -149,7 +149,7 @@ export function AgentLifecyclePanel({ snapshot, target, onReloaded, initialDraft
   const previewBlock = !canWrite ? 'No se acreditó permiso para operar agentes desde esta cuenta.' : scopeGap ?? (
     !available ? `Esta acción no está disponible: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
       : blocked ? blockingText(flow.operation, kind)
-        : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
+        : inProgress ? blockingText(flow.operation, kind)
           : busy ? 'Espera a que termine la operación en curso.'
             : !aliasConfirmed ? `Escribe el alias ${purgeAlias} para confirmar.` : undefined);
   const enqueueBlock = previewBlock ?? (!samePreview ? 'Previsualiza la operación para poder confirmarla.'

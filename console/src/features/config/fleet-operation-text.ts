@@ -247,9 +247,16 @@ export function isUnresolved(operation: FleetOperation | undefined): operation i
   return !!operation && UNRESOLVED_STATUSES.includes(operation.status);
 }
 
+export function isUnpreparedMaintenance(operation: FleetOperation | undefined): boolean {
+  return operation?.kind === 'update' && operation.target.resource === 'agent'
+    && operation.actor.actor_subject?.startsWith('host:') === true && operation.desired_revision === null
+    && (operation.status === 'queued' || operation.status === 'running')
+    && operation.steps.every(step => step.status === 'pending');
+}
+
 /** An unresolved operation of ANOTHER kind: the server refuses to enqueue the intended action until it is cancelled. */
 export function blockingOperation(operation: FleetOperation | undefined, intended: OperationKind): FleetOperation | undefined {
-  return isUnresolved(operation) && operation.kind !== intended ? operation : undefined;
+  return isUnresolved(operation) && !isUnpreparedMaintenance(operation) && operation.kind !== intended ? operation : undefined;
 }
 
 export function blockingText(operation: FleetOperation | undefined, intended: OperationKind): string {
@@ -282,7 +289,9 @@ const REFUSALS: readonly (readonly [RegExp, string])[] = [
 
 /** Server refusals of preview/enqueue/control, in Spanish; anything else passes through. */
 export function fleetErrorText(message: string, operation: FleetOperation | undefined, intended: OperationKind): string {
-  if (/already has an unresolved fleet operation/iu.test(message)) return blockingText(operation, intended);
+  if (/already has an unresolved fleet operation/iu.test(message)) {
+    return blockingText(isUnresolved(operation) && !isUnpreparedMaintenance(operation) ? operation : undefined, intended);
+  }
   if (isStaleResume(message)) return STALE_RESUME_TEXT;
   return REFUSALS.find(([pattern]) => pattern.test(message))?.[1] ?? message;
 }

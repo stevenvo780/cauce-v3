@@ -1,9 +1,9 @@
 import { webcrypto } from 'node:crypto';
-import { useState } from 'react';
-import { screen, waitFor, within } from '@testing-library/react';
+import { useState, type ReactNode } from 'react';
+import { act, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import type { FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { FleetCapabilitySchema, FleetOperationSchema, type FleetOperation, type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
 import { ConsoleAccessBoundary } from '../../api/console-access';
 import { fleetRequestHash } from '../../api/client/fleet-operations-client';
 import type { ConfigurationSnapshot } from '../../api/types';
@@ -11,6 +11,7 @@ import { server } from '../../mocks/server';
 import { ApiProvider } from '../../api/context';
 import { renderWithApi, testApi } from '../../test/render';
 import { AgentLifecyclePanel } from './AgentLifecyclePanel';
+import { useAgentLifecycle } from './use-agent-lifecycle';
 
 Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
 const snapshot: ConfigurationSnapshot = { revision: 4, role_policies: [{ role: 'agent' }, { role: 'rol con espacios' }], tenants: [{ id: 'A' }], agents: [],
@@ -267,6 +268,68 @@ it('shows the newest pending operation on open and still refuses an older versio
   expect(card).toHaveTextContent(/En cola/);
   await user.click(screen.getByRole('button', { name: 'Releer operación' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/estado distinto del recibo o una versión anterior/);
+});
+it('lets the operator select, preview and enqueue stop while host maintenance has not prepared', async () => {
+  const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+  const input: FleetOperationRequest = { kind: 'stop', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' };
+  const automatic = { ...await receipt(input, 'running', 1), kind: 'update', desired_revision: null,
+    actor: { tenant_id: 'A', alias: 'one', actor_subject: 'host:test-host:approved-key' } };
+  renderPanel(target);
+  const enqueued: FleetOperationRequest[] = [];
+  server.use(previewRoute(),
+    http.get('http://localhost/v3/console/fleet/operations', () => HttpResponse.json({ operations: [automatic] })),
+    http.post('http://localhost/v3/console/fleet/operations', async ({ request }) => {
+      const selected = await request.json() as FleetOperationRequest;
+      enqueued.push(selected);
+      const operation = { ...await receipt(selected), id: '55555555-5555-4555-8555-555555555555' };
+      return HttpResponse.json({ operation_id: operation.id, status: operation.status, operation }, { status: 202 });
+    }));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Operar agente A/one' }));
+  await screen.findByLabelText('Operación de flota');
+  const action = screen.getByRole('combobox', { name: '¿Qué quieres hacer?' });
+  expect(action).toBeEnabled();
+  await user.selectOptions(action, 'stop');
+  await user.click(screen.getByRole('button', { name: 'Previsualizar operación' }));
+  await screen.findByLabelText('Previsualización operativa');
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
+  await waitFor(() => { expect(enqueued).toHaveLength(1); });
+  expect(enqueued[0]).toMatchObject({ kind: 'stop', target });
+});
+it('keeps the accepted manual operation and its inventory refresh when an old maintenance read finishes late', async () => {
+  const target = { resource: 'agent' as const, tenant_id: 'A', alias: 'one' };
+  const input: FleetOperationRequest = { kind: 'stop', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' };
+  const automatic = FleetOperationSchema.parse({ ...await receipt(input, 'running', 1), kind: 'update', desired_revision: null,
+    actor: { tenant_id: 'A', alias: 'one', actor_subject: 'host:test-host:approved-key' } });
+  const manual = FleetOperationSchema.parse({ ...await receipt(input, 'queued', 1), id: '55555555-5555-4555-8555-555555555555' });
+  let finishAutomatic: (value: FleetOperation) => void = () => undefined;
+  let finishManual: (value: FleetOperation) => void = () => undefined;
+  const automaticRead = new Promise<FleetOperation>(resolve => { finishAutomatic = resolve; });
+  const manualRead = new Promise<FleetOperation>(resolve => { finishManual = resolve; });
+  vi.spyOn(testApi, 'getFleetCapability').mockResolvedValue(FleetCapabilitySchema.parse(capability));
+  vi.spyOn(testApi, 'listFleetOperations').mockResolvedValue([automatic]);
+  vi.spyOn(testApi, 'getFleetOperation').mockImplementation(operationId => operationId === automatic.id ? automaticRead : manualRead);
+  const reloadInventory = vi.fn();
+  const { result } = renderHook(() => useAgentLifecycle(true, target, reloadInventory),
+    { wrapper: ({ children }: { children: ReactNode }) => <ApiProvider api={testApi}>{children}</ApiProvider> });
+  await waitFor(() => { expect(result.current.operation?.id).toBe(automatic.id); });
+  let refreshAutomatic: Promise<unknown> = Promise.resolve();
+  act(() => { refreshAutomatic = result.current.refresh(); });
+  expect(result.current.busy).toBe(true);
+  act(() => { result.current.accept(manual); });
+  expect(result.current.operation?.id).toBe(manual.id);
+  expect(result.current.busy).toBe(false);
+  let refreshManual: Promise<unknown> = Promise.resolve();
+  act(() => { refreshManual = result.current.refresh(); });
+  expect(result.current.busy).toBe(true);
+  await act(async () => { finishAutomatic({ ...automatic, status: 'cancelled', version: 2 }); await refreshAutomatic; });
+  expect(result.current.operation?.id).toBe(manual.id);
+  expect(result.current.busy).toBe(true);
+  expect(reloadInventory).not.toHaveBeenCalled();
+  await act(async () => { finishManual({ ...manual, status: 'succeeded', version: 2 }); await refreshManual; });
+  expect(result.current.operation).toMatchObject({ id: manual.id, status: 'succeeded', version: 2 });
+  expect(result.current.busy).toBe(false);
+  expect(reloadInventory).toHaveBeenCalledTimes(1);
 });
 it('translates the primary membership refusal and jumps to its checkbox on click', async () => {
   renderPanel();

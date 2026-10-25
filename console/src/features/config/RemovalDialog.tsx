@@ -6,7 +6,7 @@ import { ActionButton } from '../../components/action-button';
 import { Button } from '../../components/kit';
 import { FormDialog } from '../../components/dialogs';
 import { AgentFleetOperation, AgentFleetPreview, OperationLine } from './AgentFleetOperation';
-import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, operationTitle, partitionOperations } from './fleet-operation-text';
+import { blockingOperation, blockingText, fleetCapabilityReasonText, fleetErrorText, isUnpreparedMaintenance, isUnresolved, operationTitle, partitionOperations } from './fleet-operation-text';
 import { useAgentLifecycle } from './use-agent-lifecycle';
 import './agent-lifecycle.css';
 
@@ -31,7 +31,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
   const canWrite = !sessionInvalid && !access.error && !access.loading && access.data?.permissions?.includes('config.write') === true;
   const available = flow.capability?.available === true && flow.capability.actions.includes(kind);
   const busy = sending || flow.busy;
-  const inProgress = !!flow.operation && ['queued', 'running', 'awaiting_auth', 'cancelling'].includes(flow.operation.status);
+  const inProgress = isUnresolved(flow.operation) && !isUnpreparedMaintenance(flow.operation);
   const blocked = !!blockingOperation(flow.operation, kind);
   const parsed = FleetOperationRequestSchema.safeParse({ kind, target, parameters: {}, expected_revision: revision, idempotency_key: key });
   const request = parsed.success ? parsed.data : undefined;
@@ -81,7 +81,7 @@ export function RemovalDialog({ target, kind: initialKind, revision, onClose, re
     : !available ? `El servidor no acredita esta acción: ${fleetCapabilityReasonText(flow.capability?.reason)}.`
       : !request ? 'Falta una revisión o identidad válida para esta operación.'
         : blocked ? blockingText(flow.operation, kind)
-          : inProgress ? 'Hay una operación en ejecución. Espera a que termine o cancélala desde el panel de la operación.'
+          : inProgress ? blockingText(flow.operation, kind)
             : busy ? 'Espera a que termine la operación en curso.' : undefined;
   const enqueueBlock = previewBlock ?? (!valid ? 'Previsualiza la operación para poder encolarla.'
     : !validated.preview.can_apply ? 'La vista previa no permite aplicar esta operación. Revisa los motivos de la vista previa.'

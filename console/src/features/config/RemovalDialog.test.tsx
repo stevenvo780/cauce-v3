@@ -91,6 +91,13 @@ it('fails closed when capability is missing even with config.write', async () =>
   expect(screen.getByRole('button', { name: 'Previsualizar retiro' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Encolar retiro' })).toBeDisabled();
 });
+it('keeps an unresolved prepared human operation blocking a new group request', async () => {
+  const input: FleetOperationRequest = { kind: 'restore', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' };
+  renderDialog('retire', [await operation(input, 'running')]);
+  await screen.findByLabelText('Operación de flota');
+  expect(screen.getByRole('button', { name: 'Previsualizar retiro' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Encolar retiro' })).toBeDisabled();
+});
 it('loads durable group history after reopening and restores without promising to start its agents', async () => {
   const input: FleetOperationRequest = { kind: 'restore', target, parameters: {}, expected_revision: 4, idempotency_key: 'request_key' };
   const stored = await operation(input, 'succeeded', 7);

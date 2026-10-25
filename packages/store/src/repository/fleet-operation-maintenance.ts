@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { FleetOperationRequestSchema, sha256Hex, type FleetOperation, type FleetOperationRequest } from '@cauce/protocol';
+import { FleetOperationRequestSchema, sha256Hex, type FleetOperation, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import type { DatabaseClient } from '../db.js';
 import { agentContextReconcileLockKey } from './agent-context-lock.js';
 import { fleetSteps, lockFleetRevision, recordFleetEvent, validateFleetTarget } from './fleet-operation-authority.js';
 import { FleetOperationError, publicFleetOperation, type FleetOperationRow } from './fleet-operation-contracts.js';
+import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Identity = z.object({ host_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
@@ -54,12 +55,15 @@ async function assertIdentity(client: DatabaseClient, identity: HostMaintenanceI
 }
 type AgentRequest = Extract<FleetOperationRequest, { kind: 'create' | 'update' }>;
 async function canonicalRequest(client: DatabaseClient, target: AgentRequest['target'], revision: number,
-  key: string, prepared?: AgentRequest['parameters']): Promise<AgentRequest> {
+  key: string, prepared?: AgentRequest['parameters'], allowUnselectedModel = false): Promise<AgentRequest> {
   const agent = (await client.query<Record<string, unknown>>(`SELECT agent.* FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
     WHERE agent.tenant_id=$1 AND agent.alias=$2 AND agent.retired_at IS NULL AND agent.purged_at IS NULL
       AND tenant.enabled AND tenant.retired_at IS NULL AND tenant.purged_at IS NULL`, [target.tenant_id, target.alias])).rows[0];
   if (agent?.runtime_mode !== 'container' || (!prepared && (agent.enabled !== true || agent.lifecycle_state !== 'ready'))) {
     throw new FleetOperationError('forbidden', 'maintenance target is not an active container runtime');
+  }
+  if (!(allowUnselectedModel && agent.model_id === null) && (typeof agent.model_id !== 'string' || agent.model_id.trim().length === 0)) {
+    throw new FleetOperationError('forbidden', 'maintenance requires an explicit model selection');
   }
   const memberships = (await client.query<{ room_id: string; role: string; enabled: boolean }>(
     `SELECT room_id,role,enabled FROM memberships WHERE tenant_id=$1 AND alias=$2 AND retired_at IS NULL ORDER BY room_id`,
@@ -93,7 +97,7 @@ export async function assertHostMaintenanceAuthority(client: DatabaseClient, row
   if (cancellingStale && row.desired_revision === null
       && Number(row.expected_revision) !== await lockFleetRevision(client, undefined, row.company_id)) return;
   const current = await canonicalRequest(client, row.request.target, Number(row.expected_revision), row.request.idempotency_key,
-    preparing || row.desired_revision !== null ? row.request.parameters : undefined);
+    preparing || row.desired_revision !== null ? row.request.parameters : undefined, row.request.parameters.model_id === null);
   if (sha256Hex(current.parameters) !== origin.parameters_sha256) throw new FleetOperationError('forbidden', 'maintenance target configuration changed');
   await validateFleetTarget(client, row.request, origin.host_id, preparing || row.desired_revision !== null);
 }
@@ -141,6 +145,37 @@ export async function cancelStaleMaintenance(client: DatabaseClient, row: FleetO
   if (next) await recordFleetEvent(client, row.id, Number(next.version), 'cancelled', { maintenance_skipped: 'revision_changed' });
   return true;
 }
+export async function preemptUnpreparedMaintenance(client: DatabaseClient, company: string, target: FleetTarget,
+  actor: { tenant_id: string; alias: string; actor_subject: string; request_sha256: string }): Promise<void> {
+  const rows = (await client.query<FleetOperationRow>(`SELECT operation.* FROM fleet_operations operation
+    WHERE operation.company_id=$1 AND operation.kind='update' AND operation.target->>'resource'='agent'
+      AND operation.status IN ('queued','running') AND operation.desired_revision IS NULL
+      AND EXISTS (SELECT 1 FROM agents agent WHERE agent.tenant_id=$2 AND agent.purged_at IS NULL
+        AND agent.tenant_id=operation.target->>'tenant_id' AND agent.alias=operation.target->>'alias'
+        AND ${runtimePrincipalScopeSql('agent.tenant_id', 'agent.alias')}
+        AND ($3::text IS NULL OR agent.alias=$3)
+        AND ($4::text IS NULL OR agent.primary_room_id=$4 OR EXISTS (SELECT 1 FROM memberships member
+          WHERE member.tenant_id=agent.tenant_id AND member.alias=agent.alias AND member.room_id=$4)))
+    ORDER BY operation.id FOR UPDATE OF operation`,
+  [company, target.tenant_id, target.resource === 'agent' ? target.alias : null, target.resource === 'room' ? target.room_id : null])).rows;
+  for (const row of rows) {
+    if (row.steps.some(step => step.status !== 'pending')) continue;
+    const queued = (await client.query<{ metadata: Record<string, unknown> }>(
+      `SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event='queued' ORDER BY id LIMIT 1`, [row.id])).rows[0];
+    if (typeof queued?.metadata.actor_subject !== 'string') continue;
+    row.actor_subject = queued.metadata.actor_subject;
+    if (!isMaintenanceOperation(row)) continue;
+    loadMaintenanceOrigin(row, queued.metadata);
+    const next = (await client.query<{ version: string }>(`UPDATE fleet_operations SET status='cancelled',cancel_requested=true,
+      version=version+1,epoch=epoch+1,worker_id=NULL,claim_token=NULL,lease_expires_at=NULL,
+      error='{"code":"CANCELLED","retryable":false}',updated_at=clock_timestamp()
+      WHERE id=$1 AND version=$2 AND desired_revision IS NULL RETURNING version`, [row.id, row.version])).rows[0];
+    if (!next) throw new FleetOperationError('conflict', 'maintenance changed before owner preemption');
+    await recordFleetEvent(client, row.id, Number(next.version), 'cancelled', {
+      maintenance_skipped: 'owner_priority', maintenance_preempted: actor,
+    });
+  }
+}
 export async function enqueueHostMaintenance(client: DatabaseClient, identity: HostMaintenanceIdentity,
   releaseSha256: string): Promise<{ operations: FleetOperation[] }> {
   if (!Hash.safeParse(releaseSha256).success) throw new FleetOperationError('invalid_input', 'maintenance release digest is invalid');
@@ -148,7 +183,7 @@ export async function enqueueHostMaintenance(client: DatabaseClient, identity: H
   await assertIdentity(client, identity);
   const targets = (await client.query<{ tenant_id: string; alias: string }>(`SELECT agent.tenant_id,agent.alias FROM agents agent
     JOIN tenants tenant ON tenant.id=agent.tenant_id WHERE tenant.company_id=$1 AND tenant.enabled AND tenant.retired_at IS NULL
-      AND agent.host_id=$2 AND agent.runtime_mode='container' AND agent.enabled AND agent.lifecycle_state='ready'
+      AND agent.host_id=$2 AND agent.runtime_mode='container' AND agent.enabled AND agent.lifecycle_state='ready' AND agent.model_id IS NOT NULL
       AND agent.retired_at IS NULL AND agent.purged_at IS NULL AND agent.harness_id IN ('codex','claude','grok','muse')
     ORDER BY COALESCE((SELECT max(operation.created_at) FROM fleet_operations operation
       WHERE operation.target->>'resource'='agent' AND operation.target->>'tenant_id'=agent.tenant_id

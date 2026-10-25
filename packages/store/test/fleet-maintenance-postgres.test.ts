@@ -1,9 +1,11 @@
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FleetOperationRequestSchema, sha256Hex, type FleetOperationRequest, type FleetTarget } from '@cauce/protocol';
 import { CauceRepository, enqueueHostMaintenance, FleetOperationsRepository, HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority,
   withTransaction, type DatabaseClient, type DatabasePool, type FleetOperationClaim, type HostMaintenanceIdentity } from '../src/index.js';
 import { insertDelivery } from '../src/repository/messages/_insert.js';
 import { agentContextReconcileLockKey } from '../src/repository/agent-context-lock.js';
+import { fleetSteps } from '../src/repository/fleet-operation-authority.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 import { seedFleetHuman } from './fleet-human-postgres.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
@@ -53,6 +55,37 @@ beforeEach(async () => {
 afterEach(async () => { await current?.close(); current = undefined; });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 const enqueue = () => withTransaction(pool, client => enqueueHostMaintenance(client, identity, RELEASE));
+function ownerRequest(kind: 'stop' | 'retire', revision: number, target: FleetTarget = {
+  resource: 'agent', tenant_id: 'Steven', alias: 'maintenance_agent',
+}): FleetOperationRequest {
+  if (kind === 'stop' && target.resource !== 'agent') throw new Error('stop requires an agent');
+  return { kind, target, expected_revision: revision, idempotency_key: randomUUID(), parameters: {} } as FleetOperationRequest;
+}
+const ownerEnqueue = (request: FleetOperationRequest) => repository.enqueue('Steven', 'maintenance_operator', request, subject);
+async function legacyMaintenance(): Promise<string> {
+  await pool.query("UPDATE agents SET model_id=NULL WHERE alias='maintenance_agent'");
+  const target = { resource: 'agent' as const, tenant_id: 'Steven', alias: 'maintenance_agent' };
+  const request = FleetOperationRequestSchema.parse({ kind: 'update', target, expected_revision: 0, idempotency_key: 'legacy-maintenance-null',
+    parameters: { runtime_key: 'maintenance-agent', harness_id: 'codex', display_name: null, primary_room_id: 'maintenance-room',
+      memberships: [{ room_id: 'maintenance-room', role: 'agent', enabled: true }], primary_account_id: 'maintenance-account',
+      model_id: null, reasoning_effort: 'high', extensions: [], placement: { host_id: identity.host_id, mode: 'container',
+        container_name: 'cauce-maintenance-agent', runtime_user: 'dev', home_directory: '/home/dev',
+        state_directory: '/home/dev/.cauce/maintenance-agent', systemd_user: 'stev' } } });
+  return withTransaction(pool, async client => {
+    const row = (await client.query<{ id: string }>(`INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,
+      executor_host,kind,request,request_hash,idempotency_key,expected_revision,steps,company_id)
+      VALUES('Steven','maintenance_agent',$1::jsonb,$2,$3,$4,'update',$5::jsonb,$6,$7,0,$8::jsonb,$9) RETURNING id`,
+    [JSON.stringify(target), sha256Hex(target), `fleet:${identity.company_id}:${identity.host_id}`, identity.host_id,
+      JSON.stringify(request), sha256Hex(request), request.idempotency_key,
+      JSON.stringify(fleetSteps(request).map(name => ({ name, status: 'pending' }))), identity.company_id])).rows[0];
+    if (!row) throw new Error('legacy fixture absent');
+    await client.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'queued',$2::jsonb)",
+      [row.id, JSON.stringify({ acting_company: identity.company_id, actor_subject: `host:${identity.host_id}:${identity.key_fingerprint}`,
+        maintenance: { host_id: identity.host_id, enrollment_id: identity.enrollment_id, key_fingerprint: identity.key_fingerprint,
+          release_sha256: RELEASE, parameters_sha256: sha256Hex(request.parameters) } })]);
+    return row.id;
+  });
+}
 async function claim(): Promise<FleetOperationClaim> {
   const result = await repository.claim('maintenance-worker', identity.host_id);
   if (!result) throw new Error('maintenance claim absent');
@@ -98,6 +131,135 @@ async function terminalSession(client: Pick<DatabaseClient, 'query'>, revoked = 
 }
 
 describe('durable host maintenance', () => {
+  it('never enqueues automatic maintenance without an explicit model selection', async () => {
+    await pool.query("UPDATE agents SET model_id=NULL WHERE alias='maintenance_agent'");
+    expect((await enqueue()).operations).toEqual([]);
+    expect((await enqueue()).operations).toEqual([]);
+    expect((await pool.query('SELECT id FROM fleet_operations')).rowCount).toBe(0);
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready', model_id: null });
+  });
+  it('revalidates the explicit model before granting a queued maintenance claim', async () => {
+    await enqueue(); await pool.query("UPDATE agents SET model_id=NULL WHERE alias='maintenance_agent'");
+    expect(await repository.claim('maintenance-worker', identity.host_id)).toBeNull();
+    expect((await pool.query('SELECT status,error FROM fleet_operations')).rows)
+      .toEqual([{ status: 'failed', error: { code: 'AUTHORITY_REVOKED', retryable: false } }]);
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+  });
+  it.each(['claimed', 'deferred'] as const)('keeps exact legacy model-null maintenance %s available for owner Stop', async state => {
+    const id = await legacyMaintenance(); const operation = await claim();
+    expect(operation.operation.id).toBe(id);
+    if (state === 'deferred') await repository.deferMaintenance(operation, 'preflight_unavailable');
+    const manual = await ownerEnqueue(ownerRequest('stop', 0));
+    expect((await pool.query('SELECT status FROM fleet_operations WHERE id=$1', [id])).rows).toEqual([{ status: 'cancelled' }]);
+    expect((await repository.claim('owner-worker', identity.host_id))?.operation.id).toBe(manual.id);
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready', model_id: null });
+  });
+  it('rejects a legacy model-null operation when the current model selection changed', async () => {
+    const id = await legacyMaintenance(); await pool.query("UPDATE agents SET model_id='gpt-5' WHERE alias='maintenance_agent'");
+    expect(await repository.claim('maintenance-worker', identity.host_id)).toBeNull();
+    expect((await pool.query('SELECT status,error FROM fleet_operations WHERE id=$1', [id])).rows)
+      .toEqual([{ status: 'failed', error: { code: 'AUTHORITY_REVOKED', retryable: false } }]);
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+  });
+  it.each(['stop', 'retire'] as const)('gives an authorized owner %s priority over deferred automatic maintenance', async kind => {
+    const queued = (await enqueue()).operations[0]; const operation = await claim();
+    await repository.deferMaintenance(operation, 'preflight_unavailable');
+    await pool.query("UPDATE agents SET model_id=NULL WHERE alias='maintenance_agent'");
+    const manual = await ownerEnqueue(ownerRequest(kind, operation.operation.expected_revision));
+    expect(manual).toMatchObject({ kind, status: 'queued', actor: { actor_subject: subject } });
+    expect((await pool.query('SELECT status,cancel_requested,worker_id,claim_token,lease_expires_at FROM fleet_operations WHERE id=$1', [queued?.id])).rows)
+      .toEqual([{ status: 'cancelled', cancel_requested: true, worker_id: null, claim_token: null, lease_expires_at: null }]);
+    expect((await pool.query<{ metadata: Record<string, unknown> }>(
+      "SELECT metadata FROM fleet_operation_events WHERE operation_id=$1 AND event='cancelled'", [queued?.id])).rows[0]?.metadata)
+      .toMatchObject({ maintenance_skipped: 'owner_priority', maintenance_preempted: { actor_subject: subject } });
+    expect((await repository.claim('owner-worker', identity.host_id))?.operation.id).toBe(manual.id);
+    expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready', model_id: null });
+  });
+  it('does not preempt for stale revisions, revoked humans or agent-origin requests', async () => {
+    const queued = (await enqueue()).operations[0]; if (!queued) throw new Error('queued maintenance absent');
+    const request = ownerRequest('stop', queued.expected_revision);
+    await expect(ownerEnqueue({ ...request, expected_revision: queued.expected_revision + 1 })).rejects.toMatchObject({ code: 'conflict' });
+    await pool.query('UPDATE console_users SET active=false WHERE id=$1', [subject.slice('console:'.length)]);
+    await expect(ownerEnqueue(request)).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(repository.enqueue('Steven', 'maintenance_operator', request)).rejects.toMatchObject({ code: 'forbidden' });
+    expect((await pool.query('SELECT status,version FROM fleet_operations WHERE id=$1', [queued.id])).rows)
+      .toEqual([{ status: 'queued', version: '0' }]);
+    expect((await pool.query("SELECT id FROM fleet_operation_events WHERE event='cancelled'")).rowCount).toBe(0);
+  });
+  it('keeps failed automatic maintenance protected', async () => {
+    const queued = (await enqueue()).operations[0]; const operation = await claim();
+    const failed = await repository.fail(operation, { code: 'HOST_UNAVAILABLE', retryable: true });
+    await expect(ownerEnqueue(ownerRequest('stop', operation.operation.expected_revision))).rejects.toMatchObject({ code: 'conflict' });
+    if (!queued) throw new Error('queued maintenance absent');
+    expect(await repository.get('Steven', 'maintenance_operator', queued.id, subject)).toEqual(failed);
+    expect((await pool.query("SELECT id FROM fleet_operation_events WHERE event='cancelled'")).rowCount).toBe(0);
+  });
+  it('keeps unresolved human operations protected', async () => {
+    await ownerEnqueue(ownerRequest('stop', 0)); const human = await claim();
+    await expect(ownerEnqueue(ownerRequest('retire', 0))).rejects.toMatchObject({ code: 'conflict' });
+    expect((await repository.execution(human)).operation).toEqual(human.operation);
+  });
+  it('atomically revokes a claimed but unprepared maintenance worker when the owner wins', async () => {
+    await enqueue(); const operation = await claim();
+    const owner = await pool.connect(); const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await owner.query('BEGIN');
+      const pid = (await owner.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('owner backend absent');
+      const manual = await repository.forTransaction(owner).enqueue('Steven', 'maintenance_operator', ownerRequest('stop', operation.operation.expected_revision), subject);
+      const prepared = repository.prepare(operation); settlements.push(prepared); void prepared.catch(() => undefined);
+      await blockedBy(pid);
+      await owner.query('COMMIT'); committed = true;
+      await expect(prepared).rejects.toMatchObject({ code: 'conflict' });
+      expect(await repository.renew(operation)).toBe(false);
+      await expect(repository.startStep(operation, 'stop')).rejects.toMatchObject({ code: 'conflict' });
+      expect((await pool.query('SELECT epoch,worker_id,claim_token FROM fleet_operations WHERE id=$1', [operation.operation.id])).rows)
+        .toEqual([{ epoch: String(operation.epoch + 1), worker_id: null, claim_token: null }]);
+      expect((await repository.claim('owner-worker', identity.host_id))?.operation.id).toBe(manual.id);
+      expect(await agent()).toMatchObject({ enabled: true, lifecycle_state: 'ready' });
+    } finally {
+      if (!committed) await owner.query('ROLLBACK');
+      await Promise.allSettled(settlements); owner.release();
+    }
+  });
+  it('cannot preempt maintenance after its preparation transaction wins', async () => {
+    await enqueue(); const operation = await claim();
+    const maintenance = await pool.connect(); const settlements: Promise<unknown>[] = []; let committed = false;
+    try {
+      await maintenance.query('BEGIN');
+      const pid = (await maintenance.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      if (pid === undefined) throw new Error('maintenance backend absent');
+      const prepared = await repository.forTransaction(maintenance).prepare(operation);
+      const manual = ownerEnqueue(ownerRequest('stop', prepared.operation.desired_revision ?? 0));
+      settlements.push(manual); void manual.catch(() => undefined); await blockedBy(pid);
+      await maintenance.query('COMMIT'); committed = true;
+      await expect(manual).rejects.toMatchObject({ code: 'conflict' });
+      expect((await repository.execution(operation)).operation).toEqual(prepared.operation);
+      expect(await agent()).toMatchObject({ enabled: false, lifecycle_state: 'provisioning' });
+    } finally {
+      if (!committed) await maintenance.query('ROLLBACK');
+      await Promise.allSettled(settlements); maintenance.release();
+    }
+  });
+  it.each(['room', 'tenant'] as const)('preempts only automatic maintenance within the owner %s action scope', async resource => {
+    await pool.query("INSERT INTO rooms(id,tenant_id) VALUES('outside-maintenance-room','Steven')");
+    for (const [alias, room] of [['included_agent', 'maintenance-room'], ['outside_agent', 'outside-maintenance-room']] as const) {
+      await withTransaction(pool, async client => {
+        await client.query(`INSERT INTO agents(tenant_id,alias,harness_id,enabled,lifecycle_state,runtime_key,host_id,runtime_mode,
+          container_name,runtime_user,home_directory,state_directory,systemd_user,primary_account_id,model_id,reasoning_effort)
+          SELECT tenant_id,$1,harness_id,enabled,lifecycle_state,replace($1,'_','-'),host_id,runtime_mode,$1,runtime_user,home_directory,
+            '/home/dev/.cauce/'||$1,systemd_user,primary_account_id,model_id,reasoning_effort FROM agents WHERE alias='maintenance_agent'`, [alias]);
+        await client.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES('Steven',$1,$2,'agent')", [room, alias]);
+        await client.query("UPDATE agents SET primary_room_id=$1 WHERE alias=$2", [room, alias]);
+      });
+    }
+    const queued = (await enqueue()).operations; expect(queued).toHaveLength(3);
+    const target: FleetTarget = resource === 'room' ? { resource, tenant_id: 'Steven', room_id: 'maintenance-room' } : { resource, tenant_id: 'Steven' };
+    await ownerEnqueue(ownerRequest('retire', queued[0]?.expected_revision ?? 0, target));
+    expect((await pool.query(`SELECT target->>'alias' AS alias,status FROM fleet_operations WHERE kind='update' ORDER BY target->>'alias'`)).rows)
+      .toEqual([{ alias: 'included_agent', status: 'cancelled' }, { alias: 'maintenance_agent', status: 'cancelled' },
+        { alias: 'outside_agent', status: resource === 'tenant' ? 'cancelled' : 'queued' }]);
+  });
   it('builds one exact canonical update and attributes its real signed host', async () => {
     const first = await enqueue();
     expect(first.operations).toHaveLength(1);

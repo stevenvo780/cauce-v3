@@ -72,6 +72,54 @@ it('translates the server refusal of an unresolved operation when previewing', a
   expect(await screen.findByRole('alert')).toHaveTextContent('cancélala para poder retirar');
 });
 
+it.each(['queued', 'running'])('previews and enqueues a manual retirement over %s unprepared host maintenance', async status => {
+  const current = { ...await operation('update', status, 1), desired_revision: null,
+    actor: { tenant_id: 'A', alias: 'w', actor_subject: 'host:test-host:approved-key' } };
+  renderDialog([current]);
+  const requests: FleetOperationRequest[] = [];
+  server.use(http.post('http://localhost/v3/console/fleet/operations/preview', async ({ request }) => {
+    const input = await request.json() as FleetOperationRequest;
+    requests.push(input);
+    return HttpResponse.json({ kind: input.kind, target: input.target, expected_revision: input.expected_revision,
+      request_sha256: await fleetRequestHash(input), steps: ['fence'], can_apply: true, dependencies: [] });
+  }), http.post('http://localhost/v3/console/fleet/operations', async ({ request }) => {
+    const input = await request.json() as FleetOperationRequest;
+    requests.push(input);
+    const next = { ...await operation('retire', 'queued', 1), id: '55555555-5555-4555-8555-555555555555',
+      request_sha256: await fleetRequestHash(input) };
+    return HttpResponse.json({ operation_id: next.id, status: next.status, operation: next }, { status: 202 });
+  }));
+  const user = userEvent.setup();
+  await screen.findByLabelText('Operación de flota');
+  const preview = screen.getByRole('button', { name: 'Previsualizar operación' });
+  expect(preview).toBeEnabled();
+  await user.click(preview);
+  await screen.findByLabelText('Previsualización operativa');
+  await user.click(screen.getByRole('button', { name: 'Confirmar operación' }));
+  await waitFor(() => { expect(requests).toHaveLength(2); });
+  expect(requests.every(input => input.kind === 'retire' && input.target.resource === 'agent' && input.target.alias === 'w')).toBe(true);
+});
+
+it.each(['prepared maintenance', 'human request'])('keeps %s blocked in the retirement guide', async scenario => {
+  const current = { ...await operation('update', 'running', 1),
+    desired_revision: scenario === 'prepared maintenance' ? 5 : null,
+    actor: { tenant_id: 'A', alias: 'w', actor_subject: scenario === 'human request' ? 'console:operator' : 'host:test-host:approved-key' } };
+  renderDialog([current]);
+  await screen.findByLabelText('Operación de flota');
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
+  expect(screen.getByText('Hay una operación de actualización sin terminar; cancélala para poder retirar.')).toBeInTheDocument();
+});
+
+it('requires resolving a failed manual retirement before previewing another retirement', async () => {
+  renderDialog([await operation('retire', 'failed', 3)]);
+  await screen.findByLabelText('Operación de flota');
+  expect(screen.getByRole('button', { name: 'Previsualizar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Confirmar operación' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Reintentar' })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Cancelar' })).toBeEnabled();
+});
+
 it('explains a resume refused after a revision change and makes cancelling the primary action', async () => {
   renderDialog([await operation('retire', 'failed', 3)]);
   server.use(http.post(`http://localhost/v3/console/fleet/operations/${id}/resume`, () => HttpResponse.json(

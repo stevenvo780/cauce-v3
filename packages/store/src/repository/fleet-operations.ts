@@ -10,6 +10,7 @@ import { lockPreparedFleetRevision } from './fleet-operation-slice.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
 import { fleetRollbackCompleted, fleetRollbackIntent } from './fleet-operation-rollback-intent.js';
 import { fleetReplacementCommit } from './fleet-operation-retirement.js';
+import { preemptUnpreparedMaintenance } from './fleet-operation-maintenance.js';
 
 export class FleetOperationsRepository extends FleetOperationExecution {
   protected readonly controllerHost: string | undefined;
@@ -61,6 +62,8 @@ export class FleetOperationsRepository extends FleetOperationExecution {
         await lockFleetRevision(client, request.expected_revision, authority.actingCompany);
         const { host, preview } = await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts);
         if (!preview.can_apply) throw new FleetOperationError('conflict', 'target has durable dependencies; retire it instead');
+        if (actorSubject !== undefined) await preemptUnpreparedMaintenance(client, authority.actingCompany, request.target,
+          { tenant_id: tenant, alias, actor_subject: actorSubject, request_sha256: hash });
         const inserted = (await client.query<FleetOperationRow>(
           `INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,
             request_hash,idempotency_key,expected_revision,steps,company_id)
