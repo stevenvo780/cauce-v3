@@ -268,8 +268,14 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
     const snapshot = async (): Promise<Observation> => {
       const metadata = JSON.parse(await docker(['exec', '--user', '0', wsName, 'python3', '-I', '-B', '-c',
         'import json,pathlib,sys;r={}\nfor alias in sys.argv[2:]:\n d=json.loads((pathlib.Path(sys.argv[1])/alias/"cauce-v3-adapter.json").read_bytes());r[alias]={k:d.get(k) for k in ("pid","starttime","controllerPid","controllerStarttime","stopAuthority")}\nprint(json.dumps(r))', control, ...actors.map(actor => actor.alias)])) as Record<string, { pid: number; starttime: number; controllerPid: number; controllerStarttime: number; stopAuthority: string | null }>;
-      const rows = (await docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'list-panes', '-a', '-F',
-        '#{session_name}\t#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pid}'])).split('\n').map(row => row.split('\t'));
+      const columnSeparator = String.fromCharCode(9), rowSeparator = String.fromCharCode(10);
+      const format = ['#{session_name}', '#{session_id}', '#{pane_id}', '#{pane_pid}', '#{pid}'].join(columnSeparator);
+      const rows = (await docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'list-panes', '-a', '-F', format]))
+        .split(rowSeparator).map(row => row.split(columnSeparator));
+      if (rows.some(row => row.length !== 5 || !Number.isFinite(Number(row[4])) || Number(row[4]) <= 1)) {
+        await save('snapshot-format-failure', { columns: ['session_name', 'session_id', 'pane_id', 'pane_pid', 'pid'], rows,
+          separator_codes: [columnSeparator.charCodeAt(0), rowSeparator.charCodeAt(0)] });
+      }
       expect(rows).toHaveLength(2);
       const serverPid = Number(rows[0]?.[4]); expect(serverPid).toBeGreaterThan(1);
       for (const row of rows) expect(Number(row[4])).toBe(serverPid);
