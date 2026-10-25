@@ -101,6 +101,19 @@ class MaintenancePreflightTest(fixtures.ReleaseFixture):
             self.assertEqual(self.run_guard(), [{'state': 'runtime_current'}])
         runtime.sdk_environment_proof.assert_called_once()
 
+    def test_stopped_adapter_with_current_mounts_is_skipped_as_runtime_current(self):
+        self.observed['Mounts'] = self.mounts(self.new)
+        self.state['adapter_running'] = False
+        with mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold', side_effect=AssertionError('stop launched')):
+            self.assertEqual(self.run_guard(), [{'state': 'runtime_current'}])
+
+    def test_stopped_adapter_with_older_mounts_emits_stopped_for_maintenance(self):
+        self.state['adapter_running'] = False
+        with mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold', side_effect=AssertionError('stop launched')):
+            self.assertEqual(self.run_guard(), [{'state': 'stopped'}])
+
     def test_current_mounts_with_an_older_live_bundle_still_require_guarded_stop(self):
         self.observed['Mounts'] = self.mounts(self.new)
         self.state['adapter_bundle_digest'] = 'a' * 64

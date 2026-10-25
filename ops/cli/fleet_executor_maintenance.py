@@ -306,13 +306,18 @@ def run(policy: dict, input_stream, output) -> None:
                 return
             previous = validate_previous(policy, agent, observed)
             bundle = approved_bundle(policy, agent)
-            if bundle.get('shared_tui') is not True or agent['harness_id'] not in {'claude', 'codex', 'grok', 'muse'}:
+            if agent['harness_id'] not in {'claude', 'codex', 'grok', 'muse'}:
                 emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
                 return
             assert_persistent_profile(policy, agent)
             state, environment = observe_adapter_state(previous, observed)
             if not state['adapter_running']:
-                emit(output, {'state': 'stopped'})
+                try:
+                    validate_container(policy, agent, observed)
+                except SafeFailure:
+                    emit(output, {'state': 'stopped'})
+                else:
+                    emit(output, {'state': 'runtime_current'})
                 return
             sdk_environment_proof(policy, agent, environment, state['adapter_bootstrap'], state['adapter_operation_id'])
             profile = provider_base_environment(policy, agent)
@@ -329,6 +334,9 @@ def run(policy: dict, input_stream, output) -> None:
                 if state.get('adapter_bundle_digest') == bundle['digest']:
                     emit(output, {'state': 'runtime_current'})
                     return
+            if bundle.get('shared_tui') is not True:
+                emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
+                return
             identity = identity_for(previous, observed)
             from fleet_executor_container import user_identity
             uid, gid = user_identity(previous, identity)
