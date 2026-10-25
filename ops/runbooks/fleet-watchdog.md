@@ -33,9 +33,8 @@ Monitorear de forma periódica la salud de la flota (leases de conexión, entreg
 3. Revisar el resumen textual en `/tmp/watchdog-report.txt`.
 
 ## Deshacer
-1. Detener y deshabilitar el timer del watchdog:
-   ```sh
-   # [no ejecutable en verificación]
-   systemctl disable --now cauce-v3-fleet-watchdog.timer
-   ```
+1. Detener la ejecución periódica que se haya creado en el paso 3. El repositorio no instala
+   ninguna unidad para este script (no existe `cauce-v3-fleet-watchdog.timer`; la unidad
+   `cauce-v3-watchdog@` es otro guardia, el de consumidores duplicados): hay que parar el cron
+   o el timer que se creó a mano para este script.
 2. Eliminar el archivo de estado persistente `/tmp/cauce-watchdog.state` si se requiere reiniciar la línea base de alertas.

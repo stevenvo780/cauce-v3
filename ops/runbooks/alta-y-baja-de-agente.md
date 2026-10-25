@@ -82,7 +82,7 @@ COMMIT;
 Generar el archivo canónico versionado `ops/flota.json` desde la base de datos:
 
 ```sh
-python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json
+python3 ops/scripts/export-fleet-snapshot.py --postgres-container cauce-v3-prod-postgres-1 --out ops/flota.json
 ```
 
 - Inspeccionar el cambio con `git diff ops/flota.json`. Debe reflejar únicamente el nuevo alias bajo la clave `fleet`.
@@ -247,7 +247,7 @@ WHERE alias = '<alias>';
 Re-exportar el snapshot para reflejar el retiro:
 
 ```sh
-python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json
+python3 ops/scripts/export-fleet-snapshot.py --postgres-container cauce-v3-prod-postgres-1 --out ops/flota.json
 ```
 
 - Al ejecutar `git diff ops/flota.json`, el `<alias>` se habrá movido automáticamente de `fleet` a `retired: { "<alias>": {} }`.
@@ -308,7 +308,7 @@ Confirmar que el árbol de trabajo está limpio y consistente:
 
 Si se requiere revertir una baja errónea o fallida:
 1. Re-habilitar en BD: `UPDATE agents SET enabled = true WHERE alias = '<alias>';`.
-2. Exportar snapshot: `python3 ops/scripts/export-fleet-snapshot.py --out ops/flota.json`.
+2. Exportar snapshot: `python3 ops/scripts/export-fleet-snapshot.py --postgres-container cauce-v3-prod-postgres-1 --out ops/flota.json`.
 3. Regenerar artefactos: `./ops/scripts/regenerate-fleet.sh`.
 4. Validar gate: `./ops/scripts/validate.sh`.
 5. Re-aprovisionar credenciales si fueron revocadas: `ops/cli/cauce <alias> aprovisionar`.
