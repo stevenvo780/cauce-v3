@@ -293,4 +293,4 @@ Las validó la pasada Opus; el detalle está en la sección 6 de `ordenes/v4-cie
 - [x] 13. [código] Preflight de dependencias nativas del gate. (ba5f301a)
 - [x] 14. Reservar los subcomandos del CLI como alias inválidos.
 - [x] 15. Inventariar las dependencias de Argos con la VPS antes de moverlo.
-- [ ] 16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar.
+- [ ] 16. Retirar lo legacy (`fleet_adoption_probe_*`, `fleet_executor_legacy*`) tras migrar. **25-oct [código]:** nada de las dos familias está muerto. El supervisor de contenedores ejecuta la sonda de adopción al parar un adaptador adoptado, y el ejecutor importa `fleet_executor_legacy*` para los contenedores compartidos de V3 (`ws-humanizar`, `ctrl-infra`) y los nativos con política de adopción. Borrarlo hoy rompería paradas y purgas de agentes V3. Los pasos para retirarlo cuando migren esos agentes están en `docs/v3.5-despliegue-flota.md` (§ Retiro de la adopción heredada).
