@@ -158,6 +158,46 @@ class Executor:
         else:
             stop(self.policy, row)
 
+    def previous_runtime_started(self) -> bool:
+        return 'runtime' in self.journal or self.journal.get('runtime_launch_attempted') is True
+
+    def close_previous_tui(self, row: dict, *, capture: bool) -> None:
+        kind = self.context['request']['kind']
+        if row.get('runtime_mode') != 'container' or placement_role(self.context) is not None:
+            return
+        if kind == 'update':
+            if self.previous_runtime_started():
+                return
+            desired = self.agent()
+            if all(row.get(field) == desired.get(field) for field in ('harness_id', 'model_id', 'reasoning_effort')):
+                return
+        elif kind not in {'retire', 'purge'}:
+            return
+        fields = ('tenant_id', 'alias', 'runtime_key', 'harness_id', 'host_id', 'runtime_mode', 'container_name',
+                  'runtime_user', 'home_directory', 'state_directory', 'model_id', 'reasoning_effort')
+        binding = {'operation_id': self.context['operation_id'], 'request_sha256': self.request_hash,
+                   'previous': {field: row.get(field) for field in fields}}
+        scope = hashlib.sha256(json.dumps(binding, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+        records = self.journal.setdefault('canonical_tui_stops', {})
+        if not isinstance(records, dict):
+            raise SafeFailure('canonical terminal closure journal is invalid')
+        entry = records.get(row['runtime_key'])
+        if entry is None and not capture:
+            return
+        from fleet_executor_container_tui import observe_canonical_tui, stop_canonical_tui
+        if entry is None:
+            entry = {'scope_sha256': scope, 'witness': observe_canonical_tui(self.policy, row), 'complete': False}
+            records[row['runtime_key']] = entry
+            self.save()
+        if not isinstance(entry, dict) or entry.get('scope_sha256') != scope or not isinstance(entry.get('witness'), dict):
+            raise SafeFailure('canonical terminal closure differs from its previous operation placement')
+        result = stop_canonical_tui(self.policy, row, entry['witness'])
+        if result != {'canonical_tui_stopped': True}:
+            raise SafeFailure('canonical terminal closure was not observed')
+        if entry.get('complete') is not True:
+            entry['complete'] = True
+            self.save()
+
     def materialize_snapshot(self, source: dict) -> dict:
         source = copy.deepcopy(source)
         for agent in source.get('agents', []):
@@ -306,14 +346,18 @@ class Executor:
                 raise SafeFailure('update requires the original runtime placement')
             if previous[0].get('runtime_key') != agent['runtime_key']:
                 raise SafeFailure('update cannot replace the physical runtime identity')
-            if previous[0].get('extensions', []) != agent.get('extensions', []) and previous[0].get('runtime_mode') == 'container' \
-                    and agent['runtime_mode'] == 'container' and previous[0].get('container_name') == agent['container_name']:
-                from fleet_executor_container import recreate_extensions
-                recreate_extensions(self.policy, previous[0], agent)
-            else:
-                stop(self.policy, previous[0])
+            if not self.previous_runtime_started():
+                self.stop_placement(previous[0])
+                self.close_previous_tui(previous[0], capture=True)
+                if previous[0].get('extensions', []) != agent.get('extensions', []) and previous[0].get('runtime_mode') == 'container' \
+                        and agent['runtime_mode'] == 'container' and previous[0].get('container_name') == agent['container_name']:
+                    from fleet_executor_container import recreate_extensions
+                    recreate_extensions(self.policy, previous[0], agent)
         elif self.context['request']['kind'] == 'start' and 'runtime' not in self.journal:
             self.stop()
+        if self.context['request']['kind'] == 'update':
+            self.journal['runtime_launch_attempted'] = True
+            self.save()
         evidence = start(self.policy, agent, operation_id=self.context['operation_id'])
         self.journal['runtime'] = evidence['runtime_digest']
         evidence.update(self.record_extension_receipt())
@@ -321,6 +365,8 @@ class Executor:
         return evidence
 
     def stop(self):
+        if self.context['request']['kind'] == 'update' and self.previous_runtime_started():
+            raise SafeFailure('previous runtime stop cannot run after destination startup')
         from fleet_executor_replacement import capture_update
         capture_update(self)
         rows = scoped_agents(self.policy, self.context)
@@ -336,17 +382,21 @@ class Executor:
                         previous[row['runtime_key']] = adapter_restart_state(self.policy, agent, observed)
                         self.save()
             self.stop_placement(row)
+            self.close_previous_tui(row, capture=True)
         self.journal['stopped'] = True
         self.save()
         return {'stopped_verified': True}
 
     def revoke(self):
+        if self.context['request']['kind'] == 'update' and self.previous_runtime_started():
+            raise SafeFailure('previous runtime revocation cannot run after destination startup')
         if self.journal.get('stopped') is not True:
             raise SafeFailure('revocation requires observed stop')
         rows = scoped_agents(self.policy, self.context)
         revoked = self.journal.setdefault('revoked', {})
         for row in rows:
             self.stop_placement(row)
+            self.close_previous_tui(row, capture=False)
             from fleet_executor_authority import revocation_scope
             revocation_policy, scoped = revocation_scope(self.policy, self.context, row)
             references = credential_references(revocation_policy, scoped)

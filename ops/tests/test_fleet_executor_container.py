@@ -258,7 +258,7 @@ class PurgeRemovalEvidenceTest(unittest.TestCase):
         with patch.object(container, 'approve_agent', return_value=agent), \
                 patch.object(container, 'stop_container'), \
                 patch.object(container, 'inspect_container', side_effect=inspections), \
-                patch.object(container, 'validate_container'), \
+                patch.object(container, 'teardown_agent', return_value=agent), \
                 patch.object(container, 'owned_volumes', return_value=(
                     {'ws-w-state': {}, 'ws-w-provider-profiles': {}}, [])), \
                 patch.object(container, 'docker', side_effect=docker):

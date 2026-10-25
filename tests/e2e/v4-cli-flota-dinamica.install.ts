@@ -156,7 +156,7 @@ async function saveRuntimeArchive(args: string[], archive: string, cwd: string, 
 
 async function exportCanonicalRuntime(source: string, release: string, revision: string, sourceDigest: string) {
   const inRunner = process.env.CI === '1' && process.env.DOCKER_HOST === 'unix:///var/run/docker.sock'
-    && process.env.HOME?.startsWith('/tmp/cauce-e2e-home-l2-cli-flota-dinamica-1025-') === true;
+    && process.env.HOME?.startsWith('/tmp/cauce-e2e-home-l2b-ciclo-sdk-1025-') === true;
   const context = process.env.DOCKER_CONTEXT ?? 'lab';
   if (!inRunner && !/^lab[23]?$/u.test(context)) throw new Error('candidate runtime build requires Docker lab');
   const dockerEnv = { ...process.env };
@@ -171,7 +171,7 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
   let containerCreated = false;
   try {
     await docker(['build', '--quiet', '--target', 'runtime', '--label', `io.cauce.test.owner=${owner}`,
-      '--label', 'cauce.e2e.owner=l2-cli-flota-dinamica-1025',
+      '--label', 'cauce.e2e.owner=l2b-ciclo-sdk-1025',
       '--build-arg', `CAUCE_RELEASE_COMMIT=${revision}`, '--build-arg', `CAUCE_SOURCE_DIGEST=${sourceDigest}`,
       '--file', join(source, 'deploy/Dockerfile'), '--tag', imageName, source]);
     imageBuilt = true;
@@ -188,7 +188,7 @@ async function exportCanonicalRuntime(source: string, release: string, revision:
       ? variables.find((value: unknown): value is string => typeof value === 'string' && value.startsWith('NODE_VERSION=')) : undefined;
     if (typeof nodeVersion !== 'string') throw new Error('canonical runtime has no Node version');
     await docker(['create', '--name', owner, '--network', 'none', '--read-only', '--label', `io.cauce.test.owner=${owner}`,
-      '--label', 'cauce.e2e.owner=l2-cli-flota-dinamica-1025', imageName]);
+      '--label', 'cauce.e2e.owner=l2b-ciclo-sdk-1025', imageName]);
     containerCreated = true;
     const runtimeArchive = join(dirname(release), 'cli-candidate-runtime.tar');
     await saveRuntimeArchive([...prefix, 'cp', `${owner}:/app/.`, '-'], runtimeArchive, source, dockerEnv);

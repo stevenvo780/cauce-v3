@@ -28,7 +28,7 @@ import { createFleetCliRuntimeBundle, FLEET_CLI_PROVIDER_FIXTURE, fleetCliPrepar
 const execute = promisify(execFile);
 const root = process.cwd();
 const consoleRequire = createRequire(join(root, 'console/package.json'));
-export const FLEET_CLI_OWNER = 'l2-cli-flota-dinamica-1025';
+export const FLEET_CLI_OWNER = 'l2b-ciclo-sdk-1025';
 export const fleetCliRun = randomUUID().replaceAll('-', '').slice(0, 8);
 export const fleetCliPrefix = `zz-canary-${FLEET_CLI_OWNER}-${fleetCliRun}`;
 export const fleetCliReceipts = join(root, '.delegados/v4/recibos', FLEET_CLI_OWNER, fleetCliRun);
@@ -50,6 +50,7 @@ export interface FleetCliFixture {
   runtimeFor(alias: string): Promise<FleetCliRuntime>;
   prepareTerminal(alias: string): Promise<FleetCliRuntime>;
   resumeTerminal(alias: string, expectedMarker: string): Promise<FleetCliRuntime>;
+  runtimeDiagnostic(alias: string): Promise<unknown>;
   probeTmux(alias: string): Promise<{ panePid: number; nativeId: string; capture: string; clients: number; runtime: FleetCliRuntime }>;
   close(): Promise<void>;
 }
@@ -304,6 +305,14 @@ export async function startFleetCliFixture(options: { candidateSource: string })
       runtimeByAlias.set(alias, runtime);
       return runtime;
     };
+    const runtimeDiagnostic = async (alias: string): Promise<unknown> => {
+      const runtime = runtimeByAlias.get(alias);
+      if (!runtime) return { runtime_not_observed: true };
+      const result = await command('docker', ['exec', '--user', '0', runtime.id, 'python3', '-B', '-c', fleetCliRuntimeDiagnostics,
+        runtime.runtimeKey, alias, tenantId, runtime.stateDirectory]);
+      if (result.code !== 0) return { diagnostic_unavailable: true };
+      try { return JSON.parse(result.stdout) as unknown; } catch { return { diagnostic_unavailable: true }; }
+    };
     const deliverToRuntime = async (alias: string, action: 'REMEMBER' | 'RECALL', marker: string) => {
       if (!/^[A-Za-z0-9-]{1,128}$/u.test(marker)) throw new Error('the owned SDK marker is outside the fixture contract');
       const runtime = await runtimeFor(alias);
@@ -438,7 +447,7 @@ print(json.dumps({'panePid':pane,'nativeId':native[0],'capture':capture,'clients
     };
     return { computer: active, gateway, page, errors, baseUrl, directory, caFile: pki.ca, owner, tenantId, hostId, unit, room, accountId,
       prefix: fleetCliPrefix, run: fleetCliRun, receipts: fleetCliReceipts, registry, advanceClock: ms => { offset += ms; },
-      resetClock: () => { offset = 0; }, runtimeFor, prepareTerminal, resumeTerminal, probeTmux, close };
+      resetClock: () => { offset = 0; }, runtimeFor, prepareTerminal, resumeTerminal, runtimeDiagnostic, probeTmux, close };
   } catch (error) {
     try {
       if (page) await writeFile(join(fleetCliReceipts, 'bootstrap-failure.json'), JSON.stringify({

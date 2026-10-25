@@ -29,6 +29,7 @@ const alias = `cli${randomUUID().replaceAll('-', '').slice(0, 10)}`;
 const runtimeKey = `cli-${alias}`;
 const marker = randomBytes(12).toString('hex');
 const operations: { command: string; id: string; status: string }[] = [];
+let neighbor: { pane: string; pid: number; starttime: string } | undefined;
 const active = () => { if (!fixture) throw new Error('dynamic CLI fixture unavailable'); return fixture; };
 const cli = () => { if (!installed) throw new Error('installed candidate CLI unavailable'); return installed; };
 function cliDiagnostics(result: InstalledCliResult): string[] {
@@ -70,6 +71,7 @@ async function waitOperation(id: string): Promise<Operation> {
         const journal = await active().computer.onComputer(['journalctl', '--user', '-u', active().unit, '--no-pager', '-o', 'cat',
           '--grep', 'fleet (step failed|host command failed)', '-n', '12']);
         await receipt(`failed-operation-${id}`, { operation: row,
+          runtime_diagnostic: await active().runtimeDiagnostic(alias),
           executor_redacted_errors: journal.stdout.split('\n').filter(line => line.startsWith('fleet step failed ')
             || line.startsWith('fleet host command failed component=fleet.executor ')) });
         throw new Error(`fleet ${row.kind} ended ${row.status} (${row.error?.code ?? 'no_code'}, ${row.error?.step ?? 'no_step'})`);
@@ -165,6 +167,21 @@ async function assertTerminalReleased(checkTmux = true): Promise<void> {
     return result.rows[0];
   }, { timeout: 15_000 }).toEqual({ sessions: 0, holds: 0 });
   if (checkTmux) expect((await active().probeTmux(alias)).clients).toBe(0);
+}
+async function observeNeighbor(create = false): Promise<{ pane: string; pid: number; starttime: string }> {
+  if (!runtime) throw new Error('the neighbor canary needs an observed owned runtime');
+  const script = `import json,os,pathlib,subprocess,sys
+socket,name,create=sys.argv[1:4]
+def tmux(*args): return subprocess.check_output(['/usr/bin/tmux','-S',socket,*args],text=True).strip()
+if create=='1': tmux('new-session','-d','-s',name,'-n','canary','/usr/bin/sleep','600')
+pane,pid,dead=tmux('display-message','-p','-t',name+':canary','#{pane_id} #{pane_pid} #{pane_dead}').split()
+if dead!='0': raise SystemExit('the independent neighbor canary is not alive')
+raw=pathlib.Path('/proc',pid,'stat').read_text();fields=raw[raw.rindex(')')+2:].split()
+if fields[0] in {'Z','X'}: raise SystemExit('the independent neighbor canary exited')
+print(json.dumps({'pane':pane,'pid':int(pid),'starttime':fields[19]}))`;
+  return JSON.parse(await docker(['exec', '--user', COMPUTER_RUNTIME.user, runtime.id, 'python3', '-B', '-c', script,
+    `${runtime.stateDirectory}/tmux-${String(runtime.uid)}/cauce`, `zz-canary-neighbor-${active().run}`, create ? '1' : '0'])) as
+    { pane: string; pid: number; starttime: string };
 }
 async function waitTerminalPresence(): Promise<boolean> {
   const deadline = Date.now() + 45_000;
@@ -352,9 +369,11 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
   }, 300_000);
 
   it('edita el espacio con configuración aplicada al proceso y persistida en la BD', async () => {
+    const previous = await active().probeTmux(alias);
+    neighbor = await observeNeighbor(true);
     await change('edit', { ...parameters(), model_id: 'gpt-5.5', reasoning_effort: 'high', display_name: 'Terminal CLI editada' });
     const observed = await observeRuntime();
-    await receipt('03-runtime-observation', observed);
+    await receipt('03-runtime-observation', { ...observed, runtime_diagnostic: await active().runtimeDiagnostic(alias) });
     expect(observed.processes.length).toBeGreaterThan(0);
     expect(observed.processes.every(process => process.model === 'gpt-5.5' && process.effort === 'high' && process.bootstrap === '0')).toBe(true);
     const row = (await active().computer.pool.query('SELECT model_id,reasoning_effort,display_name FROM agents WHERE tenant_id=$1 AND alias=$2', [active().tenantId, alias])).rows[0] as unknown;
@@ -363,8 +382,14 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
       'import pathlib,sys;print((pathlib.Path(sys.argv[1])/"space/projects/l2-cli-state").read_text()==sys.argv[2])',
       `${COMPUTER_RUNTIME.stateRoot}/${runtimeKey}`, marker]);
     expect(kept.trim()).toBe('True');
-    await active().prepareTerminal(alias);
-    await receipt('03-spaces-edit', { operations, runtime: observed, database: row, persistent_disk_marker_preserved: true });
+    await active().resumeTerminal(alias, marker);
+    expect((await active().probeTmux(alias)).nativeId).toBe(previous.nativeId);
+    const resumed = await cli().run(terminal(), { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
+    successful(resumed, 'terminal after owned agent edit');
+    await assertTerminalReleased();
+    expect(await observeNeighbor()).toEqual(neighbor);
+    await receipt('03-spaces-edit', { operations, runtime: observed, database: row,
+      persistent_disk_marker_preserved: true, same_native_conversation: true, independent_neighbor_preserved: true });
   }, 300_000);
 
 
@@ -378,6 +403,7 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     expect(observed.runtime_processes).toBe(0);
     if (observed.running) expect(observed.native_session_present).toBe(false);
     if (observed.running) expect(observed.credentials).toBe(false);
+    if (neighbor) expect(await observeNeighbor()).toEqual(neighbor);
   }, 360_000);
 
   it('rechaza la sesión nominal revocada por cambio de contraseña mediante la API del dueño', async () => {
