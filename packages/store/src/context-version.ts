@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { nombresDelArnes } from '@cauce/protocol';
 import { withTransaction, type DatabaseClient, type DatabasePool } from './db.js';
 import type { CompanyAuthority } from './company-authority.js';
 import { CONTEXT_PROFILE_PATH, canonicalProfileContext, synchronizeContextProfile } from './context-version-profile.js';
@@ -131,11 +132,15 @@ async function recordNativeRefusal(client: DatabaseClient, target: ContextTarget
     NATIVE_REFUSAL_AUDIT_WINDOW_SECONDS, NATIVE_REFUSAL_AUDIT_LIMIT]);
 }
 /** Judges the agent files against the locked server version, before anything is written. */
-function nativeIngestFiles(current: readonly ContextFile[], candidate: readonly ContextFile[], maxBytes: number): ContextFile[] {
+function nativeIngestFiles(current: readonly ContextFile[], candidate: readonly ContextFile[], harness: string | null): ContextFile[] {
+  const nativeNames = nombresDelArnes(harness ?? '');
+  const seeded = new Set(current.filter(file => nativeNames.some(name =>
+    harness === 'openclaw' && (file.path === `context/${name}` || file.path === `directives/${name}`)
+      || file.path === `directives/global-${name}` || file.path === `directives/workspace-${name}`)).map(file => file.path));
   const governed = contextVersionDiff(current, candidate).map(change => change.path)
-    .filter(path => !path.startsWith(NATIVE_CONTEXT_WRITABLE_PREFIX));
+    .filter(path => !path.startsWith(NATIVE_CONTEXT_WRITABLE_PREFIX) && !seeded.has(path));
   if (governed.length > 0) throw new ContextRejectedError('context_governed_path', governed);
-  return versionableContextFiles(candidate, maxBytes);
+  return versionableContextFiles(candidate, harnessContextMaxBytes(harness));
 }
 export async function ingestNativeContextVersion(pool: DatabasePool, tenant: string, alias: string,
   value: unknown): Promise<NativeContextIngestResult> {
@@ -170,7 +175,7 @@ export async function ingestNativeContextVersion(pool: DatabasePool, tenant: str
         digest_exists_in_history: history?.exists ?? false };
     }
     let canonical: ContextFile[];
-    try { canonical = nativeIngestFiles(snapshot.files, input.files, harnessContextMaxBytes(row.harness_id)); }
+    try { canonical = nativeIngestFiles(snapshot.files, input.files, row.harness_id); }
     catch (error) {
       if (!(error instanceof ContextRejectedError)) throw error;
       await recordNativeRefusal(client, target, snapshot, `native_${error.reason}`, 'context.native_rejected', {
