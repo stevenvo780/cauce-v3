@@ -6,7 +6,6 @@ import pathlib
 import re
 import subprocess
 import tempfile
-import time
 import uuid
 
 from fleet_executor_policy import (
@@ -32,6 +31,7 @@ from fleet_executor_view import environment as credential_environment
 from fleet_executor_view import payload_for
 from fleet_model_fallback import VOLUME_KIND, adapter_environment, pairing
 
+__all__ = ['HELPER', 'provider_environment', 'sdk_environment', 'credential_environment', 'payload_for', 'adapter_environment']
 
 def sidecar_effect(action: str, policy: dict, agent: dict) -> dict:
     rows = [row for row in agent.get('extensions', [])
@@ -649,62 +649,8 @@ def verify_executable(agent: dict, observed: dict, bundle: dict) -> None:
 
 def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: dict, *,
                            bootstrap: bool, operation_id: str | None = None) -> dict:
-    identity = identity_for(agent, observed)
-    uid, gid = user_identity(agent, identity)
-    try:
-        return process_proof(policy, agent, identity, bundle, bootstrap=bootstrap, operation_id=operation_id)
-    except NamespaceMismatch:
-        raise
-    except SafeFailure:
-        helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
-    verify_executable(agent, observed, bundle)
-    helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', agent['state_directory'], '--uid', uid, '--gid', gid)
-    workspace = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
-    managed = agent['_placement'].get('ownership') != 'shared'
-    if managed:
-        helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', workspace, '--uid', uid, '--gid', gid)
-    helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'],
-           '--state', str(pathlib.Path(agent['state_directory']) / 'space' / 'tmp'), '--uid', uid, '--gid', gid)
-    if (fallback := pairing(agent)) is not None and fallback['server']:
-        helper(agent, identity, 'prepare-state', '--mount', fallback['destination'], '--state', fallback['destination'], '--uid', uid, '--gid', gid)
-    from fleet_executor_profiles import prepare_profile
-    prepare_profile(policy, agent, operation_id=operation_id)
-    helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
-    view = pathlib.Path('/run/cauce-credentials') / agent['runtime_key'] / ('bootstrap' if bootstrap else 'normal')
-    checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', '0', identity['container_id'],
-        *isolated_python(agent['_placement']['python'], f'{EXECUTOR_DESTINATION}/fleet_executor_view.py',
-                         '--root', str(view), '--uid', uid, '--gid', gid)],
-        input_data=json.dumps(payload_for(policy, agent, bootstrap)).encode())
-    environment = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': agent['home_directory'], 'CAUCE_ALIAS': agent['alias'], 'CAUCE_RUNTIME_KEY': agent['runtime_key'], 'CAUCE_TENANT_ID': agent['tenant_id'],
-                   'CAUCE_TENANT': agent['tenant_id'], 'CAUCE_STATE_DIR': agent['state_directory'], 'CAUCE_CONTROL_DIR': str(identity['control']),
-                   'CAUCE_CONTAINER_ID': identity['container_id'], 'CAUCE_CONTAINER_GENERATION': identity['generation'],
-                   'CAUCE_BOOTSTRAP': '1' if bootstrap else '0', 'PYTHONDONTWRITEBYTECODE': '1'}
-    environment.update(credential_environment(view, policy, bootstrap))
-    environment.update(sdk_environment(policy, agent, bootstrap, operation_id))
-    environment.update(provider_environment(policy, agent))
-    environment.update(sidecar_shape(validate_sidecars(policy, agent))[1])
-    environment.update(adapter_environment(agent))
-    if operation_id is not None:
-        environment['CAUCE_FLEET_OPERATION_ID'] = operation_id
-    arguments = [f'{key}={value}' for key, value in environment.items()]
-    try:
-        docker('exec', '-d', '-w', '/', '--user', '0', identity['container_id'], '/usr/bin/env', '-i', *arguments,
-               *isolated_python(agent['_placement']['python'], f'{HELPER_DESTINATION}/{HELPER.name}', 'run', *lifecycle_arguments(agent, identity),
-               '--wire-alias', agent['alias'], '--tenant', agent['tenant_id'], '--runtime-uid', uid, '--runtime-gid', gid,
-               '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'], bundle['executable'], *bundle['argv'],
-               cwd=workspace if managed else observed.get('Config', {}).get('WorkingDir') or '/'))
-        deadline = time.monotonic() + 10
-        last: SafeFailure | None = None
-        while time.monotonic() < deadline:
-            try:
-                return process_proof(policy, agent, identity, bundle, bootstrap=bootstrap, operation_id=operation_id)
-            except SafeFailure as error:
-                last = error
-                time.sleep(0.1)
-        raise SafeFailure(f'container adapter identity was not observed ({last}); see {agent["state_directory"]}/.cauce-adapter.log')
-    except BaseException:
-        helper(agent, identity, 'stop', *lifecycle_arguments(agent, identity))
-        raise
+    from fleet_executor_start import start_existing_adapter as start
+    return start(policy, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
 
 
 def ownership_labels_match(policy: dict, agent: dict, observed: dict) -> bool:

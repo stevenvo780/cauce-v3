@@ -29,7 +29,7 @@ PKI_ROOT=${CAUCE_CONTAINER_PKI_ROOT:-$default_pki_root}
 LOCK_ROOT=${CAUCE_CONTAINER_LOCK_ROOT:-$default_lock_root}
 RUNTIME_HELPER_SOURCE="$ROOT/container-runtime/cauce-container-runtime.py"
 # The helper imports these siblings from its own directory: the container copy must carry all of them.
-RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_tree.py cauce_container_adoption.py cauce_container_restart.py)
+RUNTIME_HELPER_MODULES=(cauce_container_base.py cauce_container_proc.py cauce_container_lease.py cauce_container_tree.py cauce_container_adoption.py cauce_container_restart.py)
 MOUNT_VALIDATOR="$ROOT/scripts/validate-container-mount.py"
 ALIAS_LOCK_EXEC="$ROOT/scripts/alias-lock-exec.py"
 HERMES_RUNTIME_VERIFIER="$ROOT/scripts/verify-hermes-runtime.py"
