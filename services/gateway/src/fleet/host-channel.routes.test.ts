@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentQuotaOperationsRepository, FleetOperationsRepository, QuotaEnvironmentRepository, type DatabasePool, type FleetOperationClaim,
+import { AgentQuotaOperationsRepository, ConfigurationRepository, FleetOperationsRepository, QuotaEnvironmentRepository, type DatabasePool, type FleetOperationClaim,
   type QuotaOperationClaim, type RegisteredCompany } from '@cauce/store';
 import type { AgentQuotaClaim, AgentQuotaExecution } from '@cauce/protocol';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -123,13 +123,16 @@ describe('signed company host channel',()=>{
     if (!northClaim||!southClaim) throw new Error('parallel company claims absent');
     expect((await pool.query('SELECT cohort_key FROM fleet_operations ORDER BY cohort_key')).rows)
       .toEqual([{cohort_key:`fleet:north:${host.host_id}`},{cohort_key:`fleet:south:${other.host_id}`}]);
-    expect((await channelPost(app,host,{resource:'fleet_operation',action:'prepare',claim:fence(northClaim)})).statusCode).toBe(200);
+    const prepared=await channelPost(app,host,{resource:'fleet_operation',action:'prepare',claim:fence(northClaim)});
+    expect(prepared.statusCode).toBe(200);
+    const revision=prepared.json<FleetExecution>().operation.desired_revision;
+    if(revision===null)throw new Error('prepared revision absent');
     await pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
       VALUES($1,'owner','{"resource":"room"}','{}','south configuration write')`,[south.hub.id]);
     expect((await channelPost(app,host,{resource:'fleet_operation',action:'execution',claim:fence(northClaim)})).statusCode).toBe(200);
     expect((await channelPost(app,other,{resource:'fleet_operation',action:'prepare',claim:fence(southClaim)})).statusCode).toBe(409);
-    await pool.query(`INSERT INTO config_revisions(actor_tenant,actor_alias,operation,inverse_operation,summary)
-      VALUES($1,'owner','{"resource":"room"}','{}','north configuration write')`,[north.hub.id]);
+    await new ConfigurationRepository(pool).apply(north.hub.id,'owner',{resource:'agent',action:'update',
+      tenant_id:north.hub.id,alias:'north-worker',value:{display_name:'Changed sealed target'}},false,revision,companySource(north));
     expect((await channelPost(app,host,{resource:'fleet_operation',action:'execution',claim:fence(northClaim)})).statusCode).toBe(409);
   });
   it('does not touch another company lease when the signed host claims its own queue',async()=>{
