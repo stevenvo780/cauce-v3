@@ -5,7 +5,8 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'coverage', 'public/mockServiceWorker.js'] },
+  // qa/.test-state holds the layout gates' Vite dependency cache and screenshots: generated, never linted.
+  { ignores: ['dist', 'coverage', 'public/mockServiceWorker.js', 'qa/.test-state'] },
   {
     files: ['**/*.{js,mjs}'],
     ...js.configs.recommended,
