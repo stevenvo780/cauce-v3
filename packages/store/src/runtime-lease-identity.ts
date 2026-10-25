@@ -28,8 +28,8 @@ export async function assertRuntimeLeaseIdentity(
           SELECT 1 FROM fleet_runtime_identities original WHERE original.tenant_id=agent.tenant_id
             AND original.alias=agent.alias AND original.runtime_key=agent.runtime_key AND original.baseline
             AND original.baseline_state->>'runtime_mode' IS NULL
-            AND (agent.host_id IS NULL OR agent.host_id=$7::text OR original.baseline_state->>'host_id' IS NULL
-              OR agent.host_id=original.baseline_state->>'host_id')))
+            AND (agent.host_id IS NULL OR original.baseline_state->>'host_id' IS NULL
+              OR agent.host_id=COALESCE(original.baseline_state->>'host_id',$7::text))))
         OR (agent.runtime_mode IS NOT NULL AND $5='adapter-' || agent.runtime_key
           AND $8=agent.runtime_key AND $9::timestamptz>clock_timestamp()
           AND ($4::text IS NULL OR (agent.host_id=$4 AND $6::timestamptz>clock_timestamp())))
