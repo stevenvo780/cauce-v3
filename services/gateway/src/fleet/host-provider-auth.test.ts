@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,15 +107,16 @@ afterEach(async () => { for (const value of services) await value.shutdown(); aw
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 async function configureOpenClaw(): Promise<void> {
   const profile = policy.profiles['physical-account']; if (!profile) throw new Error('profile absent');
+  const nodeCommand = await realpath('/usr/bin/node');
   const command = join(directory, 'openclaw.mjs'); const bridge = join(directory, 'bridge.mjs');
   const authSource = join(directory, 'auth-list.js');
   await writeFile(command, 'export const cli = true;', { mode: 0o600 }); await writeFile(bridge, 'export const bridge = true;', { mode: 0o600 });
   await writeFile(authSource, await readFile(join(config.projectRoot, 'ops/tests/fixtures/openclaw-auth-list-2026.7.1-2.txt')), { mode: 0o600 });
   profile.command = command; profile.command_sha256 = await fingerprint(command);
   profile.openclaw = OpenClawDriver.parse({ provider_id: 'openai', method_id: 'device-code', version: '2026.7.1-2',
-    auth_list_source: authSource, auth_list_sha256: await fingerprint(authSource), node_command: '/usr/bin/node',
-    node_command_sha256: await fingerprint('/usr/bin/node'), bridge, bridge_sha256: await fingerprint(bridge) });
-  policy.logins.openclaw = { method: 'device', command: ['/usr/bin/node', command, 'models', 'auth', 'login'],
+    auth_list_source: authSource, auth_list_sha256: await fingerprint(authSource), node_command: nodeCommand,
+    node_command_sha256: await fingerprint(nodeCommand), bridge, bridge_sha256: await fingerprint(bridge) });
+  policy.logins.openclaw = { method: 'device', command: [nodeCommand, command, 'models', 'auth', 'login'],
     sha256: profile.openclaw.node_command_sha256, files: { [command]: profile.command_sha256 } };
   await savePolicy(); await saveExecutorPolicy();
 }
@@ -224,7 +225,8 @@ describe('host provider authentication factory', () => {
     await writeFile(helper, source); policy.helper.sha256 = await fingerprint(helper); await savePolicy();
     const value = await service(); const request = await value.resolve(actor, operationId);
     expect(request.provider_id).toBe('codex'); expect(request.harness_id).toBe('openclaw');
-    const opened = await value.start(actor, request); expect(opened.status).toBe('awaiting_login');
+    const opened = await value.start(actor, request);
+    expect(opened.status, JSON.stringify({ error: opened.error, reason: opened.reason, cleanup_pending: opened.cleanup_pending })).toBe('awaiting_login');
     await value.attach(actor, opened.session_id, () => undefined);
     expect(await trace()).toContain('login');
     expect((await value.cancel(actor, opened.session_id)).cleanup_pending).toBe(false);
