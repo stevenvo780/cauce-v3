@@ -14,7 +14,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-platform cauce-diagnose cauce-login cauce-spaces host_enrollment.py host_channel_client.py host_setup.py host_image.py context_client.py context_native.py space_archive.py space_archive_stream.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-platform cauce-diagnose cauce-login cauce-spaces host_enrollment.py host_channel_client.py host_setup.py host_image.py context_client.py agent_status.py context_native.py space_archive.py space_archive_stream.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach terminal-runtime.cjs)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"
@@ -41,6 +41,93 @@ if [ "$rc" = 0 ]; then ok "install exits 0"; else bad "install exits 0 (rc=$rc):
 for n in "${ESPERADOS[@]}"; do
   if [ -x "$DEST/$n" ]; then ok "publica $n"; else bad "publica $n"; fi
 done
+if (cd "$HOGAR" && env -u CAUCE_PROJECT_ROOT HOME="$HOGAR" NODE_PATH='' NODE_OPTIONS='' node - "$DEST/terminal-runtime.cjs" <<'JS'
+const assert = require('node:assert/strict');
+const runtime = require(process.argv[2]);
+assert.equal(typeof runtime.WebSocket, 'function');
+assert.equal(runtime.MAX_INPUT_MESSAGE_BYTES, 16 * 1024);
+assert.deepEqual(runtime.parseClientMessage(Buffer.from('{"type":"ping"}'), false), {type: 'ping'});
+assert.equal(runtime.isTerminalEmulatorResponse('\x1b[0n'), true);
+assert.equal(runtime.isTerminalEmulatorResponse('arbitrary input'), false);
+JS
+); then
+  ok "runtime instalado carga ws y límites compilados sin checkout ni CAUCE_PROJECT_ROOT"
+else
+  bad "runtime instalado carga ws y límites compilados sin checkout ni CAUCE_PROJECT_ROOT"
+fi
+if python3 -B - "$DEST" "$RAIZ/../package.json" "$HOGAR" <<'PY'
+import os
+import pathlib
+import subprocess
+import sys
+
+server_source = r'''
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const {WebSocketServer} = createRequire(process.argv[1])('ws');
+const server = new WebSocketServer({host: '127.0.0.1', port: 0, path: '/v3/ws/terminal'});
+const timer = setTimeout(() => process.exit(1), 12000);
+server.on('listening', () => console.log(server.address().port));
+server.on('connection', (socket, request) => {
+  assert.equal(request.headers.cookie, 'cauce_session=synthetic-install-terminal');
+  assert.equal(request.headers.origin, 'http://127.0.0.1:' + server.address().port);
+  let received = false;
+  socket.on('message', (raw) => {
+    const frame = JSON.parse(raw.toString());
+    if (frame.type === 'attach') {
+      assert.equal(frame.ticket, 'synthetic-install-ticket');
+      socket.send(JSON.stringify({type: 'ready', session_id: frame.session_id, mode: 'shell'}));
+    } else if (frame.type === 'input' && !received && frame.data !== '\x04') {
+      assert.equal(frame.data, 'install-input\n');
+      received = true;
+      socket.send(Buffer.from('installed-terminal-output\n'));
+      socket.close(1000);
+    }
+  });
+  socket.on('close', () => {
+    assert.equal(received, true);
+    clearTimeout(timer);
+    server.close();
+  });
+});
+'''
+client_source = r'''
+import sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+import context_client
+client = SimpleNamespace(gateway=sys.argv[2], origin=sys.argv[2],
+                         cookie='cauce_session=synthetic-install-terminal', ca_file=None)
+grant = {'websocket_path': '/v3/ws/terminal', 'session_id': 'synthetic-install-session',
+         'ticket': 'synthetic-install-ticket', 'authority_proof': 'ac2.synthetic-install-proof'}
+raise SystemExit(context_client.terminal_transport(client, grant, 'shell', 100, 30))
+'''
+server = subprocess.Popen(['node', '--input-type=module', '--eval', server_source,
+                           str(pathlib.Path(sys.argv[2]).resolve())], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+try:
+    port = int(server.stdout.readline())
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ('CAUCE_PROJECT_ROOT', 'NODE_PATH', 'NODE_OPTIONS')}
+    environment['HOME'] = sys.argv[3]
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', client_source, sys.argv[1],
+                             'http://127.0.0.1:' + str(port)], cwd=sys.argv[3], env=environment,
+                            input='install-input\n', capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'installed-terminal-output\n', result.stdout
+    assert 'Terminal conectado' in result.stderr, result.stderr
+    _, error = server.communicate(timeout=5)
+    assert server.returncode == 0, error
+finally:
+    if server.poll() is None:
+        server.kill()
+        server.communicate()
+PY
+then
+  ok "terminal instalado autentica, envía entrada y recibe salida por WebSocket real sin checkout"
+else
+  bad "terminal instalado autentica, envía entrada y recibe salida por WebSocket real sin checkout"
+fi
 if cmp -s "$RAIZ/cli/cauce-diagnose" "$DEST/cauce-diagnose" && [ "$(stat -c '%a' "$DEST/cauce-diagnose" 2>/dev/null)" = 755 ]; then
   ok "installed diagnose preserves source bytes and mode 0755"
 else
@@ -98,7 +185,7 @@ else
 fi
 # Installed copy, empty home: setup/status must reach host_setup and fail with a message, never a traceback.
 estado=$(HOME="$HOGAR" "$DEST/cauce" hosts status 2>&1); rc=$?
-if [ "$rc" = 1 ] && grep -q 'expected exactly one enrolled identity' <<< "$estado" && ! grep -q Traceback <<< "$estado"; then
+if [ "$rc" = 1 ] && grep -q 'Indica --identity-directory' <<< "$estado" && ! grep -q Traceback <<< "$estado"; then
   ok "hosts status corre desde el CLI instalado sin trazas"
 else
   bad "hosts status corre desde el CLI instalado sin trazas (rc=$rc): $estado"
@@ -142,6 +229,32 @@ else
   bad "publica exactamente ${#ESPERADOS[@]} ficheros (encontrados $n_instalados)"
 fi
 
+RELEASE="$WORK/release/ops"; RELEASE_HOME="$WORK/release-home"
+mkdir -p "$RELEASE/cli" "$RELEASE/scripts" "$RELEASE/guardias" "$RELEASE_HOME"
+install -m 0755 "$INSTALADOR" "$RELEASE/scripts/install-cauce-cli.sh"
+for n in "${ESPERADOS[@]}"; do
+  case "$n" in
+    cauce-estado|cauce-sesiones|cauce-attach) release_source="$RELEASE/guardias/$n" ;;
+    *) release_source="$RELEASE/cli/$n" ;;
+  esac
+  install -m 0755 "$DEST/$n" "$release_source"
+done
+salida=$(env -u CAUCE_PROJECT_ROOT HOME="$RELEASE_HOME" CAUCE_DESTINO_AVISO_INICIAL=steven_dm \
+  "$RELEASE/scripts/install-cauce-cli.sh" 2>&1); rc=$?
+if [ "$rc" = 0 ] && cmp -s "$DEST/terminal-runtime.cjs" "$RELEASE_HOME/.local/bin/terminal-runtime.cjs"; then
+  ok "release instala en HOME temporal sin checkout, node_modules ni compilador"
+else
+  bad "release instala en HOME temporal sin checkout, node_modules ni compilador (rc=$rc): $salida"
+fi
+printf 'existing binary\n' > "$RELEASE_HOME/.local/bin/cauce"
+printf 'module.exports = {};\n' > "$RELEASE/cli/terminal-runtime.cjs"
+salida=$(HOME="$RELEASE_HOME" "$RELEASE/scripts/install-cauce-cli.sh" 2>&1); rc=$?
+if [ "$rc" != 0 ] && [ "$(cat "$RELEASE_HOME/.local/bin/cauce")" = 'existing binary' ]; then
+  ok "runtime precompilado incompleto se rechaza antes de cambiar los binarios"
+else
+  bad "runtime precompilado incompleto se rechaza antes de cambiar los binarios (rc=$rc): $salida"
+fi
+
 ln -s "$DEST/cauce" "$WORK/cauce-enlace"
 for invocado in "$DEST/cauce" "$WORK/cauce-enlace"; do  # 2b) loads its lib, also through a symlink
   salida=$(HOME="$HOGAR" timeout 20 bash "$invocado" --help 2>&1)
@@ -156,7 +269,8 @@ SIN_LIB="$WORK/sin-lib"; CON_LIB="$WORK/con-lib"; mkdir -p "$SIN_LIB" "$CON_LIB"
 cp "$RAIZ/cli/cauce-credenciales.lib.sh" "$CON_LIB/"
 for dir_cli in "$SIN_LIB" "$CON_LIB"; do
   sed '/^case /,$d' "$DEST/cauce" > "$dir_cli/cauce"
-  bash -c "source '$dir_cli/cauce' 2>/dev/null; lib_credenciales_ok" >/dev/null 2>&1
+  HOME="$HOGAR" CAUCE_TEST_CLI_HOME="$HOGAR" PATH="$SHIMS:$PATH" \
+    bash -c "source '$dir_cli/cauce' 2>/dev/null; lib_credenciales_ok" >/dev/null 2>&1
   echo "$dir_cli=$?" >> "$WORK/resultado"
 done
 if grep -qx "$SIN_LIB=1" "$WORK/resultado" && grep -qx "$CON_LIB=0" "$WORK/resultado"; then ok "sin la lib, retirar/login/aprovisionar se niegan"; else bad "sin la lib, retirar/login/aprovisionar se niegan ($(tr '\n' ' ' < "$WORK/resultado"))"; fi

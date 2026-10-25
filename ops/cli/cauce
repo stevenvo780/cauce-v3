@@ -55,7 +55,20 @@ if [[ -n ${1:-} ]]; then
     flota|estado|ver|cuotas|coutas|-h|--help|help|ayuda|pila-test) ;;
     *)
       session_file=${CAUCE_CONSOLE_SESSION_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/cauce-v3/console-session.json}
-      if [[ ${2:-} == --* || ( ${2:-} == ver || ${2:-} == estado ) && ${3:-} == --* || ( $# == 1 || ${2:-} == ver || ${2:-} == estado ) && ( -e $session_file || -v CAUCE_CONSOLE_SESSION_FILE || -v CAUCE_GATEWAY_URL ) ]]; then
+      nominal_request=0
+      case "${2:-}" in
+        --*) nominal_request=1 ;;
+        ""|ver|estado|sesiones|on|off)
+          if [[ ${3:-} == --* || -e $session_file || -v CAUCE_CONSOLE_SESSION_FILE || -v CAUCE_GATEWAY_URL ]]; then
+            nominal_request=1
+            if [[ ( ${2:-} == on || ${2:-} == off ) && ${3:-} != --* && ! -v CAUCE_FLEET_RUNTIME_STATE ]]; then
+              if PYTHONDONTWRITEBYTECODE=1 python3 "$OPS/scripts/container-alias-query.py" "$1" --runtime-key >/dev/null 2>&1; then
+                nominal_request=0
+              fi
+            fi
+          fi ;;
+      esac
+      if [[ $nominal_request == 1 ]]; then
         cli_directory=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
         [[ -f $cli_directory/context_client.py ]] || cli_directory=$OPS/cli
         exec python3 -I -B -c 'import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module("context_client",run_name="__main__")' \
@@ -204,8 +217,8 @@ ${c_b}cauce${c_reset} — operar la flota Cauce V3
   ${c_b}cauce spaces backup|restore|inventory|migrate${c_reset} --help    copia, inventario y migración de un espacio
   ${c_b}cauce spaces create|list|edit|retire${c_reset} --help    registro y operaciones durables
 
-Tras cauce login, entrar usa el gateway; admite --tenant, --session-file y --mode.
-on, off, retirar y autenticación del runtime se administran desde la consola.
+Tras cauce login, entrar, ver, estado y sesiones usan el gateway; admiten --tenant y --session-file.
+Entrar admite --mode. En la flota dinámica, on, off, retirar y autenticación usan la consola.
 
 Al entrar con ${c_b}cauce <alias>${c_reset} te dice en la cabecera cual de los tres modos te toco:
   ${c_ok}compartida${c_reset}  la TUI REAL del agente, y la MISMA conversacion que Telegram.

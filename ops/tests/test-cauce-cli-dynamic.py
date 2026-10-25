@@ -78,8 +78,12 @@ class FixtureHome(unittest.TestCase):
         self.log = self.root / 'calls.jsonl'
         self.environment = {**os.environ, 'HOME': str(self.home), 'CAUCE_TEST_HOME': str(self.home),
                             'PATH': str(self.bin) + ':' + os.environ['PATH'], 'PYTHONDONTWRITEBYTECODE': '1',
+                            'XDG_STATE_HOME': str(self.root / 'state'),
+                            'DOCKER_CONFIG': os.environ.get('DOCKER_CONFIG', str(pathlib.Path.home() / '.docker')),
                             'CAUCE_FLEET_RUNTIME_STATE': str(self.root / 'inventory'),
                             'CAUCE_TEST_LOG': str(self.log)}
+        for name in ('CAUCE_GATEWAY_URL', 'CAUCE_CONSOLE_SESSION_FILE'):
+            self.environment.pop(name, None)
         self.script('getent', '#!/bin/sh\nprintf "fixture:x:1000:1000::%s:/bin/sh\\n" "$CAUCE_TEST_HOME"\n')
 
     def script(self, name, body):
@@ -227,13 +231,17 @@ class RealDisposableTerminalTests(FixtureHome):
                 self.fail(reason)
             self.skipTest(reason)
         self.docker = disposable_docker.Disposable('cli-terminal')
+        packages = disposable_docker.PACKAGES
         try:
+            disposable_docker.PACKAGES = (*packages, 'python3')
             self.docker.build()
         except (subprocess.SubprocessError, OSError) as error:
             self.docker.cleanup()
             if disposable_docker.required():
                 raise
             self.skipTest(f'disposable image unavailable: {error}')
+        finally:
+            disposable_docker.PACKAGES = packages
 
     def in_container(self, *arguments, check=True):
         return disposable_docker.docker('exec', '--user', 'node', self.container, 'tmux', '-L', 'cauce', *arguments,
@@ -252,6 +260,30 @@ class RealDisposableTerminalTests(FixtureHome):
                 continue
         return found
 
+    def read_legacy_sessions(self, receipt):
+        local_ops = self.home / '.local/share/cauce-v3/ops'
+        local_ops.unlink()
+        (local_ops / 'scripts').mkdir(parents=True)
+        generation = self.root / 'inventory/generations' / receipt['generation']
+        for name in ('flota.json', 'container-aliases.json'):
+            shutil.copy2(generation / name, local_ops / name)
+        shutil.copy2(OPS / 'scripts/container-alias-query.py', local_ops / 'scripts/container-alias-query.py')
+        for name in ('container_alias_lib.py', 'fleet_derive.py', 'fleet_runtime_inventory.py'):
+            (local_ops / 'scripts' / name).symlink_to(OPS / 'scripts' / name)
+        self.environment.pop('CAUCE_FLEET_RUNTIME_STATE')
+        native_id = str(uuid.uuid4())
+        sessions = {'sessions': {'codex:physical-one:synthetic': {'native_id': native_id, 'initialized': True}}}
+        disposable_docker.docker('exec', '--user', 'node', self.container, 'node', '--eval',
+                                  'const fs=require("node:fs"); const root="/home/node/.local/state/cauce-v3/physical-one"; '
+                                  'fs.mkdirSync(root,{recursive:true}); fs.writeFileSync(root+"/sessions.json",process.argv[1]);',
+                                  json.dumps(sessions))
+        result = self.run_cli('shared_alias', 'sesiones')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('sesiones de physical-one (codex): 1 de este harness', result.stdout)
+        self.assertIn(native_id[:8], result.stdout)
+        self.assertNotIn('no pude leer', result.stdout)
+        self.assertEqual(self.in_container('list-clients', '-t', 'cauce-physical-one').stdout.strip(), '')
+
     def walkthrough(self):
         self.container = self.docker.run('agent', '--user', 'node')
         nonce = 'cauce-recorrido-' + uuid.uuid4().hex[:12]
@@ -261,8 +293,8 @@ class RealDisposableTerminalTests(FixtureHome):
         while nonce not in self.in_container('capture-pane', '-p', '-t', 'cauce-physical-one:agente').stdout:
             self.assertLess(time.monotonic(), deadline, 'the nominal session never showed its marker')
             time.sleep(0.2)
-        self.publish(native=False, host='local', user='node', container=self.container,
-                     manager=pwd.getpwuid(os.geteuid()).pw_name, home='/home/node')
+        receipt = self.publish(native=False, host='local', user='node', container=self.container,
+                               manager=pwd.getpwuid(os.geteuid()).pw_name, home='/home/node')
         before = self.pane_pid()
 
         seen = self.run_cli('shared_alias', 'ver')
@@ -280,6 +312,7 @@ class RealDisposableTerminalTests(FixtureHome):
             refused = self.run_cli('shared_alias', verb)
             self.assertEqual(refused.returncode, 2, refused.stderr)
             self.assertIn('consola', refused.stderr)
+        self.read_legacy_sessions(receipt)
         self.assertEqual(self.pane_pid(), before, 'the terminal walkthrough must not restart the runtime')
         self.assertEqual(self.host_processes_naming(self.container), [])
 

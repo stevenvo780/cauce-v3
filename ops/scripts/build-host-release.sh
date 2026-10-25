@@ -26,6 +26,7 @@ mkdir "$stage"
 # Archiving only ops/cli leaves a new dispatcher beside the previous guards.
 git archive HEAD ops/cli ops/scripts ops/container-runtime ops/schemas ops/pty-agent \
   ops/guardias/cauce-estado ops/guardias/cauce-sesiones ops/guardias/cauce-attach | tar -x -C "$stage"
+node ops/scripts/build-cli-runtime.mjs "$stage/ops/cli/terminal-runtime.cjs"
 mkdir -p "$stage/services/gateway/dist/fleet"
 NODE_PATH="$repo_root/services/gateway/node_modules:$repo_root/packages/store/node_modules:$repo_root/packages/protocol/node_modules:$repo_root/node_modules" \
   node_modules/.bin/esbuild services/gateway/src/fleet/main.ts --bundle --platform=node --format=esm --target=node22 \

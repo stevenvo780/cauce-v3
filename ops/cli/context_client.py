@@ -348,12 +348,19 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const config = JSON.parse(readFileSync(Number(process.argv[1]), 'utf8'));
 let WebSocket, limits;
+try {
+  const runtime = createRequire(import.meta.url)(config.runtime);
+  WebSocket = runtime.WebSocket;
+  limits = runtime;
+} catch {}
 for (const manifest of config.roots.flatMap((root) => [
   join(root, 'services/terminal-relay/package.json'), join(root, 'package.json'),
 ])) {
+  if (WebSocket) break;
   try { WebSocket = createRequire(manifest)('ws'); break; } catch {}
 }
 for (const root of config.roots) {
+  if (limits) break;
   const source = join(root, 'services/terminal-relay/src/session-limits.ts');
   try {
     if (existsSync(source)) {
@@ -560,6 +567,7 @@ def terminal_transport(client: ConsoleSessionClient, grant: dict, mode: str, col
              str(pathlib.Path.home() / '.local/share/cauce-v3')]
     config = {'url': terminal_websocket(client.gateway, grant.get('websocket_path')),
               'origin': client.origin, 'cookie': client.cookie, 'ca_file': client.ca_file, 'mode': mode,
+              'runtime': str(pathlib.Path(__file__).resolve().with_name('terminal-runtime.cjs')),
               'roots': [str(pathlib.Path(root).absolute()) for root in roots if root],
               'attach': {key: grant[key] for key in ('session_id', 'ticket', 'authority_proof')}}
     config['attach'].update(cols=cols, rows=rows)
@@ -608,11 +616,30 @@ def terminal_transport(client: ConsoleSessionClient, grant: dict, mode: str, col
             signal.signal(number, handler)
 
 
+def agent_summary(client: ConsoleSessionClient, target: dict) -> str:
+    from agent_status import agent_status
+
+    def snapshot(path: str):
+        try:
+            return client.request('GET', path)
+        except ContextFailure as error:
+            if re.fullmatch(r'console request rejected with HTTP (?:403|404); redirects are disabled', str(error)):
+                return None
+            raise
+
+    query = urllib.parse.urlencode({'resource': 'agent', 'tenant_id': target['tenant_id'], 'alias': target['alias']})
+    configuration = snapshot('/v3/console/config')
+    activity = snapshot('/v3/console/activity')
+    operations = snapshot('/v3/console/fleet/operations?' + query)
+    return terminal_status(target) + '\n' + agent_status(target, configuration, activity, operations)
+
+
 def terminal_main() -> int:
     parser = ContextArgumentParser(prog='cauce <alias>', allow_abbrev=False,
                                     description='Terminal remoto con la sesión nominal de cauce login')
     parser.add_argument('alias')
-    parser.add_argument('action', nargs='?', choices=('ver', 'estado'), help='ver la TUI o consultar su estado sin abrir una sesión')
+    parser.add_argument('action', nargs='?', choices=('ver', 'estado', 'sesiones', 'on', 'off'),
+                        help='ver la TUI, consultar estado o sesiones; on/off se gestionan en la consola')
     parser.add_argument('--tenant')
     parser.add_argument('--gateway', default=os.environ.get('CAUCE_GATEWAY_URL'))
     parser.add_argument('--origin')
@@ -628,13 +655,21 @@ def terminal_main() -> int:
         client = ConsoleSessionClient(args.session_file or module['default_session_file'](),
                                       args.gateway, args.origin, args.ca_file)
         target = terminal_lookup(client, args.alias, args.tenant)
-        if args.action == 'estado':
+        if args.action in ('on', 'off'):
+            raise ContextFailure('La flota dinámica se modifica desde la consola. Usa la consola para encender o apagar este agente.')
+        if args.action in ('estado', 'sesiones'):
             if target.get('authorized') is not True and target.get('registry_only') is not True:
                 raise ContextFailure('El servidor no autoriza esta terminal; revisa tus permisos y la empresa activa en la consola.')
-            print(terminal_status(target))
+            summary = agent_summary(client, target)
+            if args.action == 'sesiones':
+                from agent_status import terminal_sessions
+                summary += '\n' + terminal_sessions(target, client.request('GET', '/v3/console/terminal/sessions'))
+            print(summary)
             return 0
         target, mode = terminal_target({'items': [target]}, args.alias, args.tenant,
                                        'harness' if args.action == 'ver' else args.mode)
+        if args.action == 'ver':
+            print(agent_summary(client, target), file=sys.stderr)
         if shutil.which('node') is None:
             raise ContextFailure('Instala Node.js y el runtime Cauce para abrir el terminal.')
         size = shutil.get_terminal_size((100, 30))

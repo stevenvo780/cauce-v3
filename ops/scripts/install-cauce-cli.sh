@@ -41,8 +41,8 @@ comprobar() {  # $1=path under ops/. Failure prints the reason and writes nothin
   fi
 }
 
-colocar() {  # $1=path under ops/. Every source was checked before the destination existed.
-  local source="$RAIZ/$1" target="$BIN/${1##*/}" backup
+colocar() {  # $1=validated source path.
+  local source="$1" target="$BIN/${1##*/}" backup
   if [ -f "$target" ] && ! cmp -s "$source" "$target"; then
     backup="$target.bak-$(date -u +%Y%m%dT%H%M%SZ)"
     cp -p -- "$target" "$backup"
@@ -64,6 +64,7 @@ fuentes=(
   cli/host_setup.py
   cli/host_image.py
   cli/context_client.py
+  cli/agent_status.py
   cli/context_native.py
   cli/space_archive.py
   cli/space_archive_stream.py
@@ -80,10 +81,25 @@ for rel in "${fuentes[@]}"; do
   comprobar "$rel" || fallos=1
 done
 [ "$fallos" = 0 ]
+if [ -f "$RAIZ/cli/terminal-runtime.cjs" ]; then
+  cp -- "$RAIZ/cli/terminal-runtime.cjs" "$PYCACHE/terminal-runtime.cjs"
+else
+  node "$RAIZ/scripts/build-cli-runtime.mjs" "$PYCACHE/terminal-runtime.cjs"
+fi
+node --check "$PYCACHE/terminal-runtime.cjs"
+node - "$PYCACHE/terminal-runtime.cjs" <<'JS'
+const runtime = require(process.argv[2]);
+if (typeof runtime.WebSocket !== 'function' || typeof runtime.parseClientMessage !== 'function'
+    || typeof runtime.isTerminalEmulatorResponse !== 'function'
+    || !Number.isSafeInteger(runtime.MAX_INPUT_MESSAGE_BYTES) || runtime.MAX_INPUT_MESSAGE_BYTES <= 0) {
+  throw new Error('Runtime de terminal Cauce incompleto.');
+}
+JS
 mkdir -p "$BIN"
 for rel in "${fuentes[@]}"; do
-  colocar "$rel"
+  colocar "$RAIZ/$rel"
 done
+colocar "$PYCACHE/terminal-runtime.cjs"
 
 if [ ! -e "$AVISO_ATTACH" ] && [ -n "${CAUCE_DESTINO_AVISO_INICIAL:-}" ]; then
   install -d -m 0700 -- "${AVISO_ATTACH%/*}"
