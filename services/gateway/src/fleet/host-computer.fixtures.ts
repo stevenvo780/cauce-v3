@@ -274,10 +274,11 @@ async function signedAuthority(work: string, pool: DatabasePool, owned: Owned, g
   await mkdir(state, { recursive: true, mode: 0o700 }); await chmod(directory, 0o700);
   const registryFile = (name: string): string => join(directory, name, name.endsWith('mtls') ? 'mtls_identities.json' : 'token_hashes.json');
   const registries = { base_mtls: registryFile('base_mtls'), base_token: registryFile('base_token'),
-    fleet_mtls: registryFile('fleet_mtls'), fleet_token: registryFile('fleet_token') };
+    fleet_mtls: registryFile('fleet_mtls'), fleet_token: registryFile('fleet_token'),
+    pty: join(directory, 'pty', 'pty_agent_identities.json') };
   for (const [name, file] of Object.entries(registries)) {
     await mkdir(join(directory, name), { mode: 0o700 });
-    await writeFile(file, JSON.stringify({ version: 1, identities: [] }), { mode: 0o600 });
+    await writeFile(file, JSON.stringify({ version: 1, ...(name === 'pty' ? { agents: [] } : { identities: [] }) }), { mode: 0o600 });
   }
   const certificate = join(directory, 'ca.crt'), key = join(directory, 'ca.key');
   await execute('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '3', '-subj', '/CN=host-setup-e2e-authority',
