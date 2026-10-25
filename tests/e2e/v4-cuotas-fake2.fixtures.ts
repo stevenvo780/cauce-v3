@@ -8,7 +8,8 @@ import type { QuotaDockerImage } from './v4-quota-environments-real-browser.fixt
 const execute = promisify(execFile);
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 
-export async function prepareFake2QuotaImage(evidence: string, prefix: string, task: string, loginUrl = 'https://example.invalid/fake2'): Promise<QuotaDockerImage> {
+export async function prepareFake2QuotaImage(evidence: string, prefix: string, task: string, loginUrl = 'https://example.invalid/fake2',
+  options: { baseImage?: string } = {}): Promise<QuotaDockerImage> {
   const directory = join(evidence, 'fake2-image');
   await mkdir(directory, { recursive: true });
   const double = `#!/usr/bin/python3
@@ -56,6 +57,9 @@ elif 'quota' in sys.argv:
 else:
     sys.exit(2)
 `;
+  // The exploration laboratory also reports when each window resets, as the real readers do.
+  const reported = options.baseImage ? double.replace("    print(json.dumps({'ok': True, 'available': True,",
+    "    for index, window in enumerate(windows):\n        window.setdefault('resetAt', (datetime.datetime.now(datetime.UTC) + (datetime.timedelta(hours=3, minutes=20) if index == 0 else datetime.timedelta(days=4, hours=2))).isoformat())\n    print(json.dumps({'ok': True, 'available': True,") : double;
   const update = '#!/bin/sh\nset -eu\nmkdir -p /home/node/.local/bin\ncp /usr/local/bin/claude /home/node/.local/bin/claude\ntouch /home/node/.fake2-updated\n';
   const launcher = `#include <errno.h>
 #include <stdlib.h>
@@ -77,11 +81,18 @@ int main(int argc, char **argv) {
 }
 `;
   const runnerDockerfile = await readFile(join(process.cwd(), 'tests/e2e/lab-runner/Dockerfile'));
-  const baseImage = `cauce-e2e-lab-runner:${sha(runnerDockerfile).slice(0, 12)}`;
-  await writeFile(join(directory, 'fake2'), double, { mode: 0o755 });
+  const baseImage = options.baseImage ?? `cauce-e2e-lab-runner:${sha(runnerDockerfile).slice(0, 12)}`;
+  await writeFile(join(directory, 'fake2'), reported, { mode: 0o755 });
   await writeFile(join(directory, 'npm'), update, { mode: 0o755 });
   await writeFile(join(directory, 'launcher.c'), launcher);
-  await writeFile(join(directory, 'Dockerfile'), `FROM ${baseImage} AS compiler\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*\nCOPY launcher.c /tmp/launcher.c\nRUN cc -O2 -Wall -Wextra -Werror /tmp/launcher.c -o /tmp/claude\nFROM ${baseImage}\nUSER root\nCOPY --from=compiler --chmod=0555 /tmp/claude /usr/local/bin/claude\nCOPY --chmod=0555 fake2 /usr/local/lib/cauce-fake2.py\nCOPY --chmod=0555 npm /usr/local/bin/npm\nUSER node\nWORKDIR /home/node\nENV HOME=/home/node\nCMD ["sleep", "infinity"]\n`);
+  if (options.baseImage) {
+    // A laboratory daemon has no network for apt: the launcher is built here and copied in.
+    await writeFile(join(directory, 'launcher.c'), launcher);
+    await execute('cc', ['-O2', '-static', '-o', join(directory, 'claude'), join(directory, 'launcher.c')], { timeout: 60_000 });
+  }
+  await writeFile(join(directory, 'Dockerfile'), options.baseImage
+    ? `FROM ${baseImage}\nUSER root\nCOPY claude /usr/local/bin/claude\nCOPY fake2 /usr/local/lib/cauce-fake2.py\nCOPY npm /usr/local/bin/npm\nRUN chmod 0555 /usr/local/bin/claude /usr/local/lib/cauce-fake2.py /usr/local/bin/npm\nUSER node\nWORKDIR /home/node\nENV HOME=/home/node\nCMD ["sleep", "infinity"]\n`
+    : `FROM ${baseImage} AS compiler\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*\nCOPY launcher.c /tmp/launcher.c\nRUN cc -O2 -Wall -Wextra -Werror /tmp/launcher.c -o /tmp/claude\nFROM ${baseImage}\nUSER root\nCOPY --from=compiler --chmod=0555 /tmp/claude /usr/local/bin/claude\nCOPY --chmod=0555 fake2 /usr/local/lib/cauce-fake2.py\nCOPY --chmod=0555 npm /usr/local/bin/npm\nUSER node\nWORKDIR /home/node\nENV HOME=/home/node\nCMD ["sleep", "infinity"]\n`);
   const tag = `${prefix}:fake2`;
   const built = await execute('docker', ['build', '--pull=false', '--label', `cauce.e2e.owner=${task}`, '-t', tag, directory], { timeout: 300_000 });
   await writeFile(join(evidence, 'fake2-build.log'), `${built.stdout}${built.stderr}`);

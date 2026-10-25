@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync, watch } from 'node:fs';
 import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { startQaLabApplication, sha256, type QaLabApplication } from './qa-lab-app.js';
 import { startQaDocker } from './qa-lab-docker.js';
+import { QA_CODEX_QUOTA_PROBE, startQaLabQuota, type QaLabQuota } from './qa-lab-quota.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 
@@ -17,6 +18,7 @@ const OWNER = 'qa0-entorno-exploracion-1025';
 
 const qaRuntime = {
   ...cancelDeployRuntime,
+  agentImageFiles: { '/usr/local/bin/codex-http-probe.py': QA_CODEX_QUOTA_PROBE },
   providerCli: cancelDeployRuntime.providerCli + `
 import os,pathlib
 if nonce is None:
@@ -152,7 +154,7 @@ async function main(): Promise<void> {
   const stopped = new Promise<void>(resolve => { stop.signal.addEventListener('abort', () => { resolve(); }, { once: true }); });
   const ports = await reserveNamedLoopbackPorts(['gateway', 'browser', 'agent', 'health'] as const);
   let proxy: Awaited<ReturnType<typeof startQaDocker>> | undefined;
-  let computer: ComputerHarness | undefined, application: QaLabApplication | undefined;
+  let computer: ComputerHarness | undefined, application: QaLabApplication | undefined, quota: QaLabQuota | undefined;
   let current: Record<string, unknown> = { status: 'starting', name, prefix, owner: OWNER, url };
   let failed = false;
   let stage = 'docker_proxy';
@@ -185,7 +187,12 @@ async function main(): Promise<void> {
     application = await startQaLabApplication({ computer, directory: privateDirectory, prefix, email, origins, url, ticketKey,
       ports: ports.ports, releasePorts: () => ports.releaseAll() });
     checkStop();
-    current = { ...current, ...owner, email, computer: computer.container,
+    stage = 'quota_readers';
+    quota = await startQaLabQuota({ prefix, pool: computer.pool, email, accountId: owner.accountId, origin: 'https://localhost:4443',
+      ca: join(dirname(computer.installRoot), 'authority/ca.crt'), directory: join(privateDirectory, 'quota'),
+      computerImage: `${prefix}:computer`, rawDockerSocket: process.env.QA_LAB_RAW_SOCKET ?? '' });
+    checkStop();
+    current = { ...current, ...owner, email, quotaHost: quota.hostId, computer: computer.container,
       database: { container: `zz-canary-qa-0db-${name}`, name: new URL(computer.databaseUrl).pathname.slice(1) },
       relay: application.relay, status: 'ready' };
     await receipt(directory, current);
@@ -205,7 +212,7 @@ async function main(): Promise<void> {
     stop.abort();
     await stopped;
     const cleanup: unknown[] = [];
-    for (const action of [async () => application?.close(), async () => computer?.close(), async () => proxy?.close(),
+    for (const action of [async () => quota?.close(), async () => application?.close(), async () => computer?.close(), async () => proxy?.close(),
       async () => ports.releaseAll(), async () => rm(privateDirectory, { recursive: true, force: true }),
       async () => rm(workRoot, { recursive: true, force: true })]) {
       try { await action(); } catch (error) { cleanup.push(error); }

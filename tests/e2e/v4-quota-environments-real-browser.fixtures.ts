@@ -36,6 +36,9 @@ export interface QuotaContainerObservation {
 }
 
 function quotaDockerEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  // The exploration laboratory owns a dedicated daemon; its raw socket keeps the quota container names the executor expects.
+  const laboratorySocket = process.env.CAUCE_QUOTA_DOCKER_HOST;
+  if (laboratorySocket) return { ...base, DOCKER_HOST: laboratorySocket };
   const context = process.env.CAUCE_QUOTA_DOCKER_CONTEXT;
   if (!context) return base;
   return { ...base, DOCKER_CONTEXT: context,
