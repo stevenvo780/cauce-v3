@@ -121,8 +121,24 @@ export async function coordinateDocumentRequest(
   });
 }
 
+export interface ContextWriteUnconfirmedEvent {
+  readonly event: 'context_write_effect_unknown';
+  readonly operation_id: string;
+  readonly stage: 'authorize' | 'dispatch' | 'resolve';
+  readonly reason: string;
+}
+
+function unconfirmedReason(error: unknown): string {
+  if (error instanceof StoreError) return `store:${error.code}:${error.message}`.slice(0, 160);
+  if (error instanceof Error) {
+    return `${error.name}:${error.message.replace(/[A-Za-z0-9_+/=-]{32,}/gu, '[opaque]').replace(/\/[^\s]+/gu, '[path]')}`.slice(0, 160);
+  }
+  return 'unknown';
+}
+
 export class AgentContextWriteCoordinator {
-  constructor(private readonly pool: DatabasePool, private readonly probe: AgentFactsProbe) {}
+  constructor(private readonly pool: DatabasePool, private readonly probe: AgentFactsProbe,
+    private readonly report: (event: ContextWriteUnconfirmedEvent) => void = () => undefined) {}
 
   async coordinate<T>(input: ContextWriteCoordinateInput<T>): Promise<CoordinateResult<T>> {
     input.signal?.throwIfAborted();
@@ -154,19 +170,24 @@ export class AgentContextWriteCoordinator {
       if (error instanceof StoreError && error.recoveryReason !== 'context_write_commit_unverified') throw error;
       return { state: 'effect_unknown', operation_id: operationId };
     }
+    let stage: ContextWriteUnconfirmedEvent['stage'] = 'authorize';
     try {
       const authorized = await authorizeAgentContextDispatch(this.pool, expected, input.signal);
+      stage = 'dispatch';
       const value = await input.dispatch({
         operationId, operationToken: authorized.token, operationGeneration: authorized.generation,
         runtimeGeneration: writer.runtimeGeneration, ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
+      stage = 'resolve';
       const resolution = await resolveAgentContextWrite(this.pool, authorized,
         async () => this.readProof(authorized, input.signal),
         async (client, proof) => input.persistTarget(client, proof, value), input.signal);
       return resolution === 'target'
         ? { state: 'committed', resolution, value }
         : { state: 'not_applied', operation_id: operationId };
-    } catch {
+    } catch (error) {
+      try { this.report({ event: 'context_write_effect_unknown', operation_id: operationId, stage, reason: unconfirmedReason(error) }); }
+      catch { /* reporting never changes the fail-closed outcome */ }
       return { state: 'effect_unknown', operation_id: operationId };
     }
   }

@@ -349,7 +349,8 @@ function registerConsoleAgentRoutes(
     );
     const recordRuntimeExpectation = repository.recordProfileRuntimeExpectation.bind(repository);
     const readRuntimeAdoption = repository.readProfileRuntimeAdoption.bind(repository);
-    const coordinator = new AgentContextWriteCoordinator(options.pool, profileProbe);
+    const coordinator = new AgentContextWriteCoordinator(options.pool, profileProbe,
+      (event) => { app.log.warn(event, 'context write effect unknown'); });
     const profileDeps: AgentProfileDeps = {
       ...createAgentProfileDraftBinding(options.authProvider, perfiles, repository),
       authorize: autorizarPerfil,

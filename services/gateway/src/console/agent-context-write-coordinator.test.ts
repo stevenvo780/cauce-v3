@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabasePool, ContextWriteDescriptor, ContextWrite
 import type { Tenant } from '@cauce/protocol';
 import type { AgentFactsProbe } from './agent-documents.routes.js';
 import { TerminalRelayFactsProbe } from './agent-documents/relay-probe.js';
-import { AgentContextWriteCoordinator } from './agent-context-write-coordinator.js';
+import { AgentContextWriteCoordinator, type ContextWriteUnconfirmedEvent } from './agent-context-write-coordinator.js';
 import { SondaCompartida, sondaDiferida } from './sonda-compartida.js';
 
 const store = vi.hoisted(() => ({ reserve: vi.fn<typeof reserveAgentContextWrite>(), authorize: vi.fn<typeof authorizeAgentContextDispatch>(), resolve: vi.fn<typeof resolveAgentContextWrite>() }));
@@ -130,6 +130,22 @@ describe('durable context coordinator physical readback', () => {
     })).rejects.toThrow('expectation is invalid');
     expect(store.reserve).not.toHaveBeenCalled();
     expect(f.dispatched).not.toHaveBeenCalled();
+  });
+
+  it('reports the stage and a redacted reason of every unconfirmed write', async () => {
+    const f = fixture();
+    const report = vi.fn<(event: ContextWriteUnconfirmedEvent) => void>();
+    const coordinator = new AgentContextWriteCoordinator({} as DatabasePool, f.probe, report);
+    f.dispatched.mockRejectedValueOnce(new Error('relay refused /home/fixture/CLAUDE.md'));
+    expect(await coordinator.coordinate(f.input)).toMatchObject({ state: 'effect_unknown' });
+    f.probe.readGovernanceDocument.mockImplementationOnce(async () => ({ text: 'owned file bytes',
+      bytes: 16, truncated: true, sha: f.input.documents[0]?.targetSha ?? '', modified_at: new Date(0).toISOString() }));
+    expect(await coordinator.coordinate(f.input)).toMatchObject({ state: 'effect_unknown' });
+    expect(report.mock.calls.map(([event]) => [event.stage, event.reason])).toEqual([
+      ['dispatch', 'Error:relay refused [path]'],
+      ['resolve', 'Error:context write readback differs'],
+    ]);
+    expect(f.persisted).not.toHaveBeenCalled();
   });
 
   it('keeps quarantine when complete readback is truncated', async () => {
