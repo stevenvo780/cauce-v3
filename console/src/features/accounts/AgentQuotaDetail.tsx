@@ -4,11 +4,12 @@ import { useResource } from '../../api/use-resource';
 import { usePolling } from '../../api/use-polling';
 import { ErrorNotice } from '../../components/ErrorNotice';
 import { FleetContext, useQuotaAccounts } from '../../shell/fleet-context';
-import { FatigueIndicator } from './FatigueIndicator';
 import { QuotaAccountCard } from './QuotaAccountCard';
 import { AgentQuotaReader } from './AgentQuotaReader';
 import { quotaReadFailure } from './quota-messages';
-import { activityRowNotRunning, agentFatigue, agentQuotaAccounts, failedQuotaRead, NOT_RUNNING_QUOTA_MESSAGE, quotaTargetUnavailableReason, readerUnavailableReason } from './quota-availability';
+import { agentQuotaBar } from '../office/agent-quota-bar';
+import { QuotaMeter } from '../office/QuotaMeter';
+import { activityRowNotRunning, agentFatigue, agentQuotaAccounts, failedQuotaRead, FATIGUE_LABEL, NOT_RUNNING_QUOTA_MESSAGE, quotaTargetUnavailableReason, readerUnavailableReason } from './quota-availability';
 
 export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: string; alias: string; compact?: boolean }) {
   const api = useApi();
@@ -22,8 +23,14 @@ export function AgentQuotaDetail({ tenant, alias, compact = false }: { tenant: s
   const noReader = notRunning || accounts.length > 0 ? null : readerUnavailableReason(snapshot.data);
   const unavailableTarget = notRunning ? null : quotaTargetUnavailableReason(snapshot.data);
   const fatigue = quotas.error ? 'error' : noReader !== null ? 'no_reader' : agentFatigue(quotas.data?.accounts ?? [], tenant, alias);
+  const bar = agentQuotaBar(quotas.data?.accounts ?? [], `${tenant}/${alias}`, Boolean(quotas.error), Date.now());
+  const displayBar = fatigue === 'no_reader' ? { ...bar, remaining: null } : bar;
+  const reading = quotas.loading && !quotas.data && !quotas.error;
   return <section aria-label={`Disponibilidad de ${alias}`} className="mt-3 grid gap-2">
-    <FatigueIndicator state={fatigue} />
+    <span data-fatigue={fatigue} className="flex items-center gap-2 text-xs text-muted">
+      <QuotaMeter quota={displayBar} reading={reading} className="w-24 shrink-0" />
+      <span>{FATIGUE_LABEL[fatigue]}</span>
+    </span>
     {quotas.loading && !quotas.data && noReader === null ? <p className="m-0 text-xs" role="status">Leyendo cuotas de la cuenta…</p> : null}
     {!compact && notRunning ? <p className="m-0 text-xs text-muted">{NOT_RUNNING_QUOTA_MESSAGE}</p> : null}
     {!compact && noReader !== null ? <p className="m-0 text-xs text-muted">{noReader}</p> : null}
