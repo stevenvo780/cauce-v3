@@ -336,8 +336,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 const config = JSON.parse(readFileSync(Number(process.argv[1]), 'utf8'));
 let WebSocket, limits;
-for (const root of config.roots) {
-  try { WebSocket = createRequire(join(root, 'package.json'))('ws'); break; } catch {}
+for (const manifest of config.roots.flatMap((root) => [
+  join(root, 'services/terminal-relay/package.json'), join(root, 'package.json'),
+])) {
+  try { WebSocket = createRequire(manifest)('ws'); break; } catch {}
 }
 for (const root of config.roots) {
   const source = join(root, 'services/terminal-relay/src/session-limits.ts');
@@ -347,7 +349,10 @@ for (const root of config.roots) {
       limits = await tsImport(source, import.meta.url); break;
     }
   } catch {}
-  try { limits = await import(pathToFileURL(join(root, 'dist/services/terminal-relay/src/session-limits.js'))); break; } catch {}
+  for (const compiled of ['services/terminal-relay/dist/session-limits.js', 'dist/services/terminal-relay/src/session-limits.js']) {
+    try { limits = await import(pathToFileURL(join(root, compiled))); break; } catch {}
+  }
+  if (limits) break;
 }
 if (!WebSocket || !limits) {
   process.stderr.write('Falta el runtime Cauce compilado; configura CAUCE_PROJECT_ROOT o instala el runtime.\n');

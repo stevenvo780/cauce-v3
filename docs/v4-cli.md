@@ -19,6 +19,24 @@ Las pruebas locales y sus límites están en [la matriz local](v4-matriz-local.m
 
 La instalación usa `ops/scripts/install-cauce-cli.sh`, que coloca helpers en el área local del usuario. El wrapper de plataforma necesita `CAUCE_PROJECT_ROOT` absoluto, el checkout fuente o el runtime instalado en `$HOME/.local/share/cauce-v3`. Prefiere `services/gateway/dist/platform-cli-main.js`; si sólo existe fuente usa `pnpm exec tsx` desde esa raíz. No instala dependencias automáticamente para suplir un bundle incompleto.
 
+### Instalar desde la release de un candidato
+
+Usa la release de `ops` y el runtime compilado del mismo candidato, con la revisión y los hashes comprobados por el operador. Extrae la release de `ops` en un directorio propio y el runtime completo en `$HOME/.local/share/cauce-v3`, o indica su raíz absoluta con `CAUCE_PROJECT_ROOT`. Conserva los manifiestos de los paquetes, sus dependencias de producción y el compilado: la terminal necesita `services/terminal-relay/dist/session-limits.js` y la dependencia `ws` del paquete `terminal-relay`. La instalación de los helpers por sí sola no instala ese runtime.
+
+```sh
+CAUCE_OPS_DIR=/ruta/release-del-candidato/ops
+export CAUCE_PROJECT_ROOT="$HOME/.local/share/cauce-v3"
+bash "$CAUCE_OPS_DIR/scripts/install-cauce-cli.sh" "$HOME/.local/bin"
+hash -r
+cauce login --dispositivo --gateway https://cauce.example.invalid
+cauce login --status
+cauce TENANT_ID/AGENT_ALIAS
+cauce TENANT_ID/AGENT_ALIAS
+cauce spaces list --tenant TENANT_ID
+```
+
+Aprueba la solicitud en `/dispositivo` con la persona de prueba y su empresa activa. En cada entrada a la terminal escribe un comando de comprobación, verifica su salida y sal con `Ctrl-]`; la segunda entrada debe recuperar la misma sesión del agente. Después repite `spaces create`, `list`, `edit` y `retire` con los parámetros y revisiones de [registro y operaciones de espacios](#registro-y-operaciones-de-espacios), primero en previsualización y después con `--apply`. Comprueba cada recibo y el efecto en el ordenador enrolado. Este es el recorrido de aceptación del candidato en el laboratorio; ejecutarlo allí no acredita el despliegue ni su repetición en producción.
+
 ### Actualizar una instalación existente
 
 Desde la raíz de un checkout actualizado de Cauce, como el mismo usuario que instaló el CLI:
