@@ -12,6 +12,7 @@ import { assertPtyFleetOnline, createPtyFleetAgent, enqueuePtyFleet, observePtyF
 import { capturePtyFleet, PTY_FLEET_OWNER, ptyFleetReceipt, ptyFleetReceipts, startPtyFleetFixture,
   type PtyFleetFixture } from './v4-pty-flota-dinamica.helpers.js';
 import { capturePtyFleetTuiDiagnostics, ptyFleetTuiRuntime, usePtyFleetTui, waitPtyFleetTuiModes } from './v4-pty-flota-dinamica.tui.js';
+import { exerciseInheritedPtyFleet } from './v4-pty-flota-dinamica.legacy.js';
 
 const execute = promisify(execFile);
 let installation = '', cli: PtyFleetCli | undefined, fixture: PtyFleetFixture | undefined;
@@ -39,7 +40,8 @@ const sources = ['ops/cli/fleet_executor_steps.py', 'ops/cli/fleet_executor_poli
   'ops/pty-agent/cauce_pty_agent/agent.py', 'ops/pty-agent/cauce_pty_agent/session.py',
   'ops/pty-agent/tests/test_native_tmux_presence.py',
   'ops/pty-agent/systemd/cauce-v3-pty@.service', 'tests/e2e/v4-cli-flota-dinamica.runtime.ts',
-  'tests/e2e/v4-pty-flota-dinamica.composer.ts', 'tests/e2e/v4-pty-flota-dinamica.composer.py'];
+  'tests/e2e/v4-pty-flota-dinamica.composer.ts', 'tests/e2e/v4-pty-flota-dinamica.composer.py',
+  'tests/e2e/v4-pty-flota-dinamica.legacy.ts', 'tests/e2e/v4-pty-flota-dinamica.legacy.py'];
 const dependencies = ['tests/e2e/s2d-provider.ts', 'tests/e2e/v4-fleet-cancel-deploy.runtime.ts',
   'packages/adapter-sdk/src/bin/shared.ts', 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts',
   'ops/container-runtime/cauce_container_base.py', 'ops/container-runtime/cauce_container_proc.py', 'ops/container-runtime/cauce_container_restart.py'];
@@ -227,13 +229,15 @@ it('crea desde la web un PTY automático, abre shell web y CLI instalada, detien
   await usePtyFleetShells(fixture, cli, second.uid, 'started');
   await usePtyFleetTui(fixture, cli, 'started', shared);
   if (!second.fingerprint) throw new Error('the started PTY has no observed certificate');
+  await exerciseInheritedPtyFleet(fixture, second.fingerprint);
   await purgePtyFleet(fixture, second.fingerprint);
   console.info('H12_FLOW purged');
   await capturePtyFleet(fixture.page, 'purged');
   expect(fixture.errors.unexpected).toEqual([]);
   await ptyFleetReceipt('complete', { alias: ptyFleetAlias, created: created.id, stopped: stopped.id, started: started.id,
-    web_and_installed_cli_before_after_start: true, manual_alias_provisioning: false, purged: true,
+    web_and_installed_cli_before_after_start: true, initial_creation_without_manual_alias_provisioning: true, purged: true,
     shared_tui_web_and_installed_cli: true, same_native_session_across_start: true,
-    real_relay_outage: true, same_operation_retry: failed.id, certificate_preserved_across_retry_start: true });
+    real_relay_outage: true, same_operation_retry: failed.id, certificate_preserved_across_retry_start: true,
+    inherited_start_update_adoption_rollback_and_foreign_launcher_rejection: true });
   completed = true;
-}, 600_000);
+}, 1_200_000);
