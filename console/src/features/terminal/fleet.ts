@@ -232,7 +232,7 @@ interface LiveTuiResolution {
 
 export const LIVE_TUI_LABELS: Readonly<Record<LiveTuiStatus, string>> = {
   available: 'TUI en vivo',
-  no_tui: 'Sin TUI que emitir',
+  no_tui: 'TUI no disponible',
   blocked: 'TUI bloqueada',
   unknown: 'TUI desconocida',
 };
@@ -257,7 +257,7 @@ export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, age
   }
   return {
     status: 'no_tui',
-    reason: `El agente PTY de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: no hay TUI que emitir, sólo shell nueva. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
+    reason: `El agente PTY de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: su arnés puede no ofrecer una TUI o su sesión aún no está preparada. Puedes abrir Shell. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
     target,
   };
 }

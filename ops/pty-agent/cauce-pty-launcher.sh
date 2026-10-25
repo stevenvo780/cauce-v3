@@ -172,13 +172,24 @@ read_generation() {
   container_restart=$restart
 }
 
-# The supervisor stamps CAUCE_CONTAINER_GENERATION with ITS formula (NUL-joined, four fields with the
-# container init start time, full digest); the measurement matches the adapter by that exact value.
-# Reusing this launcher's own 32-char ticket generation never matched, so every measurement came back
-# empty and profile writes answered 503 for every alias. Both are kept: the ticket one is protocol.
+# Adapter generations differ between managed V4 containers and the shared-container supervisor;
+# neither uses the launcher's 32-character ticket generation.
 adapter_generation=''
+ADAPTER_V4_MANAGED=0
 read_adapter_generation() {
-  local init_starttime digest
+  local init_starttime digest labels label_alias label_tenant runtime_key extra
+  ADAPTER_V4_MANAGED=0
+  labels=$(docker_control inspect --format \
+    '{{index .Config.Labels "cauce.fleet.alias"}} {{index .Config.Labels "cauce.fleet.tenant"}} {{index .Config.Labels "cauce.fleet.runtime_key"}}' \
+    "$container_id" 2>/dev/null) || return 1
+  read -r label_alias label_tenant runtime_key extra <<<"$labels"
+  if [[ $label_alias == "$alias_name" && $label_tenant == "$tenant" \
+    && $runtime_key =~ ^[a-z][a-z0-9-]{0,63}$ && -z ${extra:-} ]]; then
+    ADAPTER_V4_MANAGED=1
+    digest=$(printf '%s\0%s' "$container_id" "$container_started" | sha256sum)
+    adapter_generation=${digest%% *}
+    return 0
+  fi
   init_starttime=$(docker_control exec "$container_id" /usr/bin/python3 -c \
     'raw=open("/proc/1/stat",encoding="utf-8").read(); fields=raw[raw.rfind(")")+2:].split(); print(fields[19])' 2>/dev/null) || return 1
   [[ $init_starttime =~ ^[0-9]+$ ]] || return 1
@@ -319,14 +330,47 @@ OPENCLAW_HISTORY_LIMIT=${CAUCE_PTY_OPENCLAW_HISTORY_LIMIT:-200}
 # ownership/mode/schema boundary the agent re-checks on every OPEN. The native id never leaves
 # that process nor is frozen in the bundle.
 derive_openclaw_tui_command() {
-  local node_path tui_help entry configured_dist
+  local node_path tui_help entry configured_dist measured measured_node measured_dist measured_local extra
   local -a entry_candidates=()
-  node_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
-    sh -c 'command -v node' 2>/dev/null) || return 1
-  node_path=${node_path//[$'\r\n']/}
+  configured_dist=${CONFIG[OPENCLAW_DIST_DIR]:-}
+  node_path=''
+  OPENCLAW_LOCAL_FOUND=0
+  if [[ -n ${adapter_generation:-} && -n ${agent_root:-} ]]; then
+    measured=$(docker_control exec --user "$runtime_uid:$runtime_gid" -w / "$container_id" \
+      /usr/bin/python3 -I -B -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from cauce_pty_agent.tui_environment import measured_environment, openclaw_local
+bundle = dict(
+    alias=sys.argv[2], home=sys.argv[3], harness="openclaw",
+    container_id=sys.argv[4], tenant_id=sys.argv[7],
+    session_recovery={"state_directory": sys.argv[5], "adapter_generation": sys.argv[6]},
+)
+values = measured_environment(bundle)
+node = values.get("CAUCE_HARNESS_COMMAND", "")
+dist = values.get("CAUCE_OPENCLAW_DIST_DIR", "")
+if node and dist:
+    print(node + "\t" + dist + "\t" + str(int(openclaw_local(bundle))))
+' "$agent_root" "$alias_name" "$container_home" "$container_id" "$state_directory" "$adapter_generation" "$tenant" \
+      2>/dev/null) || return 1
+    if [[ -n $measured ]]; then
+      [[ $measured != *$'\r'* && $measured != *$'\n'* ]] || return 1
+      IFS=$'\t' read -r measured_node measured_dist measured_local extra <<<"$measured"
+      [[ -z ${extra:-} && $measured_local =~ ^[01]$ ]] || return 1
+      valid_absolute_path "$measured_node" && valid_absolute_path "$measured_dist" || return 1
+      node_path=$measured_node
+      OPENCLAW_LOCAL_FOUND=$measured_local
+      [[ -n $configured_dist ]] || configured_dist=$measured_dist
+    fi
+  fi
+  [[ ${ADAPTER_V4_MANAGED:-0} == 0 || -n ${measured:-} ]] || return 1
+  if [[ -z $node_path ]]; then
+    node_path=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
+      sh -c 'command -v node' 2>/dev/null) || return 1
+  fi
+  [[ $node_path != *$'\r'* && $node_path != *$'\n'* ]] || return 1
   valid_absolute_path "$node_path" || return 1
 
-  configured_dist=${CONFIG[OPENCLAW_DIST_DIR]:-}
   if [[ -n $configured_dist ]]; then
     entry_candidates+=("${configured_dist%/}/index.js")
   else
@@ -348,6 +392,7 @@ derive_openclaw_tui_command() {
     tui_help=$(docker_control exec --user "$runtime_uid:$runtime_gid" "$container_id" \
       "$node_path" "$entry" tui --help 2>/dev/null) || continue
     [[ $tui_help == *"--session"* ]] || continue
+    [[ $OPENCLAW_LOCAL_FOUND == 0 || $tui_help == *"--local"* ]] || continue
     OPENCLAW_ENTRY=$entry
     OPENCLAW_NODE_FOUND=$node_path
     return 0
@@ -598,8 +643,10 @@ publish_bundle() {
   local shell_candidates harness_command tmux_tui openclaw_tui runtime_facts
   shell_candidates=${CONFIG[SHELL_CANDIDATES]:-'[["/bin/bash","-l"],["/bin/sh","-l"]]'}
   harness_command=${CONFIG[HARNESS_COMMAND]:-}
+  [[ $harness_command != null ]] || harness_command=''
   tmux_tui=null
   openclaw_tui=null
+  read_adapter_generation || adapter_generation=''
   TMUX_PANE_CWD_FOUND=''
   TMUX_MEASUREMENT_CONFLICT=0
   if [[ -z $harness_command ]]; then
@@ -637,8 +684,9 @@ publish_bundle() {
         harness_command=null
         openclaw_tui=$(CAUCE_OPENCLAW_NODE=$OPENCLAW_NODE_FOUND CAUCE_OPENCLAW_ENTRY=$OPENCLAW_ENTRY \
           CAUCE_OPENCLAW_STATE=$state_directory CAUCE_OPENCLAW_HISTORY=$OPENCLAW_HISTORY_LIMIT \
+          CAUCE_OPENCLAW_LOCAL=$OPENCLAW_LOCAL_FOUND \
           PYTHONDONTWRITEBYTECODE=1 python3 -c \
-          'import json,os;print(json.dumps({"node":os.environ["CAUCE_OPENCLAW_NODE"],"entry":os.environ["CAUCE_OPENCLAW_ENTRY"],"state_directory":os.environ["CAUCE_OPENCLAW_STATE"],"history_limit":int(os.environ["CAUCE_OPENCLAW_HISTORY"])}))') \
+          'import json,os;print(json.dumps({"node":os.environ["CAUCE_OPENCLAW_NODE"],"entry":os.environ["CAUCE_OPENCLAW_ENTRY"],"state_directory":os.environ["CAUCE_OPENCLAW_STATE"],"history_limit":int(os.environ["CAUCE_OPENCLAW_HISTORY"]),**({"local":True} if os.environ.get("CAUCE_OPENCLAW_LOCAL") == "1" else {})}))') \
           || die "cannot assemble the dynamic openclaw harness resolver"
         # No native id or store key in the journal: the launcher accredits that a pointer exists,
         # the exact selection is re-resolved inside the agent on every OPEN.
@@ -651,7 +699,6 @@ publish_bundle() {
       fi
     fi
   fi
-  read_adapter_generation || adapter_generation=''
   runtime_facts=$(measure_adapter_runtime_facts)
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"

@@ -62,6 +62,7 @@ RELEASE_FILES: Final = (
     "pty-agent/cauce_pty_agent/session.py",
     "pty-agent/cauce_pty_agent/session_recovery.py",
     "pty-agent/cauce_pty_agent/tmux.py",
+    "pty-agent/cauce_pty_agent/tui_environment.py",
     "pty-agent/launcher_write_journal.py",
     "pty-agent/derive-alias-key.py",
     "pty-agent/install-pty-agent.sh",

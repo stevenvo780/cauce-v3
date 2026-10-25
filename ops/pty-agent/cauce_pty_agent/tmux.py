@@ -8,6 +8,7 @@ import subprocess
 from typing import Any
 
 from .framing import PermanentError
+from .tui_environment import measured_environment, openclaw_local, openclaw_session_key
 
 OPENCLAW_NATIVE_SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
 TMUX_SOCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -23,7 +24,9 @@ def _openclaw_tui_config(value: Any, harness: str, home: str) -> dict[str, Any] 
         return None
     if harness != "openclaw" or not isinstance(value, dict):
         raise PermanentError("bundle field is invalid: openclaw_tui")
-    if set(value) != {"node", "entry", "state_directory", "history_limit"}:
+    if set(value) - {"local"} != {"node", "entry", "state_directory", "history_limit"}:
+        raise PermanentError("bundle field is invalid: openclaw_tui")
+    if "local" in value and not isinstance(value["local"], bool):
         raise PermanentError("bundle field is invalid: openclaw_tui")
     node = value.get("node")
     entry = value.get("entry")
@@ -47,6 +50,7 @@ def _openclaw_tui_config(value: Any, harness: str, home: str) -> dict[str, Any] 
         "entry": entry,
         "state_directory": state_directory,
         "history_limit": history_limit,
+        **({"local": value["local"]} if "local" in value else {}),
     }
 
 
@@ -151,6 +155,8 @@ def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
     config = bundle.get("openclaw_tui")
     if not isinstance(config, dict):
         return None
+    if config.get("local") is True and (not openclaw_local(bundle) or not measured_environment(bundle)):
+        return None
     state_directory = config["state_directory"]
     try:
         directory_status = os.lstat(state_directory)
@@ -216,7 +222,11 @@ def resolve_openclaw_tui_command(bundle: dict[str, Any]) -> list[str] | None:
     if (not isinstance(native_id, str) or not OPENCLAW_NATIVE_SESSION_RE.fullmatch(native_id)
             or pointer.get("initialized") is not True):
         return None
+    session_key = openclaw_session_key(bundle, native_id)
+    if session_key is None:
+        return None
     return [
-        config["node"], config["entry"], "tui", "--session", native_id,
+        config["node"], config["entry"], "tui", *(["--local"] if openclaw_local(bundle) else []),
+        "--session", session_key,
         "--history-limit", str(config["history_limit"]),
     ]

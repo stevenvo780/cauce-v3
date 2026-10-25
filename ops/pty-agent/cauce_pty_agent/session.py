@@ -31,6 +31,7 @@ from .framing import (
 )
 from .openclaw_input import OpenClawInput
 from .tmux import LIVE_TMUX_HARNESSES, resolve_openclaw_tui_command, resolve_tmux_tui_command
+from .tui_environment import PATH_KEYS, measured_environment, openclaw_environment
 
 MAX_SESSIONS = 2
 # A TUI over the network is unusable if every keystroke echo becomes its own packet, so output is
@@ -113,6 +114,7 @@ class PtySession:
         self.out = bytearray()
         self.pending_input = bytearray()
         self.openclaw_input = OpenClawInput()
+        self.openclaw_paths: dict[str, str] | None = None
         self.output_paused = False
         # Logged once per session: a viewer receives keystrokes in bursts and the journal must not
         # become the echo of the operator's keyboard.
@@ -290,6 +292,15 @@ class SessionMixin:
 
     def _spawn(self, session_id: str, mode: str, argv: list[str], rows: int, cols: int) -> PtySession:
         environment = self._child_environment()
+        tui_paths = None
+        if mode in TUI_MODES and self.bundle.get("openclaw_tui") is not None:
+            tui_environment = openclaw_environment(self.bundle)
+            tui_paths = {key: value for key, value in tui_environment.items() if key in PATH_KEYS}
+            if (resolve_openclaw_tui_command(self.bundle) != argv
+                    or measured_environment(self.bundle) != tui_paths
+                    or self.bundle["openclaw_tui"].get("local") is True and not tui_paths):
+                raise OSError(errno.ESTALE, "OpenClaw runtime changed")
+            environment.update(tui_environment)
         home = self.bundle["home"]
         pid, master = pty.fork()
         if pid == 0:  # pragma: no cover - the child never returns
@@ -306,7 +317,9 @@ class SessionMixin:
         _cloexec(master)
         os.set_blocking(master, False)
         set_window_size(master, rows, cols)
-        return PtySession(session_id, pid, master, mode, argv)
+        session = PtySession(session_id, pid, master, mode, argv)
+        session.openclaw_paths = tui_paths
+        return session
 
     def _on_stdin(self, session_id: str, data: bytes) -> None:
         session = self.sessions.get(session_id)
@@ -321,7 +334,9 @@ class SessionMixin:
             return
         if session.mode in WRITABLE_TUI_MODES:
             if self.bundle.get("openclaw_tui") is not None \
-                    and resolve_openclaw_tui_command(self.bundle) != session.argv:
+                    and (resolve_openclaw_tui_command(self.bundle) != session.argv
+                         or session.openclaw_paths is not None
+                         and measured_environment(self.bundle) != session.openclaw_paths):
                 self._hangup(session, "native_session_changed")
                 return
             refusal = self.input_barrier.refusal(
