@@ -2,7 +2,7 @@
  * Detection of input box state and on-screen activity for tmux TUI panes.
  */
 
-/** Marks that the claude TUI leaves when the box holds an unsent paste. */
+/** A collapsed paste is conclusive; an expansion hint directly below the input border is footer help. */
 const PENDING_PASTE_MARKS = ["[Pasted text", "paste again to expand"];
 
 /** Prompt cursor characters supported across TUIs (Claude, Codex, Grok). */
@@ -35,13 +35,15 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
     return { occupied: true, kind: "busy", unfocused: true, evidence: "la caja de grok no tiene el foco (Space:prompt)" };
   }
 
+  const prompt = lastPromptLine(lines);
   for (const mark of PENDING_PASTE_MARKS) {
-    if (lines.some((line) => line.includes(mark))) {
+    if (lines.some((line, index) => line.includes(mark)
+      && (mark !== "paste again to expand" || prompt === undefined || !isPromptFooterHint(lines, prompt.index, index)))) {
       return { occupied: true, kind: "busy", evidence: `hay un pegado sin enviar (${mark})` };
     }
   }
 
-  const promptLine = lastPromptLine(lines);
+  const promptLine = prompt?.content;
   if (promptLine === undefined) {
     if (pane.trim().length === 0) {
       return { occupied: true, kind: "busy", evidence: "el panel está en blanco" };
@@ -68,6 +70,18 @@ export function inputBoxState(pane: string | undefined): InputBoxState {
     kind: "busy",
     evidence: `hay texto sin enviar en la caja (${promptLine.slice(0, 60)})`,
   };
+}
+
+function isPromptFooterHint(lines: readonly string[], promptIndex: number, hintIndex: number): boolean {
+  if (hintIndex <= promptIndex) return false;
+  let separatorSeen = false;
+  for (let index = promptIndex + 1; index < hintIndex; index += 1) {
+    const line = stripSgr(lines[index] ?? "").trim();
+    if (line === "") continue;
+    if (separatorSeen || !/^─{3,}$/u.test(line)) return false;
+    separatorSeen = true;
+  }
+  return separatorSeen;
 }
 
 const IN_FLIGHT_MARKS: readonly RegExp[] = [
@@ -118,7 +132,7 @@ export function grokPromptUnfocused(pane: string | undefined): boolean { // The 
 /**
  * The contents of the last prompt line, with the cursor and box borders removed.
  */
-function lastPromptLine(lines: readonly string[]): string | undefined {
+function lastPromptLine(lines: readonly string[]): { readonly index: number; readonly content: string } | undefined {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const raw = lines[index];
     if (raw === undefined) continue;
@@ -128,8 +142,8 @@ function lastPromptLine(lines: readonly string[]): string | undefined {
       if (!line.startsWith(mark)) continue;
       const content = line.slice(mark.length).trim();
       // Discards dim suggestion text (placeholder) when the box is empty.
-      if (content !== "" && isEntirelyDim(raw, mark)) return "";
-      return content;
+      if (content !== "" && isEntirelyDim(raw, mark)) return { index, content: "" };
+      return { index, content };
     }
   }
   return undefined;

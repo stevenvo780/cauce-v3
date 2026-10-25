@@ -27,6 +27,39 @@ test("la caja de entrada se reconoce ocupada en los casos medidos", () => {
   assert.equal(inputBoxState("sin caja de entrada").occupied, true);
 });
 
+test("el aviso de expansión bajo un prompt vacío no ocupa la caja", () => {
+  assert.deepEqual(inputBoxState("❯ \n────────────────\npaste again to expand"), {
+    occupied: false, kind: "free", evidence: "",
+  });
+});
+
+test("el aviso de expansión solo es footer después de un separador de entrada", () => {
+  for (const pane of [
+    "❯ \npaste again to expand",
+    "❯ \ntexto sin enviar\n────────────────\npaste again to expand",
+    "❯ \n────────────────\ntexto sin enviar\npaste again to expand",
+    "❯ \n----------------\npaste again to expand",
+  ]) {
+    assert.equal(inputBoxState(pane).kind, "busy");
+  }
+  assert.equal(inputBoxState("❯ \n\n\u001b[2m────────────────\u001b[0m\n\npaste again to expand").kind, "free");
+});
+
+test("el aviso de expansión bajo el prompt conserva el borrador y el pegado pendiente", () => {
+  const draft = inputBoxState("❯ texto sin enviar\n────────────────\npaste again to expand");
+  assert.equal(draft.kind, "busy");
+  assert.match(draft.evidence, /texto sin enviar/u);
+  const paste = inputBoxState("❯ [Pasted text #1 +12 lines]\n────────────────\npaste again to expand");
+  assert.equal(paste.kind, "busy");
+  assert.match(paste.evidence, /pegado sin enviar/u);
+  assert.equal(inputBoxState("❯ \n[Pasted text #1 +12 lines]\npaste again to expand").kind, "busy");
+});
+
+test("el aviso de expansión conserva las guardas sin prompt y con diálogo", () => {
+  assert.equal(inputBoxState("paste again to expand").kind, "busy");
+  assert.equal(inputBoxState("› 1. Yes, proceed\n────────────────\npaste again to expand").kind, "modal");
+});
+
 test("el aviso de caja ocupada dice qué hacer con el texto a medio escribir", () => {
   const notice = degradationNotice("kratos", "claude", {
     reason: "input_busy",
