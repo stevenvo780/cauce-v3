@@ -13,10 +13,11 @@ import calibration from './v4-copias-rendimiento.calibration.json' with { type: 
 import { installBackupMeasurement, collectBackupMeasurement } from './v4-copias-rendimiento.js';
 
 function measuredBudget(scenario:'large'|'many') {
-  const sample=calibration[scenario];
-  const ready=Math.ceil(sample.ready_ms*calibration.margin);
-  const total=Math.ceil((sample.ready_ms+sample.browser_download_ms+sample.restore_ms+sample.agent_read_ms)*calibration.margin);
-  return {ready,total,source_sha:calibration.source_sha,margin:calibration.margin};
+  const samples=calibration[scenario];
+  const ready=Math.ceil(Math.max(...samples.map(sample=>sample.ready_ms))*calibration.margin);
+  const total=Math.ceil(Math.max(...samples.map(sample=>sample.ready_ms+sample.browser_download_ms+sample.restore_ms+sample.agent_read_ms))*calibration.margin);
+  return {ready,total,source_shas:[...new Set(samples.map(sample=>sample.source_sha))],
+    source_receipts:samples.map(sample=>sample.source_receipt),margin:calibration.margin};
 }
 
 interface BackupRow {
