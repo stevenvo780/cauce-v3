@@ -54,9 +54,10 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
   {
     id: 'arneses',
     label: 'Arneses',
-    proposito: 'El programa del agente ya corre. Aquí ves qué archivo de instrucciones lee y dónde se edita.',
+    proposito: 'El programa del agente ya corre. Aquí ves qué archivo de instrucciones lee y dónde se edita, y el catálogo de definiciones.',
     detalle: 'No se elige el arnés en esta pantalla. El que vale es el programa en ejecución. Las definiciones '
-      + 'de abajo son el catálogo declarado.',
+      + 'de abajo son el catálogo declarado: lo cambia el administrador de plataforma en esta misma sección, '
+      + 'y es la lista que ofrece el alta de agente. Los descriptores aprobados por digest no se editan desde la web.',
   },
   {
     id: 'acceso',

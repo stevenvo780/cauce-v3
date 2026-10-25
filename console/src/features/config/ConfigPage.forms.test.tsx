@@ -80,8 +80,6 @@ const editableRows = [
   ['espacio', 'Miguel', /espacios y salas/i],
   ['membresía', 'Miguel/grp.miguel/janus', /espacios y salas/i],
   ['permiso entre clientes', 'Miguel/Steven', /acceso y roles/i],
-  ['política de rol', 'agent', /acceso y roles/i],
-  ['harness', 'codex', /^arneses$/i],
   ['destino de avisos', 'Miguel/janus/owner_dm', /acceso y roles/i],
 ] as const;
 
@@ -153,19 +151,15 @@ it('mantiene controles visibles y bloqueados si console-access no acredita confi
   expect(screen.getByRole('button', { name: 'Eliminar sala/grupo Miguel/grp.miguel' })).toBeDisabled();
 });
 
-it('no envía alta de harness sin su nombre obligatorio', async () => {
-  const changes: ChangeRequest[] = [];
-  serveChanges(changes);
+it('las definiciones de arnés se escriben desde su panel de plataforma y no desde el formulario genérico', async () => {
+  servirConfig(() => configSnapshot());
   const user = userEvent.setup();
   renderWithApi(<ConfigPage />);
-  await irA(user, /^agentes$/i);
   await irA(user, /^arneses$/i);
-  await user.click(screen.getByRole('button', { name: 'Crear harness' }));
-  const form = within(screen.getByRole('form', { name: 'Crear harness' }));
-  await user.type(form.getByLabelText('Id del harness'), 'custom');
-  await user.click(form.getByRole('button', { name: 'Previsualizar cambio' }));
-  expect(await form.findByRole('alert')).toHaveTextContent(/nombre visible/i);
-  expect(changes).toHaveLength(0);
+  expect(await screen.findByText(/Solo el administrador de plataforma puede crear, editar o borrar definiciones de arnés/))
+    .toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Crear harness' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Crear definición de arnés' })).not.toBeInTheDocument();
 });
 
 it('añade un miembro desde su sala sin pedir identidades en JSON', async () => {

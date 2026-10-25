@@ -43,12 +43,13 @@ export function scopedFormIdentity(snapshot: ConfigurationSnapshot, definition: 
 
 export const PLATFORM_CATALOG_REASON = 'Solo el administrador de plataforma puede cambiar esta política.';
 
-/** Harness rows are a global catalog. The configuration API rejects every write, including a platform administrator's. */
-export const HARNESS_CATALOG_REASON = 'Las definiciones de arnés se cambian con la CLI de plataforma, no desde esta consola.';
+/** Harness rows are a global catalog; they are written in the Arneses section, not through the generic form. */
+export const HARNESS_CATALOG_REASON = 'Las definiciones de arnés se cambian en esta sección (Definiciones de arnés), con autoridad de administrador de plataforma, no desde el formulario genérico.';
 
 /**
  * A snapshot without a role stays unchanged: the form fixtures omit it.
- * Harness and role-policy writes stay on the platform CLI for every named role.
+ * Harness and role-policy writes live in their own sections for the platform administrator;
+ * the generic form and the JSON editor stay closed for them.
  * Chain policies stay editable for platform_admin.
  */
 export function platformCatalogReason(snapshot: ConfigurationSnapshot | undefined, resource: string): string | undefined {
@@ -56,7 +57,7 @@ export function platformCatalogReason(snapshot: ConfigurationSnapshot | undefine
   const role = (snapshot as { capabilities?: { actor?: { role?: unknown } } }).capabilities?.actor?.role;
   if (resource === 'harness') return typeof role === 'string' ? HARNESS_CATALOG_REASON : undefined;
   if (resource === 'role_policy') return typeof role === 'string'
-    ? 'Las políticas de rol se cambian con la CLI de plataforma, no desde esta consola.' : undefined;
+    ? 'Las políticas de rol se cambian en Ajustes → Acceso y roles (Permisos por rol), con autoridad de administrador de plataforma, no desde el formulario genérico.' : undefined;
   if (typeof role !== 'string' || role === 'platform_admin') return undefined;
   if (resource === 'chain_policy') return PLATFORM_CATALOG_REASON;
   return undefined;

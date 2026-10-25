@@ -1,7 +1,7 @@
 import type { AnyConfigResource, ConfigAction, ConfigMutation, ConfigResource, ConfigurationSnapshot } from '../../api/types';
 import { platformCatalogReason } from './config-form-access';
 
-export const PLATFORM_CLI_REASON = 'Las definiciones de arnés y las políticas de rol se cambian con la CLI de plataforma, no desde esta consola.';
+export const PLATFORM_CLI_REASON = 'Las definiciones de arnés y las políticas de rol se cambian en sus secciones de Ajustes (Arneses y Acceso y roles), no desde el editor JSON.';
 
 export const templates: Partial<Record<ConfigResource, ConfigMutation>> = {
   tenant: { resource: 'tenant', action: 'create', id: 'Acme', value: { display_name: 'Acme', is_hub: false, enabled: true } },

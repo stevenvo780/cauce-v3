@@ -81,6 +81,45 @@ export interface ConfigurationSnapshot {
   revisions?: ConfigRevision[] | null;
 }
 
+export interface PlatformCatalogSnapshot {
+  company_id?: string;
+  revision?: number;
+  harness_definitions?: Record<string, unknown>[] | null;
+  role_policies?: Record<string, unknown>[] | null;
+}
+
+export interface PlatformHarnessCreate {
+  id: string;
+  display_name: string;
+  capabilities: string[];
+  enabled?: boolean;
+  expected_revision: number;
+}
+
+export interface PlatformHarnessUpdate {
+  display_name?: string;
+  capabilities?: string[];
+  enabled?: boolean;
+  expected_revision: number;
+}
+
+export interface PlatformRolePolicyCreate {
+  role: string;
+  allow_route?: boolean;
+  allow_read?: boolean;
+  allow_control?: boolean;
+  allow_notify?: boolean;
+  expected_revision: number;
+}
+
+export interface PlatformRolePolicyUpdate {
+  allow_route?: boolean;
+  allow_read?: boolean;
+  allow_control?: boolean;
+  allow_notify?: boolean;
+  expected_revision: number;
+}
+
 export interface ConfigurationChangeResult {
   mutation_sha256?: string;
   applied?: boolean | null;
