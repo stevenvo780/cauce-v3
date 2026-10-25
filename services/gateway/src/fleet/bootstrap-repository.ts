@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, describesFleetCompensationTarget, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
+import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, describesFleetCompensationTarget, fleetReplacementCommit, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
   providerAccountConsentSql, withTransaction, isMaintenanceOperation, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
   BootstrapAckSchema, BootstrapCreateSchema, BootstrapError, BootstrapRecordSchema, bootstrapPrompt,
@@ -15,7 +15,7 @@ interface Agent extends Record<string, unknown> {
   reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null;
 }
 interface Operation extends FleetOperationRow { executor_host: string; worker_live: boolean }
-interface Context { operation: Operation; agent: Agent; profile: StoredAgentContext & { revision: number } }
+interface Context { operation: Operation; agent: Agent; profile: StoredAgentContext & { revision: number }; committed: boolean }
 const forbidden = () => new BootstrapError('forbidden');
 const conflict = () => new BootstrapError('conflict');
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -46,8 +46,11 @@ export class BootstrapRepository {
     if (!agent?.runtime_key || (!state && agent.enabled)) throw forbidden();
     // The sealed host scope binds an operation in flight. Settling it records a new desired revision, so the runtime it
     // just admitted could no longer read its final state and profile and would exit. Only those two reads reach a settled
-    // operation; the request checks below still bind them to the durable agent row.
-    if (!(state && operation.status === 'succeeded')) await this.hostScope(client, operation, agent);
+    // operation; the request checks below still bind them to the durable agent row. A container replacement settles in
+    // two phases: its configuration commit records that revision too, while the operation stays running until the
+    // original is retired, so the replacement runtime reads its admission the same way.
+    const committed = state && await this.replacementCommitted(client, operation);
+    if (!(state && (operation.status === 'succeeded' || committed))) await this.hostScope(client, operation, agent);
     if (operation.kind === 'create' || operation.kind === 'update') {
       const desired = operation.request.parameters;
       if (!('runtime_key' in desired) || desired.runtime_key !== agent.runtime_key || desired.harness_id !== agent.harness_id
@@ -60,7 +63,20 @@ export class BootstrapRepository {
     await client.query('SELECT 1 FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR SHARE', [identity.tenant_id, identity.alias]);
     const profile = await this.profiles.readContextWithPresence(identity.tenant_id, identity.alias, client);
     if (!profile.exists || profile.revision === null || !Number.isSafeInteger(profile.revision) || profile.revision < 1) throw new BootstrapError('unverified');
-    return { operation, agent, profile: { ...profile, revision: profile.revision } };
+    return { operation, agent, profile: { ...profile, revision: profile.revision }, committed };
+  }
+
+  /** The durable configuration commit of this exact replacement: the cancel and compensation paths refuse it, so the
+   * admission it carries is final and only the retirement of the original remains. */
+  private async replacementCommitted(client: DatabaseClient, operation: Operation): Promise<boolean> {
+    if (operation.status !== 'running' || operation.cancel_requested) return false;
+    let commit: Awaited<ReturnType<typeof fleetReplacementCommit>>;
+    try { commit = await fleetReplacementCommit(client, operation.id); }
+    catch (error) { if (error instanceof FleetOperationError) throw forbidden(); throw error; }
+    if (commit === undefined) return false;
+    if (commit.company_id !== operation.company_id || commit.request_sha256 !== operation.request_hash
+        || operation.applied_revision === null || commit.applied_revision !== Number(operation.applied_revision)) throw forbidden();
+    return true;
   }
 
   private async hostScope(client: DatabaseClient, operation: Operation, agent: Agent): Promise<void> {
@@ -210,7 +226,7 @@ export class BootstrapRepository {
     });
   }
   private admitted(context: Context, normalVerified: boolean): boolean {
-    return context.operation.status === 'succeeded' && !context.operation.cancel_requested && context.agent.enabled
+    return (context.operation.status === 'succeeded' || context.committed) && !context.operation.cancel_requested && context.agent.enabled
       && context.agent.lifecycle_state === 'ready' && normalVerified
       && context.operation.steps.some(step => step.name === 'admission' && step.status === 'succeeded');
   }
@@ -231,10 +247,11 @@ export class BootstrapRepository {
     return withTransaction(this.pool, async client => {
       const context = await this.context(client, identity, operationId, true);
       const normalVerified = this.normalVerified(await this.records(client, operationId), context);
-      return { operation_id: operationId, phase, status: context.operation.status, enabled: context.agent.enabled,
-        lifecycle_state: context.agent.lifecycle_state, runtime_key: context.agent.runtime_key,
-        profile_revision: context.profile.revision, account_id: context.agent.primary_account_id,
-        normal_admitted: phase === 'normal' && this.admitted(context, normalVerified) };
+      const admitted = phase === 'normal' && this.admitted(context, normalVerified);
+      // For the admitted replacement runtime the committed configuration is its settled admission.
+      return { operation_id: operationId, phase, status: admitted && context.committed ? 'succeeded' : context.operation.status,
+        enabled: context.agent.enabled, lifecycle_state: context.agent.lifecycle_state, runtime_key: context.agent.runtime_key,
+        profile_revision: context.profile.revision, account_id: context.agent.primary_account_id, normal_admitted: admitted };
     });
   }
 }

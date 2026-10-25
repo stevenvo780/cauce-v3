@@ -89,6 +89,10 @@ async function requestCancellation(operationId: string): Promise<void> {
   const current = active();
   const card = current.page.getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: operationId });
   const cancel = card.getByRole('button', { name: 'Cancelar', exact: true });
+  // Like a person, cancel what the console shows now: the operation reached the barrier a moment ago and the card
+  // refreshes every few seconds, so a click on the previous version is refused as stale.
+  const barrier = (await operations(current)).find(row => row.id === operationId);
+  await expect.poll(() => card.locator('p').filter({ hasText: `Versión: ${String(barrier?.version)}` }).count(), { timeout: 30_000 }).toBe(1);
   await expect.poll(() => cancel.isDisabled(), { timeout: 30_000 }).toBe(false);
   await cancel.click();
   await expect.poll(async () => (await operations(current)).find(row => row.id === operationId)?.status,

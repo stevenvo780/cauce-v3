@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
@@ -127,6 +127,44 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
     expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
     await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
+  });
+  it('lets the replacement runtime read its admission while the committed operation retires the original', async () => {
+    await remoteOperation();
+    expect((await complete()).acknowledged.state).toBe('succeeded');
+    await verifyStep(); await complete('verify');
+    await pool.query(`UPDATE fleet_operations SET steps=$2::jsonb WHERE id=$1`, [operationId,
+      JSON.stringify([{ name: 'verify', status: 'succeeded' }, { name: 'admission', status: 'running' }])]);
+    await complete('verify', 'normal');
+    // What settle() does for a container replacement: admit the agent and record a new revision, but keep the operation
+    // running (and its worker) until the original container is retired.
+    await pool.query("UPDATE agents SET enabled=true,lifecycle_state='ready' WHERE alias='boot-agent'");
+    await pool.query(`UPDATE fleet_operations SET desired_revision=COALESCE(desired_revision,0)+1,applied_revision=COALESCE(desired_revision,0)+1,
+      steps='[{"name":"admission","status":"succeeded"}]'::jsonb WHERE id=$1`, [operationId]);
+    // Without its durable commit that running operation is still bound to its sealed host scope.
+    await expect(repository.state(identity, operationId, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
+    const row = (await pool.query<{ company_id: string; request_hash: string; applied_revision: string }>(
+      'SELECT company_id,request_hash,applied_revision FROM fleet_operations WHERE id=$1', [operationId])).rows[0];
+    if (!row) throw new Error('operation absent');
+    const body = { snapshot_sha256: 'a'.repeat(64), original_container_id: 'b'.repeat(64), replacement_container_id: 'c'.repeat(64),
+      replacement_started_at: '2026-10-25T20:00:00Z', runtime_digest: 'd'.repeat(64), version: 1, decision: 'configuration_committed',
+      operation_id: operationId, company_id: row.company_id, host_id: 'test-host', request_sha256: row.request_hash,
+      target_slice_sha256: 'e'.repeat(64), applied_revision: Number(row.applied_revision) };
+    const canonical = JSON.stringify(body);
+    await pool.query(`INSERT INTO fleet_operation_events(operation_id,version,event,metadata)
+      VALUES($1,(SELECT version FROM fleet_operations WHERE id=$1),'step_completed',$2::jsonb)`, [operationId, JSON.stringify({
+        replacement_commit: { ...body, commit_canonical: canonical, commit_sha256: createHash('sha256').update(canonical).digest('hex') },
+        target_slice_sha256: body.target_slice_sha256 })]);
+    // A commit bound to another revision of the operation is refused.
+    await pool.query('UPDATE fleet_operations SET applied_revision=applied_revision+1 WHERE id=$1', [operationId]);
+    await expect(repository.state(identity, operationId, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
+    await pool.query('UPDATE fleet_operations SET applied_revision=applied_revision-1 WHERE id=$1', [operationId]);
+    expect(await repository.state(identity, operationId, 'normal')).toMatchObject({ status: 'succeeded', enabled: true, normal_admitted: true });
+    expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
+    expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
+    await expect(repository.claim(identity, operationId, 'bootstrap', identity.alias)).rejects.toMatchObject({ code: 'conflict' });
+    expect(await repository.state(identity, operationId, 'bootstrap')).toMatchObject({ status: 'running', normal_admitted: false });
+    // Effects other than those reads stay bound to the sealed host scope.
+    await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('keeps the admitted normal runtime alive when settle commits between its state read and its claim', async () => {
     await remoteOperation();
