@@ -356,6 +356,9 @@ def registry_value(args) -> dict:
     require_object(value, REGISTRY_KEYS if args.command == 'create' else REGISTRY_EDIT_KEYS, 'Registro')
     if not value:
         raise ContextFailure('El cambio de registro debe contener al menos un campo.')
+    # The store only accepts a primary room once the draft and its memberships exist.
+    if args.command == 'create' and value.get('primary_room_id') is not None:
+        raise ContextFailure('La sala primaria se asigna después de crear el borrador y sus membresías; quita primary_room_id de --input.')
     if 'enabled' in value and value['enabled'] is not False:
         raise ContextFailure('Habilitar el agente requiere una operación de flota verificada.')
     for key, item in value.items():
