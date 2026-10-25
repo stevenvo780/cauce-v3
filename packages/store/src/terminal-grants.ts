@@ -161,7 +161,8 @@ export async function grantCreatorTerminalAccess(
     [input.tenant_id, input.alias])).rows[0]?.company_id;
   if (company === undefined) return null;
   const grantee = (await client.query<{ id: string }>(
-    'SELECT id FROM console_users WHERE id=$1::uuid AND active FOR SHARE', [input.creator_human_id],
+    'SELECT id FROM console_users WHERE id=$1::uuid AND company_id=$2 AND active FOR SHARE',
+    [input.creator_human_id, company],
   )).rows[0];
   if (grantee === undefined) return null;
   const modes: TerminalGrantMode[] = ['shell', 'harness', 'harness_rw'];

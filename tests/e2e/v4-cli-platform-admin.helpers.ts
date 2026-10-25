@@ -15,7 +15,7 @@ import { arrancarPostgresDePrueba, COMANDO_POSTGRES_DE_PRUEBA, saludDePostgresDe
 import { publishCliDatabase } from './cli-database-loopback.js';
 import type { CliResult } from './v4-rupturas-terminal-cli.fixtures.js';
 
-export const owner = 'e2e-a9-cli-1025b';
+export const owner = 'b3p-admin';
 export const prefix = `zz-canary-${owner}`;
 const root = resolve(import.meta.dirname, '../..');
 const receipts = join(root, '.delegados/v4/recibos', owner, 'platform-admin');

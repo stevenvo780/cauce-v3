@@ -76,6 +76,8 @@ describe.sequential('platform administration through the real CLI, gateway and o
       .toEqual([{ company_id: company, account_role: 'operator', company_role: 'owner', membership_company: company }]);
     expect((await f.pool.query('SELECT enabled,runtime_key,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rows)
       .toEqual([{ enabled: false, runtime_key: null, lifecycle_state: 'draft' }]);
+    expect((await f.pool.query('SELECT id FROM terminal_grants WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rows)
+      .toEqual([]);
     expect(applied.profiles).toEqual([expect.objectContaining({ state: 'prepared' })]);
     const repeated = await imported(); expect(repeated.configuration.mutations).toEqual([]);
     expect(repeated.profiles).toEqual([expect.objectContaining({ state: 'existing' })]);

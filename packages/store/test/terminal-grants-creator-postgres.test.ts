@@ -68,4 +68,24 @@ describe('creator terminal grant on PostgreSQL', () => {
     const grants = await admin.query<{ count: number }>('SELECT count(*)::integer AS count FROM terminal_grants');
     expect(grants.rows).toEqual([{ count: 0 }]);
   });
+
+  it('keeps another company creation committed without granting its terminal to the platform creator', async () => {
+    const created = await withTransaction(pool, async client => {
+      await client.query("UPDATE agents SET display_name='Imported company agent' WHERE tenant_id='PraxisTeam' AND alias='team_agent'");
+      return grantCreatorTerminalAccess(client, {
+        tenant_id: 'PraxisTeam', alias: 'team_agent', creator_human_id: actors.steven,
+        creator_home_tenant: 'Steven', creator_alias: 'kant', can_grant: true,
+      });
+    });
+    expect(created).toBeNull();
+    expect((await admin.query<{ display_name: string }>(
+      "SELECT display_name FROM agents WHERE tenant_id='PraxisTeam' AND alias='team_agent'")).rows)
+      .toEqual([{ display_name: 'Imported company agent' }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='PraxisTeam' AND alias='team_agent'")).rows)
+      .toEqual([{ count: 0 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM audit_events WHERE action='terminal.grant.create'")).rows)
+      .toEqual([{ count: 0 }]);
+  });
 });
