@@ -425,6 +425,126 @@ sys.exit(1)
 ' "$FLOTA_JSON" "$1"
 }
 
+provision_pty_identity() {
+  if [ "$#" != 5 ]; then
+    printf '  [3] uso: provision_pty_identity alias tenant ca_cert ca_key dry(0|1)\n' >&2
+    return 2
+  fi
+  local a=$1 ap_tenant=$2 ca_cert=$3 ca_key=$4 dry=$5
+  if [[ ! $a =~ ^[A-Za-z][A-Za-z0-9._-]{0,63}$ ]] || [[ ! $ap_tenant =~ ^[A-Za-z][A-Za-z0-9._-]{0,63}$ ]]; then
+    printf '  [3] alias o tenant PTY invalido\n' >&2
+    return 2
+  fi
+  case "$dry" in
+    0|1) ;;
+    *) printf '  [3] dry debe ser 0 o 1\n' >&2; return 2 ;;
+  esac
+  if [ ! -f "$ca_cert" ] || [ ! -f "$ca_key" ]; then
+    printf '  [3b] faltan el certificado o la clave de la CA de cliente\n' >&2
+    return 1
+  fi
+  local pty_env="${XDG_CONFIG_HOME:-$HOME/.config}/cauce-v3/pty/$a.env"
+  if [ ! -e "$pty_env" ]; then
+    validate_pty_relay_env || return 1
+  fi
+
+  # The alias key belongs to the PTY channel; preview its write because the publisher has no dry-run flag.
+  local pty_dir pty_key
+  pty_dir="$(pty_pki_root)/$a"
+  pty_key="$pty_dir/alias-key.hex"
+  if [ -e "$pty_key" ]; then
+    printf "  [3] %s ya existe (se salta): %s\n" "$pty_key" "$(estampa_modo "$pty_key")"
+  elif [ "$dry" = 1 ]; then
+    printf "  [3] haria: publish-alias-key.sh --tenant %s --alias %s --output-dir %s\n" "$ap_tenant" "$a" "$pty_dir"
+  else
+    # Only apply the conventional default when the operator picked none of the three env
+    # forms publish-alias-key.sh itself understands — never override an explicit choice.
+    if [ -z "${CAUCE_PTY_MASTER_FILE:-}${CAUCE_PTY_MASTER_ENV:-}${CAUCE_PTY_MASTER:-}" ]; then
+      CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/pty_master.key
+    fi
+    if [ -n "${CAUCE_PTY_MASTER_FILE:-}" ] && [ ! -f "$CAUCE_PTY_MASTER_FILE" ] \
+       && [ -z "${CAUCE_PTY_MASTER_ENV:-}${CAUCE_PTY_MASTER:-}" ]; then
+      printf "  [3] %sno hay master PTY: falta %s%s\n" "$c_err" "$CAUCE_PTY_MASTER_FILE" "$c_reset"
+      printf "      (o exporta CAUCE_PTY_MASTER_ENV=VAR / CAUCE_PTY_MASTER=valor antes de aprovisionar)\n"
+      return 1
+    fi
+    [ -n "${CAUCE_PTY_MASTER_FILE:-}" ] && export CAUCE_PTY_MASTER_FILE
+    if "$OPS/pty-agent/publish-alias-key.sh" --tenant "$ap_tenant" --alias "$a" --output-dir "$pty_dir"; then
+      printf "  [3] %s -> %s\n" "$pty_key" "$(estampa_modo "$pty_key")"
+    else
+      printf "  [3] %spublish-alias-key.sh fallo%s\n" "$c_err" "$c_reset"
+      return 1
+    fi
+  fi
+
+  # Sign the PTY client certificate with the same client CA as step 1.
+  local pty_crt="$pty_dir/client.crt" pty_ckey="$pty_dir/client.key" fp_pty="" vence_pty=""
+  if [ -e "$pty_crt" ] && openssl x509 -in "$pty_crt" -noout -checkend 0 >/dev/null 2>&1; then
+    printf "  [3b] %s ya existe y no esta vencido (se salta): %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
+  elif [ "$dry" = 1 ]; then
+    printf "  [3b] haria: emitir clave RSA 4096 + cert CN=pty-%s (365 dias, firmado por %s) en %s\n" "$a" "$ca_cert" "$pty_dir"
+  else
+    if ( set -e; umask 077
+         install -d -m 0700 -- "$pty_dir"
+         openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$pty_ckey.tmp" 2>/dev/null
+         openssl req -new -sha256 -key "$pty_ckey.tmp" -subj "/CN=pty-$a" -out "$pty_dir/.pty.csr"
+         printf '%s\n' 'extendedKeyUsage=clientAuth' 'basicConstraints=critical,CA:FALSE' \
+           'keyUsage=critical,digitalSignature,keyEncipherment' >"$pty_dir/.pty.ext"
+         openssl x509 -req -sha256 -in "$pty_dir/.pty.csr" -CA "$ca_cert" -CAkey "$ca_key" \
+           -CAserial "${ca_cert%.*}.srl" -CAcreateserial -days 365 \
+           -extfile "$pty_dir/.pty.ext" -out "$pty_crt.tmp" 2>/dev/null
+         openssl verify -purpose sslclient -CAfile "$ca_cert" "$pty_crt.tmp" >/dev/null
+         cp -- "$ca_cert" "$pty_dir/.ca.tmp"
+         chmod 600 -- "$pty_ckey.tmp" "$pty_crt.tmp" "$pty_dir/.ca.tmp"
+         mv -- "$pty_ckey.tmp" "$pty_ckey"; mv -- "$pty_crt.tmp" "$pty_crt"; mv -- "$pty_dir/.ca.tmp" "$pty_dir/ca.crt"
+         rm -f -- "$pty_dir/.pty.csr" "$pty_dir/.pty.ext" ); then
+      printf "  [3b] cert PTY emitido: %s -> %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
+    else
+      rm -f -- "$pty_ckey.tmp" "$pty_crt.tmp" "$pty_dir/.pty.csr" "$pty_dir/.pty.ext" "$pty_dir/.ca.tmp"
+      printf "  [3b] %sno pude emitir el cert PTY de %s%s\n" "$c_err" "$a" "$c_reset"
+      return 1
+    fi
+  fi
+
+  # The relay reads this allowlist on each new connection.
+  local reg=${CAUCE_PTY_RELAY_IDENTITIES:-/etc/cauce-v3/terminal/pty_agent_identities.json}
+  if [ -e "$pty_crt" ]; then
+    fp_pty=$(openssl x509 -in "$pty_crt" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d :)
+    vence_pty=$(date -u -d "$(openssl x509 -in "$pty_crt" -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%SZ)
+  fi
+  if [ -n "$fp_pty" ] && grep -q "\"$fp_pty\"" "$reg" 2>/dev/null; then
+    printf "  [3c] la huella de pty-%s ya esta en %s (se salta)\n" "$a" "$reg"
+  elif [ "$dry" = 1 ]; then
+    printf "  [3c] haria: anexar {tenant_id=%s, alias=%s, huella, expires_at} en %s\n" "$ap_tenant" "$a" "$reg"
+  elif REG="$reg" TEN="$ap_tenant" AL="$a" FP="$fp_pty" EXP="$vence_pty" python3 -I -B - <<'PY'
+import fcntl, json, os, shutil
+reg = os.environ["REG"]
+lock = open(reg + ".lock", "a+"); fcntl.flock(lock, fcntl.LOCK_EX)
+doc = json.load(open(reg)) if os.path.exists(reg) else {"version": 1, "agents": []}
+row = {"tenant_id": os.environ["TEN"], "alias": os.environ["AL"],
+       "fingerprint_sha256": os.environ["FP"], "expires_at": os.environ["EXP"]}
+if any(x.get("alias") == row["alias"] and x.get("fingerprint_sha256") == row["fingerprint_sha256"] for x in doc.get("agents", [])): raise SystemExit(0)
+doc.setdefault("agents", []).append(row); tmp = reg + ".tmp"
+if os.path.exists(reg): shutil.copy2(reg, reg + ".bak")
+with open(tmp, "w") as out:
+    json.dump(doc, out, indent=2); out.write("\n"); out.flush(); os.fsync(out.fileno())
+if os.path.exists(reg):
+    st = os.stat(reg); os.chmod(tmp, st.st_mode & 0o777); os.chown(tmp, st.st_uid, st.st_gid)
+else:
+    os.chmod(tmp, 0o440)
+os.replace(tmp, reg)
+PY
+  then
+    printf "  [3c] huella de pty-%s anexada en %s (vence %s)\n" "$a" "$reg" "$vence_pty"
+  else
+    printf "  [3c] %sno pude registrar la huella en %s%s\n" "$c_err" "$reg" "$c_reset"
+    return 1
+  fi
+
+  # Keep the launcher environment aligned with pty_pki_root().
+  write_pty_launcher_env "$pty_env" "$pty_dir" "$pty_key" "$dry" || return 1
+}
+
 cmd_aprovisionar() {  # $1=alias [--dry-run]
   local a=$1 dry=0
   shift || true
@@ -534,101 +654,7 @@ cmd_aprovisionar() {  # $1=alias [--dry-run]
     fi
   fi
 
-  # The alias key belongs to the PTY channel; preview its write because the publisher has no dry-run flag.
-  local pty_dir pty_key
-  pty_dir="$(pty_pki_root)/$a"
-  pty_key="$pty_dir/alias-key.hex"
-  if [ -e "$pty_key" ]; then
-    printf "  [3] %s ya existe (se salta): %s\n" "$pty_key" "$(estampa_modo "$pty_key")"
-  elif [ "$dry" = 1 ]; then
-    printf "  [3] haria: publish-alias-key.sh --tenant %s --alias %s --output-dir %s\n" "$ap_tenant" "$a" "$pty_dir"
-  else
-    # Only apply the conventional default when the operator picked none of the three env
-    # forms publish-alias-key.sh itself understands — never override an explicit choice.
-    if [ -z "${CAUCE_PTY_MASTER_FILE:-}${CAUCE_PTY_MASTER_ENV:-}${CAUCE_PTY_MASTER:-}" ]; then
-      CAUCE_PTY_MASTER_FILE=/etc/cauce-v3/secrets/pty_master.key
-    fi
-    if [ -n "${CAUCE_PTY_MASTER_FILE:-}" ] && [ ! -f "$CAUCE_PTY_MASTER_FILE" ] \
-       && [ -z "${CAUCE_PTY_MASTER_ENV:-}${CAUCE_PTY_MASTER:-}" ]; then
-      printf "  [3] %sno hay master PTY: falta %s%s\n" "$c_err" "$CAUCE_PTY_MASTER_FILE" "$c_reset"
-      printf "      (o exporta CAUCE_PTY_MASTER_ENV=VAR / CAUCE_PTY_MASTER=valor antes de aprovisionar)\n"
-      return 1
-    fi
-    [ -n "${CAUCE_PTY_MASTER_FILE:-}" ] && export CAUCE_PTY_MASTER_FILE
-    if "$OPS/pty-agent/publish-alias-key.sh" --tenant "$ap_tenant" --alias "$a" --output-dir "$pty_dir"; then
-      printf "  [3] %s -> %s\n" "$pty_key" "$(estampa_modo "$pty_key")"
-    else
-      printf "  [3] %spublish-alias-key.sh fallo%s\n" "$c_err" "$c_reset"
-      return 1
-    fi
-  fi
-
-  # Sign the PTY client certificate with the same client CA as step 1.
-  local pty_crt="$pty_dir/client.crt" pty_ckey="$pty_dir/client.key" fp_pty="" vence_pty=""
-  if [ -e "$pty_crt" ] && openssl x509 -in "$pty_crt" -noout -checkend 0 >/dev/null 2>&1; then
-    printf "  [3b] %s ya existe y no esta vencido (se salta): %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
-  elif [ "$dry" = 1 ]; then
-    printf "  [3b] haria: emitir clave RSA 4096 + cert CN=pty-%s (365 dias, firmado por %s) en %s\n" "$a" "$ca_cert" "$pty_dir"
-  else
-    if ( set -e; umask 077
-         install -d -m 0700 -- "$pty_dir"
-         openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$pty_ckey.tmp" 2>/dev/null
-         openssl req -new -sha256 -key "$pty_ckey.tmp" -subj "/CN=pty-$a" -out "$pty_dir/.pty.csr"
-         printf '%s\n' 'extendedKeyUsage=clientAuth' 'basicConstraints=critical,CA:FALSE' \
-           'keyUsage=critical,digitalSignature,keyEncipherment' >"$pty_dir/.pty.ext"
-         openssl x509 -req -sha256 -in "$pty_dir/.pty.csr" -CA "$ca_cert" -CAkey "$ca_key" \
-           -CAserial "${ca_cert%.*}.srl" -CAcreateserial -days 365 \
-           -extfile "$pty_dir/.pty.ext" -out "$pty_crt.tmp" 2>/dev/null
-         openssl verify -purpose sslclient -CAfile "$ca_cert" "$pty_crt.tmp" >/dev/null
-         cp -- "$ca_cert" "$pty_dir/.ca.tmp"
-         chmod 600 -- "$pty_ckey.tmp" "$pty_crt.tmp" "$pty_dir/.ca.tmp"
-         mv -- "$pty_ckey.tmp" "$pty_ckey"; mv -- "$pty_crt.tmp" "$pty_crt"; mv -- "$pty_dir/.ca.tmp" "$pty_dir/ca.crt"
-         rm -f -- "$pty_dir/.pty.csr" "$pty_dir/.pty.ext" ); then
-      printf "  [3b] cert PTY emitido: %s -> %s\n" "$pty_crt" "$(estampa_modo "$pty_crt")"
-    else
-      rm -f -- "$pty_ckey.tmp" "$pty_crt.tmp" "$pty_dir/.pty.csr" "$pty_dir/.pty.ext" "$pty_dir/.ca.tmp"
-      printf "  [3b] %sno pude emitir el cert PTY de %s%s\n" "$c_err" "$a" "$c_reset"
-      return 1
-    fi
-  fi
-
-  # The relay reads this allowlist on each new connection.
-  local reg=${CAUCE_PTY_RELAY_IDENTITIES:-/etc/cauce-v3/terminal/pty_agent_identities.json}
-  if [ -e "$pty_crt" ]; then
-    fp_pty=$(openssl x509 -in "$pty_crt" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | tr -d :)
-    vence_pty=$(date -u -d "$(openssl x509 -in "$pty_crt" -noout -enddate | cut -d= -f2)" +%Y-%m-%dT%H:%M:%SZ)
-  fi
-  if [ -n "$fp_pty" ] && grep -q "\"$fp_pty\"" "$reg" 2>/dev/null; then
-    printf "  [3c] la huella de pty-%s ya esta en %s (se salta)\n" "$a" "$reg"
-  elif [ "$dry" = 1 ]; then
-    printf "  [3c] haria: anexar {tenant_id=%s, alias=%s, huella, expires_at} en %s\n" "$ap_tenant" "$a" "$reg"
-  elif REG="$reg" TEN="$ap_tenant" AL="$a" FP="$fp_pty" EXP="$vence_pty" python3 -I -B - <<'PY'
-import fcntl, json, os, shutil
-reg = os.environ["REG"]
-lock = open(reg + ".lock", "a+"); fcntl.flock(lock, fcntl.LOCK_EX)
-doc = json.load(open(reg)) if os.path.exists(reg) else {"version": 1, "agents": []}
-row = {"tenant_id": os.environ["TEN"], "alias": os.environ["AL"],
-       "fingerprint_sha256": os.environ["FP"], "expires_at": os.environ["EXP"]}
-if any(x.get("alias") == row["alias"] and x.get("fingerprint_sha256") == row["fingerprint_sha256"] for x in doc.get("agents", [])): raise SystemExit(0)
-doc.setdefault("agents", []).append(row); tmp = reg + ".tmp"
-if os.path.exists(reg): shutil.copy2(reg, reg + ".bak")
-with open(tmp, "w") as out:
-    json.dump(doc, out, indent=2); out.write("\n"); out.flush(); os.fsync(out.fileno())
-if os.path.exists(reg):
-    st = os.stat(reg); os.chmod(tmp, st.st_mode & 0o777); os.chown(tmp, st.st_uid, st.st_gid)
-else:
-    os.chmod(tmp, 0o440)
-os.replace(tmp, reg)
-PY
-  then
-    printf "  [3c] huella de pty-%s anexada en %s (vence %s)\n" "$a" "$reg" "$vence_pty"
-  else
-    printf "  [3c] %sno pude registrar la huella en %s%s\n" "$c_err" "$reg" "$c_reset"
-    return 1
-  fi
-
-  # Keep the launcher environment aligned with pty_pki_root().
-  write_pty_launcher_env "$pty_env" "$pty_dir" "$pty_key" "$dry" || return 1
+  provision_pty_identity "$a" "$ap_tenant" "$ca_cert" "$ca_key" "$dry" || return $?
 
   # Skip existing identity material; update-alias-config.py --init refuses to overwrite it.
   local cp_dir="/etc/cauce-v3/container-pki/$a" cp_env="/etc/cauce-v3/container-aliases/$a.env"
