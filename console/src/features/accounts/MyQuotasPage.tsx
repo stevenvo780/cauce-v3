@@ -117,7 +117,7 @@ export function MyQuotasPage() {
       <p className="m-0 mt-1 max-w-2xl text-sm text-muted">«Registrar cuenta» añade una suscripción (Claude, Codex…) para consultar su cuota, aunque ningún agente la use todavía.</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <ActionButton label="Actualizar cuotas y entornos" disabled={busy || accounts.loading || environments.loading} announceError={false} action={async () => {
-          try { await reload(); }
+          try { await reload(); setError(''); }
           catch (cause: unknown) {
             setError(describeQuotaEnvironmentError(cause, 'No se pudo actualizar.'));
             return { error: cause instanceof Error ? cause : new Error('No se pudo actualizar.') };
