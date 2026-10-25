@@ -1,10 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { get as httpGet } from 'node:http';
-import { Agent } from 'node:https';
+import { get as httpGet, type IncomingMessage, type ServerResponse } from 'node:http';
+import { Agent, get as httpsGet } from 'node:https';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { createRequire } from 'node:module';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services/gateway/src/auth.js';
@@ -138,6 +140,11 @@ async function stopProcess(child: ChildProcess, label: string): Promise<void> {
 export async function startV4Infrastructure(alias: string, runtimeKey: string, harness: string, context = defaultContext) {
   const { evidence, runId, owner } = context;
   const prefix = owner.split('-')[0] ?? 'h8b';
+  const diagnostics = owner === 'h8d-regresion-tui-1025';
+  const record = (event: string, fields: Record<string, unknown> = {}) => {
+    if (diagnostics) appendFileSync(join(evidence, `${harness}-frontend.jsonl`),
+      JSON.stringify({ at: new Date().toISOString(), event, ...fields }) + '\n', { mode: 0o600 });
+  };
   const directory = await mkdtemp(join(tmpdir(), `zz-canary-${prefix}-infra-`));
   const actions: { label: string; run: () => Promise<void> }[] = [];
   const resources: { kind: 'container' | 'network' | 'image'; reference: string }[] = [];
@@ -166,6 +173,16 @@ export async function startV4Infrastructure(alias: string, runtimeKey: string, h
     if (errors.length) throw new AggregateError(errors, 'V4 infrastructure cleanup failed');
   };
   try {
+  if (diagnostics) {
+    const loop = monitorEventLoopDelay({ resolution: 20 });
+    loop.enable();
+    const timer = setInterval(() => {
+      record('eventloop', { max_ms: loop.max / 1e6, p99_ms: loop.percentile(99) / 1e6 });
+      loop.reset();
+    }, 1_000);
+    timer.unref();
+    actions.push({ label: 'diagnostic timer', run: async () => { clearInterval(timer); loop.disable(); } });
+  }
   const database = await startTestDatabase();
   resources.push({ kind: 'container', reference: database.container.getId() });
   actions.push({ label: `PostgreSQL ${database.container.getId()}`, run: async () => {
@@ -216,6 +233,18 @@ export async function startV4Infrastructure(alias: string, runtimeKey: string, h
   actions.push({ label: 'proxy TLS agent', run: async () => { proxy.destroy(); } });
   const viteModule = consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<{ close(): Promise<void>; listen(): Promise<void> }> };
   const vite = await viteModule.createServer({ configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'),
+    ...(diagnostics ? { plugins: [{ name: 'owned-frontend-observation',
+      configureServer(server: { middlewares: { use(callback: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void } }) {
+        server.middlewares.use((request, response, next) => {
+          const requestId = randomUUID();
+          const started = performance.now();
+          const path = new URL(request.url ?? '/', 'https://localhost').pathname;
+          record('request', { request_id: requestId, method: request.method, path });
+          response.once('finish', () => { record('response', { request_id: requestId, path, status: response.statusCode, elapsed_ms: performance.now() - started }); });
+          response.once('close', () => { record('response-close', { request_id: requestId, path, ended: response.writableEnded, elapsed_ms: performance.now() - started }); });
+          next();
+        });
+      } }] } : {}),
     cacheDir: join(directory, 'vite-cache'), envDir: directory, server: { host: '127.0.0.1', port: ports.frontend, strictPort: true,
       https: { key: tls.key, cert: tls.cert }, proxy: {
         [`/v3/console/terminal/relays/${pki.relayInstanceId}/ws`]: { target: `https://127.0.0.1:${String(ports.browser)}`, agent: proxy, secure: true, changeOrigin: false, ws: true },
@@ -245,6 +274,8 @@ export async function startV4Infrastructure(alias: string, runtimeKey: string, h
     await waitForRelay(relay, ports.health, () => relayLog);
     trusted = await startTrustedBrowser(pki.caCert, directory, [ports.frontend, ports.gateway]);
     const browser = trusted;
+    const observable = browser.browser as typeof browser.browser & { on?: (event: string, handler: () => void) => void };
+    if (diagnostics && typeof observable.on === 'function') observable.on('disconnected', () => { record('browser-disconnected'); });
     actions.push({ label: `Chromium ${browser.container}`, run: () => browser.close() });
     const browserIdentity = (await browserDocker(['inspect', '--format', '{{.Id}} {{range .NetworkSettings.Networks}}{{.NetworkID}}{{end}}', browser.container])).stdout.trim().split(' ');
     for (const [index, kind] of ['container', 'network'].entries()) {
@@ -263,6 +294,29 @@ export async function startV4Infrastructure(alias: string, runtimeKey: string, h
     await writePrivate(launcherConfig, `${alias}.env`, `RELAY_HOST=127.0.0.1\nRELAY_PORT=${String(ports.agent)}\nRELAY_SERVER_NAME=localhost\nPKI_DIR=${launcherPki}\nALIAS_KEY_FILE=${launcherPki}/alias-key.hex\nCONTAINER_RUNTIME_DIR=/run\n`);
     return { directory, database, pki, room, email, password, gatewayUrl, baseUrl, ports, launcherConfig,
       launcherPkiRoot: join(directory, 'launcher-pki'), close,
+      diagnoseBrowser: async (width: number) => {
+        if (!diagnostics) return;
+        const started = performance.now();
+        const ca = await readFile(pki.caCert);
+        const nodeProbe = await new Promise<Record<string, unknown>>((resolve) => {
+          const request = httpsGet(baseUrl, { ca, rejectUnauthorized: true, timeout: 3_000 }, response => {
+            let bytes = 0;
+            response.on('data', (chunk: Buffer) => { bytes += chunk.length; });
+            response.once('end', () => { resolve({ status: response.statusCode, bytes, elapsed_ms: performance.now() - started }); });
+            response.once('aborted', () => { resolve({ aborted: true, bytes, elapsed_ms: performance.now() - started }); });
+            response.once('error', error => { resolve({ error_type: error.name, elapsed_ms: performance.now() - started }); });
+          });
+          request.once('timeout', () => { request.destroy(); resolve({ timeout_ms: 3_000, elapsed_ms: performance.now() - started }); });
+          request.once('error', error => { resolve({ error_type: error.name, elapsed_ms: performance.now() - started }); });
+        });
+        const stderr = await browserDocker(['exec', browser.container, 'tail', '-n', '100', '/tmp/cauce-chrome-stderr.log'],
+          { timeout: 5_000, maxBuffer: 32 * 1024 }).then(value => value.stdout, () => '[Chrome stderr unavailable]');
+        const publicStderr = stderr.replaceAll(/(?:https?|wss?):\/\/[^\s]+/gu, '[URL omitted]');
+        const state = await browserDocker(['inspect', '--format', '{"running":{{json .State.Running}},"oom_killed":{{json .State.OOMKilled}},"exit_code":{{json .State.ExitCode}}}', browser.container],
+          { timeout: 5_000 }).then(value => value.stdout, () => '[Browser state unavailable]');
+        await writeFile(join(evidence, `${harness}-${String(width)}-failure-diagnostic.json`), JSON.stringify({ at: new Date().toISOString(),
+          node_frontend_probe: nodeProbe, chrome_stderr: publicStderr, browser_state: state, browser_container_id: browser.containerId }, null, 2));
+      },
       page: async (width: number): Promise<BrowserPage> => {
         if (!trusted) throw new Error('Chromium is unavailable');
         const context = await trusted.browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block', ...(width === 390 ? { isMobile: true, hasTouch: true } : {}) });

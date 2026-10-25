@@ -3,7 +3,7 @@ import { cp, mkdtemp, readFile, rm, writeFile, chmod, readdir } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { browserDocker, browserExec, browserErrorStderr } from './browser-owned-lifecycle.js';
+import { browserDocker, browserExec, browserErrorStderr, browserErrorStdout } from './browser-owned-lifecycle.js';
 import { defaultContext, digest, type V4Image, type V4TestContext } from './v4-terminal-v4-image-real-browser.image.js';
 import { startV4Infrastructure, stopProcess } from './v4-terminal-v4-image-real-browser.infra.js';
 import { TMUX_SOCKET } from '../../packages/adapter-sdk/src/shared-session/types.js';
@@ -13,6 +13,17 @@ interface Binding {
   container_id: string; image_id: string; started_at: string; generation: string; command: string; native_command: string;
   files: Record<string, string>; state: string; profile: string; adapter_pid: number;
   openclaw_help?: { legacy: Record<string, unknown>; measured: { exit?: number; session_flag?: boolean; local_flag?: boolean; history_limit_flag?: boolean } };
+}
+function processOutcome(error: unknown) {
+  let current = error;
+  while (current !== null && typeof current === 'object') {
+    if ('code' in current || 'signal' in current || 'killed' in current) return {
+      exit_code: 'code' in current && typeof current.code === 'number' ? current.code : null,
+      signal: 'signal' in current && typeof current.signal === 'string' ? current.signal : null,
+      killed: 'killed' in current && typeof current.killed === 'boolean' ? current.killed : null };
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return { exit_code: null };
 }
 
 export async function packageSdk(context = defaultContext): Promise<string> {
@@ -53,7 +64,7 @@ export async function packageSdk(context = defaultContext): Promise<string> {
 }
 
 export async function startV4Runtime(image: V4Image, sdk: string, harness: V4Harness,
-  options: { context?: V4TestContext; driverPath?: string } = {}) {
+  options: { context?: V4TestContext; driverPath?: string; diagnostics?: boolean } = {}) {
   const context = options.context ?? defaultContext;
   const { owner, evidence } = context;
   const prefix = owner.split('-')[0] ?? 'h8b';
@@ -67,8 +78,23 @@ export async function startV4Runtime(image: V4Image, sdk: string, harness: V4Har
   catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
   const requestFile = join(directory, 'request.json');
   const request = { directory, harness, alias, runtime_key: key, name, image_id: image.id, sdk, sdk_root: join(sdk, '../..'),
+    owner, evidence, diagnostics: options.diagnostics ?? false,
     room: infra.room, relay_url: `${infra.gatewayUrl.replace('https:', 'wss:')}/v3/ws`, cert: infra.pki.agentCert, key: infra.pki.agentKey, ca: infra.pki.caCert };
-  const driver = async (action: string) => browserExec('python3', [options.driverPath ?? 'tests/e2e/v4-terminal-v4-image-real-browser.driver.py', action, requestFile], { timeout: 120_000, maxBuffer: 128 * 1024 });
+  const driver = async (action: string) => {
+    const command = ['python3', options.driverPath ?? 'tests/e2e/v4-terminal-v4-image-real-browser.driver.py', action, requestFile];
+    const started = Date.now();
+    try {
+      const result = await browserExec(command[0] ?? '', command.slice(1), { timeout: 120_000, maxBuffer: 128 * 1024 });
+      if (options.diagnostics) await writeFile(join(evidence, `${harness}-${action}-process.json`), JSON.stringify({ command,
+        started_at: new Date(started).toISOString(), elapsed_ms: Date.now() - started, timeout_ms: 120_000, exit_code: 0, stderr: result.stderr }, null, 2));
+      return result;
+    } catch (error) {
+      if (options.diagnostics) await writeFile(join(evidence, `${harness}-${action}-process.json`), JSON.stringify({ command,
+        started_at: new Date(started).toISOString(), elapsed_ms: Date.now() - started, timeout_ms: 120_000,
+        failed: true, ...processOutcome(error), stdout: browserErrorStdout(error), stderr: browserErrorStderr(error) }, null, 2));
+      throw error;
+    }
+  };
   let launcher: ReturnType<typeof spawn> | undefined;
   let launcherLog = '';
   let lastNative = '';

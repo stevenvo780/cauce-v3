@@ -10,6 +10,11 @@ export const evidence = join(process.cwd(), '.delegados/v4/recibos', owner, runI
 export const digest = (value: Buffer | string): string => createHash('sha256').update(value).digest('hex');
 export interface V4TestContext { owner: string; evidence: string; runId: string }
 export const defaultContext: V4TestContext = { owner, evidence, runId };
+export function currentV4TestContext(): V4TestContext {
+  const taskOwner = /^\/tmp\/cauce-e2e-home-(h8d-regresion-tui-1025)-\d+$/u.exec(process.env.HOME ?? '')?.[1];
+  return taskOwner === undefined ? defaultContext : { owner: taskOwner, runId,
+    evidence: join(process.cwd(), '.delegados/v4/recibos', taskOwner, runId) };
+}
 export interface V4Image { tag: string; id: string; recipe: Record<string, string>; sourceDateEpoch: string; versions: string }
 
 export async function realV4Image(context = defaultContext): Promise<V4Image> {
