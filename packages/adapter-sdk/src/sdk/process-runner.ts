@@ -186,7 +186,10 @@ export class SpawnCommandRunner {
     const result = await this.runProcess(request, environment);
     await assertCommandPins(request.command, request.commandPins);
     const witness = await attestor?.verifyHeadlessConsumption(snapshot, request, result)
-      ?? await openClaw?.verifyOpenClawConsumption(openClawSnapshot, request, result);
+      ?? await openClaw?.verifyOpenClawConsumption(openClawSnapshot, request, result)
+      ?? (request.harness === "grok"
+        ? (await import("./headless-consumption.js")).verifyGrokConsumption(request, result)
+        : undefined);
     return { ...result, ...(witness === undefined ? {} : { consumptionWitness: witness }),
       ...(invocationWitness === undefined ? {} : { invocationWitness }) };
   }

@@ -438,6 +438,10 @@ function registerConsoleAgentRoutes(
       fenceRuntime: (input) => repository.reconcileAgentContextRuntime(input),
       deliveryInFlight: (tenantId, alias) => entregaEnVuelo(options.pool, tenantId, alias),
       recordAudit: (entry) => recordTerminalAudit(options.pool, entry),
+      withProfileWriteTransaction: (work) => withTransaction(options.pool, work),
+      recordDesiredExpectationInTransaction: (client, tenantId, alias, contract, expectedPrior) =>
+        repository.recordProfileRuntimeExpectationInTransaction(client, tenantId, alias, contract, expectedPrior),
+      recordAuditInTransaction: (client, entry) => recordTerminalAudit(client, entry),
     });
     registerAgentContextReconcileRoutes(app, {
       authorize: autorizarPerfil,

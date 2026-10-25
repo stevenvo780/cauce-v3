@@ -1,6 +1,8 @@
-import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction } from '@cauce/store';
+import { canonicalProfileRuntimeContract, persistAgentContextReconcileInTransaction, type DatabaseClient } from '@cauce/store';
 import { coordinateContextRequest } from './agent-context-write-coordinator.js';
 import { randomUUID } from 'node:crypto';
+import { desiredProfileContract, type AgentProfileDeps } from './agent-profile.routes.js';
+import type { ProfileRuntimeContract } from '@cauce/protocol';
 import type { CauceRepository } from '@cauce/store';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AliasSchema, TenantSchema, nombresDelArnes, type ContextoDeAlias } from '@cauce/protocol';
@@ -125,6 +127,10 @@ export interface AgentContextReloadDeps {
   deliveryInFlight(tenantId: string, alias: string): Promise<DeliveriesInFlight>;
   coordinateWrite?: import('./agent-profile.routes.js').AgentProfileDeps['coordinateWrite'];
   recordAudit(entry: TerminalAuditEntry): Promise<void>;
+  /** Probe-less reload (V4 fleet): record the desired expectation in the write transaction. */
+  withProfileWriteTransaction?: AgentProfileDeps['withProfileWriteTransaction'];
+  recordDesiredExpectationInTransaction?: AgentProfileDeps['recordDesiredExpectationInTransaction'];
+  recordAuditInTransaction?: (client: DatabaseClient, entry: TerminalAuditEntry) => Promise<void>;
   /** Overridable so a test counts on its own instance instead of the process-wide one. */
   telemetry?: Pick<ContextContaminationTelemetry, 'recordVerdict'>;
 }
@@ -434,6 +440,49 @@ export function registerAgentContextReloadRoutes(
        * block it is; only that refusal pays for the second read, and a race that clears the block
        * in between falls back to the generic conflict instead of inventing a verdict.
        */
+      const withReloadTx = deps.withProfileWriteTransaction;
+      const recordReloadExpectation = deps.recordDesiredExpectationInTransaction;
+      const auditReloadInTx = deps.recordAuditInTransaction;
+      if (runtimeErrorCode(error) === 'unavailable'
+        && withReloadTx !== undefined && recordReloadExpectation !== undefined && auditReloadInTx !== undefined) {
+        const contract = desiredProfileContract(
+          lectura.contexto.hechos.arnes.harness, lectura.contexto, revision,
+        );
+        if (contract !== undefined) {
+          try {
+            await withReloadTx(async (client) => {
+              await auditReloadInTx(client, {
+                tenant_id: caller.actor.tenant_id, actor_alias: caller.actor.alias,
+                action: 'agent_document.write', decision: 'allow',
+                metadata: metadatos(caller, target, { revision, state: 'pending_session_refresh' }),
+              });
+              const prior: ProfileRuntimeContract | null = priorExpectation === undefined ? null : {
+                revision: priorExpectation.revision, generation: priorExpectation.generation,
+                documents: priorExpectation.documents.map((document) => ({
+                  name: document.name, path: document.path, sha: document.sha,
+                })),
+              };
+              await recordReloadExpectation(
+                client, target.tenant_id, target.alias, contract, prior,
+              );
+            });
+          } catch (writeError) {
+            return denegar(runtimeErrorStatus(writeError), {
+              error: runtimeErrorCode(writeError) ?? 'context_reload_failed', revision,
+            });
+          }
+          const state: ContextApplyState = 'pending_session_refresh';
+          return await reply.code(202).send({
+            ok: true, state, evidence: CONTEXT_APPLY_POLICY[state].evidence,
+            message: 'recarga registrada sin sonda de gobierno; el runtime la acreditará en su próximo turno',
+            tenant_id: target.tenant_id, alias: target.alias, revision,
+            runtime_verification: {
+              state: 'unverified', generation: null, container_id: null, observed_at: null, documents: [],
+            },
+            documents: [], contaminacion: { contaminated: false, findings: [] },
+          });
+        }
+      }
       const veredicto = runtimeErrorCode(error) === 'conflict'
         ? await juzgarNegativa(target)
         : undefined;

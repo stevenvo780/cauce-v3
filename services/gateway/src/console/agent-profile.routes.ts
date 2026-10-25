@@ -293,7 +293,7 @@ function adoptionMatches(
  * projection of the desired profile over an empty base, which is exactly what the adapter seeds
  * on a fresh home; the adapter later proves adoption by measuring those same bytes on a delivery.
  */
-function desiredProfileContract(
+export function desiredProfileContract(
   harness: string,
   contexto: ContextoDeAlias,
   revision: number,

@@ -7,6 +7,7 @@ import { codexTranscript, rolloutSessionId } from "../shared-session/rollout.js"
 import { transcriptDirectoryIn } from "../shared-session/session.js";
 import { claudeTranscript } from "../shared-session/transcript.js";
 import { parseClaudeOutput, parseCodexOutput } from "./output-parser/harnesses.js";
+import { parseGrokOutput } from "./output-parser/grok.js";
 import {
   sameDirectory, snapshotTranscripts, transcriptDirectory, transcriptEntries, transcriptStillCurrent,
   verifyTranscript, type TranscriptSnapshot,
@@ -71,6 +72,27 @@ export async function prepareHeadlessConsumption(
       request.sessionId !== undefined && (request.harness === "claude"
         ? basename(file, ".jsonl") === request.sessionId : rolloutSessionId(file) === request.sessionId));
     return { harness: request.harness, config, configuredPath: path, workingPath, workspace, anchors, transcripts };
+  } catch { return undefined; }
+}
+
+/**
+ * Grok leaves no transcript file: its single JSON result is the only native record. The witness
+ * therefore attests that this exact process consumed the turn input and ended with the parsed
+ * final response under the session the CLI itself reported. It is weaker than a transcript
+ * proof (no independent file to re-read), and it is the strongest evidence Grok emits.
+ */
+export function verifyGrokConsumption(
+  request: CommandRunRequest, result: CommandRunResult,
+): HarnessConsumptionWitness | undefined {
+  try {
+    if (result.exitCode !== 0 || result.signal !== null
+      || result.timedOut || result.cancelled || request.signal.aborted) return undefined;
+    const parsed = parseGrokOutput(result.stdout);
+    const sid = parsed.nativeSessionId;
+    if (sid === undefined || parsed.output.status !== "done"
+      || (request.sessionId !== undefined && sid !== request.sessionId)
+      || !isDeepStrictEqual(request.emissionOutput?.() ?? parsed.output, parsed.output)) return undefined;
+    return consumptionWitness("grok", sid, sid, request.stdin);
   } catch { return undefined; }
 }
 
