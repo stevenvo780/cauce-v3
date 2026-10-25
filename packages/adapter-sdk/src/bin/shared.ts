@@ -217,11 +217,11 @@ export async function ensureSharedSessionStartup(
     if (!signal.aborted) throw error;
   }) };
   const result = await ensureSharedSession(boundedTmux, spec, { ...options, readyTimeoutMs: 0 });
-  const readiness = result.pane !== undefined && (result.ready || result.failure === 'tui_absent')
+  const readiness = result.pane !== undefined && (result.ready || result.failure === 'tui_absent' || result.failure === 'provider_login_required')
     ? await waitForAccreditedTui(boundedTmux, spec, result.pane, { ...options,
       log: () => { logger({ event: 'shared_session_pending', alias: shared.alias, reason: 'tui_starting' }); } })
     : undefined;
-  if (readiness !== 'ready' || signal.aborted) {
+  if ((readiness !== 'ready' && readiness !== 'login_required') || signal.aborted) {
     logger({ event: 'shared_session_degraded', alias: shared.alias,
       reason: signal.aborted ? 'startup_cancelled' : readiness === 'changed'
         ? 'session_identity_unverified' : result.failure ?? 'tui_absent',

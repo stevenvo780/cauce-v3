@@ -1,5 +1,6 @@
 import type { StructuredOutput } from "../sdk/types.js";
 import type { SharedSessionDegradation, SharedSessionHarness } from "./types.js";
+import { PROVIDER_LOGIN_MESSAGE } from './provider-login.js';
 
 /** Literal marker for the shared session degradation notice. */
 export const DEGRADED_MARK = "⚠ CAUCE — SESIÓN COMPARTIDA CAÍDA";
@@ -16,6 +17,7 @@ export const MERGED_MARK = "⚠ CAUCE — EL TURNO SE FUNDIÓ CON OTRO EN CURSO"
 const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> = {
   session_absent: "no hay sesión compartida abierta para este alias",
   tui_absent: "la sesión existe pero no hay una TUI viva adentro",
+  provider_login_required: PROVIDER_LOGIN_MESSAGE,
   session_alias_mismatch: "la sesión tmux declara un alias distinto",
   session_harness_mismatch: "la sesión tmux pertenece a otro harness",
   session_identity_unverified: "la identidad alias+harness de la sesión no pudo acreditarse",

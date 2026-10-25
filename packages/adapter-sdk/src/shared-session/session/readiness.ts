@@ -2,16 +2,17 @@ import { readFile } from 'node:fs/promises';
 import { signalAborted } from '../../runtime-state.js';
 import { assertCommandPins } from '../../sdk/command-pins.js';
 import { inputBoxState } from '../pane.js';
+import { providerLoginRequired } from '../provider-login.js';
 import { capturePane, inspectSolePaneHarness, panePid, samePaneIdentity, sessionIdStillNamed, sessionOption,
   type PaneHarnessIdentity, type TmuxController } from '../tmux.js';
-import { sessionName, TUI_WINDOW } from '../types.js';
+import { sessionName, TUI_WINDOW, type SharedSessionHarness } from '../types.js';
 import type { EnsureOptions } from '../session.js';
 import { SESSION_ALIAS_OPTION, SESSION_HARNESS_OPTION,
   type SharedSessionSpec } from './identity.js';
 
 const DEFAULT_READY_TIMEOUT_MS = 90_000;
 const READY_POLL_MS = 1_000;
-type TuiReadiness = 'ready' | 'gone' | 'timeout' | 'cancelled' | 'changed';
+type TuiReadiness = 'ready' | 'login_required' | 'gone' | 'timeout' | 'cancelled' | 'changed';
 
 async function processStarttime(pid: string): Promise<string | undefined> {
   if (!/^[1-9][0-9]*$/u.test(pid)) return undefined;
@@ -46,8 +47,8 @@ export async function waitForAccreditedTui(
   for (;;) {
     if (signalAborted(options.signal)) return 'cancelled';
     await assertCommandPins(spec.command ?? spec.harness, spec.commandPins);
-    const result = await waitForTui(tmux, pane.paneId, options, identityCurrent);
-    if (result === 'ready') {
+    const result = await waitForTui(tmux, pane.paneId, options, identityCurrent, spec.harness);
+    if (result === 'ready' || result === 'login_required') {
       await assertCommandPins(spec.command ?? spec.harness, spec.commandPins);
       if (signalAborted(options.signal)) return 'cancelled';
       if (!await identityCurrent()) return signalAborted(options.signal) ? 'cancelled' : 'changed';
@@ -60,6 +61,7 @@ export async function waitForAccreditedTui(
 export async function waitForTui(
   tmux: TmuxController, target: string, options: EnsureOptions,
   identityCurrent?: () => Promise<boolean>,
+  harness?: SharedSessionHarness,
 ): Promise<TuiReadiness> {
   const now = options.now ?? Date.now;
   const deadline = now() + (options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS);
@@ -73,6 +75,7 @@ export async function waitForTui(
     if (identityCurrent !== undefined && !await identityCurrent()) {
       return signalAborted(options.signal) ? 'cancelled' : 'changed';
     }
+    if (harness !== undefined && providerLoginRequired(harness, pane)) return 'login_required';
     const input = inputBoxState(pane);
     if (!input.occupied || input.unfocused === true) return 'ready';
     if (await panePid(tmux, target) === undefined) return 'gone';

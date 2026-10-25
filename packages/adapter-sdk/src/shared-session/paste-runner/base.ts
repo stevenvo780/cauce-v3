@@ -8,6 +8,7 @@ import { validateStructuredOutput } from "../../sdk/output-parser.js";
 import { correlatedEmission } from "../../sdk/mcp-emission/recovery.js";
 import { envelopeHasCorrelation, stripJsonFence } from "../envelope.js";
 import { inputBoxState, turnInFlight } from "../pane.js";
+import { providerLoginError, providerLoginRequired } from '../provider-login.js';
 import type { EnsureFailure } from "../session.js";
 import { TUI_WINDOW } from "../types.js";
 import { tuiProfile } from "../tui-profile.js";
@@ -345,6 +346,13 @@ export abstract class PasteSessionRunnerBase<E> {
     });
   }
 
+  protected async providerLoginBlocked(identity: PaneIdentity, signal?: AbortSignal): Promise<boolean> {
+    const pane = await this.capturedPane(identity, signal);
+    return !signalAborted(signal) && providerLoginRequired(this.options.harness, pane)
+      && await paneIdentityStillCurrent(this.options.tmux, identity, this.tmuxControl(signal))
+      && !signalAborted(signal);
+  }
+
   protected forgetLocalQuarantine(identity: PaneIdentity): void {
     if (this.locallyQuarantined !== undefined
       && samePaneIdentity(this.locallyQuarantined, identity)) {
@@ -514,6 +522,7 @@ export abstract class PasteSessionRunnerBase<E> {
         return { ok: false, replaced: true };
       }
       if (signalAborted(signal)) return { ok: false, cancelled: true };
+      if (providerLoginRequired(this.options.harness, pane)) throw providerLoginError();
       const state = inputBoxState(pane);
       // grok queues a paste made while it generates and runs it later as its own turn: the box
       // is only "free" for it when no turn is in flight. See `tuiProfile`.

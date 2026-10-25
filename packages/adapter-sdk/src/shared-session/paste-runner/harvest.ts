@@ -10,6 +10,7 @@ import {
 } from "../tmux.js";
 import type { DispatchMark } from "../grok-dispatch.js";
 import { turnInFlight } from "../pane.js";
+import { PROVIDER_LOGIN_MESSAGE, providerLoginError } from '../provider-login.js';
 import { tuiProfile } from "../tui-profile.js";
 import type { TurnOutcome } from "../types.js";
 import type { CommittedRunResult, PendingQuarantine } from "./contracts.js";
@@ -136,6 +137,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         }
         probe += 1;
 
+        const loginBlocked = await this.providerLoginBlocked(activeIdentity, request.signal);
+        if (signalAborted(request.signal)) continue;
+
         if (injected === undefined) {
           const scanned = await beforeAbort(
             () => this.locateInjectedTurn(baseline, promptText, correlationId),
@@ -159,7 +163,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
           // If the paste merged with an in-flight turn, recover the envelope written after the paste.
           const envelope = scan.envelope;
-          if (injected === undefined && envelope !== undefined) {
+          if (injected === undefined && envelope !== undefined && (!loginBlocked || envelope.kind === 'answer')) {
             const harvested = await beforeAbort(
               () => this.harvested(envelope, undefined, generating),
               request.signal,
@@ -196,7 +200,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           if (noted.aborted) continue;
           const outcome = port.findAnswer(slice.entries, injectedTurn.key);
           if (request.signal.aborted) continue;
-          if (outcome !== undefined) {
+          if (outcome !== undefined && (!loginBlocked || outcome.kind === 'answer')) {
             const sessionId = injectedTurn.sessionId;
             const witnessed = await beforeAbort(async () => {
               const canonical = port.isConversation === undefined || await port.isConversation(injectedTurn.file);
@@ -224,7 +228,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             ? port.findEnvelope?.(slice.entries, correlationId, injectedTurn.key)
             : undefined;
           if (signalAborted(request.signal)) continue;
-          if (rescue !== undefined) {
+          if (rescue !== undefined && (!loginBlocked || rescue.kind === 'answer')) {
             const harvested = await beforeAbort(
               () => this.harvested(rescue, injectedTurn.sessionId, generating),
               request.signal,
@@ -234,6 +238,17 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           }
         }
 
+        if (loginBlocked) {
+          const deposited = request.emissionOutput?.();
+          if (deposited?.status === 'done') return { result: result({
+            stdout: port.stdout(JSON.stringify(deposited), injected?.sessionId),
+          }), terminalBoundary: true };
+          if (lingering?.outcome.kind === 'answer') return {
+            result: this.settledResult(lingering.outcome, injected?.sessionId, request), terminalBoundary: true,
+          };
+          await this.disarmPendingQuarantine(pending);
+          throw providerLoginError();
+        }
         const stillLingering = lingering;
         if (stillLingering !== undefined && Date.now() - lingeringSince >= backgroundWaitMs) {
           await this.note({
@@ -468,6 +483,10 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
         };
       }
       activeIdentity = inspected.identity;
+
+      if (await this.providerLoginBlocked(activeIdentity)) return {
+        result: postEnterCancelled(PROVIDER_LOGIN_MESSAGE), terminalBoundary: true,
+      };
 
       if (!interruptDelivered) {
         const profile = tuiProfile(this.options.harness);

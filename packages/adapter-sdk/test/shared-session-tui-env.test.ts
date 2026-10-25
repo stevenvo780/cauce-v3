@@ -3,7 +3,8 @@ import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { writeFile } from 'node:fs/promises';
+import { readdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { ensureSharedSessionStartup, sharedSessionRunner } from "../src/bin/shared.js";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
 import type { AdapterLog } from "../src/sdk/types.js";
@@ -20,7 +21,11 @@ import {
   transcriptDirectoryIn,
 } from "../src/shared-session/session.js";
 import { CliTmux, type TmuxController } from "../src/shared-session/tmux.js";
-import { FakeTmux, freshState } from "./shared-session-fixtures.js";
+import { FakeTmux, adapterFor, assistantEntry, envelopeText, execute as executeHarness, freshState, userEntry } from "./shared-session-fixtures.js";
+import { PasteSessionRunner } from '../src/shared-session/paste-runner.js';
+import { PROVIDER_LOGIN_MESSAGE, providerLoginRequired } from '../src/shared-session/provider-login.js';
+import { claudeTranscript } from '../src/shared-session/transcript.js';
+import type { SharedSessionHarness } from '../src/shared-session/types.js';
 
 const immediate = (): Promise<void> => Promise.resolve();
 
@@ -391,3 +396,183 @@ test(
     }
   },
 );
+
+const LOGIN: Partial<Record<SharedSessionHarness, string>> = {
+  claude: 'Login expired · Please run /login\nPaste code here if prompted >',
+  codex: 'Sign in with ChatGPT to use Codex as part of your paid plan\nor connect an API key for usage-based billing',
+  grok: 'Sign in to Grok\nOpening your browser to sign in\nWaiting for approval',
+  muse: 'Open this page to sign in:\nWaiting for approval',
+};
+const EXPIRED = {
+  codex: 'Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.',
+  grok: 'Authentication required: your session has expired or your credentials were rejected. Run /login to re-authenticate, then resend your message.',
+  muse: 'Your saved Meta credentials are invalid. Your message was not sent. Quit Muse Code and run `muse login`.',
+};
+const request = (harness: SharedSessionHarness) => ({ command: harness, harness, args: [], stdin: 'owned login canary',
+  signal: new AbortController().signal, timeoutMs: 120_000 });
+const loginError = (error: unknown): boolean => error instanceof ProcessExecutionError
+  && error.code === 'PROVIDER_LOGIN_REQUIRED' && error.retryable && error.message === PROVIDER_LOGIN_MESSAGE;
+
+async function fixture(harness: SharedSessionHarness, suffix: string, sleep?: (tmux: FakeTmux) => void) {
+  const { state, home, workspace } = await freshState(`provider-login-${harness}-${suffix}`);
+  const tmux = new FakeTmux(); tmux.paneStartCommand = `exec ${harness}`;
+  tmux.sessionOptions.set('@cauce_alias', 'kratos'); tmux.sessionOptions.set('@cauce_harness', harness);
+  const runner = new PasteSessionRunner({ alias: 'kratos', harness, workspace, tmux,
+    transcript: claudeTranscript(join(home, '.claude'), workspace), sleep: async () => { sleep?.(tmux); },
+    quarantineFile: join(state, 'quarantine'), readyTimeoutMs: 0, settleMs: 0, pollMs: 1 });
+  const healthy = (): void => {
+    tmux.paneContent = '❯ '; tmux.onSubmit = async text => {
+      const id = randomUUID(); const sid = randomUUID();
+      await writeFile(join(transcriptDirectory(home, workspace), `${sid}.jsonl`),
+        `${userEntry(id, null, text, sid)}\n${assistantEntry(randomUUID(), id, envelopeText(), sid)}\n`);
+    };
+  };
+  return { state, tmux, runner, healthy };
+}
+
+for (const harness of Object.keys(LOGIN) as SharedSessionHarness[]) {
+  test(`${harness}: current auth widget is distinguished from quoted or historical login text`, () => {
+    const pane = LOGIN[harness]; assert.ok(pane);
+    assert.equal(providerLoginRequired(harness, pane), true);
+    assert.equal(providerLoginRequired(harness, `\u001b[31m${pane}\u001b[0m`), true);
+    for (const healthy of [`${pane}\n❯ `, `\u001b[31m${pane}\u001b[0m\n❯ `, `\`\`\`text\n${pane}\n\`\`\``,
+      pane.split('\n').map(line => `> ${line}`).join('\n'), '❯ explain a login expired error', '']) {
+      assert.equal(providerLoginRequired(harness, healthy), false);
+    }
+  });
+
+  if (harness !== 'claude') test(`${harness}: a blocking expiry in the active footer survives an ordinary prompt above it`, () => {
+    const text = EXPIRED[harness];
+    assert.equal(providerLoginRequired(harness, `❯ \n${text}`), true);
+    assert.equal(providerLoginRequired(harness, `❯ \n${text.replace(/(.{1,40})\s/gu, '$1\n')}`), true);
+    assert.equal(providerLoginRequired(harness, `\u001b[31m${text}\u001b[0m\n❯ `), false);
+    assert.equal(providerLoginRequired(harness, `> ${text}\n❯ `), false);
+    assert.equal(providerLoginRequired(harness, `❯ \n\`\`\`text\n${text}\n\`\`\``), false);
+  });
+
+  test(`${harness}: login before paste fails explicitly and a healthy next turn reuses the same TUI`, async () => {
+    const { state, tmux, runner, healthy } = await fixture(harness, 'before');
+    tmux.paneContent = LOGIN[harness] ?? '';
+    const identity = [tmux.sessionId, tmux.paneId, tmux.panePid];
+    await assert.rejects(runner.run(request(harness)), loginError);
+    assert.equal(tmux.used('paste-buffer'), false); assert.equal(tmux.submittedCount, 0);
+    healthy(); const result = await runner.run(request(harness));
+    assert.equal(result.exitCode, 0); assert.equal(result.timedOut, false);
+    assert.deepEqual([tmux.sessionId, tmux.paneId, tmux.panePid], identity);
+    assert.equal((await readdir(state)).some(name => name.includes('quarantine')), false);
+    for (const command of ['kill-pane', 'kill-session', 'respawn-pane', 'new-session']) assert.equal(tmux.used(command), false);
+  });
+
+  test(`${harness}: login during response wait ends promptly and clears only its pending`, async () => {
+    const { state, tmux, runner, healthy } = await fixture(harness, 'during');
+    tmux.onSubmit = () => { tmux.paneContent = LOGIN[harness] ?? ''; };
+    const started = performance.now();
+    await assert.rejects(runner.run(request(harness)), loginError);
+    assert.ok(performance.now() - started < 5000); assert.equal(tmux.submittedCount, 1);
+    assert.equal(tmux.paneOptions.has('@cauce_quarantined_pane'), false);
+    assert.equal((await readdir(state)).some(name => name.endsWith('.pending')), false);
+    healthy(); assert.equal((await runner.run(request(harness))).exitCode, 0);
+    assert.equal(tmux.submittedCount, 2); assert.equal(tmux.interruptedCount, 0);
+    for (const command of ['kill-pane', 'kill-session', 'respawn-pane', 'new-session']) assert.equal(tmux.used(command), false);
+  });
+
+  test(`${harness}: login replacing a busy input box stops acquisition without sending anything`, async () => {
+    let changed = false;
+    const { tmux, runner } = await fixture(harness, 'acquire', pane => {
+      if (!changed) { changed = true; pane.paneContent = LOGIN[harness] ?? ''; }
+    });
+    tmux.paneContent = '❯ owner draft';
+    await assert.rejects(runner.run(request(harness)), loginError);
+    assert.equal(tmux.used('paste-buffer'), false); assert.equal(tmux.submittedCount, 0);
+    assert.equal(tmux.interruptedCount, 0);
+  });
+}
+
+test('login shown after load-buffer is rejected under the input barrier before paste and Enter', async () => {
+  const { tmux, runner, healthy } = await fixture('claude', 'barrier');
+  const original = tmux.run.bind(tmux);
+  tmux.run = async (args, stdin, control) => {
+    const result = await original(args, stdin, control);
+    if (args[0] === 'load-buffer') tmux.paneContent = LOGIN.claude ?? '';
+    return result;
+  };
+  await assert.rejects(runner.run(request('claude')), loginError);
+  assert.equal(tmux.used('paste-buffer'), false); assert.equal(tmux.submittedCount, 0);
+  assert.equal(tmux.buffers.size, 0); assert.equal(tmux.inputOff, false);
+  tmux.run = original; healthy(); assert.equal((await runner.run(request('claude'))).exitCode, 0);
+});
+
+test('startup with an accredited login widget connects without waiting for a human to authenticate', async () => {
+  const { state, home, workspace } = await freshState('provider-login-startup');
+  const config = loadSharedSessionConfig('claude', 'kratos', state, { HOME: home, CAUCE_SHARED_SESSION: '1',
+    CAUCE_SHARED_SESSION_WORKSPACE: workspace, CLAUDE_CONFIG_DIR: join(home, '.claude') });
+  assert.ok(config);
+  const tmux = new FakeTmux(); tmux.sessionExists = false; tmux.windows = [];
+  tmux.panePid = String(process.pid); tmux.paneContent = LOGIN.claude ?? '';
+  await ensureSharedSessionStartup(config, () => undefined, tmux);
+  assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
+  for (const command of ['kill-pane', 'kill-session', 'send-keys', 'paste-buffer']) assert.equal(tmux.used(command), false);
+});
+
+test('a durable correlated success wins over subsequent login expiry; the next delivery requires login', async () => {
+  const { tmux, runner, healthy } = await fixture('claude', 'terminal-before-login');
+  healthy(); const submit = tmux.onSubmit;
+  tmux.onSubmit = async text => { await submit?.(text); tmux.paneContent = LOGIN.claude ?? ''; };
+  assert.equal((await runner.run(request('claude'))).exitCode, 0);
+  await assert.rejects(runner.run(request('claude')), loginError);
+  assert.equal(tmux.submittedCount, 1); assert.equal(tmux.interruptedCount, 0);
+});
+
+test('an uncorrelated transcript answer cannot turn a login failure into success', async () => {
+  const { tmux, runner, healthy } = await fixture('claude', 'foreign-terminal');
+  healthy(); const submit = tmux.onSubmit;
+  tmux.onSubmit = async () => { await submit?.('another delivery'); tmux.paneContent = LOGIN.claude ?? ''; };
+  await assert.rejects(runner.run(request('claude')), loginError);
+  assert.equal(tmux.submittedCount, 1); assert.equal(tmux.interruptedCount, 0);
+});
+
+test('a lone Claude expiry banner is insufficient without its active login widget', () => {
+  assert.equal(providerLoginRequired('claude', 'Login expired · Please run /login'), false);
+});
+
+test('pinned Codex account-mismatch and Grok refresh failures remain provider-specific', () => {
+  for (const [harness, text] of [
+    ['codex', 'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.'],
+    ['grok', 'Authentication could not be refreshed. Run `grok login` to sign in again.'],
+  ] as const) {
+    assert.equal(providerLoginRequired(harness, `❯ \n${text}`), true);
+    assert.equal(providerLoginRequired(harness, `${text}\n❯ `), false);
+  }
+});
+
+test('login appearing after paste prevents Enter and does not quarantine the healthy next delivery', async () => {
+  let changed = false;
+  const { state, tmux, runner, healthy } = await fixture('claude', 'before-enter', pane => {
+    if (pane.pasted !== undefined && !changed) {
+      changed = true; pane.inputContent = ''; pane.paneContent = LOGIN.claude ?? '';
+    }
+  });
+  await assert.rejects(runner.run(request('claude')), loginError);
+  assert.equal(tmux.submittedCount, 0); assert.equal(tmux.inputOff, false);
+  assert.equal((await readdir(state)).some(name => name.endsWith('.pending')), false);
+  healthy(); assert.equal((await runner.run(request('claude'))).exitCode, 0);
+  assert.equal(tmux.submittedCount, 1); assert.equal(tmux.interruptedCount, 0);
+});
+
+test('cancelling an already-auth-blocked turn does not send Escape or kill its login widget', async () => {
+  const { tmux, runner } = await fixture('claude', 'cancel');
+  const controller = new AbortController();
+  tmux.onSubmit = () => { tmux.paneContent = LOGIN.claude ?? ''; controller.abort(); };
+  const result = await runner.run({ ...request('claude'), signal: controller.signal });
+  assert.equal(result.cancelled, true); assert.equal(tmux.interruptedCount, 0);
+  assert.equal(tmux.paneOptions.has('@cauce_quarantined_pane'), false);
+  for (const command of ['kill-pane', 'kill-session', 'respawn-pane']) assert.equal(tmux.used(command), false);
+});
+
+test('the real HarnessAdapter preserves the explicit retryable login error before provider execution', async () => {
+  const { state, tmux, runner } = await fixture('claude', 'adapter-error');
+  tmux.paneContent = LOGIN.claude ?? '';
+  const adapter = await adapterFor(runner, state, 'kratos', 'claude');
+  await assert.rejects(executeHarness(adapter), loginError);
+  assert.equal(tmux.used('paste-buffer'), false); assert.equal(tmux.submittedCount, 0);
+});

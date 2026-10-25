@@ -21,6 +21,7 @@ import {
   type TmuxController,
 } from "./tmux.js";
 import { waitForTui } from './session/readiness.js';
+import { PROVIDER_LOGIN_MESSAGE } from './provider-login.js';
 export { waitForAccreditedTui } from './session/readiness.js';
 import { ensureExactSessionLaunch, paneWorkspaceState } from "./exact-launch.js";
 import {
@@ -39,7 +40,7 @@ import {
 } from "./session/identity.js";
 export type { SharedSessionSpec } from "./session/identity.js";
 /** Reasons `ensureSharedSession` can decline a usable session; `workspace_mismatch` is detected here, against the freshly created pane, never inside `session/identity.ts`. */
-export type EnsureFailure = IdentityEnsureFailure | "workspace_mismatch";
+export type EnsureFailure = IdentityEnsureFailure | "workspace_mismatch" | 'provider_login_required';
 export interface EnsureOptions {
   readonly sleep: (ms: number) => Promise<void>;
   /** Cancels the preflight before a delivery touches the input box. */
@@ -362,7 +363,7 @@ async function startTui(
       result: cancelledEnsure(created.created, created.sessionId),
     };
   }
-  const waited = await waitForTui(tmux, target, options);
+  const waited = await waitForTui(tmux, target, options, undefined, spec.harness);
   if (waited === "cancelled" || signalAborted(options.signal)) {
     return {
       ready: false,
@@ -485,8 +486,8 @@ async function startTui(
         sessionId: created.sessionId,
         pid: pane.panePid,
         pane,
-        failure: "tui_absent",
-        detail: `la TUI de ${spec.alias} no llegó a estar lista`,
+        failure: waited === 'login_required' ? 'provider_login_required' : "tui_absent",
+        detail: waited === 'login_required' ? PROVIDER_LOGIN_MESSAGE : `la TUI de ${spec.alias} no llegó a estar lista`,
       },
     };
   }

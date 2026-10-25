@@ -29,10 +29,13 @@ import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
 import { PasteSessionHarvestRunner, type WakeCommit } from "./harvest.js";
 import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
 import { assertCommandPins } from '../../sdk/command-pins.js';
+import { ProcessExecutionError } from '../../sdk/errors.js';
+import { providerLoginError } from '../provider-login.js';
 
 
 type PromptCommitOutcome =
   | { readonly state: "entered" }
+  | { readonly state: 'login_required' }
   | { readonly state: "not_pasted"; readonly paste: PastePromptResult }
   | {
     readonly state: "ambiguous";
@@ -76,6 +79,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     this.exactSessionId = ready.sessionId;
     const identity = ready.identity;
     const target = identity.paneId;
+    if (await this.providerLoginBlocked(identity, request.signal)) throw providerLoginError();
 
     await this.reconcileTerminalPending(identity);
     const quarantine = await this.quarantineState(identity);
@@ -239,6 +243,10 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           request.signal,
           wait.focusSpent !== true,
         );
+        if (committed.state === 'login_required') {
+          await this.disarmPendingQuarantine(pending);
+          throw providerLoginError();
+        }
         if (committed.state === "ambiguous") {
           stagedFile = undefined; // Ambiguous: the pasted pointer may still be read.
           return await this.ambiguousCommittedState(
@@ -257,6 +265,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
             return replacedBeforeSubmission();
           }
           if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+          if (paste.reason === 'provider_login_required') throw providerLoginError();
           if (paste.reason === "turn_in_flight") continue; // A turn began before the barrier: wait again.
           if (paste.reason === "input_unfocused") {
             wait.focusSpent = true; // ONE Space per delivery: a 2nd over a late redraw or the owner's Tab would type a space.
@@ -299,7 +308,12 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       correlationId,
       pending,
       dispatch,
-    );
+    ).catch(async (error: unknown) => {
+      if (error instanceof ProcessExecutionError && error.code === 'PROVIDER_LOGIN_REQUIRED' && promptFile !== undefined) {
+        await rm(promptFile, { force: true }).catch(() => undefined);
+      }
+      throw error;
+    });
     if (promptFile !== undefined && harvested.terminalBoundary) await rm(promptFile, { force: true }).catch(() => undefined); // Ambiguous: kept, a queued prompt may read it later.
     let nativeWitnessVerified = this.options.nativePointer === undefined;
     if (nativeSnapshot !== undefined && harvested.terminalBoundary
@@ -396,6 +410,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           signal,
           timeoutMs: this.quarantineOperationTimeoutMs(),
           verifyInputEmpty: true,
+          harness: this.options.harness,
           inputBarrier: barrier,
           requireIdle: profile.pasteOnlyWhenIdle,
           ...(profile.focusKey === undefined || !focus ? {} : { focusKey: profile.focusKey }),
@@ -427,6 +442,8 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
             detail: "wait between paste and Enter did not reach a postcondition",
             forceTerminate: true,
           };
+        } else if (await this.providerLoginBlocked(identity)) {
+          outcome = { state: 'login_required' };
         } else {
           // Delivery cancellation does not cancel the commit; the client has deadline and real reap.
           const entered = await sendEnter(
@@ -459,12 +476,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         this.tmuxControl(),
       );
       if (released !== "applied") {
+        const loginBlocked = outcome?.state === 'login_required'
+          || (outcome?.state === 'not_pasted' && outcome.paste.reason === 'provider_login_required');
         outcome = {
           state: "ambiguous",
           detail: released === "not_applied"
             ? "la generación cambió antes de restaurar su flag exacto de input"
             : "tmux no acreditó la restauración exacta del flag/token de input",
-          forceTerminate: true,
+          forceTerminate: !loginBlocked,
         };
       }
     }
@@ -496,6 +515,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       this.ensureOptions(signal),
     );
     if (ensure.cancelled === true || signal.aborted) return { ok: false, cancelled: true };
+    if (ensure.failure === 'provider_login_required') throw providerLoginError();
     if (!ensure.ready) {
       this.exactSessionId = ensure.sessionId;
       return { ok: false, reason: ensure.failure ?? "session_absent", detail: ensure.detail };

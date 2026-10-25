@@ -19,6 +19,7 @@ type DegradationReason =
   | "session_absent"
   /** The session exists but no live harness TUI is inside it. */
   | "tui_absent"
+  | 'provider_login_required'
   /** The exact session declares another alias; never reused nor auto-destroyed. */
   | "session_alias_mismatch"
   /** The exact session belongs to another harness (e.g. claude after migrating to codex). */

@@ -1,4 +1,6 @@
 import { inputBoxState, turnInFlight } from "../pane.js";
+import { providerLoginRequired } from '../provider-login.js';
+import type { SharedSessionHarness } from '../types.js';
 import { signalAborted } from "../../runtime-state.js";
 import {
   CREATION_NONCE_OPTION,
@@ -211,12 +213,13 @@ export function pasteSafeText(text: string): string { // Visible, inert controls
 export interface PastePromptResult {
   /** `ambiguous` only appears if the transport lost the atomic mutation result. */
   readonly state: "not_pasted" | "pasted" | "ambiguous";
-  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "mutation_rejected"; // turn_in_flight, input_unfocused: nothing pasted.
+  readonly reason?: "cancelled" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "mutation_rejected" | 'provider_login_required'; // turn_in_flight, input_unfocused: nothing pasted.
   /** Postcondition verified: the buffer no longer exists or contains only the harmless marker. */
   readonly bufferScrubbed: boolean;
 }
 
 interface PastePromptOptions extends TmuxRunControl {
+  readonly harness?: SharedSessionHarness;
   /** Verifies the input box twice: before load-buffer and just before the pane mutation. */
   readonly verifyInputEmpty?: boolean;
   /** Already-acquired exclusion; mandatory when verifying the input box. */
@@ -317,7 +320,7 @@ export async function pastePrompt(
         ? "ready"
         : await pastePrecondition(
           tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
-          options.focusKey !== undefined,
+          options.focusKey !== undefined, options.harness,
         );
       if (firstGuard === "input_unfocused" && options.focusKey !== undefined && options.inputBarrier !== undefined) {
         await mutateUnderInputBarrier(tmux, options.inputBarrier, `send-keys -t ${identity.paneId} ${options.focusKey}`,
@@ -352,7 +355,7 @@ export async function pastePrompt(
             ? "ready"
             : await pastePrecondition(
               tmux, identity, options.inputBarrier, mutationControl, options.requireIdle === true,
-              options.focusKey !== undefined,
+              options.focusKey !== undefined, options.harness,
             );
           if (finalGuard !== "ready") {
             state = finalGuard === "unreadable" ? "ambiguous" : "not_pasted";
@@ -392,7 +395,7 @@ export async function pastePrompt(
   };
 }
 
-type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "unreadable";
+type PastePrecondition = "ready" | "identity_changed" | "input_busy" | "turn_in_flight" | "input_unfocused" | "unreadable" | 'provider_login_required';
 
 /**
  * Snapshot immediately before the paste, already under human-keyboard exclusion.
@@ -409,6 +412,7 @@ async function pastePrecondition(
   control: TmuxRunControl,
   requireIdle = false,
   focusable = false,
+  harness?: SharedSessionHarness,
 ): Promise<PastePrecondition> {
   if (barrier === undefined || !samePaneIdentity(barrier.identity, identity)) return "unreadable";
   // `capture-pane` triggers `after-capture-pane`; all effective configuration must be rejected
@@ -434,6 +438,7 @@ async function pastePrecondition(
   }
   const pane = await capturePane(tmux, identity.paneId, { styled: true, control });
   if (pane === undefined) return "unreadable";
+  if (harness !== undefined && providerLoginRequired(harness, pane)) return 'provider_login_required';
   const box = inputBoxState(pane);
   if (box.unfocused === true && focusable) return "input_unfocused";
   if (box.occupied) return "input_busy";
@@ -443,7 +448,7 @@ async function pastePrecondition(
 function pasteGuardReason(
   guard: Exclude<PastePrecondition, "ready" | "unreadable">,
 ): PastePromptResult["reason"] {
-  return guard === "input_busy" || guard === "turn_in_flight" || guard === "input_unfocused" ? guard : "identity_changed";
+  return guard === "input_busy" || guard === "turn_in_flight" || guard === "input_unfocused" || guard === 'provider_login_required' ? guard : "identity_changed";
 }
 
 export async function sendEnter(
