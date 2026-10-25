@@ -45,7 +45,8 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const modo = new URLSearchParams(search).get('modo');
   const requestedView = modo === 'tui' || modo === 'terminal' ? modo : undefined;
   const loginAction = loginActionOf(search);
-  const [recovered, setRecovered] = useState<{ agentId: string; revision: number }>();
+  // Recovery remounts the workspace. An agent change must not: unmounting drops a failed revocation.
+  const [workspaceEpoch, setWorkspaceEpoch] = useState(0);
 
   usePolling(targets.reload, 15_000, { pausedWhile: targets.loading });
   usePolling(access.reload, 30_000, { pausedWhile: access.loading });
@@ -53,7 +54,6 @@ function TerminalPageContent({ params }: TerminalPageProps) {
   const tenantId = params?.[0];
   const alias = params?.[1];
   const agentId = params?.length === 2 && tenantId && alias ? fleetAgentId(tenantId, alias) : undefined;
-  const recoveryRevision = recovered && recovered.agentId === agentId ? recovered.revision : 0;
   const { agents, live, loading, error } = fleet;
   const selectedAgent = agents.find((agent) => agent.id === agentId);
   useEffect(() => {
@@ -101,7 +101,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         </Notice>
       ) : null}
       {selectedAgent ? <AgentRecovery tenantId={selectedAgent.tenantId} alias={selectedAgent.alias} onRecovered={() => {
-        setRecovered(current => ({ agentId: selectedAgent.id, revision: (current?.revision ?? 0) + 1 }));
+        setWorkspaceEpoch(current => current + 1);
         navigate(`/terminal/${encodeURIComponent(selectedAgent.tenantId)}/${encodeURIComponent(selectedAgent.alias)}?modo=tui`);
         refreshAll();
       }} className="shrink-0 border-b border-line p-3" /> : null}
@@ -112,7 +112,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         </Notice>
       ) : (
         <OperatorWorkspace
-          key={`${agentId ?? ''}/${String(recoveryRevision)}`}
+          key={String(workspaceEpoch)}
           agents={agents}
           agentId={agentId}
           live={live}
