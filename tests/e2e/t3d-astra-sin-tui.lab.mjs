@@ -217,7 +217,25 @@ try {
       throw error;
     }
   }
-  await toolPython('absence-preflight', 'import runpy\nwitness=runpy.run_path(' + JSON.stringify(join(ROOT, '.delegados/v4/live_adapter_v3_snapshot.py')) + ')\nprint(json.dumps(witness["snapshot"](agent["unit"],agent["alias"],agent["uid"],privileged_proc_read=True)))\n');
+  const absenceTrace = `import runpy
+witness=runpy.run_path(${JSON.stringify(join(ROOT, '.delegados/v4/live_adapter_v3_snapshot.py'))})
+def observe(frame,event,packet):
+ if event=="exception":
+  error=packet[1];trace=packet[2];origin=[]
+  while trace is not None:
+   origin.append({"function":trace.tb_frame.f_code.co_name,"line":trace.tb_lineno});trace=trace.tb_next
+  pid=frame.f_locals.get("pid");number=getattr(error,"errno",None)
+  print(json.dumps({"inspection_pid":pid if type(pid) is int else None,"error_type":type(error).__name__,"errno":number if type(number) is int else None,"origin":origin}),file=sys.stderr)
+ return observe
+def select(frame,event,packet):
+ return observe if event=="call" and frame.f_code.co_name=="process_absence" else None
+sys.settrace(select)
+try:
+ print(json.dumps(witness["snapshot"](agent["unit"],agent["alias"],agent["uid"],privileged_proc_read=True)))
+finally:
+ sys.settrace(None)
+`;
+  await toolPython('absence-preflight', absenceTrace);
   const absent = JSON.parse(await toolPython('initial-snapshot', 'print(json.dumps(tool.snapshot(agent)))\n'));
   assert.equal(absent.tui, 'absent');
   const initialDeliveryCount = (await pool.query('SELECT count(*)::int AS count FROM deliveries WHERE recipient_alias=$1', [alias])).rows[0].count;
