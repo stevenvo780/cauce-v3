@@ -25,7 +25,14 @@ interface Entry {
 const denied = () => new ProviderAuthError('AUTHORITY_REVOKED');
 const unavailable = () => new ProviderAuthError('HOST_UNAVAILABLE');
 
-async function readScope(client: DatabaseClient, id: string): Promise<AuthScope> {
+async function readScope(client: DatabaseClient, id: string, expected: Pick<AuthScope, 'host_id' | 'company_id'>): Promise<AuthScope> {
+  // Signed host requests lock identity before host, so readers must keep that order.
+  const identity = await client.query(`SELECT 1 FROM fleet_host_identities
+    WHERE host_id=$1 AND company_id=$2 AND enabled FOR SHARE`, [expected.host_id, expected.company_id]);
+  if (!identity.rowCount) throw denied();
+  const host = await client.query(`SELECT 1 FROM fleet_hosts
+    WHERE host_id=$1 AND company_id=$2 AND enabled FOR SHARE`, [expected.host_id, expected.company_id]);
+  if (!host.rowCount) throw denied();
   const row = (await client.query<AuthScope>(`SELECT op.id AS operation_id,op.environment_id,op.company_id,op.requested_by,
     op.claim_token,op.claim_epoch::int,op.worker_id,op.status,op.result->>'expires_at' AS expires_at,
     environment.host_id,environment.account_id,environment.provider FROM quota_environment_operations op
@@ -33,10 +40,11 @@ async function readScope(client: DatabaseClient, id: string): Promise<AuthScope>
     JOIN provider_accounts account ON account.id=environment.account_id AND account.company_id=environment.company_id
     JOIN fleet_hosts host ON host.host_id=environment.host_id AND host.company_id=environment.company_id
     JOIN fleet_host_identities identity ON identity.host_id=host.host_id AND identity.company_id=host.company_id
-    WHERE op.id=$1 AND op.action='authenticate' AND op.consent
+    WHERE op.id=$1 AND op.company_id=$3 AND environment.host_id=$2 AND op.action='authenticate' AND op.consent
       AND (account.enabled OR account.quota_registration_key IS NOT NULL AND account.quota_identity_hash IS NULL)
       AND account.canonical_account_id IS NULL AND host.enabled AND identity.enabled
-      AND op.status IN ('running','awaiting_auth','done','failed') FOR SHARE OF op,environment,account,host,identity`, [id])).rows[0];
+      AND op.status IN ('running','awaiting_auth','done','failed') FOR SHARE OF op,environment,account,host,identity`,
+  [id, expected.host_id, expected.company_id])).rows[0];
   if (!row?.claim_token || !row.worker_id) throw denied();
   return row;
 }
@@ -69,7 +77,7 @@ export class QuotaAuthBroker {
             signal.throwIfAborted();
             await this.current(actor, request);
             if (!await this.command(entry, { id: randomUUID(), type: 'verify' })) throw new ProviderAuthError('FUNCTIONAL_CHECK_FAILED');
-            const scope = await withTransaction(this.pool, client => readScope(client, entry.claim.id));
+            const scope = await withTransaction(this.pool, client => readScope(client, entry.claim.id, entry.scope));
             const verified = sameFence(entry, scope) && scope.status === 'done';
             return { identity_matches: verified, functional_call_verified: verified };
           },
@@ -101,7 +109,7 @@ export class QuotaAuthBroker {
     const humanId = /^console:([0-9a-f-]{36})$/u.exec(actor.subject)?.[1];
     if (!humanId) throw denied();
     await withTransaction(this.pool, async client => {
-      const scope = await readScope(client, request.operation_id);
+      const scope = await readScope(client, request.operation_id, entry.scope);
       const authority = await lockCompanyAuthority(client, { tenant: actor.tenant_id, alias: actor.alias,
         humanId, ...(actor.requestedCompany === undefined ? {} : { requestedCompany: actor.requestedCompany }) });
       assertQuotaAuthority(authority, true);
@@ -209,7 +217,7 @@ export function registerQuotaAuthHostRoute(app: FastifyInstance, pool: DatabaseP
       const verified = await identity.request(hostId, 'POST', `/v3/fleet/hosts/${hostId}/quota-auth`, request.body,
         async (client, host) => {
           const packet = QuotaAuthPacketSchema.parse((request.body as { payload: unknown }).payload);
-          const scope = await readScope(client, packet.claim.id);
+          const scope = await readScope(client, packet.claim.id, host);
           if (scope.host_id !== host.host_id || scope.company_id !== host.company_id) throw denied();
           if (packet.action === 'register') {
             await quota.forTransaction(client).assertHostScopeInTransaction(client, packet.claim, host);

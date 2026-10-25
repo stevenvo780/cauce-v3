@@ -1,13 +1,18 @@
-import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { createHash, randomBytes, randomUUID, sign } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createQuotaAccount, QuotaEnvironmentRepository, QuotaOperationsRepository, type DatabasePool, type QuotaOperationClaim } from '@cauce/store';
+import { createQuotaAccount, hostRequestMessage, QuotaEnvironmentRepository, QuotaOperationsRepository, type DatabaseClient, type DatabasePool, type QuotaOperationClaim } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import type { ProviderAuthLogin, ProviderAuthRequest } from '../console/provider-auth.types.js';
+import { registerHostEnrollmentRoutes } from '../console/host-enrollment.routes.js';
+import { PostgresConsoleUserStore } from '../console-users.js';
+import { PasswordAuthProvider } from '../password-auth.js';
 import { channelCompany, channelHost, companySource } from './host-channel.fixtures.js';
 import { SignedHostChannel } from './signed-source.js';
 import { registerHostChannelRoutes } from './host-channel.routes.js';
@@ -18,16 +23,30 @@ import type { QuotaEffect } from './quota-host-command.js';
 
 let database: TestDatabase; let current: EmptyTestDatabase | undefined; let pool: DatabasePool;
 let app: FastifyInstance | undefined; let directory: string | undefined; let hostRuntime: QuotaHostAuthentication | undefined;
-preparePostgresSuite(import.meta.url, async () => { database = await startTestDatabase(); }, 180_000);
+const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a7c-login-definitivo-1025/postgres', randomUUID().slice(0, 8));
+const execute = promisify(execFile);
+preparePostgresSuite(import.meta.url, async () => {
+  database = await startTestDatabase();
+  await mkdir(receipts, { recursive: true });
+  const container = database.container.getId();
+  const mounts = JSON.parse((await execute('docker', ['inspect', '--format', '{{json .Mounts}}', container])).stdout) as { Type: string; Name?: string }[];
+  const sources: Record<string, string> = {};
+  for (const file of ['services/gateway/src/fleet/quota-auth-postgres.test.ts', 'services/gateway/src/fleet/quota-auth-broker.ts']) {
+    sources[file] = createHash('sha256').update(await readFile(file)).digest('hex');
+  }
+  await writeFile(join(receipts, 'runtime.json'), JSON.stringify({ container, volumes: mounts.filter(mount => mount.Type === 'volume').map(mount => mount.Name), sources }, null, 2));
+  console.info(`E2E fixture database: ${container}; quota auth lock receipts: ${receipts}`);
+}, 180_000);
 beforeEach(async () => { current = await startTestCaseDatabase(database); pool = current.pool; });
 afterEach(async () => { await hostRuntime?.shutdown(); await app?.close(); if (directory) await rm(directory, { recursive: true, force: true });
   await current?.close(); app = undefined; directory = undefined; hostRuntime = undefined; });
 afterAll(async () => { await database.pool.end(); await database.container.stop(); });
-async function fixture(options: { verificationFails?: boolean } = {}) {
+async function scopeFixture() {
   const company = await channelCompany(pool, 'quota-auth-fixture');
   const host = await channelHost(pool, company);
   const broker = new QuotaAuthBroker(pool);
   app = Fastify(); registerHostChannelRoutes(app, pool); registerQuotaAuthHostRoute(app, pool, broker);
+  registerHostEnrollmentRoutes(app, new PasswordAuthProvider({ users: new PostgresConsoleUserStore(pool), signingKey: randomBytes(32) }), pool);
   await app.listen({ host: '127.0.0.1', port: 0 });
   const address = app.server.address(); if (!address || typeof address === 'string') throw new Error('fixture address missing');
   directory = await mkdtemp(join(tmpdir(), 'cauce-quota-auth-'));
@@ -51,6 +70,11 @@ async function fixture(options: { verificationFails?: boolean } = {}) {
     expected_version: environment.version, idempotency_key: 'synthetic-auth' });
   const claim = await repository.claim('ignored', host.host_id); if (!claim) throw new Error('auth claim missing');
   const execution = await repository.execution(claim);
+  const actor = { tenant_id: company.hub.id, alias: 'owner', subject: `console:${company.user.id}` };
+  return { company, host, broker, channel, repository, claim, execution, actor };
+}
+async function fixture(options: { verificationFails?: boolean } = {}) {
+  const { host, broker, channel, repository, claim, execution, actor } = await scopeFixture();
   const plan: NonNullable<QuotaEffect['login_plan']> = { operation_id: claim.id, account_scope: execution.environment.account_id,
     command: ['/usr/local/bin/codex', 'login', '--device-auth'], home: '/home/node', cwd: '/home/node', runtime_user: 'node',
     env: { PATH: '/usr/local/bin:/usr/bin:/bin' }, backend: 'container', state_root: '/fixture/quota-login', ttl_seconds: 600,
@@ -71,12 +95,96 @@ async function fixture(options: { verificationFails?: boolean } = {}) {
     } });
   const handle = await hostRuntime.begin(execution, plan, claim, new AbortController().signal);
   await repository.finish(claim, handle.public_result, true);
-  const actor = { tenant_id: company.hub.id, alias: 'owner', subject: `console:${company.user.id}` };
   if (!broker.service.resolve) throw new Error('resolver missing');
   const request = await broker.service.resolve(actor, claim.id);
   return { broker, repository, request, actor, host, claim, handle, login, inputs, state: () => ({ started, stopped }) };
 }
+interface BlockedBackend { pid: number; wait_event_type: string; wait_event: string; blockers: number[]; query: string }
+async function blockedBy(client: DatabaseClient, pid: number): Promise<BlockedBackend[]> {
+  return (await client.query<BlockedBackend>(`SELECT pid,wait_event_type,wait_event,pg_blocking_pids(pid) AS blockers,query
+    FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid))`, [pid])).rows;
+}
+function publicWait(row: BlockedBackend) {
+  return { pid: row.pid, wait_event_type: row.wait_event_type, wait_event: row.wait_event, blockers: row.blockers,
+    statement_sha256: createHash('sha256').update(row.query.split('\n')[0] ?? '').digest('hex') };
+}
+function failureCode(error: unknown): string {
+  return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    && /^[A-Z0-9_]+$/u.test(error.code) ? error.code : 'UNCLASSIFIED';
+}
 describe('quota authentication over real signed HTTP and runtime PostgreSQL', () => {
+  it('resolves authorized login scope while a signed heartbeat updates the same host without a deadlock', async () => {
+    const f = await scopeFixture(); if (!current || !f.broker.service.resolve) throw new Error('scope fixture missing');
+    const expiresAt = new Date(Date.now() + 600_000).toISOString();
+    expect(await f.channel.request('POST', `/v3/fleet/hosts/${f.host.host_id}/quota-auth`, {
+      action: 'register', claim: f.claim, expires_at: expiresAt, method: 'device',
+    })).toEqual({ registered: true });
+    await f.repository.finish(f.claim, { expires_at: expiresAt }, true);
+    const path = `/v3/fleet/hosts/${f.host.host_id}/heartbeat`;
+    const packet = { host_id: f.host.host_id, company_id: f.host.company_id, issued_at: Date.now(),
+      nonce: randomBytes(32).toString('hex'), payload: { cli_version: 'quota-auth-lock-test', platform: 'test', docker_version: null, status: 'reachable' }, proof: '' };
+    packet.proof = sign(null, Buffer.from(hostRequestMessage('POST', path, packet)), f.host.keys.privateKey).toString('base64');
+    const heartbeat = async () => {
+      const response = await fetch(f.channel.gateway + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(packet), signal: AbortSignal.timeout(15_000) });
+      await response.body?.cancel(); return { ok: true as const, status: response.status };
+    };
+    const gate = await current.adminPool.connect();
+    let heartbeatResult: Promise<{ ok: boolean; status?: number; code?: string }> | undefined;
+    let scopeResult: Promise<{ ok: boolean; operation_id?: string; code?: string }> | undefined;
+    try {
+      const observer = await current.adminPool.connect();
+      try {
+        await observer.query(`CREATE FUNCTION quota_auth_heartbeat_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN IF NEW.host_id=TG_ARGV[0] THEN PERFORM pg_advisory_xact_lock(783003662); END IF; RETURN NEW; END $$`);
+        await observer.query(`CREATE TRIGGER quota_auth_heartbeat_barrier BEFORE UPDATE ON fleet_host_identities
+          FOR EACH ROW EXECUTE FUNCTION quota_auth_heartbeat_barrier('${f.host.host_id.replaceAll("'", "''")}')`);
+        await gate.query('BEGIN');
+        await gate.query('SELECT pg_advisory_xact_lock(783003662)');
+        const gatePid = (await gate.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+        if (gatePid === undefined) throw new Error('barrier backend missing');
+        const deadlocks = async () => Number((await observer.query<{ deadlocks: string }>(
+          'SELECT deadlocks::text FROM pg_stat_database WHERE datname=current_database()')).rows[0]?.deadlocks);
+        const before = await deadlocks();
+        heartbeatResult = heartbeat().catch((error: unknown) => ({ ok: false, code: failureCode(error) }));
+        let heartbeatWait: BlockedBackend | undefined;
+        await expect.poll(async () => { heartbeatWait = (await blockedBy(observer, gatePid))[0]; return heartbeatWait !== undefined; }, { timeout: 5_000 }).toBe(true);
+        if (!heartbeatWait) throw new Error('heartbeat did not reach the identity barrier');
+        const heartbeatPid = heartbeatWait.pid;
+        scopeResult = f.broker.service.resolve(f.actor, f.claim.id).then(request => ({ ok: true, operation_id: request.operation_id }),
+          (error: unknown) => ({ ok: false, code: failureCode(error) }));
+        let scopeWait: BlockedBackend | undefined;
+        await expect.poll(async () => { scopeWait = (await blockedBy(observer, heartbeatPid))[0]; return scopeWait !== undefined; }, { timeout: 5_000 }).toBe(true);
+        if (!scopeWait) throw new Error('scope resolution did not block on the real heartbeat');
+        const waits = { heartbeat: publicWait(heartbeatWait), scope: publicWait(scopeWait) };
+        const locks = (await observer.query<{ pid: number; relation: string | null; locktype: string; mode: string; granted: boolean }>(
+          `SELECT pid,relation::regclass::text AS relation,locktype,mode,granted FROM pg_locks
+            WHERE pid=ANY($1::int[]) ORDER BY pid,locktype,relation,mode`, [[heartbeatPid, scopeWait.pid]])).rows;
+        await gate.query('ROLLBACK');
+        const [heartbeatOutcome, scopeOutcome] = await Promise.all([heartbeatResult, scopeResult]);
+        if (scopeOutcome.code === '40P01') await expect.poll(deadlocks, { timeout: 3_000 }).toBeGreaterThan(before);
+        const after = await deadlocks();
+        await writeFile(join(receipts, 'lock-order.json'), JSON.stringify({ waits, locks, heartbeat: heartbeatOutcome, scope: scopeOutcome, deadlocks_before: before, deadlocks_after: after }, null, 2));
+        console.info(`Quota auth lock outcomes: ${JSON.stringify({ heartbeat: heartbeatOutcome, scope: scopeOutcome, deadlocks_before: before, deadlocks_after: after })}`);
+        expect(heartbeatOutcome).toEqual({ ok: true, status: 200 });
+        expect(scopeOutcome).toEqual({ ok: true, operation_id: f.claim.id });
+        expect(after).toBe(before);
+        expect((await pool.query<{ reachable: boolean }>("SELECT controller_status='reachable' AND controller_seen_at IS NOT NULL AS reachable FROM fleet_hosts WHERE host_id=$1", [f.host.host_id])).rows[0]?.reachable).toBe(true);
+        expect((await heartbeat()).status).toBe(409);
+        const foreign = await channelCompany(pool, 'quota-auth-lock-foreign');
+        await expect(f.broker.service.resolve({ tenant_id: foreign.hub.id, alias: 'owner', subject: `console:${foreign.user.id}` }, f.claim.id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+        await pool.query('UPDATE fleet_host_identities SET enabled=false WHERE host_id=$1', [f.host.host_id]);
+        await expect(f.broker.service.resolve(f.actor, f.claim.id)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+      } finally {
+        try {
+          await gate.query('ROLLBACK');
+          await Promise.allSettled([heartbeatResult, scopeResult]);
+          await observer.query('DROP TRIGGER IF EXISTS quota_auth_heartbeat_barrier ON fleet_host_identities');
+          await observer.query('DROP FUNCTION IF EXISTS quota_auth_heartbeat_barrier()');
+        } finally { observer.release(); }
+      }
+    } finally { gate.release(); }
+  }, 30_000);
   it('rejects another selected company even when the requester is a platform administrator', async () => {
     const f = await fixture(); const other = await channelCompany(pool, 'quota-auth-company-selection');
     if (!current) throw new Error('test database missing');
