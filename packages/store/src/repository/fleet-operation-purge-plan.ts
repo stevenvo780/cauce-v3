@@ -4,7 +4,8 @@ import type { ConfigurationDependency } from '../configuration/contracts.js';
 import { runtimePrincipalScopeSql } from './system-principal-scope.js';
 
 export const PURGE_CONFIGURATION = ['agent_profile_runtime_adoptions', 'agent_profile_runtime_expectations', 'agent_profiles',
-  'agent_account_bindings', 'alias_routing_ceiling', 'egress_destinations', 'agent_sealing_keys', 'agent_appearances', 'console_agent_favorites'];
+  'agent_account_bindings', 'alias_routing_ceiling', 'egress_destinations', 'agent_sealing_keys', 'agent_appearances', 'console_agent_favorites',
+  'terminal_grants'];
 const AGENT_PAIRS = [['tenant_id', 'alias'], ['tenant_id', 'agent_alias'], ['tenant_id', 'actor_alias'],
   ['actor_tenant', 'actor_alias'], ['recipient_tenant', 'recipient_alias'], ['source_tenant', 'source_alias'],
   ['target_tenant', 'target_alias'], ['parent_tenant', 'parent_alias'], ['child_tenant', 'child_alias'],

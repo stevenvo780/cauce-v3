@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ConfigurationRepository,
   grantCreatorTerminalAccess, listTerminalGrants, revokeTerminalGrant, withTransaction,
   type CompanyAuthority, type DatabasePool,
 } from '../src/index.js';
@@ -86,6 +87,31 @@ describe('creator terminal grant on PostgreSQL', () => {
       .toEqual([{ count: 0 }]);
     expect((await admin.query<{ count: number }>(
       "SELECT count(*)::integer AS count FROM audit_events WHERE action='terminal.grant.create'")).rows)
+      .toEqual([{ count: 0 }]);
+  });
+
+  it('purges creator terminal grant and deletes agent when deleted via configuration', async () => {
+    const repository = new ConfigurationRepository(pool);
+    const steven = { ...manager, humanId: actors.steven };
+    const authority = () => Promise.resolve(steven);
+    const alias = 'purged_draft';
+    const created = await repository.apply('Steven', 'kant', {
+      resource: 'agent', action: 'create', tenant_id: 'Steven', alias,
+      value: { display_name: 'Purged Draft', harness_id: 'codex' },
+    }, false, undefined, authority);
+    expect(created.applied).toBe(true);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
+      .toEqual([{ count: 1 }]);
+    const deleted = await repository.apply('Steven', 'kant', {
+      resource: 'agent', action: 'delete', tenant_id: 'Steven', alias,
+    }, false, created.revision, authority);
+    expect(deleted.applied).toBe(true);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM terminal_grants WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
+      .toEqual([{ count: 0 }]);
+    expect((await admin.query<{ count: number }>(
+      "SELECT count(*)::integer AS count FROM agents WHERE tenant_id='Steven' AND alias=$1", [alias])).rows)
       .toEqual([{ count: 0 }]);
   });
 });
