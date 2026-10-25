@@ -139,16 +139,16 @@ login_claude() {  # $1=alias $2=ctr $3=usu $4=cfgdir de claude
   local opcion token
   printf "\n  %sComo funciona esto de verdad:%s %sclaude setup-token%s SOLO IMPRIME un token.\n" "$c_warn" "$c_reset" "$c_b" "$c_reset"
   printf "  %sNo escribe ninguna credencial en ningun sitio. Si lo dejas en pantalla, se pierde.%s\n" "$c_dim" "$c_reset"
-  printf "  %sEste CLI lo instala por vos en %s/.credentials.json,%s\n" "$c_dim" "$4" "$c_reset"
+  printf "  %sEste CLI lo instala por ti en %s/.credentials.json,%s\n" "$c_dim" "$4" "$c_reset"
   printf "  %sque es EXACTAMENTE el fichero que comprueba despues.%s\n" "$c_dim" "$c_reset"
   printf "\n  %s1)%s generar un token nuevo    %s(lanza 'claude setup-token' y luego lo instalo)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
   printf "  %s2)%s pegar uno que ya tengas   %s(sk-ant-oat01-...; no gasta uno nuevo)%s\n" "$c_b" "$c_reset" "$c_dim" "$c_reset"
   read -r -p "  opcion [1/2]: " opcion
   if [ "${opcion:-1}" != 2 ]; then
-    printf "\n  %s-- 'claude setup-token' dentro de %s: abri la URL, autoriza, y COPIA el token --%s\n\n" "$c_dim" "$2" "$c_reset"
+    printf "\n  %s-- 'claude setup-token' dentro de %s: abre la URL, autoriza, y COPIA el token --%s\n\n" "$c_dim" "$2" "$c_reset"
     if es_host_native "$1"; then claude setup-token
     else docker exec -it --user "$3" "$2" claude setup-token; fi
-    printf "\n  %sEse token de arriba TODAVIA NO esta instalado.%s Pegalo aca y lo instalo.\n" "$c_warn" "$c_reset"
+    printf "\n  %sEse token de arriba TODAVIA NO esta instalado.%s Pégalo aquí y lo instalo.\n" "$c_warn" "$c_reset"
   fi
   printf "  Pega el token y ENTER %s(no se muestra)%s: " "$c_dim" "$c_reset"
   read -r -s token; printf '\n'

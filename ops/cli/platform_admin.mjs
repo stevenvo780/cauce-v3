@@ -178,7 +178,7 @@ async function confirm(request, input = process.stdin, output = process.stderr) 
   const prompt = createInterface({ input, output });
   try {
     const answer = await prompt.question(
-      `La empresa ${request.company} quedará ${request.state}. Escribí su id para confirmar: `);
+      `La empresa ${request.company} quedará ${request.state}. Escribe su id para confirmar: `);
     if (answer.trim() !== request.company) throw new UsageError('Confirmación rechazada; no se cambió nada.');
   } finally {
     prompt.close();
@@ -237,7 +237,7 @@ async function loadStore(module = 'db') {
     if (tsImport) return tsImport(source.href, import.meta.url);
   }
   if (existsSync(compiled)) return import(compiled.href);
-  throw new LocalError('falta tsx y la capa compilada del store; usá cauce platform contenedor');
+  throw new LocalError('falta tsx y la capa compilada del store; usa cauce platform contenedor');
 }
 
 function isDatabaseError(error) {

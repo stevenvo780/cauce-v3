@@ -50,7 +50,7 @@ export function parseImportArguments(argv, environment = process.env) {
     values.set(name, value);
     index += 1;
   }
-  if (flags.size !== 1) throw new UsageError('Elegí exactamente --dry-run o --apply.');
+  if (flags.size !== 1) throw new UsageError('Elige exactamente --dry-run o --apply.');
   const email = (values.get('email') ?? environment.CAUCE_IMPORT_OWNER_EMAIL ?? '').trim().toLowerCase();
   if (!EMAIL.test(email) || email.length > 254) throw new UsageError('Falta --email (o CAUCE_IMPORT_OWNER_EMAIL) o no es un correo válido.');
   const name = values.get('nombre');
@@ -146,7 +146,7 @@ async function load(source, compiled) {
     if (tsImport) return tsImport(new URL(source, root).href, import.meta.url);
   }
   if (existsSync(new URL(compiled, root))) return import(new URL(compiled, root).href);
-  throw new Error('falta tsx y la capa compilada del runtime; usá cauce platform contenedor');
+  throw new Error('falta tsx y la capa compilada del runtime; usa cauce platform contenedor');
 }
 
 /** The owner's hub always routes, reads and controls an imported tenant. The reverse edge keeps the inventory flags. */
