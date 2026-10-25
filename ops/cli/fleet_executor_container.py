@@ -5,6 +5,7 @@ import json
 import pathlib
 import re
 import subprocess
+import tempfile
 import time
 import uuid
 
@@ -134,15 +135,6 @@ def inspect_container(name: str) -> dict | None:
 def rebased(value: str, release: pathlib.Path, root: pathlib.Path) -> str:
     candidate = pathlib.PurePosixPath(value)
     return str(root / candidate.relative_to(release)) if candidate.is_relative_to(release) else value
-
-
-def rebased_policy(value, release: pathlib.Path, root: pathlib.Path):
-    if isinstance(value, dict):
-        return {(rebased(key, release, root) if isinstance(key, str) and key.startswith('/') else key):
-                rebased_policy(item, release, root) for key, item in value.items()}
-    if isinstance(value, list):
-        return [rebased_policy(item, release, root) for item in value]
-    return rebased(value, release, root) if isinstance(value, str) and value.startswith('/') else value
 
 
 def runtime_mounts(policy: dict, agent: dict, root: pathlib.Path | None = None, release: pathlib.Path | None = None) -> dict:
@@ -455,9 +447,11 @@ def identity_for(agent: dict, observed: dict) -> dict:
 
 
 def helper(agent: dict, identity: dict, action: str, *extra: str) -> bytes:
+    from fleet_executor_lifecycle import command
     python = str(path(agent['_placement']['python']))
-    return docker('exec', '-w', '/', '--user', '0', identity['container_id'],
-                  *isolated_python(python, f'{HELPER_DESTINATION}/{HELPER.name}', action, *extra))
+    arguments, source = command(python, action, *extra)
+    return checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', '0', identity['container_id'], *arguments],
+                           input_data=source, timeout=40)
 
 
 def user_identity(agent: dict, identity: dict) -> tuple[str, str]:
@@ -502,45 +496,63 @@ def start_container(policy: dict, raw_agent: dict, *, bootstrap: bool = True, op
     return start_existing_adapter(policy, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
 
 
+def assert_idle_command(observed: dict) -> None:
+    configuration = observed.get('Config') or {}
+    if configuration.get('Entrypoint') != ['/bin/sleep'] or configuration.get('Cmd') != ['infinity'] \
+            or configuration.get('User') != '0':
+        raise SafeFailure('preserved container does not have the approved idle command')
+
+
 def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool = True,
-                             bootstrap: bool = False, operation_id: str | None = None) -> dict:
-    from fleet_executor_image import previous_agent, validate_previous
-    from fleet_executor_rebind import bound_release
+                             bootstrap: bool = False, operation_id: str | None = None,
+                             allow_refresh: bool = True) -> dict:
+    from fleet_executor_image import recover_image, refresh_image, validate_previous
     agent = approve_agent(policy, raw_agent)
+    bundle = approved_bundle(policy, agent)
+    if allow_refresh:
+        recover_image(policy, agent, preserve_only=True)
     observed = inspect_container(agent['container_name'])
     if observed is None:
         raise SafeFailure('original container is unavailable for adapter restoration')
-    validate_previous(policy, agent, observed)
-    agent = previous_agent(agent, observed['Image'])
+    previous = validate_previous(policy, agent, observed)
     if not was_running:
-        return stop_running_adapter(agent, observed)
+        return stop_running_adapter(previous, observed)
+    restored = policy
+    approved = agent
+    if not allow_refresh:
+        agent = previous
+        restored = {**policy, 'containers': {**policy.get('containers', {}), agent['container_name']: agent['_placement']}}
+    try:
+        validate_container(restored, agent, observed)
+    except SafeFailure:
+        if not allow_refresh:
+            raise SafeFailure('original container needs the current approved release; preserved without another refresh') from None
+        replacement = refresh_image(policy, agent, observed,
+                                    restore_adapter={'bootstrap': bootstrap, 'operation_id': operation_id})
+        return replacement['_adapter_restored']
+    if not allow_refresh and previous['_placement']['image'] != approved['_placement']['image'] and bundle['executable_sha256'] is None:
+        bundle = {**bundle, 'executable_sha256': approved_executable_digest(policy, approved, bundle)}
+    restart = adapter_restart_state(restored, agent, observed)
+    if restart['adapter_running']:
+        operation_id = restart['adapter_operation_id']
+        namespace_proof({'CAUCE_BOOTSTRAP': '1' if restart['adapter_bootstrap'] else '0'}, bootstrap)
+        if restart['adapter_bundle_digest'] == bundle['digest']:
+            return process_proof(restored, agent, identity_for(agent, observed), bundle,
+                                 bootstrap=bootstrap, operation_id=operation_id)
+        stop_running_adapter(agent, observed)
     if not observed['State']['Running']:
+        assert_idle_command(observed)
         docker('start', observed['Id'])
         current = inspect_container(agent['container_name'])
         if current is None or current['Id'] != observed['Id'] or not current['State']['Running'] or current['State']['Pid'] <= 0:
             raise SafeFailure('original container is not observed running for adapter restoration')
         observed = current
-    restored = {**policy, 'containers': {**policy.get('containers', {}), agent['container_name']: agent['_placement']}}
-    previous = bound_release(observed, RELEASE_ROOT)
-    if previous is not None:
-        restored = rebased_policy(restored, RELEASE_ROOT, previous)
-        bundle = policy['bundles'][agent['harness_id']]
-        directory = rebased(bundle['directory'], RELEASE_ROOT, previous)
-        restored.update(_runtime_release=str(previous), bundles={**policy['bundles'], agent['harness_id']: {
-            **bundle, 'directory': directory,
-            'executable': rebased(bundle['executable'], RELEASE_ROOT, previous),
-            'argv': [rebased(value, RELEASE_ROOT, previous) if value.startswith('/') else value for value in bundle['argv']]}})
-    bundle = approved_bundle(restored, agent)
-    restart = adapter_restart_state(restored, agent, observed)
-    if not restart['adapter_running']:
-        return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
-    return process_proof(restored, agent, identity_for(agent, observed), bundle,
-                         bootstrap=bootstrap, operation_id=restart['adapter_operation_id'])
+    return start_existing_adapter(restored, agent, observed, bundle, bootstrap=bootstrap, operation_id=operation_id)
 
 
 def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None) -> dict:
     from fleet_executor_image import validate_previous
-    from fleet_executor_rebind import bound_release
+    from fleet_executor_lifecycle import command
     agent = validate_previous(policy, agent, observed, release)
     if not observed['State']['Running']:
         return {'adapter_running': False}
@@ -550,31 +562,69 @@ def adapter_restart_state(policy: dict, agent: dict, observed: dict, release: pa
         return {'adapter_running': False}
     except SafeFailure:
         pass
-    root = release or RELEASE_ROOT
-    previous = bound_release(observed, root)
-    bundle = policy['bundles'][agent['harness_id']]
-    if previous is not None:
-        bundle = {**bundle, 'directory': rebased(bundle['directory'], root, previous)}
-    process_proof(policy, agent, identity, bundle)
-    metadata = json.loads(docker('exec', '--user', '0', identity['container_id'], '/bin/cat',
-                                str(identity['control'] / 'cauce-v3-adapter.json')))
-    script = ('import json,pathlib,sys; p=pathlib.Path("/proc")/sys.argv[1]; '
-              'assert int((p/"stat").read_text().rsplit(")",1)[1].split()[19])==int(sys.argv[2]); '
-              'values=dict(v.split(b"=",1) for v in (p/"environ").read_bytes().split(b"\\0") if b"=" in v); '
-              'print(json.dumps({"bootstrap":values.get(b"CAUCE_BOOTSTRAP",b"").decode(),'
-              '"operation_id":values.get(b"CAUCE_FLEET_OPERATION_ID",b"").decode()}))')
-    namespace = json.loads(docker('exec', '--user', '0', identity['container_id'], agent['_placement']['python'],
-                                 '-I', '-B', '-c', script, str(metadata['pid']), str(metadata['starttime'])))
-    if namespace['bootstrap'] not in {'0', '1'}:
+    uid, gid = user_identity(agent, identity)
+    expected = {'alias': agent['runtime_key'], 'wireAlias': agent['alias'], 'tenantId': agent['tenant_id'],
+                'stateDirectory': agent['state_directory'], 'controlDirectory': str(identity['control']),
+                'containerId': identity['container_id'], 'containerGeneration': identity['generation'],
+                'runtimeUid': int(uid), 'runtimeGid': int(gid), 'phase': 'running'}
+    arguments, source = command(agent['_placement']['python'], json.dumps(expected), observe=True)
+    observation = json.loads(checked_command([DOCKER, 'exec', '-i', '-w', '/', '--user', '0', identity['container_id'],
+                                             *arguments], input_data=source, timeout=40))
+    environment = observation['environment']
+    if environment.get('CAUCE_BOOTSTRAP') not in {'0', '1'}:
         raise SafeFailure('original adapter credential namespace is invalid')
-    operation = namespace['operation_id']
+    operation = environment.get('CAUCE_FLEET_OPERATION_ID', '')
     try:
         if operation and (not isinstance(operation, str) or str(uuid.UUID(operation)) != operation):
             raise ValueError
     except ValueError:
         raise SafeFailure('original adapter operation identity is invalid') from None
-    return {'adapter_running': True, 'adapter_bootstrap': namespace['bootstrap'] == '1',
-            'adapter_operation_id': operation or None}
+    bootstrap = environment['CAUCE_BOOTSTRAP'] == '1'
+    namespace_proof(environment, bootstrap, operation or None)
+    sdk_environment_proof(policy, agent, environment, bootstrap, operation or None)
+    return {'adapter_running': True, 'adapter_bootstrap': bootstrap,
+            'adapter_operation_id': operation or None, 'adapter_bundle_digest': observation['metadata']['bundleDigest']}
+
+
+def executable_digest(raw: bytes) -> str:
+    value = raw.decode('ascii').strip()
+    if re.fullmatch(r'[0-9a-f]{64}', value) is None:
+        raise SafeFailure('approved executable measurement has no exact digest')
+    return value
+
+
+def approved_executable_digest(policy: dict, agent: dict, bundle: dict) -> str:
+    from fleet_executor_lifecycle import EXECUTABLE_DIGEST
+    from fleet_executor_pki import checked_file
+    image = agent['_placement']['image']
+    if not isinstance(image, str) or re.fullmatch(r'sha256:[0-9a-f]{64}', image) is None:
+        raise SafeFailure('executable measurement requires the current approved image digest')
+    with tempfile.TemporaryDirectory(prefix='executable-pin-', dir=policy['roots']['state']) as directory:
+        cidfile = pathlib.Path(directory) / 'container.id'
+        labels = {**expected_labels(policy, agent), 'cauce.fleet.probe': 'executable-pin'}
+        try:
+            return executable_digest(docker('run', '--rm', '--pull=never', '--cidfile', str(cidfile), '-w', '/',
+                '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                '--pids-limit', '16', '--memory', '256m', '--cpus', '1', '--user', '0',
+                *[value for key, item in labels.items() for value in ('--label', key + '=' + item)],
+                '--entrypoint', agent['_placement']['python'], image, '-I', '-B', '-c', EXECUTABLE_DIGEST, bundle['executable']))
+        finally:
+            if cidfile.exists():
+                identity = checked_file(cidfile).decode('ascii').strip()
+                if re.fullmatch(r'[0-9a-f]{64}', identity) is None:
+                    raise SafeFailure('approved executable probe has no exact container identity')
+                try:
+                    docker('rm', '-f', identity)
+                except SafeFailure:
+                    if docker('ps', '-aq', '--no-trunc', '--filter', 'id=' + identity).strip():
+                        raise SafeFailure('approved executable probe cleanup is unverified') from None
+
+
+def verify_executable(agent: dict, observed: dict, bundle: dict) -> None:
+    from fleet_executor_lifecycle import EXECUTABLE_DIGEST
+    if bundle['executable_sha256'] is not None and executable_digest(docker('exec', '-w', '/', '--user', '0', observed['Id'],
+            agent['_placement']['python'], '-I', '-B', '-c', EXECUTABLE_DIGEST, bundle['executable'])) != bundle['executable_sha256']:
+        raise SafeFailure('approved executable differs before adapter launch')
 
 
 def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: dict, *,
@@ -587,6 +637,7 @@ def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: di
         raise
     except SafeFailure:
         helper(agent, identity, 'stopped', *lifecycle_arguments(agent, identity))
+    verify_executable(agent, observed, bundle)
     helper(agent, identity, 'prepare-state', '--mount', agent['_placement']['state_root'], '--state', agent['state_directory'], '--uid', uid, '--gid', gid)
     workspace = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
     managed = agent['_placement'].get('ownership') != 'shared'
@@ -731,3 +782,8 @@ def discard_operation(policy: dict, raw_agent: dict, operation_id: str) -> None:
         if name in existing and all((json.loads(docker('volume', 'inspect', name))[0].get('Labels') or {}).get(key) == value
                                     for key, value in labels.items()):
             docker('volume', 'rm', name)
+
+
+def retire_replaced_container(policy: dict, previous: dict, receipt: dict | None = None, *, apply: bool = False) -> dict:
+    from fleet_executor_replacement import retire_replaced
+    return retire_replaced(policy, previous, receipt, apply=apply)

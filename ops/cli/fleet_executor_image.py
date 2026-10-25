@@ -143,8 +143,15 @@ def failure_details(error: BaseException) -> str:
     return type(error).__name__ + ': ' + diagnostic(message.encode())
 
 
-def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.Path | None = None) -> None:
-    from fleet_executor_container import docker, inspect_container, ownership_labels_match, restore_existing_adapter
+def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.Path | None = None, *,
+                     preserve_only: bool = False) -> None:
+    from fleet_executor_container import (
+        assert_idle_command,
+        docker,
+        inspect_container,
+        ownership_labels_match,
+        restore_existing_adapter,
+    )
     name = agent['container_name']
     backup = inspect_container(name + '-image-rollback')
     current = inspect_container(name)
@@ -161,18 +168,24 @@ def restore_previous(policy: dict, agent: dict, receipt: dict, release: pathlib.
                 docker('rm', '-f', current['Id'])
         docker('rename', backup['Id'], name)
     current = inspect_container(name)
+    if current is None or current['Id'] != receipt['previous_id']:
+        raise SafeFailure('preserved original container was not observed at its canonical name')
+    if preserve_only:
+        remember(policy, agent, {**receipt, 'status': 'preserved'})
+        return
     if receipt['was_running'] and not current['State']['Running']:
+        assert_idle_command(current)
         docker('start', current['Id'])
         current = inspect_container(name)
         if current is None or not current['State']['Running'] or current['State']['Pid'] <= 0:
             raise SafeFailure('restored original container is not observed running')
     if receipt.get('adapter_running'):
         restore_existing_adapter(policy, agent, bootstrap=receipt.get('adapter_bootstrap', False),
-                                 operation_id=receipt.get('adapter_operation_id'))
+                                 operation_id=receipt.get('adapter_operation_id'), allow_refresh=False)
     remember(policy, agent, {**receipt, 'status': 'rolled_back'})
 
 
-def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None) -> None:
+def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None, *, preserve_only: bool = False) -> None:
     from fleet_executor_container import docker, inspect_container, validate_container
     root = policy.get('roots', {}).get('state')
     if root is None:
@@ -195,7 +208,8 @@ def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None
         raise SafeFailure('image refresh recovery belongs to another runtime')
     if receipt['status'] == 'prepared':
         with image_guard(receipt['previous_id']):
-            restore_previous(policy, agent, receipt, release)
+            restore_previous(policy, agent, receipt, release,
+                             preserve_only=preserve_only or 'restore_adapter' in receipt)
     elif receipt['status'] == 'succeeded':
         backup = inspect_container(agent['container_name'] + '-image-rollback')
         if backup is not None:
@@ -207,7 +221,8 @@ def recover_image(policy: dict, agent: dict, release: pathlib.Path | None = None
                 docker('rm', backup['Id'])
 
 
-def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None) -> dict:
+def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Path | None = None, *,
+                  restore_adapter: dict | None = None) -> dict:
     from fleet_executor_container import (
         adapter_restart_state,
         create_container,
@@ -215,10 +230,13 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
         inspect_container,
         owned_volumes,
         runtime_mounts,
+        start_existing_adapter,
         stop_running_adapter,
         validate_container,
     )
+    from fleet_executor_runtime import approved_bundle, namespace_proof
     from provider_login_container import LoginFailure
+    bundle = approved_bundle(policy, agent)
     with image_guard(observed['Id']):
         current = inspect_container(agent['container_name'])
         if current is None or current['Id'] != observed['Id']:
@@ -244,6 +262,14 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
                    'container_name': agent['container_name'], 'previous_id': current['Id'], 'previous_image': current['Image'],
                    'image': image, 'was_running': current['State']['Running'], 'status': 'prepared'}
         receipt.update(adapter_restart_state(policy, previous, current, release))
+        if restore_adapter is not None:
+            if set(restore_adapter) != {'bootstrap', 'operation_id'} or type(restore_adapter['bootstrap']) is not bool:
+                raise SafeFailure('adapter restoration namespace is invalid')
+            restore_adapter = dict(restore_adapter)
+            if receipt.get('adapter_running'):
+                namespace_proof({'CAUCE_BOOTSTRAP': '1' if receipt['adapter_bootstrap'] else '0'}, restore_adapter['bootstrap'])
+                restore_adapter['operation_id'] = receipt['adapter_operation_id']
+            receipt['restore_adapter'] = restore_adapter
         remember(policy, agent, receipt)
         try:
             stop_running_adapter(previous, current)
@@ -254,20 +280,25 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
             # Keep the operation that created it: cancelling that operation must still find and discard it.
             replacement = create_container(policy, agent, binds,
                                            operation_id=(current['Config'].get('Labels') or {}).get('cauce.fleet.operation'))
-            if receipt['was_running']:
+            if receipt['was_running'] or restore_adapter is not None:
                 docker('start', replacement['Id'])
                 replacement = inspect_container(agent['container_name'])
                 if replacement is None or not replacement['State']['Running'] or replacement['State']['Pid'] <= 0:
                     raise SafeFailure('refreshed container is not observed running')
             validate_container(policy, agent, replacement, binds)
+            if restore_adapter is not None:
+                replacement['_adapter_restored'] = start_existing_adapter(policy, agent, replacement, bundle,
+                    bootstrap=restore_adapter['bootstrap'], operation_id=restore_adapter['operation_id'])
         except BaseException as error:
             receipt['failure_cause'] = failure_details(error)
             try:
-                restore_previous(policy, agent, receipt, release)
+                restore_previous(policy, agent, receipt, release, preserve_only=restore_adapter is not None)
             except BaseException as rollback_error:
                 raise SafeFailure('image refresh failed; original container preserved for recovery; cause=' + receipt['failure_cause']
                                   + '; rollback=' + failure_details(rollback_error)) from error
-            raise SafeFailure('image refresh failed; original container restored and volumes preserved; cause=' + receipt['failure_cause']) from error
-        remember(policy, agent, {**receipt, 'status': 'succeeded', 'container_id': replacement['Id']})
+            outcome = 'preserved for an approved adapter retry' if restore_adapter is not None else 'restored and volumes preserved'
+            raise SafeFailure('image refresh failed; original container ' + outcome + '; cause=' + receipt['failure_cause']) from error
+        remember(policy, agent, {**receipt, 'status': 'succeeded', 'container_id': replacement['Id'],
+                                **replacement.get('_adapter_restored', {})})
         docker('rm', current['Id'])
         return replacement

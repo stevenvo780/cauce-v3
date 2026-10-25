@@ -15,8 +15,10 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'container-runtime'))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
 import fleet_executor_container as container
+import fleet_executor_lifecycle as lifecycle
 import fleet_executor_rebind as rebind
 import fleet_executor_view
+from cauce_container_base import bundle_digest
 from fleet_executor_policy import SafeFailure, approve_agent
 
 OPS = pathlib.Path(__file__).resolve().parents[1]
@@ -34,7 +36,7 @@ class FakeDocker:
     def add(self, name, labels, mounts, *, running):
         self.counter += 1
         self.containers[name] = {'Id': f'{self.counter:064x}', 'Name': '/' + name, 'Image': IMAGE,
-            'Config': {'Labels': labels}, 'Mounts': mounts,
+            'Config': {'Labels': labels, 'Entrypoint': ['/bin/sleep'], 'Cmd': ['infinity'], 'User': '0'}, 'Mounts': mounts,
             'HostConfig': {'ReadonlyRootfs': True, 'Privileged': False, 'PidMode': '', 'NetworkMode': 'none',
                 'CapAdd': container.BASE_CAPABILITIES, 'CapDrop': ['ALL'], 'SecurityOpt': ['no-new-privileges'],
                 'Tmpfs': {'/run': 'rw,nosuid,noexec,size=16m'}, 'Memory': 0, 'MemorySwap': 0, 'NanoCpus': 0, 'PidsLimit': 128},
@@ -78,13 +80,16 @@ class FakeDocker:
             return b''
         if command == 'create':
             return self.create(arguments)
-        if '-c' in arguments and '/cauce/lifecycle/cauce-container-runtime.py' not in arguments:
+        current_helper = lifecycle.BOOTSTRAP in arguments
+        if '-c' in arguments and not current_helper and '/cauce/lifecycle/cauce-container-runtime.py' not in arguments:
             return b'clear\n'
         name = self.by_id(arguments[arguments.index('--user') + 2] if '--env' not in arguments else arguments[arguments.index('--env') + 2])
         if '/usr/bin/getent' in arguments:
             return b'nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n'
-        action = arguments[arguments.index('/cauce/lifecycle/cauce-container-runtime.py') + 1]
-        source = next(row['Source'] for row in self.containers[name]['Mounts'] if row['Destination'] == '/cauce/lifecycle')
+        action = arguments[arguments.index(lifecycle.BOOTSTRAP) + 2] if current_helper else \
+            arguments[arguments.index('/cauce/lifecycle/cauce-container-runtime.py') + 1]
+        source = str(lifecycle.SOURCE_ROOT) if current_helper else \
+            next(row['Source'] for row in self.containers[name]['Mounts'] if row['Destination'] == '/cauce/lifecycle')
         self.calls[-1] = ('helper', action, source)
         if action == 'stopped' and name in self.live:
             raise SafeFailure('runtime effect or observation failed')
@@ -136,7 +141,7 @@ class ReleaseFixture(unittest.TestCase):
             'roots': {'state': str(pathlib.Path(self.temporary.name))},
             'containers': {self.name: {'image': IMAGE, 'runtime_user': 'nobody', 'systemd_user': self.user,
                 'home_directory': '/nonexistent', 'state_root': '/tmp/cauce-state', 'python': '/usr/local/bin/python3.12'}},
-            'bundles': {'codex': {'directory': str(self.new / 'adapter'), 'digest': 'sha256:' + '0' * 64,
+            'bundles': {'codex': {'directory': str(self.new / 'adapter'), 'digest': bundle_digest(str(self.new / 'adapter')),
                 'executable': '/usr/local/bin/python3.12', 'executable_sha256': None, 'argv': []}}}
         self.agent = approve_agent(self.policy, {'tenant_id': 'Equipo_42', 'alias': 'shared_alias', 'runtime_key': 'physical-one',
             'harness_id': 'codex', 'host_id': 'fixture-host', 'runtime_mode': 'container', 'container_name': self.name,
@@ -195,6 +200,9 @@ class RebindEffectTests(ReleaseFixture):
             patch = mock.patch.object(module, 'docker', self.docker)
             patch.start()
             self.addCleanup(patch.stop)
+        commands = mock.patch.object(container, 'checked_command', lambda command, **_kwargs: self.docker(*command[1:]))
+        commands.start()
+        self.addCleanup(commands.stop)
         labels = container.expected_labels(self.policy, self.agent)
         self.docker.volumes[self.name + '-state'] = dict(labels)
 
@@ -204,7 +212,7 @@ class RebindEffectTests(ReleaseFixture):
             self.docker.live.add(self.name)
         return row
 
-    def test_running_live_container_is_stopped_by_its_own_helper_then_recreated_on_the_current_release(self):
+    def test_running_live_container_is_stopped_by_the_current_helper_then_recreated_on_the_current_release(self):
         before = self.old_container(live=True)
         with mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': True}):
             result = container.stop_container(self.policy, self.agent)
@@ -219,9 +227,9 @@ class RebindEffectTests(ReleaseFixture):
         self.assertEqual(sources[str(self.new / 'adapter')], str(self.new / 'adapter'))
         self.assertEqual(sources['/tmp/cauce-state'], self.name + '-state')
         helpers = [call for call in self.docker.calls if call[0] == 'helper']
-        self.assertEqual(helpers[:2], [('helper', 'stop', str(self.old / 'ops/container-runtime')),
-                                       ('helper', 'stopped', str(self.old / 'ops/container-runtime'))])
-        self.assertTrue(all(source == str(self.new / 'ops/container-runtime') for _, _, source in helpers[2:]))
+        self.assertEqual(helpers[:2], [('helper', 'stop', str(lifecycle.SOURCE_ROOT)),
+                                       ('helper', 'stopped', str(lifecycle.SOURCE_ROOT))])
+        self.assertTrue(all(source == str(lifecycle.SOURCE_ROOT) for _, _, source in helpers[2:]))
         self.assertFalse(any(call[:2] == ('volume', 'create') or call[:2] == ('volume', 'rm') for call in self.docker.calls))
 
     def test_failed_old_helper_stop_preserves_the_original_container(self):

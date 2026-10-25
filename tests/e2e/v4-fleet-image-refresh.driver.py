@@ -85,8 +85,10 @@ def run_case(directory: pathlib.Path, name: str, old_image: str, new_image: str,
         after = container.inspect_container(name)
         source = next(row['Source'] for row in after['Mounts'] if row['Destination'] == '/cauce/lifecycle')
         return {'runtime_verified': bool(proof.get('runtime_digest')), 'original_id': after['Id'] == stored['id'],
-                'old_release_retained': source == str(old_root / 'ops/container-runtime'),
-                'new_release_not_mounted': str(ROOT) not in source}
+                'current_release_mounted': source == str(ROOT / 'ops/container-runtime'),
+                'previous_release_available': old_root.is_dir(),
+                'state_volume_preserved': any(row.get('Name') == name + '-state' and row.get('Destination') == '/tmp/cauce-state'
+                                              for row in after['Mounts'])}
     bundle = ROOT / 'adapter' if scenario == 'setup-old' else directory / 'bundle'
     if not bundle.exists():
         bundle.mkdir()

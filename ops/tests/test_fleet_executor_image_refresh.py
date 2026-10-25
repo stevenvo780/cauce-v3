@@ -111,6 +111,9 @@ class ImageRefreshTests(ReleaseFixture):
             patch = mock.patch.object(module, 'docker', self.docker)
             patch.start()
             self.addCleanup(patch.stop)
+        commands = mock.patch.object(container, 'checked_command', lambda command, **_kwargs: self.docker(*command[1:]))
+        commands.start()
+        self.addCleanup(commands.stop)
         private_state = login.private_state
         state = mock.patch.object(login, 'private_state', lambda value, **_kwargs:
                                   private_state(str(self.base.parent / ('login-state' if value.startswith('/tmp/cauce-provider-runtime-')
@@ -547,25 +550,36 @@ class ImageRefreshTests(ReleaseFixture):
 
     def test_recovery_replays_prepared_receipt_with_or_without_a_candidate(self):
         for candidate in (False, True):
-            with self.subTest(candidate=candidate):
-                self.docker.containers.clear()
-                before = self.prepare_interruption(candidate=candidate)
-                image_refresh.recover_image(self.policy, self.agent)
-                self.assert_original(before)
-                self.assertEqual(json.loads(self.receipt().read_text())['status'], 'rolled_back')
-                self.docker.calls.clear()
-                image_refresh.recover_image(self.policy, self.agent)
-                self.assertEqual(self.mutating_calls(), [])
+            for preserve in (False, True):
+                with self.subTest(candidate=candidate, preserve=preserve):
+                    self.docker.containers.clear()
+                    before = self.prepare_interruption(candidate=candidate)
+                    self.docker.calls.clear()
+                    image_refresh.recover_image(self.policy, self.agent, preserve_only=preserve)
+                    if preserve:
+                        self.assertEqual(set(self.docker.containers), {self.name})
+                        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                        self.assertFalse(self.docker.containers[self.name]['State']['Running'])
+                        self.assertFalse(any(call[0] in {'start', 'helper'} for call in self.docker.calls))
+                    else:
+                        self.assert_original(before)
+                    self.assertEqual(json.loads(self.receipt().read_text())['status'], 'preserved' if preserve else 'rolled_back')
+                    self.docker.calls.clear()
+                    image_refresh.recover_image(self.policy, self.agent, preserve_only=preserve)
+                    self.assertEqual(self.mutating_calls(), [])
 
     def test_recovery_refuses_a_foreign_candidate(self):
-        self.prepare_interruption(candidate=True)
-        candidate = self.docker.containers[self.name]
-        candidate['Config']['Labels']['cauce.fleet.owner'] = 'foreign'
-        self.docker.calls.clear()
-        with self.assertRaises(SafeFailure):
-            image_refresh.recover_image(self.policy, self.agent)
-        self.assertEqual(self.docker.containers[self.name]['Id'], candidate['Id'])
-        self.assertEqual(self.mutating_calls(), [])
+        for preserve in (False, True):
+            with self.subTest(preserve=preserve):
+                self.docker.containers.clear()
+                self.prepare_interruption(candidate=True)
+                candidate = self.docker.containers[self.name]
+                candidate['Config']['Labels']['cauce.fleet.owner'] = 'foreign'
+                self.docker.calls.clear()
+                with self.assertRaises(SafeFailure):
+                    image_refresh.recover_image(self.policy, self.agent, preserve_only=preserve)
+                self.assertEqual(self.docker.containers[self.name]['Id'], candidate['Id'])
+                self.assertEqual(self.mutating_calls(), [])
 
     def test_completed_receipt_only_removes_the_validated_previous_backup(self):
         self.prepare_interruption(candidate=True, status='succeeded')
