@@ -25,6 +25,13 @@ import { reserveNamedLoopbackPorts } from './port-reservation.js';
 const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, '../..');
 export interface DynamicCliResult { code: number | null; stdout: string; stderr: string }
+export interface RemoteCliRelocation {
+  relayHost: string;
+  sourceHost: string;
+  sourceRelayPort: number;
+  destination: { container: string; host: string; home: string };
+  start(bundle: Record<string, unknown>, marker: string): Promise<void>;
+}
 
 export async function runDynamicCli(args: string[], sessionFile: string | undefined, input = '', detachWhen?: string): Promise<DynamicCliResult> {
   return await new Promise((resolveResult, reject) => {
@@ -109,7 +116,7 @@ function startProxy(gateway: string, relay: string, agent: Agent, paths: string[
   return { server, sockets };
 }
 
-export async function startDynamicTerminalFixture(options: { tui?: boolean } = {}) {
+export async function startDynamicTerminalFixture(options: { tui?: boolean; remoteRelocation?: RemoteCliRelocation } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'zz-canary-cli-terminal-'));
   const runtimeUid = process.getuid?.() === 0 ? 1000 : userInfo().uid;
   const runtimeGid = process.getuid?.() === 0 ? 1000 : userInfo().gid;
@@ -119,6 +126,7 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
   const runtimeUser = account.stdout.split(':')[0];
   if (!runtimeUser) throw new Error('the real PTY fixture requires a normal runtime account');
   const ports = await reserveNamedLoopbackPorts(['browser', 'agent', 'health', 'frontend']);
+  const agentPort = options.remoteRelocation?.sourceRelayPort ?? ports.ports.agent;
   let database: TestDatabase | undefined;
   let app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   let proxy: ReturnType<typeof startProxy> | undefined;
@@ -228,6 +236,11 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
         VALUES($1,$2,'cli-pty-e2e',true,$3,$4,$5,$6)`, [tenant, target, target === alias ? container : `${container}-op`, runtimeUser, home, join(home, '.cauce')]);
       await database.pool.query('INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,$4)', [tenant, alias, target, role]);
     }
+    if (options.remoteRelocation) {
+      await database.pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id)
+        SELECT $1,$1,company_id FROM agents WHERE tenant_id=$2 AND alias=$3`, [options.remoteRelocation.sourceHost, tenant, alias]);
+      await database.pool.query('UPDATE agents SET host_id=$1 WHERE tenant_id=$2 AND alias=$3', [options.remoteRelocation.sourceHost, tenant, alias]);
+    }
     await maintainConsoleUser(database.pool, { email, name: 'CLI PTY E2E operator', role: 'operator', tenant,
       alias: operator, updateOnly: false, activate: false }, await hashPassword(password, { cost: 1024, blockSize: 8, parallelism: 1 }));
     const relayToken = randomBytes(32).toString('base64url');
@@ -264,8 +277,8 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
     const frontend = `http://127.0.0.1:${String(ports.ports.frontend)}`;
     const relayEnv = {
       PATH: process.env.PATH, NODE_EXTRA_CA_CERTS: tls.cert_path, NODE_ENV: 'test',
-      CAUCE_TERMINAL_RELAY_BIND_HOST: '127.0.0.1', CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(ports.ports.browser),
-      CAUCE_TERMINAL_RELAY_AGENT_PORT: String(ports.ports.agent), CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(ports.ports.health),
+      CAUCE_TERMINAL_RELAY_BIND_HOST: options.remoteRelocation ? '0.0.0.0' : '127.0.0.1', CAUCE_TERMINAL_RELAY_BROWSER_PORT: String(ports.ports.browser),
+      CAUCE_TERMINAL_RELAY_AGENT_PORT: String(agentPort), CAUCE_TERMINAL_RELAY_HEALTH_PORT: String(ports.ports.health),
       CAUCE_TERMINAL_RELAY_TLS_CERT_FILE: tls.cert_path, CAUCE_TERMINAL_RELAY_TLS_KEY_FILE: tls.key_path,
       CAUCE_TERMINAL_RELAY_CLIENT_CA_FILE: tls.cert_path, CAUCE_TERMINAL_RELAY_CONSOLE_CN: 'localhost',
       CAUCE_TERMINAL_RELAY_AGENT_CA_FILE: tls.cert_path, CAUCE_TERMINAL_RELAY_AGENT_REGISTRY_FILE: agentRegistry,
@@ -285,7 +298,7 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
     const bundleConfiguration = { tenant_id: tenant, alias, container_id: container,
       generation: `g${suffix}`, image_id: `sha256:${'a'.repeat(64)}`, runtime_user: runtimeUser, runtime_uid: runtimeUid,
       runtime_gid: runtimeGid, home, shell_candidates: ['/bin/sh'], harness: options.tui ? 'codex' : 'shell', relay_host: '127.0.0.1',
-      relay_port: ports.ports.agent, relay_server_name: 'localhost', alias_key_hex: deriveAliasKey(ticketKey, tenant, alias).toString('hex'),
+      relay_port: agentPort, relay_server_name: 'localhost', alias_key_hex: deriveAliasKey(ticketKey, tenant, alias).toString('hex'),
       client_cert_pem: tls.cert.toString(), client_key_pem: tls.key.toString(), ca_pem: tls.cert.toString(), agent_version: 'cli-pty-e2e',
       ...(options.tui ? { tmux_tui: { path: '/usr/bin/tmux', socket: tmuxSocket } } : {}),
     };
@@ -312,21 +325,37 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
       relocate: async () => {
         if (!database) throw new Error('relocation requires the owned database');
         if (options.tui) throw new Error('relocation requires the shell fixture');
+        const marker = options.remoteRelocation ? await readFile(join(home, 'move-proof.txt'), 'utf8') : '';
         await stopChild(python);
-        const destination = `zz-canary-e2e-a9-cli-1025b-${suffix}`;
-        const destinationHome = join(directory, 'destination-home');
-        await mkdir(destinationHome, { mode: 0o700 });
-        if (process.getuid?.() === 0) await chown(destinationHome, runtimeUid, runtimeGid);
-        const host = `zz-canary-e2e-a9-cli-1025b-${suffix}`;
+        const destination = options.remoteRelocation?.destination.container ?? `zz-canary-e2e-a9-cli-1025b-${suffix}`;
+        const destinationHome = options.remoteRelocation?.destination.home ?? join(directory, 'destination-home');
+        if (!options.remoteRelocation) {
+          await mkdir(destinationHome, { mode: 0o700 });
+          if (process.getuid?.() === 0) await chown(destinationHome, runtimeUid, runtimeGid);
+        }
+        const host = options.remoteRelocation?.destination.host ?? `zz-canary-e2e-a9-cli-1025b-${suffix}`;
         await database.pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id)
           SELECT $1,$1,company_id FROM agents WHERE tenant_id=$2 AND alias=$3`, [host, tenant, alias]);
         await database.pool.query('UPDATE agents SET container_name=$1,host_id=$2,home_directory=$3 WHERE tenant_id=$4 AND alias=$5',
           [destination, host, destinationHome, tenant, alias]);
         const generation = `moved-${suffix}`;
-        const movedBundle = await privateFile('destination-bundle.json', JSON.stringify({
+        const movedConfiguration = {
           ...bundleConfiguration,
           container_id: destination, generation, home: destinationHome,
-        }));
+          ...(options.remoteRelocation ? { relay_host: options.remoteRelocation.relayHost } : {}),
+        };
+        if (options.remoteRelocation) {
+          await options.remoteRelocation.start(movedConfiguration, marker);
+          const deadline = Date.now() + 90_000;
+          while (registry.get(tenant, alias, Date.now())?.presence.container_id !== destination
+            || registry.get(tenant, alias, Date.now())?.presence.generation !== generation
+            || registry.state(tenant, alias, Date.now()) !== 'online') {
+            if (Date.now() >= deadline) throw new Error('remote PTY did not become online');
+            await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
+          }
+          return { container: destination, home: destinationHome, host, generation, sourceExited: python.exitCode !== null || python.signalCode !== null };
+        }
+        const movedBundle = await privateFile('destination-bundle.json', JSON.stringify(movedConfiguration));
         movedContainers.push(destination);
         const moved = spawn('docker', ['run', '--rm', '--name', destination, '--label', 'cauce.e2e.owner=e2e-a9-cli-1025b',
           '--network', 'host', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -343,7 +372,7 @@ export async function startDynamicTerminalFixture(options: { tui?: boolean } = {
           if (Date.now() >= deadline || moved.exitCode !== null) throw new Error('relocated PTY did not become online');
           await new Promise(resolveDelay => setTimeout(resolveDelay, 100));
         }
-        return { container: destination, home: destinationHome, host, generation };
+        return { container: destination, home: destinationHome, host, generation, sourceExited: python.exitCode !== null || python.signalCode !== null };
       },
       denyTarget: async () => {
         await writeFile(grants, JSON.stringify({ version: 1, grants: [] }), { mode: 0o600 });
