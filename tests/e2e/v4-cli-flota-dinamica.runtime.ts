@@ -100,6 +100,7 @@ export function createFleetCliRuntimeBundle(candidateSource: string, options: { 
         for (const destination of [join(stage, part), join(tree, part)]) {
           await rm(destination, { recursive: true, force: true });
           await cp(join(source, part), destination, { recursive: true });
+          await execute('chmod', ['-R', 'u=rwX,go=rX', destination]);
         }
       }
       for (const part of ['services/gateway/src', 'packages/store/src', 'packages/protocol/src', 'packages/adapter-sdk/descriptors']) {

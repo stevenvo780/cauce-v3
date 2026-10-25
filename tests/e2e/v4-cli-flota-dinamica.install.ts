@@ -5,6 +5,7 @@ import { chmod, mkdir, readFile, readdir, readlink, realpath, writeFile } from '
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import { build } from 'esbuild';
 
 const execute = promisify(execFile);
 const root = resolve(import.meta.dirname, '../..');
@@ -79,7 +80,7 @@ export class InstalledCliProcess {
         const output = this.stdout + this.stderr;
         if (matches(output, pattern)) { cleanup(); resolveOutput(output); }
       };
-      const closed = () => { cleanup(); reject(new Error('installed CLI closed before its expected output')); };
+      const closed = () => { cleanup(); reject(new Error(`installed CLI closed before its expected output: code=${String(this.child.exitCode)} stdout=${JSON.stringify(this.stdout)} stderr=${JSON.stringify(this.stderr)}`)); };
       const timer = setTimeout(() => { cleanup(); reject(new Error('installed CLI did not produce its expected output')); }, timeout);
       this.child.stdout.on('data', check);
       this.child.stderr.on('data', check);
@@ -152,6 +153,14 @@ async function saveRuntimeArchive(args: string[], archive: string, cwd: string, 
     try { await exited.catch(() => undefined); } finally { clearTimeout(kill); }
     throw error;
   } finally { clearTimeout(timer); clearTimeout(forced); }
+}
+
+// Same bundle as ops/scripts/build-cli-runtime.mjs, from the archived candidate: the release ships it beside the CLI.
+async function buildCandidateTerminalRuntime(root: string, source: string, outfile: string) {
+  await build({ absWorkingDir: source, entryPoints: ['ops/cli/terminal-runtime.mjs'], outfile, bundle: true, platform: 'node',
+    format: 'cjs', target: 'node22', external: ['bufferutil', 'utf-8-validate'], logLevel: 'error',
+    alias: { '@cauce/protocol': join(source, 'packages/protocol/src/index.ts') },
+    nodePaths: ['node_modules', 'packages/protocol/node_modules', 'services/terminal-relay/node_modules'].map(path => join(root, path)) });
 }
 
 async function exportCanonicalRuntime(source: string, release: string, revision: string, sourceDigest: string, taskOwner: string) {
@@ -243,6 +252,7 @@ export async function buildInstalledCli(directory: string, options: { owner?: st
   const sourceDigest = createHash('sha256').update(await readFile(sourceArchive)).digest('hex');
   const runtimeMetadata = await exportCanonicalRuntime(source, release, revision, sourceDigest, taskOwner);
   await execute('tar', ['--no-same-owner', '--delay-directory-restore', '--overwrite', '-xf', opsArchive, '-C', release]);
+  await buildCandidateTerminalRuntime(root, source, join(release, 'ops/cli/terminal-runtime.cjs'));
   await execute('tar', ['-cf', archive, '-C', release, '.']);
   const manifest: InstalledCliManifest = { revision,
     source_sha256: sourceDigest,

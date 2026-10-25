@@ -403,7 +403,7 @@ provision_pty_identity "$2" "$3" "$4" "$5" 0
       material.push({ path: destinationConfig, body: serverConfig + 'CONTAINER_RUNTIME_DIR=/run\nRELAY_SERVER_NAME=localhost\n', mode: 0o600 });
       const releaseOps = join(observed.releaseRoot, 'ops');
       material.push({ path: `${COMPUTER_RUNTIME.home}/.config/systemd/user/cauce-v3-pty@${alias}.service.d/10-release.conf`,
-        body: `[Service]\nEnvironment=CAUCE_PTY_OPS_ROOT=${releaseOps}\nEnvironment=CAUCE_PTY_PKI_ROOT=${destinationPkiRoot}\nEnvironment=CAUCE_FLEET_RUNTIME_STATE=${runtimeState}\n`,
+        body: `[Service]\nEnvironment=CAUCE_PTY_OPS_ROOT=${releaseOps}\nEnvironment=CAUCE_PTY_PKI_ROOT=${destinationPkiRoot}\nEnvironment=CAUCE_FLEET_RUNTIME_STATE=${runtimeState}\nEnvironment=CAUCE_PTY_FLEET_SHARED_TUI=1\n`,
         mode: 0o600 });
       const transferred = await active.onComputer(['python3', '-B', '-c', installTerminalMaterial], JSON.stringify(material));
       if (transferred.code !== 0) throw new Error('the fresh server PTY channel could not be installed in its owned computer profile');
