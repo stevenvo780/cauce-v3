@@ -5,27 +5,34 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 import { isaTenant, newTrustedPage, startBoundedAdapter, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { startAgentQuotaDocker } from './v4-cuotas-agent-real-browser.fixtures.js';
+import {
+  accreditedQuotaTransportRule, closeAccreditedQuota, maskedStatusScreenshot, secureStatusArtifacts,
+  verifyAccreditedQuota, verifyAccreditedQuotaExecution, type AccreditedQuota,
+} from './v4-agentes-s-accredited-quota.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   login, openRegistration, syntheticPerson, type V4Locator, type V4Page,
 } from './v4-console-real-browser.helpers.js';
 
-const task = 'e2e-a2-cobertura-w-1025';
+const task = 'a2x-filas-ejecutor-acreditado-1025';
 const driverSha256 = createHash('sha256').update(readFileSync(new URL(import.meta.url))).digest('hex');
+const helperSha256 = createHash('sha256').update(readFileSync(new URL('./v4-agentes-s-accredited-quota.ts', import.meta.url))).digest('hex');
 const run = randomUUID().slice(0, 8);
-const prefix = `zz-canary-${task}-${run}`;
+const prefix = `zz-canary-a2x-s-${run}`;
 const person = syntheticPerson('status', run);
 person.company = { name: prefix, slug: prefix };
 const directory = join(process.cwd(), '.delegados/v4/recibos', task, 's', run);
 const accountId = `${prefix}-subscription`;
-const hostId = `${prefix}-host`;
+const hostId = `${prefix}-status-host`;
 const states = ['down', 'blocked', 'delegating', 'receiving', 'thinking', 'idle', 'unprepared'] as const;
-const errors = new BrowserErrorLog(HERMETIC_INSTANCE_RULES);
+const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, accreditedQuotaTransportRule]);
 const checks: Record<string, unknown> = {};
 const screenshots: string[] = [];
 const originalApprovals = process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE;
 const originalDescriptors = process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
+let physical: AccreditedQuota | undefined;
 let page: V4Page | undefined;
 let tenant = '';
 let payer = '';
@@ -55,7 +62,7 @@ async function capture(label: string, target = browser(), focus?: V4Locator): Pr
     if (focus) await focus.evaluate(element => { element.scrollIntoView({ block: 'start' }); });
     await target.evaluate(async () => { await document.fonts.ready; await new Promise<void>(done => { requestAnimationFrame(() => { requestAnimationFrame(() => { done(); }); }); }); });
     const file = `${label}-${device}.png`;
-    await target.screenshot({ path: join(directory, file) });
+    await maskedStatusScreenshot(target, join(directory, file));
     screenshots.push(file);
   }
   await target.setViewportSize({ width: 1440, height: 900 });
@@ -164,6 +171,9 @@ beforeAll(async () => {
   await pool().query(`INSERT INTO alias_routing_ceiling(tenant_id,alias,account_id,account_payer_tenant,created_by_tenant)
     VALUES($1,$2,$3,$4,$1)`, [tenant, alias(), accountId, payer]);
   await pool().query('INSERT INTO agent_account_bindings(tenant_id,agent_alias,account_id,enabled) VALUES($1,$2,$3,true)', [tenant, alias(), accountId]);
+  physical = await startAgentQuotaDocker(active(), person.email, join(directory, 'physical-quota'));
+  process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE = physical.approvalsFile;
+  process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = physical.descriptors;
 }, 600_000);
 
 beforeEach(async () => {
@@ -177,25 +187,34 @@ afterEach(async context => {
   if (context.task.result?.state !== 'fail' || !page) return;
   const stem = `failure-${String(failure++)}`;
   const body = await browser().locator('body').innerText().catch(() => 'Body unavailable');
-  await writeFile(join(directory, `${stem}.txt`), body.replaceAll(person.password, '[REDACTED]'));
-  const target = browser() as unknown as { screenshot(options: { path: string; timeout: number }): Promise<Buffer> };
-  await target.screenshot({ path: join(directory, `${stem}.png`), timeout: 10_000 }).catch(() => undefined);
+  await writeFile(join(directory, `${stem}.txt`), body.replaceAll(person.password, '[REDACTED]'), { mode: 0o600 });
+  await maskedStatusScreenshot(browser(), join(directory, `${stem}.png`), 10_000).catch(() => undefined);
 });
 
 afterAll(async () => {
   try {
-    await writeFile(join(directory, 'receipt.json'), JSON.stringify({ task, run, driverSha256, tenant, mocks: false, checks, screenshots,
-      unexpectedErrors: errors.unexpected, ignoredErrors: Object.fromEntries(errors.ignored) }, null, 2) + '\n');
+    if (physical) await closeAccreditedQuota(physical, record);
   } finally {
     if (originalApprovals === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE;
     else process.env.CAUCE_HARNESS_DESCRIPTOR_APPROVALS_FILE = originalApprovals;
     if (originalDescriptors === undefined) delete process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY;
     else process.env.CAUCE_HARNESS_DESCRIPTOR_DIRECTORY = originalDescriptors;
-    await fixture?.close();
+    try {
+      await writeFile(join(directory, 'receipt.json'), JSON.stringify({ task, run, driverSha256, helperSha256, tenant, mocks: false, checks, screenshots,
+        unexpectedErrors: errors.unexpected, ignoredErrors: Object.fromEntries(errors.ignored) }, null, 2) + '\n', { mode: 0o600 });
+    } finally {
+      try { await fixture?.close(); }
+      finally { await secureStatusArtifacts(directory); }
+    }
   }
 }, 180_000);
 
 describe.sequential('Estado del agente con Chromium, gateway y PostgreSQL reales', () => {
+  function physicalCoverage() {
+    if (!physical) throw new Error('accredited quota runtime unavailable');
+    return { fixture: active(), runtime: physical, page: browser(), record,
+      capture: (label: string, focus: V4Locator) => capture(label, browser(), focus) };
+  }
   it('S01 contrasta siete estados de lectura contra la actividad persistida del laboratorio', async () => {
     const expected = {
       down: 'No está conectado: no va a tomar mensajes nuevos.', blocked: 'Tomó un mensaje y no avanza.',
@@ -393,6 +412,16 @@ describe.sequential('Estado del agente con Chromium, gateway y PostgreSQL reales
       transportErrorAndLoading: 'not injected; not certified', complete: false });
     errors.assertClean();
   }, 180_000);
+
+  it('S06 consulta cuota físicamente y contrasta la medición, el transporte y la sesión caducada', async () => {
+    await verifyAccreditedQuota(physicalCoverage());
+    errors.assertClean();
+  }, 180_000);
+
+  it('S06 acredita ejecución, fallo físico y recuperación del lector en Docker', async () => {
+    await verifyAccreditedQuotaExecution(physicalCoverage());
+    errors.assertClean();
+  }, 150_000);
 
   it('S01 ejecuta un adaptador real con lease, mensaje, respuesta y ACK final persistidos', async () => {
     await prepareChatRuntimeIdentity(active(), isaTenant);

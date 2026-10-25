@@ -1,18 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hashPassword } from '../../services/gateway/src/password.js';
 import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { verifyAccreditedSettingsLifecycle } from './v4-agentes-settings-accredited.lifecycle.js';
 import {
   apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   login, openRegistration, syntheticPerson, type V4Locator, type V4Page,
 } from './v4-console-real-browser.helpers.js';
 
-const task = 'e2e-a2-cobertura-w-1025';
+const task = 'a2x-filas-ejecutor-acreditado-1025';
 const run = randomUUID().slice(0, 8);
-const prefix = `zz-canary-${task}-${run}`;
+const prefix = `zz-canary-a2xs-base-${run}`;
 const evidenceDirectory = join(process.cwd(), '.delegados/v4/recibos', task, 'settings');
 const person = { ...syntheticPerson('settings-coverage', run), name: prefix, email: `${prefix}@example.test`,
   company: { name: prefix, slug: prefix } };
@@ -73,9 +74,11 @@ async function step(label: string, action: () => Promise<void>): Promise<void> {
     const body = await browser().locator('body').innerText().catch(() => 'Page unavailable');
     const raw = cause instanceof Error ? cause.stack ?? cause.message : String(cause);
     const safe = [person.password, reader.password].reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), `${raw}\n\n${body}`);
+    const screenshot = { path: join(evidenceDirectory, `${stem}.png`), fullPage: true, mask: [browser().locator('input[type="password"]')] };
     await Promise.allSettled([
       writeFile(join(evidenceDirectory, `${stem}.txt`), safe, { mode: 0o600 }),
-      browser().screenshot({ path: join(evidenceDirectory, `${stem}.png`), fullPage: true }),
+      browser().screenshot(screenshot)
+        .then(() => chmod(join(evidenceDirectory, `${stem}.png`), 0o600)),
     ]);
     throw cause;
   }
@@ -85,7 +88,9 @@ async function capture(label: string, target = browser(), focus?: V4Locator): Pr
   for (const [device, width, height] of [['desktop', 1440, 900], ['mobile', 390, 844]] as const) {
     await target.setViewportSize({ width, height });
     if (focus) await focus.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
-    await target.screenshot({ path: join(evidenceDirectory, `${run}-${label}-${device}.png`), fullPage: true });
+    const options = { path: join(evidenceDirectory, `${run}-${label}-${device}.png`), fullPage: true,
+      mask: [target.locator('input[type="password"]')] };
+    await target.screenshot(options); await chmod(options.path, 0o600);
     (receipt.screenshots as string[]).push(`${run}-${label}-${device}.png`);
   }
   await target.setViewportSize({ width: 1440, height: 900 });
@@ -468,7 +473,7 @@ describe.sequential('Cobertura pendiente de ajustes de agentes con Chromium y Po
     });
   }, 180_000);
 
-  it('E03 R02 T07 F07 A13: muestra placement fijo, guía legado, retiro conservado y bloqueos reales', async () => {
+  it('E03 R02 A13: muestra placement fijo, guía legado, retiro conservado y bloqueos sin ejecutor', async () => {
     await step('legacy-retired-guards', async () => {
       await openSheet(fixedAlias, 'Ajustes');
       await sheet().getByText('La computadora se cambia desde «Ejecución» mediante una operación de flota. Esa operación no copia los datos del espacio.', { exact: true }).waitFor();
@@ -516,12 +521,6 @@ describe.sequential('Cobertura pendiente de ajustes de agentes con Chromium y Po
       await guide.getByRole('button', { name: 'Cerrar', exact: true }).first().click();
       await guide.waitFor({ state: 'hidden' });
       await openAgents();
-      await browser().getByLabel('Buscar agente o grupo', { exact: true }).fill(fixedAlias);
-      await browser().getByRole('button', { name: `Acciones de ${ref(fixedAlias)}`, exact: true }).click();
-      const retire = browser().getByRole('menuitem', { name: 'Retirar agente', exact: true });
-      await expect.poll(() => retire.evaluate(element => element.getAttribute('aria-disabled'))).toBe('true');
-      await capture('T07-retiro-sin-ejecutor');
-      await openAgents();
       await browser().getByRole('button', { name: `Restaurar o revisar ${ref(retiredAlias)}`, exact: true }).click();
       await sheet().getByRole('note').filter({ hasText: 'su historial se conserva' }).waitFor();
       expect((await storedAgent(retiredAlias)).lifecycle_state).toBe('retired');
@@ -533,10 +532,8 @@ describe.sequential('Cobertura pendiente de ajustes de agentes con Chromium y Po
       await retiredSteps.getByText('Hecho', { exact: true }).waitFor();
       expect(await retiredGuide.getByRole('button', { name: 'Previsualizar operación', exact: true }).isDisabled()).toBe(true);
       await capture('R01-guia-purga');
-      await retiredGuide.getByRole('link', { name: 'Descargar copia', exact: true }).click();
-      await expect.poll(() => browser().url()).toContain(`/messages/${encodeURIComponent(tenant)}/${retiredAlias}?view=context`);
-      record('E03-R01-R02-T07-F07-R04', { legacyRuntime: (await storedAgent(legacyAlias)).runtime_key,
-        retired: await storedAgent(retiredAlias), physicalOperationExecuted: false, backupLinkNavigatesToContext: true, backupDownloaded: false });
+      record('E03-R01-R02-unconfigured', { legacyRuntime: (await storedAgent(legacyAlias)).runtime_key,
+        retired: await storedAgent(retiredAlias), executorUnconfigured: true });
     });
   }, 180_000);
 
@@ -682,4 +679,7 @@ describe.sequential('Cobertura pendiente de ajustes de agentes con Chromium y Po
     });
   }, 180_000);
 
+  it('T07 F07 R04 R05 R06: retira, restaura, descarga y contrasta purgas físicas con ejecutor acreditado', async () => {
+    await verifyAccreditedSettingsLifecycle();
+  }, 1_200_000);
 });

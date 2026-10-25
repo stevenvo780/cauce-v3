@@ -105,7 +105,9 @@ def release_readable(tree: pathlib.Path) -> None:
         if item.is_symlink():
             continue
         mode = item.stat().st_mode
-        item.chmod(mode | (0o055 if item.is_dir() or mode & 0o111 else 0o044))
+        readable_mode = mode | (0o055 if item.is_dir() or mode & 0o111 else 0o044)
+        if readable_mode != mode:
+            item.chmod(readable_mode)
 
 
 class DockerAgentQuotaTest(AgentQuotaPacketTest):
@@ -115,9 +117,7 @@ class DockerAgentQuotaTest(AgentQuotaPacketTest):
             capture_output=True, text=True, timeout=plazo(15))
         if probe.returncode:
             raise unittest.SkipTest('disposable local Python image is unavailable')
-        # The executor bind-mounts this checkout's ops/cli and ops/container-runtime as its release and the reader
-        # runs there as the container's non-root user. A packaged release is go=rX; a clone made under a restrictive
-        # umask (027 in the release-gate clone) is not, and the reader could not even open its own script.
+        # The non-root reader requires packaged release go=rX modes on the mounted checkout.
         for tree in ('cli', 'container-runtime'):
             release_readable(fixtures.OPS / tree)
         cls.image_tag = 'zz-canary-agent-quota-' + uuid.uuid4().hex[:12]
