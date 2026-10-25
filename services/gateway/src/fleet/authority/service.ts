@@ -4,6 +4,7 @@ import { assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, Flee
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { runAuthorityCommand, type AuthorityCommand } from './command.js';
 import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema,
+  TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema,
   FleetAuthorityError, type AuthorityRequest, type AuthorityScope } from './schemas.js';
 
 const Agent = z.object({ tenant_id: z.string(), alias: z.string(), runtime_key: z.string(), host_id: z.string() }).loose();
@@ -52,12 +53,12 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
   const reserved = (await client.query(`SELECT 1 FROM fleet_runtime_identities
     WHERE runtime_key=$1 AND tenant_id=$2 AND alias=$3`, [agent.runtime_key, agent.tenant_id, agent.alias])).rowCount;
   if (reserved !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
-  if (request.action === 'issue') {
+  if (request.action === 'issue' || request.action === 'issue_terminal') {
     if (slice.placement_role === 'source') throw new FleetAuthorityError('AUTHORITY_REVOKED');
     await assertFleetRelocationSourceBarrier(client, row);
     if (row.status !== 'running' || row.cancel_requested || row.target.resource !== 'agent'
         || !['create', 'update', 'start', 'restore'].includes(row.kind)) throw new FleetAuthorityError('AUTHORITY_REVOKED');
-    const admitted = request.phase === 'normal';
+    const admitted = request.action === 'issue_terminal' || request.phase === 'normal';
     if (admitted ? !row.steps.some(step => step.name === 'verify' && step.status === 'succeeded')
         || !row.steps.some(step => step.name === 'admission' && step.status === 'running')
       : !row.steps.some(step => ['credentials', 'runtime'].includes(step.name) && step.status === 'running')) {
@@ -73,6 +74,12 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
         AND ${providerAccountConsentSql('account', 'agent.tenant_id')}
       FOR SHARE OF agent,tenant,room,account`, [agent.runtime_key, agent.tenant_id, agent.alias, host])).rowCount;
     if (consent !== 1) throw new FleetAuthorityError('AUTHORITY_REVOKED');
+  } else if (request.action === 'revoke_terminal' || request.action === 'terminal_receipt') {
+    if (row.target.resource !== 'agent' || !['create', 'update', 'start', 'restore'].includes(row.kind)
+        || slice.placement_role === 'source' || !(row.status === 'cancelling' || row.cancel_requested
+          || row.steps.some(step => step.name === 'admission' && step.status === 'running'))) {
+      throw new FleetAuthorityError('AUTHORITY_REVOKED');
+    }
   } else if (request.action === 'revoke' && !(row.status === 'cancelling' || row.cancel_requested
       || row.steps.some(step => step.name === 'revoke' && step.status === 'running')
       || row.kind === 'purge' && row.steps.some(step => step.name === 'revoke' && step.status === 'succeeded')
@@ -99,7 +106,8 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     const parsed = AuthorityRequestSchema.safeParse(input);
     if (!parsed.success) throw new FleetAuthorityError('INVALID_REQUEST');
     const request = parsed.data;
-    if (request.action === 'issue' && createHash('sha256').update(request.csr_pem).digest('hex') !== request.csr_sha256) {
+    if ((request.action === 'issue' || request.action === 'issue_terminal' || request.action === 'terminal_receipt')
+        && createHash('sha256').update(request.csr_pem).digest('hex') !== request.csr_sha256) {
       throw new FleetAuthorityError('INVALID_REQUEST');
     }
     const { agent, row } = await authority(client, request.scope, request, host);
@@ -112,7 +120,14 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
     agent: { tenant_id: agent.tenant_id, alias: agent.alias } };
     const output = await runAuthorityCommand(options.command, packet);
     await authority(client, scope, request, host);
-    const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output) : AuthorityInventorySchema.parse(output);
+    const result = request.action === 'issue' ? AuthorityIssuedSchema.parse(output)
+      : request.action === 'issue_terminal' ? TerminalGrantSchema.parse(output)
+      : request.action === 'terminal_receipt' ? TerminalReceiptSchema.parse(output)
+      : request.action === 'revoke_terminal' ? TerminalRevokedSchema.parse(output) : AuthorityInventorySchema.parse(output);
+    if (request.action === 'revoke_terminal' && ('grant_id' in result
+        && (result.grant_id !== request.grant_id || result.certificate_sha256 !== request.certificate_sha256))) {
+      throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
+    }
     if (request.action === 'issue' && 'token' in result
         && createHash('sha256').update(result.token).digest('hex') !== result.token_sha256) throw new FleetAuthorityError('AUTHORITY_UNAVAILABLE');
     if (request.action === 'verify_absent' || request.action === 'revoke') {

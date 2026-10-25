@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import pathlib
@@ -132,7 +134,7 @@ def target(agent, record):
 
 
 def policy_paths(policy):
-    if not {'version', 'state_root', 'registries', 'signer'} <= set(policy) <= {'version', 'state_root', 'registries', 'signer', 'base_registry_owner_uid'} \
+    if not {'version', 'state_root', 'registries', 'signer'} <= set(policy) <= {'version', 'state_root', 'registries', 'signer', 'base_registry_owner_uid', 'terminal'} \
             or policy['version'] != 1 \
             or set(policy['registries']) not in (set(AUTHORITIES), {*AUTHORITIES, 'pty'}) \
             or set(policy['signer']) != {'certificate', 'key', 'certificate_sha256', 'key_sha256'}:
@@ -177,7 +179,10 @@ def validate_packet(packet):
             raise AuthorityError('invalid terminal preservation authority')
         required.add('preserve_terminal')
     fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
-              'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'}}
+              'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
+              'issue_terminal': {'csr_pem', 'csr_sha256', 'idempotency_key'},
+              'terminal_receipt': {'csr_pem', 'csr_sha256', 'idempotency_key'},
+              'revoke_terminal': {'grant_id', 'certificate_sha256'}}
     if packet['action'] not in fields or set(packet) != required | fields[packet['action']]:
         raise AuthorityError('authority request is invalid')
 
@@ -328,9 +333,10 @@ def readiness(policy):
     return {'ready': True}
 
 
-def issue_certificate(policy, packet):
+def issue_certificate(policy, packet, *, terminal=False):
     csr = packet['csr_pem']
-    if packet['phase'] not in {'bootstrap', 'normal'} or not isinstance(csr, str) or len(csr.encode()) > 16384 \
+    phase = 'normal' if terminal else packet['phase']
+    if phase not in {'bootstrap', 'normal'} or not isinstance(csr, str) or len(csr.encode()) > 16384 \
             or re.fullmatch(r'-----BEGIN CERTIFICATE REQUEST-----\n[A-Za-z0-9+/=\n]+-----END CERTIFICATE REQUEST-----\n', csr) is None \
             or digest(csr.encode()) != packet['csr_sha256'] or re.fullmatch(r'[A-Za-z0-9_-]{8,128}', packet['idempotency_key']) is None:
         raise AuthorityError('authority issuance request is invalid')
@@ -339,11 +345,11 @@ def issue_certificate(policy, packet):
     text = openssl('req', '-text', '-noout', input_data=csr.encode())
     bits = re.search(rb'Public-Key: \((\d+) bit\)', text)
     extensions = text.split(b'Requested Extensions:', 1)[-1].split(b'Signature Algorithm:', 1)[0].strip()
-    if subject != ('subject=CN=agent-' + packet['scope']['runtime_key']).encode() or extensions \
+    if subject != ('subject=CN=' + ('pty-' if terminal else 'agent-') + packet['scope']['runtime_key']).encode() or extensions \
             or b'Public Key Algorithm: rsaEncryption' not in text or bits is None or not 2048 <= int(bits[1]) <= 4096:
         raise AuthorityError('authority CSR is outside its canonical runtime')
     ca_pem, key_pem, expiry = read_signer(policy)
-    days = min(1 if packet['phase'] == 'bootstrap' else 730,
+    days = min(1 if phase == 'bootstrap' else 730,
                (expiry - datetime.datetime.now(datetime.UTC)).days)
     if days < 1:
         raise AuthorityError('authority signer validity is too short')
@@ -361,10 +367,118 @@ def issue_certificate(policy, packet):
                               '-set_serial', '0x' + secrets.token_hex(16), '-days', str(days), '-extfile', extension).decode()
     expires = openssl('x509', '-enddate', '-noout', input_data=certificate.encode()).decode().strip()
     leaf_expiry = datetime.datetime.strptime(expires, 'notAfter=%b %d %H:%M:%S %Y GMT').replace(tzinfo=datetime.UTC)
-    token = secrets.token_hex(32)
-    return {'certificate_pem': certificate, 'ca_pem': ca_pem.decode(), 'token': token,
-            'certificate_sha256': digest(ssl.PEM_cert_to_DER_cert(certificate)), 'token_sha256': digest(token.encode()),
-            'expires_at': min(expiry, leaf_expiry).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    result = {'certificate_pem': certificate, 'ca_pem': ca_pem.decode(),
+              'certificate_sha256': digest(ssl.PEM_cert_to_DER_cert(certificate)),
+              'expires_at': min(expiry, leaf_expiry).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    if not terminal:
+        token = secrets.token_hex(32)
+        result.update(token=token, token_sha256=digest(token.encode()))
+    return result
+
+
+def terminal_configuration(policy):
+    value = policy.get('terminal')
+    required = {'master_file', 'master_sha256', 'relay_host', 'relay_port'}
+    if not isinstance(value, dict) or not required <= set(value) <= required | {'relay_server_name'} \
+            or not isinstance(value.get('master_sha256'), str) or HEX.fullmatch(value['master_sha256']) is None \
+            or not isinstance(value.get('relay_host'), str) \
+            or re.fullmatch(r'(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])', value['relay_host']) is None \
+            or type(value.get('relay_port')) is not int or not 1 <= value['relay_port'] <= 65535 \
+            or 'relay_server_name' in value and (not isinstance(value['relay_server_name'], str)
+                or re.fullmatch(r'[A-Za-z0-9.:-]+', value['relay_server_name']) is None) \
+            or 'pty' not in policy['registries']:
+        raise AuthorityError('terminal authority is unavailable')
+    raw, _ = read(path(value['master_file']), private=True)
+    if digest(raw) != value['master_sha256']:
+        raise AuthorityError('terminal authority master pin changed')
+    if len(raw) == 32:
+        master = raw
+    else:
+        encoded = raw.decode('utf-8').strip()
+        master = bytes.fromhex(encoded) if re.fullmatch(r'[A-Fa-f0-9]{64}', encoded) else base64.b64decode(encoded, validate=True)
+    if len(master) != 32:
+        raise AuthorityError('terminal authority master is invalid')
+    return value, master
+
+
+def terminal_record(packet, receipt):
+    return {**packet['agent'], 'fingerprint_sha256': receipt['certificate_sha256'].upper(), 'expires_at': receipt['expires_at']}
+
+
+def terminal_effect(policy, packet, rows, journal, journal_path, journal_stat):
+    configuration, master = terminal_configuration(policy)
+    current = next((row for row in rows if row[0] == 'pty'), None)
+    if current is None:
+        raise AuthorityError('terminal authority is unavailable')
+    _, document, original, _ = current
+    registry_owners = frozenset({os.geteuid(), original.st_uid})
+    existing = journal.get('terminal')
+    configuration_pin = digest(json.dumps(configuration, sort_keys=True).encode())
+    if existing is not None and existing.get('configuration_sha256') != configuration_pin:
+        raise AuthorityError('terminal authority configuration changed')
+    if packet['action'] == 'terminal_receipt':
+        if not isinstance(packet['csr_pem'], str) or len(packet['csr_pem'].encode()) > 16384 \
+                or digest(packet['csr_pem'].encode()) != packet['csr_sha256'] \
+                or not isinstance(packet['idempotency_key'], str) \
+                or re.fullmatch(r'[A-Za-z0-9_-]{8,128}', packet['idempotency_key']) is None:
+            raise AuthorityError('terminal receipt request is invalid')
+        if existing is None:
+            return {'grant': None, 'registered': False, 'revoked': False}
+        request_hash = digest(json.dumps({**packet, 'action': 'issue_terminal'}, sort_keys=True, separators=(',', ':')).encode())
+        if existing.get('request_hash') != request_hash:
+            raise AuthorityError('terminal receipt request differs from its issued grant')
+        record = terminal_record(packet, existing['receipt'])
+        related = [row for row in document['agents'] if row['fingerprint_sha256'].lower() == existing['receipt']['certificate_sha256']]
+        if related and related != [record] or existing.get('revocation_complete') and related:
+            raise AuthorityError('terminal receipt registry identity changed')
+        return {'grant': existing['receipt'], 'registered': related == [record], 'revoked': existing.get('revoked') is True}
+    if packet['action'] == 'issue_terminal':
+        ca_pem, _, _ = read_signer(policy)
+        if journal.get('revoked') or existing is not None and existing.get('revoked'):
+            raise AuthorityError('revoked terminal grant cannot issue')
+        request_hash = digest(json.dumps(packet, sort_keys=True, separators=(',', ':')).encode())
+        if existing is None:
+            receipt = issue_certificate(policy, packet, terminal=True)
+            prk = hmac.new(b'cauce-v3/pty-ticket/v1', master, hashlib.sha256).digest()
+            info = ('pty:' + packet['agent']['tenant_id'] + ':' + packet['agent']['alias']).encode()
+            receipt.update(alias_key_hex=hmac.new(prk, info + b'\x01', hashlib.sha256).hexdigest(),
+                           grant_id=request_hash, relay_host=configuration['relay_host'], relay_port=configuration['relay_port'])
+            if 'relay_server_name' in configuration:
+                receipt['relay_server_name'] = configuration['relay_server_name']
+            existing = {'request_hash': request_hash, 'receipt': receipt, 'configuration_sha256': configuration_pin}
+            journal['terminal'] = existing
+            publish(journal_path, journal, journal_stat)
+        elif existing.get('request_hash') != request_hash:
+            raise AuthorityError('terminal grant replay changed its request')
+        receipt = existing['receipt']
+        if receipt['ca_pem'] != ca_pem.decode():
+            raise AuthorityError('terminal grant signer changed')
+        record = terminal_record(packet, receipt)
+        related = [row for row in document['agents'] if row['fingerprint_sha256'].lower() == receipt['certificate_sha256']]
+        if related and related != [record] or existing.get('registered') and related != [record]:
+            raise AuthorityError('terminal grant registry changed')
+        if not related:
+            location = pathlib.Path(policy['registries']['pty'])
+            publish(location, {**document, 'agents': [*document['agents'], record]}, original, registry_owners)
+        existing['registered'] = True
+        publish(journal_path, journal, read(journal_path, private=True)[1])
+        return receipt
+    if any(not isinstance(packet.get(key), str) or HEX.fullmatch(packet[key]) is None
+           for key in ('grant_id', 'certificate_sha256')) \
+            or existing is None or existing['receipt'].get('grant_id') != packet.get('grant_id') \
+            or existing['receipt'].get('certificate_sha256') != packet.get('certificate_sha256'):
+        raise AuthorityError('terminal revocation is outside its issued grant')
+    record = terminal_record(packet, existing['receipt'])
+    related = [row for row in document['agents'] if row['fingerprint_sha256'].lower() == packet['certificate_sha256']]
+    if related and related != [record] or existing.get('revocation_complete') and related:
+        raise AuthorityError('terminal grant changed after revocation')
+    existing['revoked'] = True
+    publish(journal_path, journal, read(journal_path, private=True)[1])
+    if related:
+        publish(path(policy['registries']['pty']), {**document, 'agents': [row for row in document['agents'] if row != record]}, original, registry_owners)
+    existing['revocation_complete'] = True
+    publish(journal_path, journal, read(journal_path, private=True)[1])
+    return {'revoked': True, 'grant_id': packet['grant_id'], 'certificate_sha256': packet['certificate_sha256']}
 
 
 def expired(row) -> bool:
@@ -452,6 +566,8 @@ def perform(policy, packet):
         rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
                          packet.get('preserve_terminal', False))
         action = packet['action']
+        if action in {'issue_terminal', 'revoke_terminal', 'terminal_receipt'}:
+            return terminal_effect(policy, packet, rows, journal, journal_path, journal_stat)
         if action == 'inventory':
             return observation(rows)
         if action == 'issue':

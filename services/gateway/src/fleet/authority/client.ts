@@ -2,6 +2,7 @@ import { request } from 'node:http';
 import { z } from 'zod';
 import { assertAuthoritySocket, type AuthoritySocketPolicy } from './socket.js';
 import { AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema, FleetAuthorityError,
+  TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema, type TerminalIssue, type TerminalRevocation,
   type AuthorityScope, type AuthorityIssue, type AuthorityInventoryPins, type AuthorityRequest } from './schemas.js';
 
 const ErrorSchema = z.object({ error: z.enum(['INVALID_REQUEST', 'AUTHORITY_REVOKED', 'AUTHORITY_UNAVAILABLE']) }).strict();
@@ -37,6 +38,15 @@ export class FleetAuthorityClient {
   async inventory(scope: AuthorityScope) { return AuthorityInventorySchema.parse(await this.invoke({ action: 'inventory', scope })); }
   async verifyAbsent(scope: AuthorityScope) { return AuthorityInventorySchema.parse(await this.invoke({ action: 'verify_absent', scope })); }
   async issue(scope: AuthorityScope, request: AuthorityIssue) { return AuthorityIssuedSchema.parse(await this.invoke({ action: 'issue', scope, ...request })); }
+  async issueTerminal(scope: AuthorityScope, request: TerminalIssue) {
+    return TerminalGrantSchema.parse(await this.invoke({ action: 'issue_terminal', scope, ...request }));
+  }
+  async revokeTerminal(scope: AuthorityScope, request: TerminalRevocation) {
+    return TerminalRevokedSchema.parse(await this.invoke({ action: 'revoke_terminal', scope, ...request }));
+  }
+  async terminalReceipt(scope: AuthorityScope, request: TerminalIssue) {
+    return TerminalReceiptSchema.parse(await this.invoke({ action: 'terminal_receipt', scope, ...request }));
+  }
   async revoke(scope: AuthorityScope, expected_inventory: AuthorityInventoryPins) {
     return AuthorityInventorySchema.parse(await this.invoke({ action: 'revoke', scope, expected_inventory }));
   }

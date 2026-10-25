@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import importlib.util
 import json
 import os
@@ -76,6 +78,145 @@ class FleetAuthorityIssuerTest(unittest.TestCase):
 
     def lookup(self, certificate_sha256):
         return issuer.perform(self.policy, {'action': 'resolve_runtime_authority', 'certificate_sha256': certificate_sha256})
+
+    def terminal_request(self):
+        location = self.root / 'pty_agent_identities.json'
+        location.write_text(json.dumps({'version': 1, 'agents': []}))
+        location.chmod(0o600)
+        self.registries['pty'] = str(location)
+        master = self.root / 'terminal-master'
+        master.write_text('ab' * 32 + '\n')
+        master.chmod(0o600)
+        self.policy['terminal'] = {'master_file': str(master), 'master_sha256': issuer.digest(master.read_bytes()),
+                                   'relay_host': 'relay.example.test', 'relay_port': 8445, 'relay_server_name': 'relay.example.test'}
+        self.execute('req', '-new', '-key', self.key, '-subj', '/CN=pty-runtime-a', '-out', self.csr)
+        csr = self.csr.read_text()
+        return self.packet('issue_terminal', csr_pem=csr, csr_sha256=issuer.digest(csr.encode()), idempotency_key='terminal-fixture')
+
+    def test_terminal_grant_has_canonical_identity_hkdf_and_no_bus_token(self):
+        packet = self.terminal_request()
+        lookup = {**packet, 'action': 'terminal_receipt'}
+        before = {str(name): name.read_bytes() for name in self.root.rglob('*') if name.is_file()}
+        self.assertEqual(issuer.perform(self.policy, lookup), {'grant': None, 'registered': False, 'revoked': False})
+        self.assertEqual({name: pathlib.Path(name).read_bytes() for name in before}, before)
+        grant = issuer.perform(self.policy, packet)
+        self.assertEqual(issuer.perform(self.policy, lookup), {'grant': grant, 'registered': True, 'revoked': False})
+        self.assertEqual(issuer.perform(self.policy, packet), grant)
+        self.assertNotIn('token', grant)
+        self.assertEqual(grant['relay_host'], 'relay.example.test')
+        self.assertEqual(grant['grant_id'], issuer.digest(json.dumps(packet, sort_keys=True, separators=(',', ':')).encode()))
+        prk = hmac.new(b'cauce-v3/pty-ticket/v1', bytes.fromhex('ab' * 32), hashlib.sha256).digest()
+        self.assertEqual(grant['alias_key_hex'], hmac.new(prk, b'pty:Steven:agent_a\x01', hashlib.sha256).hexdigest())
+        subject = issuer.openssl('x509', '-subject', '-nameopt', 'RFC2253', '-noout', input_data=grant['certificate_pem'].encode())
+        self.assertEqual(subject.strip(), b'subject=CN=pty-runtime-a')
+        self.assertIn(b'URI:urn:cauce:runtime:runtime-a', issuer.openssl('x509', '-ext', 'subjectAltName', '-noout', input_data=grant['certificate_pem'].encode()))
+        for name in issuer.AUTHORITIES:
+            self.assertEqual(json.loads(pathlib.Path(self.registries[name]).read_text())['identities'], [])
+        self.assertEqual(json.loads(pathlib.Path(self.registries['pty']).read_text())['agents'],
+                         [{**self.agent, 'fingerprint_sha256': grant['certificate_sha256'].upper(), 'expires_at': grant['expires_at']}])
+
+    def test_terminal_master_encodings_and_pins_are_exact(self):
+        self.terminal_request()
+        for raw in (bytes.fromhex('ab' * 32), ('ab' * 32 + '\n').encode(), base64.b64encode(bytes.fromhex('ab' * 32))):
+            master = pathlib.Path(self.policy['terminal']['master_file'])
+            master.write_bytes(raw)
+            self.policy['terminal']['master_sha256'] = issuer.digest(raw)
+            self.assertEqual(issuer.terminal_configuration(self.policy)[1], bytes.fromhex('ab' * 32))
+        self.policy['terminal']['master_sha256'] = '0' * 64
+        with self.assertRaises(issuer.AuthorityError):
+            issuer.terminal_configuration(self.policy)
+        self.policy['terminal']['master_sha256'] = issuer.digest(master.read_bytes())
+        master.chmod(0o640)
+        with self.assertRaises(issuer.AuthorityError):
+            issuer.terminal_configuration(self.policy)
+
+    def test_terminal_issuance_requires_configuration_and_canonical_csr(self):
+        packet = self.terminal_request()
+        for subject, extra in (('/CN=agent-runtime-a', []), ('/CN=pty-foreign', []),
+                               ('/CN=pty-runtime-a', ['-addext', 'subjectAltName=DNS:foreign'])):
+            self.execute('req', '-new', '-key', self.key, '-subj', subject, '-out', self.csr, *extra)
+            csr = self.csr.read_text()
+            with self.assertRaises(issuer.AuthorityError):
+                issuer.perform(self.policy, {**packet, 'csr_pem': csr, 'csr_sha256': issuer.digest(csr.encode())})
+        self.policy.pop('terminal')
+        with self.assertRaisesRegex(issuer.AuthorityError, 'terminal authority is unavailable'):
+            issuer.perform(self.policy, packet)
+
+    def test_terminal_revocation_is_scoped_resumable_and_preserves_existing_identity(self):
+        packet = self.terminal_request()
+        location = pathlib.Path(self.registries['pty'])
+        prior = {**self.agent, 'fingerprint_sha256': 'F' * 64, 'expires_at': '2099-01-01T00:00:00Z'}
+        foreign = {**self.agent, 'tenant_id': 'Miguel', 'fingerprint_sha256': 'E' * 64, 'expires_at': prior['expires_at']}
+        location.write_text(json.dumps({'version': 1, 'agents': [prior, foreign]}))
+        grant = issuer.perform(self.policy, packet)
+        revoke = self.packet('revoke_terminal', grant_id=grant['grant_id'], certificate_sha256=grant['certificate_sha256'])
+        for change in ({'certificate_sha256': 'f' * 64}, {'grant_id': '0' * 64},
+                       {'scope': {**self.scope, 'operation_id': '71000000-0000-4000-8000-000000000002'}},
+                       {'agent': {**self.agent, 'tenant_id': 'Miguel'}}):
+            with self.assertRaises(issuer.AuthorityError):
+                issuer.perform(self.policy, {**revoke, **change})
+        publish = issuer.publish
+        def interrupted(filename, *args):
+            if filename == location:
+                raise OSError('owned registry publication interrupted')
+            return publish(filename, *args)
+        with mock.patch.object(issuer, 'publish', side_effect=interrupted), self.assertRaises(OSError):
+            issuer.perform(self.policy, revoke)
+        self.assertEqual(issuer.perform(self.policy, revoke), {'revoked': True, 'grant_id': grant['grant_id'],
+                                                           'certificate_sha256': grant['certificate_sha256']})
+        self.assertEqual(issuer.perform(self.policy, revoke)['revoked'], True)
+        self.assertEqual(json.loads(location.read_text())['agents'], [prior, foreign])
+        self.assertEqual(issuer.perform(self.policy, {**packet, 'action': 'terminal_receipt'}),
+                         {'grant': grant, 'registered': False, 'revoked': True})
+        self.assertEqual(json.loads(location.read_text())['agents'], [prior, foreign])
+        with self.assertRaises(issuer.AuthorityError):
+            issuer.perform(self.policy, packet)
+
+    def test_terminal_lost_response_reuses_receipt_and_rejects_changed_request(self):
+        packet = self.terminal_request()
+        location = pathlib.Path(self.registries['pty'])
+        publish = issuer.publish
+        def interrupted(filename, *args):
+            if filename == location:
+                raise OSError('owned registry publication interrupted')
+            return publish(filename, *args)
+        with mock.patch.object(issuer, 'publish', side_effect=interrupted), self.assertRaises(OSError):
+            issuer.perform(self.policy, packet)
+        before = json.loads(next(self.state.glob('*.json')).read_text())['terminal']['receipt']
+        self.assertEqual(issuer.perform(self.policy, {**packet, 'action': 'terminal_receipt'}),
+                         {'grant': before, 'registered': False, 'revoked': False})
+        for changed in ({'csr_pem': 'changed', 'csr_sha256': issuer.digest(b'changed')}, {'idempotency_key': 'changed-terminal-key'}):
+            with self.subTest(changed=tuple(changed)), self.assertRaises(issuer.AuthorityError):
+                issuer.perform(self.policy, {**packet, 'action': 'terminal_receipt', **changed})
+        for change in ({'runtime_key': 'foreign-runtime'}, {'operation_id': '71000000-0000-4000-8000-000000000002'}):
+            self.assertEqual(issuer.perform(self.policy, {**packet, 'action': 'terminal_receipt', 'scope': {**self.scope, **change}}),
+                             {'grant': None, 'registered': False, 'revoked': False})
+        self.assertEqual(issuer.perform(self.policy, packet), before)
+        with self.assertRaises(issuer.AuthorityError):
+            issuer.perform(self.policy, {**packet, 'idempotency_key': 'changed-terminal-key'})
+
+    def test_terminal_executor_client_validates_certificate_claim_and_exact_response(self):
+        sys.path.insert(0, str(SOURCE.parent))
+        import fleet_executor_authority as client
+        packet = self.terminal_request()
+        grant = issuer.perform(self.policy, packet)
+        policy = {'authority': {}, 'roots': {'state': str(self.state)}}
+        with mock.patch.object(client, 'scope_for', return_value=self.scope), \
+                mock.patch.object(client, 'public_ca', return_value=(self.ca / 'ca.crt').read_bytes()), \
+                mock.patch.object(client, 'call', return_value=grant) as call:
+            self.assertEqual(client.issue_terminal(policy, {}, {'runtime_key': 'runtime-a'}, packet['csr_pem'], packet['idempotency_key']), grant)
+            call.assert_called_once_with({}, self.scope, 'issue_terminal', csr_pem=packet['csr_pem'],
+                                         csr_sha256=packet['csr_sha256'], idempotency_key=packet['idempotency_key'])
+            for changed in ({'alias_key_hex': 'foreign'}, {'certificate_sha256': 'f' * 64}, {'token': 'f' * 64},
+                            {'relay_port': True}, {'expires_at': '2099-01-01T00:00:00Z'}):
+                call.return_value = {**grant, **changed}
+                with self.subTest(changed=tuple(changed)), self.assertRaises(client.SafeFailure):
+                    client.issue_terminal(policy, {}, {'runtime_key': 'runtime-a'}, packet['csr_pem'], packet['idempotency_key'])
+            call.return_value = {'revoked': True, 'grant_id': grant['grant_id'], 'certificate_sha256': grant['certificate_sha256']}
+            self.assertTrue(client.revoke_terminal(policy, {}, self.agent, grant['grant_id'], grant['certificate_sha256'])['revoked'])
+            call.return_value = {**call.return_value, 'grant_id': 'f' * 64}
+            with self.assertRaises(client.SafeFailure):
+                client.revoke_terminal(policy, {}, self.agent, grant['grant_id'], grant['certificate_sha256'])
 
     def journal(self):
         return self.state / (issuer.digest(json.dumps(self.scope, sort_keys=True).encode()) + '.json')

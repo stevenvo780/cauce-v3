@@ -36,11 +36,25 @@ export const AuthorityIssuedSchema = z.object({
   token: AuthorityDigestSchema, certificate_sha256: AuthorityDigestSchema, token_sha256: AuthorityDigestSchema,
   expires_at: z.iso.datetime(),
 }).strict();
+export const TerminalIssueSchema = AuthorityIssueSchema.omit({ phase: true });
+export const TerminalGrantSchema = z.object({
+  certificate_pem: z.string().min(1).max(16_384), ca_pem: z.string().min(1).max(16_384),
+  certificate_sha256: AuthorityDigestSchema, expires_at: z.iso.datetime(), alias_key_hex: AuthorityDigestSchema,
+  grant_id: AuthorityDigestSchema, relay_host: z.string().regex(/^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/u),
+  relay_port: z.number().int().min(1).max(65_535), relay_server_name: z.string().regex(/^[A-Za-z0-9.:-]+$/u).optional(),
+}).strict();
+export const TerminalRevocationSchema = z.object({ grant_id: AuthorityDigestSchema,
+  certificate_sha256: AuthorityDigestSchema }).strict();
+export const TerminalRevokedSchema = TerminalRevocationSchema.extend({ revoked: z.literal(true) });
+export const TerminalReceiptSchema = z.object({ grant: TerminalGrantSchema.nullable(), registered: z.boolean(), revoked: z.boolean() }).strict();
 export const AuthorityRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('inventory'), scope: AuthorityScopeSchema }).strict(),
   z.object({ action: z.literal('verify_absent'), scope: AuthorityScopeSchema }).strict(),
   z.object({ action: z.literal('revoke'), scope: AuthorityScopeSchema, expected_inventory: AuthorityInventoryPinsSchema }).strict(),
   AuthorityIssueSchema.extend({ action: z.literal('issue'), scope: AuthorityScopeSchema }),
+  TerminalIssueSchema.extend({ action: z.literal('issue_terminal'), scope: AuthorityScopeSchema }),
+  TerminalIssueSchema.extend({ action: z.literal('terminal_receipt'), scope: AuthorityScopeSchema }),
+  TerminalRevocationSchema.extend({ action: z.literal('revoke_terminal'), scope: AuthorityScopeSchema }),
 ]);
 export type AuthorityScope = z.infer<typeof AuthorityScopeSchema>;
 export type AuthorityRequest = z.infer<typeof AuthorityRequestSchema>;
@@ -48,6 +62,8 @@ export type AuthorityIssue = z.infer<typeof AuthorityIssueSchema>;
 export type AuthorityInventory = z.infer<typeof AuthorityInventorySchema>;
 export type AuthorityIssued = z.infer<typeof AuthorityIssuedSchema>;
 export type AuthorityInventoryPins = z.infer<typeof AuthorityInventoryPinsSchema>;
+export type TerminalIssue = z.infer<typeof TerminalIssueSchema>;
+export type TerminalRevocation = z.infer<typeof TerminalRevocationSchema>;
 export class FleetAuthorityError extends Error {
   constructor(readonly code: 'INVALID_REQUEST' | 'AUTHORITY_REVOKED' | 'AUTHORITY_UNAVAILABLE') {
     super(`Fleet authority ${code}`); this.name = 'FleetAuthorityError';

@@ -14,7 +14,7 @@ import { FleetAuthorityClient } from './client.js';
 import { createFleetAuthorityService } from './service.js';
 import { startFleetAuthoritySocket } from './socket.js';
 import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
-import { AuthorityInventorySchema, type AuthorityScope } from './schemas.js';
+import { AuthorityInventorySchema, type AuthorityScope, type TerminalIssue } from './schemas.js';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -94,6 +94,68 @@ afterEach(async () => {
 });
 afterAll(async () => { if (database) { await database.pool.end(); await database.container.stop(); } });
 describe('central fleet authority through a private host socket and PostgreSQL', () => {
+  async function terminalRequest(): Promise<TerminalIssue> {
+    const filename = join(directory, 'policy.json');
+    const policy = JSON.parse(await readFile(filename, 'utf8')) as { registries: Record<string, string>; terminal?: unknown };
+    policy.registries.pty = join(directory, 'pty_agent_identities.json');
+    await writeFile(policy.registries.pty, JSON.stringify({ version: 1, agents: [] }), { mode: 0o600 });
+    const master = join(directory, 'terminal-master'); await writeFile(master, 'ab'.repeat(32), { mode: 0o600 });
+    policy.terminal = { master_file: master, master_sha256: hash(await readFile(master)), relay_host: 'relay.example.test', relay_port: 8445 };
+    await writeFile(filename, JSON.stringify(policy), { mode: 0o600 }); command.policy_sha256 = hash(await readFile(filename));
+    await execute('/usr/bin/openssl', ['req', '-new', '-key', join(directory, 'worker.key'), '-subj', '/CN=pty-runtime-a',
+      '-out', join(directory, 'terminal.csr')]);
+    const csr_pem = await readFile(join(directory, 'terminal.csr'), 'utf8');
+    return { csr_pem, csr_sha256: hash(csr_pem), idempotency_key: 'terminal-grant-fixture' };
+  }
+  async function startAdmission() {
+    await repo.completeStep(claim, 'credentials', { certificate_fingerprint: 'a'.repeat(64) });
+    for (const [name, evidence] of [
+      ['runtime', { runtime_digest: 'a'.repeat(64) }], ['authenticate', { provider_verified: true }],
+      ['profile', { profile_verified: true }],
+      ['verify', { provider_verified: true, profile_verified: true, bootstrap_verified: true, roundtrip_verified: true }],
+    ] as const) { await repo.startStep(claim, name); await repo.completeStep(claim, name, evidence); }
+    await repo.startStep(claim, 'admission');
+  }
+  it('issues only a fenced terminal grant during admission and revokes only its own receipt', async () => {
+    const terminal = await terminalRequest();
+    await expect(client.issueTerminal(scope, terminal)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await startAdmission();
+    expect(await client.terminalReceipt(scope, terminal)).toEqual({ grant: null, registered: false, revoked: false });
+    const granted = await client.issueTerminal(scope, terminal);
+    expect(await client.terminalReceipt(scope, terminal)).toEqual({ grant: granted, registered: true, revoked: false });
+    expect(new X509Certificate(granted.certificate_pem).subject).toBe('CN=pty-runtime-a');
+    expect(granted.alias_key_hex).toMatch(/^[a-f0-9]{64}$/u); expect(granted).not.toHaveProperty('token');
+    expect(await client.issueTerminal(scope, terminal)).toEqual(granted);
+    await expect(client.revokeTerminal(scope, { grant_id: granted.grant_id, certificate_sha256: 'f'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'AUTHORITY_UNAVAILABLE' });
+    expect(await client.revokeTerminal(scope, { grant_id: granted.grant_id, certificate_sha256: granted.certificate_sha256 }))
+      .toMatchObject({ revoked: true, grant_id: granted.grant_id });
+    expect((await client.inventory(scope)).authorities.find(row => row.id === 'pty')?.matching_records).toEqual([]);
+    expect(await client.terminalReceipt(scope, terminal)).toEqual({ grant: granted, registered: false, revoked: true });
+    await expect(client.issueTerminal(scope, terminal)).rejects.toMatchObject({ code: 'AUTHORITY_UNAVAILABLE' });
+  });
+  it('rejects stale terminal claims, altered scope, CSR, consent and replay without rotating the grant', async () => {
+    const terminal = await terminalRequest(); await startAdmission();
+    const granted = await client.issueTerminal(scope, terminal);
+    for (const change of [{ host_id: 'foreign-host' }, { runtime_key: 'foreign-runtime' }, { scope_sha256: 'f'.repeat(64) },
+      { claim_epoch: scope.claim_epoch + 1 }, { prepared_revision: scope.prepared_revision + 1 }, { claim_token: '71000000-0000-4000-8000-000000000099' }]) {
+      await expect(client.issueTerminal({ ...scope, ...change }, terminal)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    }
+    await expect(client.issueTerminal(scope, { ...terminal, csr_sha256: 'f'.repeat(64) }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(client.issueTerminal(scope, { ...terminal, idempotency_key: 'another-terminal-request' }))
+      .rejects.toMatchObject({ code: 'AUTHORITY_UNAVAILABLE' });
+    await pool.query("UPDATE fleet_operations SET lease_expires_at=now()-interval '1 second' WHERE id=$1", [scope.operation_id]);
+    await expect(client.issueTerminal(scope, terminal)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const replacement = await repo.claim('terminal-replacement', 'host-a'); if (!replacement) throw new Error('Replacement absent');
+    const updated = { ...scope, claim_epoch: replacement.epoch, worker_id: replacement.worker_id, claim_token: replacement.claim_token };
+    expect(await client.issueTerminal(updated, terminal)).toEqual(granted);
+    expect((await client.terminalReceipt(updated, terminal)).grant).toEqual(granted);
+    await pool.query('UPDATE console_users SET active=false WHERE id=$1', [humanId]);
+    await expect(client.issueTerminal(updated, terminal)).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    await expect(client.revokeTerminal(updated, { grant_id: granted.grant_id, certificate_sha256: granted.certificate_sha256 }))
+      .rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+  });
   it('keeps the terminal registry during non-purge operations and rejects caller preservation flags', async () => {
     const policy = join(directory, 'policy.json');
     const document = JSON.parse(await readFile(policy, 'utf8')) as { registries: Record<string, string> };

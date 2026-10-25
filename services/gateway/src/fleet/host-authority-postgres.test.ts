@@ -127,6 +127,50 @@ describe('signed authority for self-service enrolled computers', () => {
     const inventory = (await post({ action: 'inventory', scope })).body;
     expect(inventory).not.toContain(issued.token); expect(inventory).not.toContain('PRIVATE KEY');
   });
+  it('grants and rolls back only its terminal certificate through the enrolled host signature', async () => {
+    const filename = join(directory, 'policy.json');
+    const policy = JSON.parse(await readFile(filename, 'utf8')) as { registries: Record<string, string>; terminal?: unknown };
+    policy.registries.pty = join(directory, 'pty_agent_identities.json');
+    await writeFile(policy.registries.pty, JSON.stringify({ version: 1, agents: [] }), { mode: 0o600 });
+    const master = join(directory, 'terminal-master'); await writeFile(master, 'ab'.repeat(32), { mode: 0o600 });
+    policy.terminal = { master_file: master, master_sha256: hash(await readFile(master)), relay_host: 'relay.example.test', relay_port: 8445 };
+    await writeFile(filename, JSON.stringify(policy), { mode: 0o600 }); command.policy_sha256 = hash(await readFile(filename));
+    await execute('/usr/bin/openssl', ['req', '-new', '-key', join(directory, 'worker.key'), '-subj', '/CN=pty-signed-worker',
+      '-out', join(directory, 'terminal.csr')]);
+    const csr_pem = await readFile(join(directory, 'terminal.csr'), 'utf8');
+    const terminal = { action: 'issue_terminal', scope, csr_pem, csr_sha256: hash(csr_pem), idempotency_key: 'signed-terminal-fixture' };
+    expect((await post(terminal)).statusCode).toBe(409);
+    await repo.completeStep(claim, 'credentials', { certificate_fingerprint: 'a'.repeat(64) });
+    for (const [name, evidence] of [
+      ['runtime', { runtime_digest: 'a'.repeat(64) }], ['authenticate', { provider_verified: true }],
+      ['profile', { profile_verified: true }],
+      ['verify', { provider_verified: true, profile_verified: true, bootstrap_verified: true, roundtrip_verified: true }],
+    ] as const) { await repo.startStep(claim, name); await repo.completeStep(claim, name, evidence); }
+    await repo.startStep(claim, 'admission');
+    const response = await post(terminal); expect(response.statusCode).toBe(200);
+    const granted = response.json<{ certificate_pem: string; grant_id: string; certificate_sha256: string }>();
+    expect(new X509Certificate(granted.certificate_pem).subject).toBe('CN=pty-signed-worker');
+    expect(response.json()).not.toHaveProperty('token'); expect((await post(terminal)).json()).toEqual(response.json());
+    for (const changed of [{ scope: { ...scope, claim_epoch: scope.claim_epoch + 1 } },
+      { scope: { ...scope, scope_sha256: 'f'.repeat(64) } }, { csr_sha256: 'f'.repeat(64) }]) {
+      expect((await post({ ...terminal, ...changed })).statusCode).toBeGreaterThanOrEqual(400);
+    }
+    const foreign = await channelCompany(pool, 'terminal-foreign'); const otherHost = await channelHost(pool, foreign);
+    const rejected = await app.inject({ method: 'POST', url: `/v3/fleet/hosts/${otherHost.host_id}/authority`,
+      payload: packet({ ...terminal, scope: { ...scope, host_id: otherHost.host_id } }, otherHost) });
+    expect(rejected.statusCode).toBe(409); expect(rejected.json()).toEqual({ error: 'AUTHORITY_REVOKED' });
+    const revoke = { action: 'revoke_terminal', scope, grant_id: granted.grant_id, certificate_sha256: granted.certificate_sha256 };
+    expect((await post({ ...revoke, grant_id: 'f'.repeat(64) })).statusCode).toBeGreaterThanOrEqual(400);
+    const operation = await repo.get(company.hub.id, 'owner', scope.operation_id, `console:${company.user.id}`);
+    await repo.cancel(company.hub.id, 'owner', scope.operation_id, operation.version, `console:${company.user.id}`);
+    expect((await post(terminal)).statusCode).toBe(409);
+    expect((await post({ ...terminal, action: 'terminal_receipt' })).json())
+      .toMatchObject({ grant: granted, registered: true, revoked: false });
+    expect((await post(revoke)).json()).toEqual({ revoked: true, grant_id: granted.grant_id, certificate_sha256: granted.certificate_sha256 });
+    expect((await post(revoke)).statusCode).toBe(200);
+    expect((await post({ ...terminal, action: 'terminal_receipt' })).json())
+      .toMatchObject({ registered: false, revoked: true });
+  });
   it('rejects replay and signatures bound to another route before issuance', async () => {
     const envelope = packet({ action: 'ready' });
     expect(await client.invoke(host.host_id, envelope)).toEqual({ ready: true, host_id: host.host_id });
@@ -253,7 +297,7 @@ try:
  assert authority.authority_ready(f.policy),'signed Python issuer readiness rejected'
  for step in ('artifacts','credentials','runtime'):
   r=f.run_step(step)
-  assert r.returncode==0,r.stderr
+  assert r.returncode==0,(step,r.stderr)
   out[step]=json.loads(r.stdout)['evidence']
  metadata=json.loads((f.roots['runtime']/'.control'/a['runtime_key']/'cauce-v3-adapter.json').read_text())
  pid=metadata['pid'];out['running']=pathlib.Path('/proc/'+str(pid)).exists()
