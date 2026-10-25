@@ -18,7 +18,7 @@ function EmptyThread({ seed, alias, state, onSuggestion }: {
     <div className="grid min-h-[50dvh] place-content-center justify-items-center gap-4 py-10 text-center">
       <AgentOrb seed={seed} state={state} size={56} sleeping={state === undefined || state === 'idle' || state === 'down'} />
       <div className="grid gap-1">
-        <h3 className="m-0 text-lg font-semibold tracking-tight text-fg">Empezá la conversación con {alias}</h3>
+        <h3 className="m-0 text-lg font-semibold tracking-tight text-fg">Empieza la conversación con {alias}</h3>
         <p className="m-0 text-[13px] text-muted">No hay mensajes con este agente en la ventana recibida.</p>
       </div>
       {onSuggestion ? (

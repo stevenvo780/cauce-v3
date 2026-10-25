@@ -94,7 +94,7 @@ export function MessageDetail({ item, chosen, outOfWindow, agentId, fullBody, he
           {fullBody?.estado === 'fallo' ? <p role="alert" className="m-0 text-xs text-danger-ink">{fullBody.motivo}</p> : null}
           {truncated && fullBody?.estado !== 'listo' ? (
             <p className="m-0 flex flex-wrap items-center gap-2 text-xs text-muted">
-              <span>El listado trae sólo los primeros {CARACTERES_DE_PREVISUALIZACION} caracteres.</span>
+              <span>El listado trae solo los primeros {CARACTERES_DE_PREVISUALIZACION} caracteres.</span>
               <Button size="sm" disabled={!id || fullBody?.estado === 'pidiendo'}
                 onClick={() => { if (id) onFetchBody(id); }}>
                 {fullBody?.estado === 'pidiendo' ? 'Pidiendo…' : 'Ver el mensaje completo'}

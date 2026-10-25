@@ -61,7 +61,7 @@ describe('el room de origen cuando hay más de uno', () => {
     const hilo = await openConversation('argos');
     const selector = await within(hilo).findByRole('combobox', { name: /room de origen/i });
     expect(within(selector).getAllByRole('option').map((opcion) => opcion.textContent))
-      .toEqual(['Elegí la sala de origen', 'grp.steven', 'ops.infra']);
+      .toEqual(['Elige la sala de origen', 'grp.steven', 'ops.infra']);
     expect(selector).toHaveValue('');
     expect(within(hilo).getByRole('button', { name: 'Enviar' })).toBeDisabled();
 
@@ -129,7 +129,7 @@ describe('el compositor', () => {
     const hilo = await openConversation('kratos');
     expect(await within(hilo).findByText('Lease vencido · envío en cola')).toBeVisible();
 
-    await user.type(within(hilo).getByRole('textbox', { name: /mensaje para kratos/i }), 'seguís ahí?');
+    await user.type(within(hilo).getByRole('textbox', { name: /mensaje para kratos/i }), 'sigues ahí?');
     expect(within(hilo).getAllByRole('note').some((nota) => nota.textContent.includes('envío en cola')))
       .toBe(true);
   }, 25_000);

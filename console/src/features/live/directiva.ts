@@ -29,9 +29,9 @@ function normalizar(texto: string): string {
  */
 const GIROS_DE_AUTONOMIA: { patron: RegExp; etiqueta: string }[] = [
   { patron: /\bautonomia\b/, etiqueta: 'autonomía' },
-  { patron: /ped(i|ir|is|ile)\s+permiso/, etiqueta: 'pedir permiso' },
+  { patron: /ped(e|i|ir|is|ile)\s+permiso/, etiqueta: 'pedir permiso' },
   { patron: /sin\s+ped(ir|i)\s+permiso/, etiqueta: 'sin pedir permiso' },
-  { patron: /\bdecid(i|ir|is)\s+y\s+actu(a|ar|as)/, etiqueta: 'decidí y actuá' },
+  { patron: /\bdecid(e|i|ir|is)\s+y\s+actu(a|ar|as)/, etiqueta: 'decide y actúa' },
   { patron: /\bno\s+preguntes\b/, etiqueta: 'no preguntes' },
   { patron: /sin\s+preguntar\b/, etiqueta: 'sin preguntar' },
   { patron: /\bconsulta(r|)\s+(a\s+)?(un\s+)?humano/, etiqueta: 'consultar a un humano' },
@@ -124,7 +124,7 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
         tono: 'choque',
         titulo: 'La autonomía está escrita en dos capas',
         detalle: `El rol declarado y ${rotuloDeFichero(fichero)} hablan los dos de lo mismo. La autonomía `
-          + 'va SÓLO en el rol: es lo único que viaja en cada entrega y sigue siendo verdad si el '
+          + 'va SOLO en el rol: es lo único que viaja en cada entrega y sigue siendo verdad si el '
           + 'contenedor se recrea. Cuando las dos versiones diverjan, nadie va a saber cuál manda.',
         evidencia: compartidos,
       });
@@ -137,7 +137,7 @@ export function avisosDeCapas(roleBrief: string | null | undefined, directiva: A
         tono: 'choque',
         titulo: 'El manual abre declarando identidad',
         detalle: `${rotuloDeFichero(fichero)} empieza diciendo quién es el agente, que es el trabajo del `
-          + 'rol declarado. El manual responde a «cómo se trabaja aquí», no a «quién sos».',
+          + 'rol declarado. El manual responde a «cómo se trabaja aquí», no a «quién eres».',
         evidencia: [identidad],
       });
     }

@@ -84,7 +84,7 @@ it('explica una denegación breve y no produce archivo', async () => {
   getUserMedia.mockRejectedValue(new DOMException('denied', 'NotAllowedError'));
   const { onFile } = renderRecorder();
   fireEvent.click(screen.getByRole('button', { name: 'Grabar nota de voz' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Revisá el permiso del navegador');
+  expect(await screen.findByRole('alert')).toHaveTextContent('Revisa el permiso del navegador');
   expect(onFile).not.toHaveBeenCalled();
 });
 

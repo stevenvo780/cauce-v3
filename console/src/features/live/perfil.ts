@@ -368,7 +368,7 @@ export const MOTIVOS_DE_CONTAMINACION: Readonly<Record<string, string>> = {
 
 export function fraseDeContaminacion(motivo: string): string {
   return MOTIVOS_DE_CONTAMINACION[motivo]
-    ?? 'algo que esta consola todavía no sabe nombrar; miralo dentro del contenedor';
+    ?? 'algo que esta consola todavía no sabe nombrar; míralo dentro del contenedor';
 }
 
 interface HallazgoDeContaminacion {

@@ -165,7 +165,7 @@ describe('la escritura aplicada del perfil', () => {
     });
   });
 
-  it('acepta sólo convergencia y un ACK exacto por fichero', () => {
+  it('acepta solo convergencia y un ACK exacto por fichero', () => {
     expect(esPerfilAplicado(ack, esperado)).toBe(true);
     expect(esPerfilAplicado({ ...ack, applied_revision: 6 }, esperado)).toBe(false);
     expect(esPerfilAplicado({ ...ack, acknowledgements: [] }, esperado)).toBe(false);
@@ -244,7 +244,7 @@ describe('el destino de cada campo sale del arnés REAL, no de openclaw cableado
     return reparto;
   }
 
-  it('CONTROL NEGATIVO: los SIETE campos se consumen en los tres arneses, sólo cambia el reparto', () => {
+  it('CONTROL NEGATIVO: los SIETE campos se consumen en los tres arneses, solo cambia el reparto', () => {
     for (const harness of ['claude', 'codex', 'openclaw', 'muse', 'grok'] as const) {
       const reparto = repartoReal(harness);
       for (const campo of CAMPOS_DEL_PERFIL) expect(reparto[campo]).not.toEqual([]);
@@ -352,7 +352,7 @@ describe('cuando conviven dos mediciones del contexto manda la que denuncia', ()
   });
 });
 
-describe('una recarga sólo se presenta hecha con el lote entero acreditado', () => {
+describe('una recarga solo se presenta hecha con el lote entero acreditado', () => {
   const VERIFICACION = {
     state: 'current', generation: 'gen-4', container_id: 'ws-kant',
     observed_at: '2026-08-26T00:00:00Z', documents: [],

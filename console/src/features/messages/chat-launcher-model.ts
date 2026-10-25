@@ -47,7 +47,7 @@ export function lastMessages(page: MessagePage | undefined, agents: readonly Age
       const previous = result.get(agent.id);
       if (previous && previous.at >= at) continue;
       const sender = message.actor_alias?.trim();
-      const from = output ? undefined : author ? 'Vos' : sender === '' ? undefined : sender;
+      const from = output ? undefined : author ? 'Tú' : sender === '' ? undefined : sender;
       result.set(agent.id, { at, createdAt: message.created_at ?? '', text: message.body_preview?.trim() ?? '', from });
     }
   }

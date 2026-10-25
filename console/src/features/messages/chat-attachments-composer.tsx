@@ -162,14 +162,14 @@ export function ChatAttachmentsComposer({
         <label className="flex items-center gap-2 px-1 text-xs text-muted">Room de origen
           <select value={roomId} disabled={sending} onChange={(event) => { onRoomChange(event.target.value); }}
             className="m-0 h-7 w-auto min-w-36 rounded-md border border-line bg-surface py-0 pr-7 pl-2 text-xs text-fg">
-            <option value="" disabled>Elegí la sala de origen</option>
+            <option value="" disabled>Elige la sala de origen</option>
             {roomUnavailable ? <option value={roomId} disabled>{roomId} · no disponible</option> : null}
             {route.sourceRoomIds.map((room) => <option key={room} value={room}>{room}</option>)}
           </select>
         </label>
       ) : null}
-      {roomUnavailable ? <p className="m-0 px-1 text-xs text-danger-ink" role="alert">La sala elegida ya no está disponible. Elegí otra sala antes de enviar; el borrador se conserva.</p>
-        : route.allowed && !roomId ? <p className="m-0 px-1 text-xs text-muted" role="note">Elegí una sala de origen antes de enviar.</p> : null}
+      {roomUnavailable ? <p className="m-0 px-1 text-xs text-danger-ink" role="alert">La sala elegida ya no está disponible. Elige otra sala antes de enviar; el borrador se conserva.</p>
+        : route.allowed && !roomId ? <p className="m-0 px-1 text-xs text-muted" role="note">Elige una sala de origen antes de enviar.</p> : null}
       {blocked ? (
         <p className="m-0 flex items-center gap-1.5 px-1 text-xs text-danger-ink">
           {canPublish ? <CircleOff size={13} aria-hidden="true" /> : <LockKeyhole size={13} aria-hidden="true" />}{blocked}
@@ -185,7 +185,7 @@ export function ChatAttachmentsComposer({
         ) : null}
         <textarea ref={(node) => { textarea.current = node; if (inputRef) inputRef.current = node; }} id={`messenger-input-${agentId}`} value={text} onChange={(event) => { onTextChange(event.target.value); }}
           onKeyDown={handleKeyDown} onPaste={handlePaste} rows={1} maxLength={8_000}
-          placeholder={canSend ? `Escribile a ${agentAlias}…` : 'No podés escribir en esta conversación'} disabled={!canSend}
+          placeholder={canSend ? `Escribile a ${agentAlias}…` : 'No puedes escribir en esta conversación'} disabled={!canSend}
           className="block max-h-[40dvh] min-h-12 w-full min-w-0 flex-1 resize-none in-data-[keyboard-open]:min-h-11 in-data-[keyboard-open]:pt-2.5 in-data-[keyboard-open]:pb-2.5 border-0 bg-transparent px-4 pt-3.5 pb-1 text-[15px] leading-6 text-fg shadow-none outline-none placeholder:text-muted focus:shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-none disabled:cursor-not-allowed max-[760px]:text-base" />
         <div className="flex items-center gap-1 px-2 pb-2 in-data-[keyboard-open]:shrink-0 in-data-[keyboard-open]:gap-0.5 in-data-[keyboard-open]:pr-1.5 in-data-[keyboard-open]:pb-1">
           <input ref={fileInput} className="hidden" type="file" multiple tabIndex={-1}
@@ -198,7 +198,7 @@ export function ChatAttachmentsComposer({
           <ChatVoiceRecorder disabled={!canSend || editingBlocked || files.length >= MAX_ATTACHMENTS_PER_MESSAGE}
             availableBytes={MAX_ATTACHMENTS_TOTAL_BYTES - files.reduce((total, file) => total + file.size, 0)}
             onFile={(file) => { appendFiles([file]); }} onRecordingChange={recordingChanged} />
-          {lane === 'batch' ? <span className="ml-1 rounded-full bg-muted-bg in-data-[keyboard-open]:hidden px-2 py-0.5 text-[11px] text-muted" title="Cambiá el carril en «Opciones de la conversación»">Batch</span> : null}
+          {lane === 'batch' ? <span className="ml-1 rounded-full bg-muted-bg in-data-[keyboard-open]:hidden px-2 py-0.5 text-[11px] text-muted" title="Cambia el carril en «Opciones de la conversación»">Batch</span> : null}
           <button type="submit" aria-label={sendLabel} title={sendLabel} onPointerDown={keepFocus}
             disabled={!canSend || sending || recording || (!text.trim() && files.length === 0)}
             className="ml-auto grid size-9 cursor-pointer place-items-center rounded-full border-0 bg-fg text-canvas transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:bg-muted-bg disabled:text-muted disabled:opacity-100 touch-manipulation">

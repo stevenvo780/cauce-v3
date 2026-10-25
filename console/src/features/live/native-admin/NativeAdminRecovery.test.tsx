@@ -66,7 +66,7 @@ it('crea una pieza únicamente desde ausencia medida y CAS null', async () => {
   await user.click(screen.getByRole('button', { name: 'Guardar pieza nativa' }));
   expect(await screen.findByText(/Guardado con respaldo privado y SHA/)).toBeInTheDocument();
 });
-it('conserva la operación pendiente al reabrir y sólo libera un reintento tras cercado old', async () => {
+it('conserva la operación pendiente al reabrir y solo libera un reintento tras cercado old', async () => {
   const { user, details } = await unknown();
   expect(screen.getByLabelText('Tipo de pieza')).toBeDisabled(); expect(screen.getByLabelText('Nombre de pieza')).toBeDisabled();
   details.open = false; fireEvent(details, new Event('toggle')); details.open = true; fireEvent(details, new Event('toggle'));
@@ -101,7 +101,7 @@ it('conserva el recibo de una escritura cuando la relectura se pierde y exige re
   expect(screen.getByRole('button', { name: 'Guardar pieza nativa' })).toBeDisabled();
   expect(screen.getByLabelText('Motivo del cambio nativo')).toHaveValue('Modificar skill con evidencia');
 });
-it('borra sólo tras confirmación y acredita ausencia mediante relectura', async () => {
+it('borra solo tras confirmación y acredita ausencia mediante relectura', async () => {
   const { user } = await open();
   server.use(http.put(path + '/' + id, async ({ request }) => {
     const body = await request.json() as { mutation: { action: string; expected_sha: string } };

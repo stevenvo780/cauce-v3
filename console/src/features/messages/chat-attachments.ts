@@ -16,7 +16,7 @@ function validateFile(file: File): void {
 
 export function validateAttachmentSelection(files: readonly File[]): void {
   if (files.length > MAX_ATTACHMENTS_PER_MESSAGE) {
-    throw new Error(`Podés adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.`);
+    throw new Error(`Puedes adjuntar hasta ${String(MAX_ATTACHMENTS_PER_MESSAGE)} archivos.`);
   }
   let total = 0;
   for (const file of files) {

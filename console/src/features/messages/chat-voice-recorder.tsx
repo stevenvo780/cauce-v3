@@ -205,7 +205,7 @@ export function ChatVoiceRecorder({ disabled, availableBytes, onFile, onRecordin
         releaseStream();
         setRecording(false);
         onRecordingChangeRef.current(false);
-        setError('No se pudo acceder al micrófono. Revisá el permiso del navegador.');
+        setError('No se pudo acceder al micrófono. Revisa el permiso del navegador.');
       }
     }
   }

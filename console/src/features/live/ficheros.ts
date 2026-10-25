@@ -117,7 +117,7 @@ export function avisoDeFuente(mapa: AgentDocumentsMap): string | undefined {
 export function avisoAntesDeGuardar(item: AgentDocumentItem): string | undefined {
   if (item.warning) return item.warning;
   if (modoDeDocumento(item) === 'proyectado') {
-    return 'De este fichero sólo ves una parte. Lo que quites de aquí se quita del documento.';
+    return 'De este fichero solo ves una parte. Lo que quites de aquí se quita del documento.';
   }
   return undefined;
 }

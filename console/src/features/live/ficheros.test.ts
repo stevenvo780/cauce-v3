@@ -36,7 +36,7 @@ describe('qué se puede hacer con cada fichero', () => {
     expect(modoDeDocumento(proyectado)).toBe('proyectado');
   });
 
-  it('sin editable y sin campos proyectados es sólo lectura', () => {
+  it('sin editable y sin campos proyectados es solo lectura', () => {
     const cerrado = doc({ editable: false, reason: 'vive con el OAuth' });
     expect(modoDeDocumento(cerrado)).toBe('solo-lectura');
   });
@@ -72,7 +72,7 @@ describe('estado después de escribir', () => {
     bytes: 12,
   } as const;
 
-  it('dice aplicado sólo con evidencia explícita de adopción de la sesión', () => {
+  it('dice aplicado solo con evidencia explícita de adopción de la sesión', () => {
     const mensaje = mensajeDeGuardado({ ...ACK, state: 'applied' });
 
     expect(mensaje).toMatch(/Aplicado/);
@@ -134,7 +134,7 @@ describe('el motivo escrito a mano que exige la auditoría', () => {
   });
 });
 
-describe('las dos negativas que sólo existen al guardar', () => {
+describe('las dos negativas que solo existen al guardar', () => {
   it('una sesión sin persona no se pinta como avería de ruta: dice qué hacer', () => {
     const explicado = explicarFalloDeMotivo(
       403, 'writable_requires_attribution', 'escribir la gobernanza exige una persona con nombre',

@@ -84,14 +84,14 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
   expect((await openConversationInfo(user)).querySelector('[data-room-origin]')).toHaveTextContent(/derivado de tu topología/i);
   await user.keyboard('{Escape}');
 
-  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisa la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
   await waitFor(() => { expect(enviados).toHaveLength(1); });
   expect(enviados[0]).toMatchObject({
     room_id: 'grp.steven',
     recipients: [{ tenant_id: 'Steven', alias: 'argos' }],
-    body: { text: 'revisá la cola' },
+    body: { text: 'revisa la cola' },
     lane: 'interactive',
   });
   expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
@@ -300,7 +300,7 @@ function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
     request_id: 'c0ffee00-1111-4222-8333-555555555555',
     trace_id: 'trace-gaia-000777',
     tenant_id: 'Steven', room_id: 'ops.infra', actor_alias: 'kant',
-    body_preview: 'gaia, tomá el encargo del censo', lane: 'batch' as const,
+    body_preview: 'gaia, toma el encargo del censo', lane: 'batch' as const,
     created_at: new Date(Date.now() - 30_000).toISOString(),
     deliveries: [{
       delivery_id: 'dddddddd-1111-4222-8333-666666666666',
@@ -329,7 +329,7 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
 
   // The thread opens with its message inside although no room or lease declares the alias.
   const hilo = await openConversation('gaia');
-  expect(await within(thread(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(await within(thread(hilo)).findByText('gaia, toma el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
   expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
@@ -343,11 +343,11 @@ it('con el registro caído, el hilo sigue existiendo porque el propio feed lo so
   renderChat();
 
   const hilo = await openConversation('gaia');
-  expect(await within(thread(hilo)).findByText('gaia, tomá el encargo del censo')).toBeInTheDocument();
+  expect(await within(thread(hilo)).findByText('gaia, toma el encargo del censo')).toBeInTheDocument();
   expect(within(hilo).getByText('Fuera de la topología')).toBeVisible();
   expect(within(hilo).getByText('Lease sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
-  expect(notaQueDice(hilo, /sólo porque el servidor publicó mensajes suyos/i)).toBe(true);
+  expect(notaQueDice(hilo, /solo porque el servidor publicó mensajes suyos/i)).toBe(true);
 }, 25_000);
 
 /**
@@ -374,7 +374,7 @@ it('vuelve a poder publicar en el lane batch, con la prioridad de ese carril', a
   const hilo = await openConversation('argos');
   await openConversationMenu(user);
   await user.click(screen.getByRole('menuitemradio', { name: /batch · prioridad 0/i }));
-  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexá el informe');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'indexa el informe');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
   await waitFor(() => { expect(enviados).toHaveLength(1); });
@@ -392,7 +392,7 @@ it('sin tocar el selector sigue publicando interactive con prioridad 10', async 
   renderChat();
 
   const hilo = await openConversation('argos');
-  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisá la cola');
+  await user.type(within(hilo).getByRole('textbox', { name: /mensaje para argos/i }), 'revisa la cola');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
   await waitFor(() => { expect(enviados).toHaveLength(1); });

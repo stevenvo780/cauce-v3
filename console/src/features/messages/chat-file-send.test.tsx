@@ -50,7 +50,7 @@ function choose(...files: File[]) {
   act(() => { fireEvent.change(input, { target: { files } }); });
 }
 
-it('envía sólo un archivo inline con bytes, SHA y body idéntico en prepare y publish; limpia al aceptar', async () => {
+it('envía solo un archivo inline con bytes, SHA y body idéntico en prepare y publish; limpia al aceptar', async () => {
   const api = configurePublish();
   const file = new File(['%PDF-1.4\n'], 'informe.pdf', { type: 'application/pdf' });
   renderWithApi(<ConversationPane {...props()} page={{ items: [] }} />);

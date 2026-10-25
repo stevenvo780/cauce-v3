@@ -16,7 +16,7 @@ it('conserva la primera operación pendiente al abrir veinte borradores posterio
   expect(readNativeDraft(api, 'Steven', 'pending-first')).toEqual(pending);
   expect(readNativeDraft(api, 'Steven', 'normal-0')).toEqual(draft);
 });
-it('aplica el tope sólo a borradores descartables y conserva todos los IDs, mutations e identidades pendientes', () => {
+it('aplica el tope solo a borradores descartables y conserva todos los IDs, mutations e identidades pendientes', () => {
   const { api, draft, pending } = fixture();
   for (let index = 0; index < 21; index += 1) storeNativeDraft(api, 'Steven', `pending-${String(index)}`, pending);
   for (let index = 0; index < 21; index += 1) storeNativeDraft(api, 'Steven', `normal-${String(index)}`, draft);

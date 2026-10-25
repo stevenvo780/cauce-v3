@@ -413,7 +413,7 @@ export function ChatLauncher({ phone }: { phone: boolean }) {
             spellCheck={false}
             aria-keyshortcuts="/"
             onChange={(event) => { setQuery(event.target.value); setActive(event.target.value.trim() ? 0 : -1); }}
-            placeholder={phone ? 'Buscar agente o tenant' : 'Buscá por alias o tenant y apretá Enter'}
+            placeholder={phone ? 'Buscar agente o tenant' : 'Busca por alias o tenant y aprieta Enter'}
             className={cn('w-full rounded-2xl border border-line bg-transparent pr-4 text-fg', phone ? 'h-12 pl-11 text-[15px]' : 'h-14 pl-12 text-[17px]')}
           />
           {phone || query ? null : (
