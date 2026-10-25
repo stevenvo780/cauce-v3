@@ -2,7 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', '**/dist/**', 'node_modules/**', 'ops/artifacts/**', '**/*.d.mts'] },
+  { ignores: ['dist/**', '**/dist/**', 'node_modules/**', 'ops/artifacts/**', 'console/qa/.test-state/**', '**/*.d.mts'] },
   {
     files: ['**/*.ts', '**/*.tsx'],
     extends: [js.configs.recommended, ...tseslint.configs.strictTypeChecked, ...tseslint.configs.stylisticTypeChecked],

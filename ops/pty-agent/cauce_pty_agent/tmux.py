@@ -8,7 +8,7 @@ import subprocess
 from typing import Any
 
 from .framing import PermanentError
-from .tui_environment import measured_environment, openclaw_local, openclaw_session_key
+from .tui_environment import _matching_environments, measured_environment, openclaw_local, openclaw_session_key
 
 OPENCLAW_NATIVE_SESSION_RE = re.compile(r"^[A-Za-z0-9._:-]{1,512}$")
 TMUX_SOCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -65,7 +65,10 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
         return None
     if harness not in ("claude", "codex", "muse", "grok") or not isinstance(value, dict):
         raise PermanentError("bundle field is invalid: tmux_tui")
-    if set(value) != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
+    if set(value) - {"alias"} != {"path", "socket"} or not TMUX_IDENTITY_RE.fullmatch(alias):
+        raise PermanentError("bundle field is invalid: tmux_tui")
+    physical_alias = value.get("alias", alias)
+    if not isinstance(physical_alias, str) or not TMUX_IDENTITY_RE.fullmatch(physical_alias):
         raise PermanentError("bundle field is invalid: tmux_tui")
     path = value.get("path")
     socket_name = value.get("socket")
@@ -80,7 +83,7 @@ def _tmux_tui_config(value: Any, harness: str, alias: str) -> dict[str, str] | N
     if (not stat.S_ISREG(details.st_mode) or details.st_uid != 0
             or details.st_mode & 0o022 or not os.access(path, os.X_OK)):
         raise PermanentError("bundle tmux executable is unsafe")
-    return {"path": path, "socket": socket_name}
+    return {"path": path, "socket": socket_name, **({"alias": physical_alias} if "alias" in value else {})}
 
 
 def tmux_tui_target(bundle: dict[str, Any]) -> str | None:
@@ -90,12 +93,46 @@ def tmux_tui_target(bundle: dict[str, Any]) -> str | None:
     can never drift onto another alias's session while the attach stays fenced.
     """
     config = bundle.get("tmux_tui")
-    alias = bundle.get("alias")
-    if not isinstance(config, dict) or not isinstance(alias, str):
+    if not isinstance(config, dict):
+        return None
+    alias = config.get("alias", bundle.get("alias"))
+    if not isinstance(alias, str):
         return None
     if not TMUX_IDENTITY_RE.fullmatch(alias) or bundle.get("harness") not in ("claude", "codex", "muse", "grok"):
         return None
     return f"cauce-{alias}:{TMUX_TUI_WINDOW}"
+
+
+def tmux_tui_prefix(bundle: dict[str, Any]) -> list[str] | None:
+    config = bundle.get("tmux_tui")
+    if not isinstance(config, dict):
+        return None
+    environments = _matching_environments(bundle)
+    recovery = bundle.get("session_recovery")
+    if isinstance(recovery, dict) and not environments:
+        return None
+    if not any("TMUX_TMPDIR" in environment for environment in environments):
+        return [config["path"], "-L", config["socket"]]
+    state = recovery.get("state_directory") if isinstance(recovery, dict) else None
+    alias = config.get("alias", bundle.get("alias"))
+    if (not isinstance(state, str) or not os.path.isabs(state) or os.path.normpath(state) != state
+            or any(environment.get("TMUX_TMPDIR") != state or environment.get("CAUCE_ALIAS") != bundle.get("alias")
+                   or environment.get("CAUCE_RUNTIME_KEY") != alias for environment in environments)):
+        return None
+    directory = os.path.join(state, f"tmux-{os.geteuid()}")
+    socket = os.path.join(directory, config["socket"])
+    try:
+        for path in (state, directory):
+            details = os.stat(path, follow_symlinks=False)
+            if (not stat.S_ISDIR(details.st_mode) or details.st_uid != os.geteuid()
+                    or stat.S_IMODE(details.st_mode) != 0o700 or os.path.realpath(path) != path):
+                return None
+        details = os.stat(socket, follow_symlinks=False)
+        if not stat.S_ISSOCK(details.st_mode) or details.st_uid != os.geteuid():
+            return None
+    except OSError:
+        return None
+    return [config["path"], "-S", socket]
 
 
 def resolve_tmux_tui_command(bundle: dict[str, Any], mode: str = "harness") -> list[str] | None:
@@ -111,9 +148,10 @@ def resolve_tmux_tui_command(bundle: dict[str, Any], mode: str = "harness") -> l
     """
     config = bundle.get("tmux_tui")
     target = tmux_tui_target(bundle)
-    if not isinstance(config, dict) or target is None:
+    prefix = tmux_tui_prefix(bundle)
+    if not isinstance(config, dict) or target is None or prefix is None:
         return None
-    alias = bundle["alias"]
+    alias = config.get("alias", bundle["alias"])
     harness = bundle["harness"]
     conditions = (
         f"#{{&&:#{{==:#{{session_name}},cauce-{alias}}},"
@@ -126,7 +164,7 @@ def resolve_tmux_tui_command(bundle: dict[str, Any], mode: str = "harness") -> l
     attach = (f"attach-session -t {target}" if mode == "harness_rw"
               else f"attach-session -r -f ignore-size -t {target}")
     return [
-        config["path"], "-L", config["socket"],
+        *prefix,
         "if-shell", "-F", "-t", target, conditions, attach, 'run-shell "exit 77"',
     ]
 

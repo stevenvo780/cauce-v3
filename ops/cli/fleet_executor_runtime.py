@@ -76,6 +76,8 @@ def lifecycle_arguments(agent: dict, identity: dict) -> list[str]:
 
 def provider_environment(policy: dict, agent: dict) -> dict:
     values = provider_base_environment(policy, agent)
+    if policy['bundles'][agent['harness_id']].get('shared_tui') is True:
+        values.setdefault('TMPDIR', agent['state_directory'])
     from fleet_executor_templates import resolve_profile
     binding = resolve_profile(policy, agent)
     if binding is not None:
@@ -191,7 +193,8 @@ def sdk_environment(policy: dict, agent: dict, bootstrap: bool, operation_id: st
               'CAUCE_RELAY_URL': urlunsplit(('wss', gateway.netloc, '/v3/ws', '', ''))}
     if policy['bundles'][agent['harness_id']].get('shared_tui') is True:
         values.update(CAUCE_SHARED_SESSION='1',
-            CAUCE_SHARED_SESSION_WORKSPACE=str(path(agent['state_directory']) / 'space' / 'projects'))
+            CAUCE_SHARED_SESSION_WORKSPACE=str(path(agent['state_directory']) / 'space' / 'projects'),
+            TMUX_TMPDIR=agent['state_directory'])
     model = agent.get('model_id')
     if model is not None:
         if not isinstance(model, str) or not 1 <= len(model) <= 128 or any(ord(char) < 32 for char in model) \

@@ -376,6 +376,9 @@ def compose_policy(package: dict, host_id: str, install_root: pathlib.Path, rele
     if 'native' in supplied and supplied['native'] != []:
         raise HostFailure('setup policy cannot add native runtimes')
     supplied.pop('native', None)
+    for harness, bundle in supplied.get('bundles', {}).items():
+        if harness in {'claude', 'codex', 'grok', 'muse'}:
+            bundle.setdefault('shared_tui', True)
     resolved = dict(local_images or {})
     if local_image is not None:
         image_id = next(item['image_id'] for item in package['artifacts'] if item['kind'] == 'image' and item['name'] != 'quota-image')

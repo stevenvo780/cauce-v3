@@ -176,9 +176,11 @@ read_generation() {
 # neither uses the launcher's 32-character ticket generation.
 adapter_generation=''
 ADAPTER_V4_MANAGED=0
+TMUX_PHYSICAL_ALIAS=''
 read_adapter_generation() {
   local init_starttime digest labels label_alias label_tenant runtime_key extra
   ADAPTER_V4_MANAGED=0
+  TMUX_PHYSICAL_ALIAS=$alias_name
   labels=$(docker_control inspect --format \
     '{{index .Config.Labels "cauce.fleet.alias"}} {{index .Config.Labels "cauce.fleet.tenant"}} {{index .Config.Labels "cauce.fleet.runtime_key"}}' \
     "$container_id" 2>/dev/null) || return 1
@@ -186,6 +188,7 @@ read_adapter_generation() {
   if [[ $label_alias == "$alias_name" && $label_tenant == "$tenant" \
     && $runtime_key =~ ^[a-z][a-z0-9-]{0,63}$ && -z ${extra:-} ]]; then
     ADAPTER_V4_MANAGED=1
+    TMUX_PHYSICAL_ALIAS=$runtime_key
     digest=$(printf '%s\0%s' "$container_id" "$container_started" | sha256sum)
     adapter_generation=${digest%% *}
     return 0
@@ -271,7 +274,7 @@ derive_harness_command() {
   # The executable is the image's stable capability: kept even when no server/session exists yet;
   # the agent additionally validates ownership/mode and resolves the session per OPEN.
   TMUX_PATH_FOUND=$tmux_path
-  session="cauce-$alias_name"
+  session="cauce-${TMUX_PHYSICAL_ALIAS:-$alias_name}"
 
   # One tmux command returns session, markers, window cardinality and pane facts from the same observation: separate
   # probes could assemble a cwd from states that never coexisted, and `list-windows` rejects duplicate windows too.
@@ -292,7 +295,7 @@ derive_harness_command() {
       && $observed_session_id =~ ^\$[0-9]+$ ]] || return 1
     [[ $window_name == "$TMUX_TUI_WINDOW" ]] || continue
     harness_windows=$((harness_windows + 1))
-    [[ $window_panes == 1 && $marker_alias == "$alias_name" && $marker_harness == "$harness" \
+    [[ $window_panes == 1 && $marker_alias == "${TMUX_PHYSICAL_ALIAS:-$alias_name}" && $marker_harness == "$harness" \
       && $pane_pid =~ ^[1-9][0-9]*$ && $pane_dead == 0 ]] || return 1
     valid_absolute_path "$pane_cwd" || return 1
     session_id=$observed_session_id
@@ -671,8 +674,9 @@ publish_bundle() {
     if [[ -n $TMUX_PATH_FOUND ]]; then
       harness_command=null
       tmux_tui=$(CAUCE_TMUX_PATH=$TMUX_PATH_FOUND CAUCE_TMUX_SOCKET=$TMUX_SOCKET \
+        CAUCE_TMUX_PHYSICAL_ALIAS=${TMUX_PHYSICAL_ALIAS:-$alias_name} CAUCE_TMUX_WIRE_ALIAS=$alias_name \
         PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"]},separators=(",",":")))') \
+        'import json,os;print(json.dumps({"path":os.environ["CAUCE_TMUX_PATH"],"socket":os.environ["CAUCE_TMUX_SOCKET"],**({"alias":os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"]} if os.environ.get("CAUCE_TMUX_PHYSICAL_ALIAS") and os.environ["CAUCE_TMUX_PHYSICAL_ALIAS"] != os.environ.get("CAUCE_TMUX_WIRE_ALIAS") else {})},separators=(",",":")))') \
         || die "cannot assemble the dynamic tmux harness resolver"
       printf 'cauce-pty-launcher: dynamic tmux resolver enabled alias=%s socket=%s\n' \
         "$alias_name" "$TMUX_SOCKET" >&2

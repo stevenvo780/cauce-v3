@@ -2,7 +2,6 @@
 """La medición del perfil OpenClaw usa el alias visible, no la clave física."""
 from __future__ import annotations
 
-import os
 import pathlib
 import subprocess
 import sys

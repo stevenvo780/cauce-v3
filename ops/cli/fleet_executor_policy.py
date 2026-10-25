@@ -331,12 +331,15 @@ def validate_payload(document) -> dict:
         raise SafeFailure('invalid operation identity')
     if 'fleet_scope' in document:
         scope = document['fleet_scope']
+        request = document['request']
+        minimum_revision = 0 if isinstance(request, dict) and request.get('kind') == 'recover' \
+            and request.get('parameters') == {'action': 'probe'} else 1
         fields = {'operation_id', 'host_id', 'scope_sha256', 'prepared_revision', 'worker_id', 'claim_token', 'claim_epoch'}
         if not isinstance(scope, dict) or set(scope) - {'placement_role'} != fields or scope['operation_id'] != document['operation_id'] \
                 or re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', scope.get('host_id', '')) is None \
                 or re.fullmatch(r'[a-f0-9]{64}', scope.get('scope_sha256', '')) is None \
                 or re.fullmatch(r'[A-Za-z0-9_-]{1,128}', scope.get('worker_id', '')) is None \
-                or type(scope['prepared_revision']) is not int or scope['prepared_revision'] < 1 \
+                or type(scope['prepared_revision']) is not int or scope['prepared_revision'] < minimum_revision \
                 or type(scope['claim_epoch']) is not int or scope['claim_epoch'] < 0 \
                 or str(uuid.UUID(scope['claim_token'])) != scope['claim_token']:
             raise SafeFailure('invalid coordinated host scope')

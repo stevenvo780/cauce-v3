@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
+import shutil
+import stat
 import unicodedata
 
 from fleet_executor_policy import SafeFailure, bounded_text, path
@@ -255,6 +258,18 @@ def fleet_harnesses(policy: dict) -> dict:
     return eligible
 
 
+def native_shared_tui_available() -> bool:
+    executable = shutil.which('tmux', path='/usr/bin:/bin')
+    if executable is None:
+        return False
+    try:
+        details = os.stat(executable, follow_symlinks=False)
+    except OSError:
+        return False
+    return stat.S_ISREG(details.st_mode) and details.st_uid == 0 and not details.st_mode & 0o022 \
+        and os.access(executable, os.X_OK)
+
+
 def runtime_candidates(policy: dict) -> list[dict]:
     from fleet_executor_probe_cache import executor_code_sha256, measured_capability
 
@@ -262,12 +277,15 @@ def runtime_candidates(policy: dict) -> list[dict]:
     measured = {}
     code_sha256 = executor_code_sha256()
     eligible = fleet_harnesses(policy)
+    native_tmux_available = native_shared_tui_available()
     fields = ('runtime_user', 'systemd_user', 'home_directory', 'state_root')
     for mode, name, candidate in ([('native', None, row) for row in policy['native']] +
             [('container', name, row) for name, row in sorted(policy['containers'].items())] +
             [('container', None, row) for row in policy.get('container_templates', [])]):
         for harness in sorted(policy['bundles']):
             if harness not in eligible or candidate.get('harness_id', harness) != harness:
+                continue
+            if mode == 'native' and policy['bundles'][harness].get('shared_tui') is True and not native_tmux_available:
                 continue
             module = None
             if eligible[harness]:
@@ -335,5 +353,8 @@ def capabilities(policy: dict) -> dict:
     from fleet_executor_authority import authority_ready
     if not authority_ready(policy):
         return {'available': False, 'actions': [], 'placements': [], 'reason': 'executor_unconfigured'}
-    return {'available': True, 'actions': ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge'],
-            'placements': [placement]}
+    actions = ['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge']
+    if any(row['harness_id'] in {'claude', 'codex', 'grok', 'muse'}
+            and policy['bundles'][row['harness_id']].get('shared_tui') is True for row in runtimes):
+        actions.append('recover')
+    return {'available': True, 'actions': actions, 'placements': [placement]}

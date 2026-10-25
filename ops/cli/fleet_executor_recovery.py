@@ -19,14 +19,14 @@ HARNESSES = frozenset({'claude', 'codex', 'grok', 'muse'})
 STATES = frozenset({'present', 'absent', 'resumed', 'recreated', 'unsupported', 'conflict', 'failed'})
 SHA = re.compile(r'[a-f0-9]{64}')
 ENVIRONMENT = frozenset({'PATH', 'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'CODEX_HOME',
-    'CLAUDE_CONFIG_DIR', 'GROK_HOME', 'TMPDIR', 'NODE_COMPILE_CACHE', 'CAUCE_ALIAS', 'CAUCE_RUNTIME_KEY',
+    'CLAUDE_CONFIG_DIR', 'GROK_HOME', 'TMPDIR', 'TMUX_TMPDIR', 'NODE_COMPILE_CACHE', 'CAUCE_ALIAS', 'CAUCE_RUNTIME_KEY',
     'CAUCE_TENANT_ID', 'CAUCE_TENANT', 'CAUCE_STATE_DIR', 'CAUCE_CONTAINER_ID', 'CAUCE_CONTAINER_GENERATION',
     'CAUCE_INSTANCE_ID', 'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE', 'CAUCE_MODEL_ID',
     'CAUCE_REASONING_EFFORT', 'CAUCE_HARNESS_COMMAND', 'CAUCE_HARNESS_COMMAND_SHA256', 'CAUCE_HARNESS_COMMAND_FILES'})
 
 
 def fingerprint(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def validate_parameters(parameters: dict) -> None:
@@ -71,7 +71,7 @@ def observe(policy: dict, agent: dict) -> tuple[dict, dict, dict]:
         process_proof(policy, agent, runtime, bundle)
         metadata = json.loads(docker('exec', '--user', '0', runtime['container_id'], '/bin/cat',
             str(runtime['control'] / 'cauce-v3-adapter.json')))
-        values = process_environment(docker('exec', '--user', '0', runtime['container_id'], '/bin/cat',
+        values = process_environment(docker('exec', '--user', agent['runtime_user'], runtime['container_id'], '/bin/cat',
             f'/proc/{metadata["pid"]}/environ'))
         process_proof(policy, agent, runtime, bundle)
     else:
@@ -99,7 +99,8 @@ def observe(policy: dict, agent: dict) -> tuple[dict, dict, dict]:
     return identity, values, bundle
 
 
-def run_helper(agent: dict, identity: dict, values: dict, bundle: dict, action: str, parameters: dict | None = None) -> dict:
+def run_helper(agent: dict, identity: dict, values: dict, bundle: dict, action: str, parameters: dict | None = None,
+               *, expires_at: int | None = None) -> dict:
     entries = [pathlib.Path(value) for value in bundle['argv'] if isinstance(value, str)
         and value.endswith('/bin/' + agent['harness_id'] + '.js')]
     if len(entries) != 1 or not entries[0].is_relative_to(pathlib.Path(bundle['directory'])):
@@ -107,7 +108,10 @@ def run_helper(agent: dict, identity: dict, values: dict, bundle: dict, action: 
     workspace = values.get('CAUCE_SHARED_SESSION_WORKSPACE')
     if not isinstance(workspace, str) or workspace != str(pathlib.Path(agent['state_directory']) / 'space/projects'):
         raise SafeFailure('recovery workspace differs from the approved agent workspace')
-    expires_at = int(time.time() * 1000) + 7500
+    if expires_at is None:
+        expires_at = int(time.time() * 1000) + 7500
+    if type(expires_at) is not int or not 0 < expires_at - time.time() * 1000 <= 7500:
+        raise SafeFailure('recovery helper authorization expired before launch')
     command = [bundle['executable'], str(entries[0].with_name('shared-session.js')), action,
         '--alias', agent['alias'], '--harness', agent['harness_id'], '--state', agent['state_directory'], '--workspace', workspace]
     command.extend(['--expires-at', str(expires_at)])
@@ -154,7 +158,7 @@ def run_helper(agent: dict, identity: dict, values: dict, bundle: dict, action: 
         # A lost docker client cannot cancel the remote supervisor. Its absolute deadline keeps
         # this executor call alive until the remote helper can no longer launch another effect.
         while not cleanup_confirmed and time.time() * 1000 < expires_at + 1200:
-            time.sleep(min(0.05, (expires_at + 1200 - time.time() * 1000) / 1000))
+            time.sleep(max(0, min(0.05, (expires_at + 1200 - time.time() * 1000) / 1000)))
         if child.poll() is None:
             os.killpg(child.pid, signal.SIGKILL)
         child.wait(timeout=3)
@@ -184,9 +188,9 @@ def perform(policy: dict, context: dict, step: str) -> dict:
     agent = approve_agent(policy, target_agent(context))
     parameters = context['request']['parameters']
     validate_parameters(parameters)
-    if step == 'compensate':
-        return {'evidence': {}}
     if parameters['action'] == 'probe':
+        if step == 'compensate':
+            return {'evidence': {'recovery_compensated': True}}
         result = preview(policy, context)
         return {'evidence': {'runtime_digest': fingerprint(result), 'recovery': result}}
     directory = _destination(pathlib.Path(policy['roots']['state']), 'operations/' + context['operation_id'])
@@ -197,6 +201,21 @@ def perform(policy: dict, context: dict, step: str) -> dict:
     journal = json.loads(filename.read_bytes()) if filename.exists() else {'request_sha256': request_hash}
     if journal.get('request_sha256') != request_hash:
         raise SafeFailure('recovery replay changed its confirmed request')
+    if step == 'compensate':
+        if journal.get('attempted'):
+            expires_at = journal.get('helper_expires_at')
+            if type(expires_at) is not int or expires_at + 1200 - time.time() * 1000 > 8700:
+                raise SafeFailure('recovery helper completion deadline is unavailable')
+            until = time.monotonic() + 10
+            while time.time() * 1000 < expires_at + 1200:
+                if time.monotonic() >= until:
+                    raise SafeFailure('recovery helper completion deadline was not observed')
+                time.sleep(max(0, min(0.05, (expires_at + 1200 - time.time() * 1000) / 1000)))
+            observed = preview(policy, context)
+            if observed['identity'] != parameters['identity'] or observed['session']['state'] not in {'present', 'absent'} \
+                    or observed['session']['resumable'] is not True:
+                raise SafeFailure('recovery compensation could not observe the confirmed runtime conversation')
+        return {'evidence': {'recovery_compensated': True}}
     current = preview(policy, context)
     if current['identity'] != parameters['identity']:
         raise SafeFailure('recovery runtime identity changed after confirmation')
@@ -212,12 +231,13 @@ def perform(policy: dict, context: dict, step: str) -> dict:
             or session['fingerprint'] != parameters['expected_fingerprint'] \
             or session['state'] == 'present' and not parameters['force']:
         raise SafeFailure('recovery conversation or terminal changed after confirmation')
-    journal['attempted'] = True
-    atomic_write(filename, json.dumps(journal, sort_keys=True).encode(), mode=0o600)
     identity, values, bundle = observe(policy, agent)
     if identity != parameters['identity']:
         raise SafeFailure('recovery runtime changed before the physical effect')
-    result = run_helper(agent, identity, values, bundle, 'recovery-apply', parameters)
+    expires_at = int(time.time() * 1000) + 7500
+    journal.update(attempted=True, helper_expires_at=expires_at)
+    atomic_write(filename, json.dumps(journal, sort_keys=True).encode(), mode=0o600)
+    result = run_helper(agent, identity, values, bundle, 'recovery-apply', parameters, expires_at=expires_at)
     if result['state'] != ('recreated' if session['state'] == 'absent' else 'resumed') \
             or result['resumable'] is not True or result['fingerprint'] != parameters['expected_fingerprint']:
         raise SafeFailure('recovery did not confirm the exact conversation restart')

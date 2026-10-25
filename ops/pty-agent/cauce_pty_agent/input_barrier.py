@@ -9,7 +9,7 @@ import re
 import subprocess
 from typing import Any
 
-from .tmux import tmux_tui_target
+from .tmux import tmux_tui_prefix, tmux_tui_target
 
 INPUT_BARRIER_OPTION = "@cauce_input_barrier"
 # A keystroke must never become a `tmux` fork: the pane answer is reused for this long and the
@@ -31,12 +31,12 @@ DEFAULT_TMUX_PREFIX_BYTE = 0x02
 
 def _tmux_output(bundle: dict[str, Any], arguments: list[str]) -> str | None:
     """One short read-only tmux command on the alias socket. `None` means «unreadable»."""
-    config = bundle.get("tmux_tui")
-    if not isinstance(config, dict):
+    prefix = tmux_tui_prefix(bundle)
+    if prefix is None:
         return None
     try:
         completed = subprocess.run(
-            [config["path"], "-L", config["socket"], *arguments],
+            [*prefix, *arguments],
             capture_output=True, timeout=INPUT_BARRIER_TIMEOUT, check=False,
         )
     except (OSError, subprocess.SubprocessError):

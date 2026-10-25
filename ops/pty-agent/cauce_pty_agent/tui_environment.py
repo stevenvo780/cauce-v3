@@ -6,7 +6,7 @@ from typing import Any
 
 PATH_KEYS = frozenset({
     "OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_AGENT_DIR",
-    "CAUCE_OPENCLAW_DIST_DIR", "CAUCE_HARNESS_COMMAND", "TMPDIR", "NODE_COMPILE_CACHE",
+    "CAUCE_OPENCLAW_DIST_DIR", "CAUCE_HARNESS_COMMAND", "TMPDIR", "TMUX_TMPDIR", "NODE_COMPILE_CACHE",
     "CODEX_HOME", "CLAUDE_CONFIG_DIR",
 })
 PRIVATE_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"})
@@ -100,7 +100,7 @@ def measured_environment(bundle: dict[str, Any]) -> dict[str, str]:
         if (not path.startswith("/") or path == "/" or os.path.normpath(path) != path
                 or any(ord(character) < 32 for character in path)):
             return {}
-        if key.startswith("OPENCLAW_") or key in {"TMPDIR", "NODE_COMPILE_CACHE", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}:
+        if key.startswith("OPENCLAW_") or key in {"TMPDIR", "TMUX_TMPDIR", "NODE_COMPILE_CACHE", "CODEX_HOME", "CLAUDE_CONFIG_DIR"}:
             if os.path.commonpath((bundle["home"], path)) != os.path.normpath(bundle["home"]):
                 return {}
     return result

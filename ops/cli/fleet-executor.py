@@ -75,13 +75,12 @@ def main() -> int:
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     context = validate_payload(json.loads(encoded))
-    if args.recovery_preview or context['request']['kind'] == 'recover':
-        from fleet_executor_recovery import perform as recovery_perform
+    if args.recovery_preview:
         from fleet_executor_recovery import preview as recovery_preview
         if context['request']['kind'] != 'recover':
             raise SafeFailure('recovery preview requires an exact recovery request')
         with executor_lock(policy):
-            receipt = recovery_preview(policy, context) if args.recovery_preview else recovery_perform(policy, context, args.step)
+            receipt = recovery_preview(policy, context)
         print(json.dumps(receipt, sort_keys=True, separators=(',', ':')))
         return 0
     with image_operation(context['operation_id'], legacy_target=context['request']['target']['resource'] == 'agent'):
