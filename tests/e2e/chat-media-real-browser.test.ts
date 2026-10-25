@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sep } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import { isRfcUuid, objectRecord } from '@cauce/protocol';
 import { generatedMedia, passiveDocuments, startMediaReplyAdapter, readReplyFiles, type MediaFile, type MediaReplyAdapter } from './chat-media-real-browser.fixtures.js';
 import {
@@ -8,6 +9,7 @@ import {
   type BrowserPage, type FunctionalTenant, type Locator,
 } from './console-functional-browser.fixtures.js';
 import { fileSha256, readFileTurns } from './chat-file-send-real-browser.fixtures.js';
+import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 
 interface FileInput extends Locator {
   setInputFiles(files: { name: string; mimeType: string; buffer: Buffer }[]): Promise<void>;
@@ -32,6 +34,7 @@ const adapters = new Map<string, MediaReplyAdapter>();
 let secondHuman: BrowserPage | undefined;
 const sent = new Map<string, { id: string; files: MediaFile[] }>();
 let incoming: ReplyReference | undefined;
+const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a6-chat-1025b');
 
 async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void> {
   await page.getByLabel('Correo').waitFor({ timeout: 15_000 });
@@ -67,6 +70,7 @@ async function createMembership(page: BrowserPage, tenant: FunctionalTenant, act
 
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('File E2E requires its own Testcontainers database');
+  await mkdir(receipts, { recursive: true });
   const active = await startConsoleFunctionalFixture();
   fixture = active;
   process.stdout.write(`Media E2E owned resources: postgres=${active.database.container.getId()} browser=${active.browserContainer} image=${active.browserRuntime.image} imageId=${active.browserRuntime.imageId}\n`);
@@ -76,6 +80,7 @@ beforeAll(async () => {
     await page.goto(active.baseUrl, { waitUntil: 'domcontentloaded' });
     await login(page, tenant);
     await createMembership(page, tenant, active);
+    await prepareChatRuntimeIdentity(active, tenant);
     adapters.set(tenant.tenant, await startMediaReplyAdapter(active, tenant));
     const deadline = Date.now() + 20_000;
     let leases = 0;
@@ -307,6 +312,7 @@ describe('Multimedia durable con Chromium, PG y SDK reales y proveedor CLI sintÃ
     await binaryRoundtrip(page, id, files);
     await previewMedia(page, files);
     incoming = await incomingMedia(isaTenant, id, files);
+    await page.screenshot({ path: join(receipts, 'media-reply-1440.png') });
   }, 180_000);
 
   it('mantiene SVG y HTML como descargas en mÃ³vil y niega binarios y metadata de otro tenant', async () => {

@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ackCanonicalConsumption } from './chat-native-consumption.fixtures.js';
+import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
 import {
   functionalTenants, newTrustedPage, startBoundedAdapter, startConsoleFunctionalFixture,
@@ -125,6 +126,7 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
     for (const [index, tenant] of functionalTenants.entries()) {
       const width = index === 0 ? 1440 : 360;
       const page = await loginAndCreateMembership(tenant, { width, height: width === 360 ? 800 : 1000 });
+      await prepareChatRuntimeIdentity(activeFixture, tenant);
       await startBoundedAdapter(activeFixture, tenant);
       await waitForLease(tenant);
       const nonce = `CHAT-CHECK-${tenant.tenant}-${randomUUID()}`;
@@ -185,10 +187,10 @@ describe('Estados durables y contenido estructurado en el chat web', () => {
       await page.getByRole('button', { name: 'Enviar', exact: true }).click();
       const nativeEntry = page.locator('article[data-direction="input"]').filter({ hasText: nativeMarker });
       const pending = nativeEntry.getByRole('status', {
-        name: 'Entrega: Enviado · esperando aceptación del agente', exact: true,
+        name: 'Entrega: En cola: el agente aún no está listo', exact: true,
       });
       await pending.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await pending.innerText()).toBe('✓');
+      expect(await pending.locator('[data-checks="1"]').innerText()).toBe('✓');
       expect(await nativeEntry.locator('[data-checks="1"]').count()).toBe(1);
       expect(await nativeEntry.locator('[data-checks="2"]').count()).toBe(0);
       expect(await nativeEntry.locator('[role="status"][title$="Lectura sin comprobar."]').count()).toBe(1);

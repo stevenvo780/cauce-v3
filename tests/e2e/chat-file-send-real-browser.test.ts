@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { sep } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
 import {
   functionalTenants, isaTenant, jhonTenant, newTrustedPage, startConsoleFunctionalFixture,
   type BrowserPage, type FunctionalTenant, type Locator,
 } from './console-functional-browser.fixtures.js';
 import { fileSha256, readFileTurns, startFileAdapter, type FileAdapter } from './chat-file-send-real-browser.fixtures.js';
+import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 
 interface FileInput extends Locator {
   setInputFiles(files: { name: string; mimeType: string; buffer: Buffer }[]): Promise<void>;
@@ -28,6 +30,7 @@ let fixture: Fixture | undefined;
 const pages = new Map<string, BrowserPage>();
 const adapters = new Map<string, FileAdapter>();
 const sent = new Map<string, { id: string; filename: string; sha256: string; base64: string }>();
+const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a6-chat-1025b');
 
 async function login(page: BrowserPage, tenant: FunctionalTenant): Promise<void> {
   await page.getByLabel('Correo').waitFor({ timeout: 15_000 });
@@ -63,6 +66,7 @@ async function createMembership(page: BrowserPage, tenant: FunctionalTenant, act
 
 beforeAll(async () => {
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('File E2E requires its own Testcontainers database');
+  await mkdir(receipts, { recursive: true });
   const active = await startConsoleFunctionalFixture();
   fixture = active;
   process.stdout.write(`File E2E owned resources: postgres=${active.database.container.getId()} browser=${active.browserContainer} image=${active.browserRuntime.image} imageId=${active.browserRuntime.imageId}\n`);
@@ -72,6 +76,7 @@ beforeAll(async () => {
     await page.goto(active.baseUrl, { waitUntil: 'domcontentloaded' });
     await login(page, tenant);
     await createMembership(page, tenant, active);
+    await prepareChatRuntimeIdentity(active, tenant);
     adapters.set(tenant.tenant, await startFileAdapter(active, tenant));
     const deadline = Date.now() + 20_000;
     let leases = 0;
@@ -182,6 +187,7 @@ async function publishFile(tenant: FunctionalTenant, file: TestFile, text: strin
   expect(await detail.innerText()).not.toContain('content_base64');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
   sent.set(tenant.tenant, { id: row.id, filename: file.name, sha256, base64 });
+  await page.screenshot({ path: join(receipts, `file-materialized-${tenant.tenant}.png`) });
 }
 
 async function switchAccount(page: BrowserPage, tenant: FunctionalTenant): Promise<void> {
@@ -235,5 +241,6 @@ describe('Archivos de chat mediante UI, PostgreSQL y SDK reales con harness sint
       "SELECT count(*)::text AS count FROM messages WHERE body->>'text'=$1 OR body->'attachments_v1'->0->>'name'=$2", [draft, name],
     );
     expect(unpublished.rows).toEqual([{ count: '0' }]);
+    await page.screenshot({ path: join(receipts, 'file-identity-switched.png') });
   }, 180_000);
 });

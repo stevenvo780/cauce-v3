@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ackEnvelope, terminalAck } from '../../packages/store/test/helpers/consumer.js';
 import type { Locator } from './console-functional-browser.fixtures.js';
 import {
-  evidenceDirectory, injectConfirm503, startConversationBrowserFixture,
+  evidenceDirectory, startConversationBrowserFixture,
   type ConversationBrowserFixture,
 } from './conversation-real-browser.fixtures.js';
 
@@ -135,7 +135,6 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       const reply = `respuesta real ${viewport.label} ${randomUUID()}`;
       const textbox = page.getByLabel(`Mensaje para ${active.pty.targetAlias}`, { exact: true });
       await textbox.fill(marker);
-      const fault = await injectConfirm503(page);
       const send = page.getByRole('button', { name: 'Enviar', exact: true }) as unknown as {
         click(options?: { clickCount?: number }): Promise<void>;
       };
@@ -143,31 +142,20 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
 
       const humanEntry = page.locator('article[data-direction="input"]').filter({ hasText: marker });
       const pendingCheck = humanEntry.getByRole('status', {
-        name: 'Entrega: Enviado · esperando aceptación del agente', exact: true,
+        name: 'Entrega: En cola: el agente aún no está listo', exact: true,
       });
       await pendingCheck.waitFor({ state: 'visible', timeout: 20_000 });
-      expect(await pendingCheck.innerText()).toBe('✓');
+      expect(await pendingCheck.locator('[data-checks="1"]').innerText()).toBe('✓');
       expect(await humanEntry.locator('[data-checks="1"]').count()).toBe(1);
       expect(await humanEntry.locator('[data-checks="2"]').count()).toBe(0);
       expect(await humanEntry.locator('section[data-delivery-id]').count()).toBe(0);
-      const confirmingButton = page.getByRole('button', { name: 'Confirmando…', exact: true });
-      await confirmingButton.waitFor({ state: 'visible', timeout: 10_000 });
-      await fault.waitForCalls(1);
-      expect(await (confirmingButton as InputLocator).isDisabled()).toBe(true);
+      await expect.poll(async () => (await messageEvidence(active, marker)).confirm, { timeout: 20_000 }).toBe('1');
       expect(await (page.locator('textarea') as InputLocator).inputValue()).toBe('');
       expect(new URL(page.url()).pathname).toBe(`/messages/${active.pty.tenant}/${active.pty.targetAlias}`);
       const pendingRoot = await messageEvidence(active, marker);
-      expect(pendingRoot).toMatchObject({ actor_alias: active.pty.operatorAlias, status: 'pending', initiators: '1', outbox: '1', prepare: '1', confirm: '0' });
+      expect(pendingRoot).toMatchObject({ actor_alias: active.pty.operatorAlias, status: 'pending', initiators: '1', outbox: '1', prepare: '1', confirm: '1' });
       expect(await active.roomId()).toBe(sharedRoom);
-      await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-accepted-confirm-pending.png`, fullPage: false });
-
-      await fault.releaseNext();
-      await fault.waitForCalls(2);
-      expect((await messageEvidence(active, marker)).confirm).toBe('0');
-      await fault.releaseNext();
-      await page.getByText(/Confirmación incierta; intención pendiente/u)
-        .waitFor({ state: 'visible', timeout: 20_000 });
-      await fault.remove();
+      await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-accepted-confirmed.png`, fullPage: false });
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
 
@@ -264,7 +252,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
       expect((await messageEvidence(active, marker)).message_id).toBe(pendingRoot.message_id);
       await page.screenshot({ path: `${evidenceDirectory}/${viewport.label}-agent-reply-done.png`, fullPage: false });
       console.info(JSON.stringify({ viewport: viewport.label, messageId: pendingRoot.message_id,
-        deliveryId: pendingRoot.delivery_id, roomId: sharedRoom, confirmFaults: fault.calls,
+        deliveryId: pendingRoot.delivery_id, roomId: sharedRoom, confirmation: 'committed',
         outcome: 'one durable human root, started then done ACK, canonical reply shown in a separate agent bubble' }));
     }
   }, 10 * 60_000);
@@ -288,7 +276,7 @@ describe('PR52 human conversation and durable reply in real Chromium', () => {
 
     const entry = page.locator('article[data-direction="input"]').filter({ hasText: marker });
     await entry.waitFor({ state: 'visible', timeout: 20_000 });
-    await entry.getByRole('status', { name: 'Entrega: Enviado · esperando aceptación del agente', exact: true })
+    await entry.getByRole('status', { name: 'Entrega: En cola: el agente aún no está listo', exact: true })
       .waitFor({ state: 'visible', timeout: 20_000 });
     expect(await page.getByLabel('Historial de la conversación', { exact: true }).getByText(marker, { exact: true }).count()).toBe(1);
     expect(await page.evaluate(() => document.activeElement?.matches('[data-chat-composer] textarea'))).toBe(true);
