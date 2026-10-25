@@ -298,7 +298,8 @@ async function certificate(directory: string, name: string, ca?: { cert: string;
   const isCa = ca === undefined;
   await writeFile(config, `[req]\ndistinguished_name=dn\nprompt=no\n${isCa ? '' : 'req_extensions=ext\n'}[dn]\nCN=${name}\n${isCa ? '' : `[ext]\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=${name === 'gateway-server' ? 'serverAuth' : 'clientAuth'}\nsubjectAltName=${san}\n`}`);
   await exec('openssl', ['req', '-new', '-key', key, '-out', csr, '-config', config]);
-  if (ca) await exec('openssl', ['x509', '-req', '-in', csr, '-CA', ca.cert, '-CAkey', ca.key, '-CAcreateserial', '-out', cert, '-days', '2', '-sha256', '-extfile', config, '-extensions', 'ext']);
+  // A random serial per leaf: -CAcreateserial shares ca.srl, and the adapters signed in parallel read it half written.
+  if (ca) await exec('openssl', ['x509', '-req', '-in', csr, '-CA', ca.cert, '-CAkey', ca.key, '-set_serial', `0x${randomBytes(8).toString('hex').slice(1)}`, '-out', cert, '-days', '2', '-sha256', '-extfile', config, '-extensions', 'ext']);
   else await exec('openssl', ['req', '-x509', '-new', '-key', key, '-out', cert, '-days', '2', '-sha256', '-config', config, '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
   await chmod(key, 0o600);
   await chmod(cert, 0o600);
@@ -344,7 +345,12 @@ async function availableLoopbackPort(): Promise<number> {
   return port;
 }
 
-export async function startConsoleFunctionalFixture(): Promise<Fixture> {
+interface FunctionalFixtureOptions {
+  sessionTtlMs?: number;
+  configureGateway?: (app: Fixture['app'], database: TestDatabase, auth: PasswordAuthProvider) => void;
+}
+
+export async function startConsoleFunctionalFixture(options: FunctionalFixtureOptions = {}): Promise<Fixture> {
   const directory = await mkdtemp(join(tmpdir(), 'cauce-ui-functional-'));
   let setupStage = 'prepare browser runtime';
   let browserRuntime: BrowserRuntime | undefined;
@@ -381,13 +387,14 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     const frontendPort = await availableLoopbackPort();
     setupStage = 'build gateway and start HTTPS listener';
     const auth = new PasswordAuthProvider({
-      users: new PostgresConsoleUserStore(database.pool), signingKey: randomBytes(32), sessionTtlMs: 10 * 60_000,
+      users: new PostgresConsoleUserStore(database.pool), signingKey: randomBytes(32), sessionTtlMs: options.sessionTtlMs ?? 10 * 60_000,
       fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pki.identityPath)),
     });
     await auth.ready();
     app = await buildGateway({ pool: database.pool, authProvider: auth, logger: { level: 'info', stream: gatewayDiagnostics }, https: {
       key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca.cert), requestCert: true, rejectUnauthorized: true,
     }, consoleOrigins: [`https://localhost:${String(frontendPort)}`] });
+    options.configureGateway?.(app, database, auth);
     await app.listen({ host: '127.0.0.1', port: 0 });
     const gatewayAddress = app.server.address() as import('node:net').AddressInfo;
     proxyAgent = new HttpsAgent({ cert: await readFile(pki.consoleClient.cert), key: await readFile(pki.consoleClient.key), ca: await readFile(pki.ca.cert), rejectUnauthorized: true });
@@ -410,6 +417,7 @@ export async function startConsoleFunctionalFixture(): Promise<Fixture> {
     const activeBrowserContainer = isolatedBrowser.container;
     browser = activeBrowser;
     closeBrowserContainer = isolatedBrowser.closeContainer;
+    process.stdout.write(`E2E fixture database: ${database.container.getId()}\n`);
     const fixture: Fixture = {
       database, directory, browserRuntime: runtime, baseUrl: `https://localhost:${String(address.port)}`, gatewayUrl: `https://localhost:${String(gatewayAddress.port)}`, pki, app, vite, browser: activeBrowser, browserContainer: activeBrowserContainer, contexts, adapters, prompts, gatewayDiagnostics,
       close: async () => {
