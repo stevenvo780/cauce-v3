@@ -7,6 +7,7 @@ import ssl
 import stat
 import subprocess
 import sys
+import time
 
 alias = sys.argv[1]
 key = sys.argv[2]
@@ -47,6 +48,60 @@ if certificate.is_file():
 files = {name: observed(pki / name) for name in ('client.crt', 'client.key', 'ca.crt', 'alias-key.hex')}
 main_pid = command('systemctl', '--user', 'show', unit, '--property=MainPID', '--value')
 pid = int(main_pid['value']) if main_pid['value'].isdigit() else 0
+
+
+def terminal_process():
+    result = {'euid': os.geteuid(), 'monotonic_us': time.monotonic_ns() // 1000}
+    stage = 'unit_before'
+    properties = '--property=ActiveState,MainPID,InvocationID,ExecMainStartTimestampMonotonic'
+    try:
+        result['boot_id'] = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        before = command('systemctl', '--user', 'show', unit, properties)
+        if before['code'] != 0:
+            raise RuntimeError('unit observation failed')
+        result['unit_before'] = dict(line.split('=', 1) for line in before['value'].splitlines())
+        expected_version = None
+        if len(sys.argv) > 5 and re.fullmatch(r'[a-f0-9-]{36}', sys.argv[5]):
+            stage = 'provision_record'
+            effects = pathlib.Path(sys.argv[4]) / 'operations' / sys.argv[5] / 'effects.json'
+            entry = json.loads(effects.read_text()).get('terminal_provision', {}).get(key, {})
+            if entry.get('operation_id') != sys.argv[5] or entry.get('identity', {}).get('runtime_key') != key \
+                    or entry.get('identity', {}).get('alias') != alias:
+                raise ValueError('terminal journal identity differs')
+            expected_version = entry.get('source_sha256')
+            if not isinstance(expected_version, str) or re.fullmatch(r'[a-f0-9]{64}', expected_version) is None:
+                raise ValueError('terminal journal source pin is unavailable')
+        result['expected_version_available'] = expected_version is not None
+        selected = result['unit_before']['MainPID']
+        if selected.isdigit() and int(selected) > 0:
+            stage = 'process_stat'
+            process = pathlib.Path('/proc') / selected
+            before_stat = (process / 'stat').read_text().rsplit(')', 1)[1].split()
+            result.update(pid=int(selected), uid=process.stat().st_uid, starttime=int(before_stat[19]))
+            if result['uid'] != os.geteuid():
+                raise PermissionError('terminal process belongs to another user')
+            stage = 'process_environment'
+            entries = [row.split(b'=', 1) for row in (process / 'environ').read_bytes().split(bytes([0])) if row]
+            if any(len(row) != 2 for row in entries):
+                raise ValueError('terminal process environment is malformed')
+            for name, wanted in (('CAUCE_PTY_AGENT_VERSION', expected_version), ('INVOCATION_ID', result['unit_before']['InvocationID'])):
+                values = [value for field, value in entries if field == name.encode()]
+                result[name] = {'name_count': len(values), 'matches': len(values) == 1 and wanted is not None and values[0] == wanted.encode()}
+            stage = 'process_after'
+            after_stat = (process / 'stat').read_text().rsplit(')', 1)[1].split()
+            result['process_stable'] = before_stat[19] == after_stat[19] and after_stat[0] not in ('Z', 'X') \
+                and process.stat().st_uid == result['uid']
+        stage = 'unit_after'
+        after = command('systemctl', '--user', 'show', unit, properties)
+        if after['code'] != 0:
+            raise RuntimeError('unit observation failed')
+        result['unit_after'] = dict(line.split('=', 1) for line in after['value'].splitlines())
+        result['unit_stable'] = result['unit_before'] == result['unit_after']
+    except Exception as error:
+        result['observation_error'] = {'stage': stage, 'type': type(error).__name__, 'errno': getattr(error, 'errno', None)}
+    return result
+
+
 metadata_script = '''import hashlib,json,os,pathlib,stat,sys
 stage='control_open'
 sys.excepthook=lambda kind,error,trace: print(json.dumps({'observer_error':{'stage':stage,'type':kind.__name__,'errno':getattr(error,'errno',None)}}),file=sys.stderr)
@@ -172,4 +227,5 @@ print(json.dumps({'uid': os.getuid(), 'gid': os.getgid(), 'unit': unit, 'alias':
                   'pki': observed(pki), 'env': observed(env), 'dropin': observed(dropin),
                   'wants': observed(wants), 'alias_unit': observed(units / unit), 'files': files,
                   'fingerprint': fingerprint, 'certificate_cn': certificate_cn, 'certificate_runtime_key': runtime_key, 'sdk': sdk_observed,
+                  'terminal_process': terminal_process(),
                   'applied_generation': applied_generation, 'applied_contains_runtime': applied_contains_runtime}))
