@@ -18,9 +18,9 @@ import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import { apiGet, asV4Page, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration,
   PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 
-export const TASK = 'c171b-copias-grandes-1025';
+export const TASK = 'c171c-copias-grandes-rendimiento-1025';
 export const RUN = randomUUID().replaceAll('-', '').slice(0, 6);
-export const PREFIX = `zz-canary-${TASK}-${RUN}`;
+export const PREFIX = `zz-canary-c171c-copias-${RUN}`;
 export const ALIAS = `zz-canary-copy-${RUN}`;
 export const EVIDENCE = resolve('.delegados/v4/recibos', TASK, RUN);
 export const LARGE_BYTES = 1_000_000_000;

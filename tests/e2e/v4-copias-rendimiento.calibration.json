@@ -1,0 +1,19 @@
+{
+  "source_sha": "f3e089b5b3e83a4e2562ba00be00f5af220cf30f",
+  "source_receipt": "c171b-copias-grandes-1025/a393d2",
+  "margin": 2,
+  "large": {
+    "content_bytes": 1000000091,
+    "ready_ms": 458515.574636,
+    "browser_download_ms": 43110.93081,
+    "restore_ms": 130886.765805,
+    "agent_read_ms": 4751.259318
+  },
+  "many": {
+    "content_bytes": 8388699,
+    "ready_ms": 17940.485445,
+    "browser_download_ms": 2902.516016,
+    "restore_ms": 344104.559628,
+    "agent_read_ms": 35117.79588
+  }
+}
