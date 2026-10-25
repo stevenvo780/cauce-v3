@@ -3,7 +3,9 @@ import { chmod, lstat, mkdtemp, readdir, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
+import { deviceNumbersAreComparable } from './browser-socket-identity.js';
 import { createNetworkWithFallback } from './docker-network-subnet.js';
+import { publishLabPrivateSocket } from './lab-private-socket.js';
 
 interface DockerResult { stdout: string }
 type Docker = (args: string[]) => Promise<DockerResult>;
@@ -141,15 +143,20 @@ export async function isolatedBrowserNetwork(docker: Docker, ports: readonly num
   let socketIdentity: Awaited<ReturnType<typeof lstat>> | undefined;
   let id: string | undefined;
   let proxy: Awaited<ReturnType<typeof restrictedBrowserProxy>> | undefined;
+  let bridge: { close(): Promise<void> } | undefined;
   let transportCleanup: Promise<void> | undefined;
   const closeTransport = () => {
     transportCleanup ??= (async () => {
-      if (socketIdentity !== undefined) {
-        const current = await lstat(socketPath);
-        if (!current.isSocket() || current.ino !== socketIdentity.ino || current.dev !== socketIdentity.dev
-          || current.uid !== process.getuid?.()) throw new Error('Browser transport socket changed ownership');
+      try {
+        if (socketIdentity !== undefined) {
+          const current = await lstat(socketPath);
+          if (!current.isSocket() || current.ino !== socketIdentity.ino || current.dev !== socketIdentity.dev
+            || current.uid !== process.getuid?.()) throw new Error('Browser transport socket changed ownership');
+        }
+      } finally {
+        await bridge?.close();
+        await proxy?.close();
       }
-      await proxy?.close();
     })();
     return transportCleanup;
   };
@@ -187,7 +194,12 @@ export async function isolatedBrowserNetwork(docker: Docker, ports: readonly num
     const gateway = actual?.IPAM.Config[0]?.Gateway;
     if (actual?.Id !== id || !actual.Internal || actual.Labels['cauce.e2e.owner'] !== owner
         || gateway === undefined || !/^\d+\.\d+\.\d+\.\d+$/u.test(gateway)) throw new Error('Browser network identity differs');
-    proxy = await restrictedBrowserProxy({ socketPath }, ports);
+    if (deviceNumbersAreComparable()) proxy = await restrictedBrowserProxy({ socketPath }, ports);
+    else {
+      // virtiofs shows the socket node, but only a listener started in the VM accepts container connections.
+      proxy = await restrictedBrowserProxy('127.0.0.1', ports);
+      bridge = await publishLabPrivateSocket(socketPath, proxy.port);
+    }
     socketIdentity = await lstat(socketPath);
     if (!socketIdentity.isSocket() || socketIdentity.uid !== process.getuid?.() || (socketIdentity.mode & 0o777) !== 0o600) throw new Error('Private browser transport metadata differs');
     process.stdout.write(`E2E browser transport: uid=${String(socketIdentity.uid)} dev=${String(socketIdentity.dev)} ino=${String(socketIdentity.ino)} mode=600\n`);
