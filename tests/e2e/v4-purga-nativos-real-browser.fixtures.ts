@@ -13,7 +13,7 @@ import { asV4Page, fillRegistration, openRegistration, syntheticPerson, type V4P
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 interface ViteServer { close(): Promise<void>; listen(): Promise<void> }
-export const OWNER = 'f3-purga-nativos-1025b';
+export const OWNER = 'f3b-commit-1025';
 export const RECEIPTS = join(process.cwd(), '.delegados/v4/recibos', OWNER, `native-${randomUUID()}`);
 
 export interface NativeManifest {
@@ -44,32 +44,16 @@ async function certificates(directory: string) {
   return { ca, key, cert };
 }
 
-async function nativeComputer(directory: string, prefix: string, baseUrl: string): Promise<ComputerHarness> {
+async function nativeComputer(prefix: string, baseUrl: string): Promise<ComputerHarness> {
   const workRoot = await mkdtemp('/datos/f3n-');
-  const previous = process.env.PATH;
   try {
     await chmod(workRoot, 0o755);
-    const dockerCommand = (await execute('/bin/sh', ['-c', 'command -v docker'])).stdout.trim();
-    const args = ['run', '--rm', '--label', `cauce.e2e.owner=${OWNER}`, '--user', `${String(process.getuid?.() ?? 1000)}:${String(process.getgid?.() ?? 1000)}`,
-      ...(process.getgroups?.() ?? []).flatMap(group => ['--group-add', String(group)]),
-      '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-      '--mount', 'type=bind,src=/tmp,dst=/tmp', '--mount', 'type=bind,src=/datos,dst=/datos,readonly',
-      '--mount', `type=bind,src=${workRoot},dst=${workRoot}`,
-      '--mount', 'type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock', '--workdir', process.cwd(),
-      `${prefix}:computer`, '/usr/local/bin/python3.12', '-B'];
-    await writeFile(join(RECEIPTS, 'pack-runtime.json'), JSON.stringify({ command: dockerCommand, args,
-      work_root: workRoot, reason: 'El empaquetador requiere /usr/bin/docker; el runner solo instala /usr/local/bin/docker.' }, null, 2));
-    await writeFile(join(directory, 'python3'), `#!/usr/bin/env node\nconst {spawnSync}=require('node:child_process');\n`
-      + `const result=spawnSync(${JSON.stringify(dockerCommand)},[...${JSON.stringify(args)},...process.argv.slice(2)],{stdio:'inherit'});\n`
-      + `if(result.error) throw result.error;process.exitCode=result.status??1;\n`, { mode: 0o700 });
-    process.env.PATH = `${directory}:${previous ?? '/usr/bin:/bin'}`;
     const computer = await startComputerHarness({ prefix, consoleOrigins: [baseUrl], workRoot, resourceOwner: OWNER });
     return { ...computer, close: async () => {
       try { return await computer.close(); }
       finally { await rm(workRoot, { recursive: true, force: true }); }
     } };
   } catch (error) { await rm(workRoot, { recursive: true, force: true }); throw error; }
-  finally { if (previous === undefined) delete process.env.PATH; else process.env.PATH = previous; }
 }
 
 export async function nativeFixture(run: string): Promise<NativeFixture> {
@@ -87,10 +71,10 @@ export async function nativeFixture(run: string): Promise<NativeFixture> {
     const pki = await certificates(directory);
     const ports = await reserveNamedLoopbackPorts(['frontend', 'spare'] as const); await ports.releaseAll();
     const baseUrl = `https://localhost:${String(ports.ports.frontend)}`;
-    computer = await nativeComputer(directory, `zz-canary-${OWNER}-${run}`, baseUrl);
+    computer = await nativeComputer(`zz-canary-${OWNER}-${run}`, baseUrl);
     const server = await (consoleRequire('vite') as { createServer(options: Record<string, unknown>): Promise<ViteServer> }).createServer({
       configFile: join(process.cwd(), 'console/vite.config.ts'), root: join(process.cwd(), 'console'), envDir: directory,
-      server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true,
+      server: { host: '127.0.0.1', port: ports.ports.frontend, strictPort: true, hmr: false, watch: null,
         https: { key: await readFile(pki.key), cert: await readFile(pki.cert) },
         proxy: { '/v3': { target: computer.gatewayUrl, changeOrigin: false, ws: true } } },
     });
