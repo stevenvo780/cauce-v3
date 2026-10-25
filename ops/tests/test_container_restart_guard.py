@@ -1,12 +1,20 @@
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "container-runtime"))
 
 from cauce_container_base import PermanentError
-from cauce_container_restart import RestartPane, assert_empty_composer, process_environment, restart_fence, shared_pane
+from cauce_container_restart import (
+    RestartPane,
+    assert_empty_composer,
+    process_environment,
+    restart_fence,
+    shared_pane,
+    tmux_absent,
+)
 
 
 class RestartGuardTests(unittest.TestCase):
@@ -29,6 +37,7 @@ class RestartGuardTests(unittest.TestCase):
         with patch("cauce_container_restart.os.geteuid", return_value=0), \
                 patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
                 patch("cauce_container_restart.process_environment", return_value=environment), \
+                patch("cauce_container_restart.tmux_absent", return_value=False), \
                 patch("cauce_container_restart.subprocess.run", return_value=Mock(returncode=0, stdout=b"")) as run:
             pane = shared_pane(document)
             self.assertEqual(pane.target, "=cauce-zz-canary-restart-physical:agente")
@@ -143,6 +152,60 @@ class RestartGuardTests(unittest.TestCase):
                         signal()
                 run.assert_not_called()
         signal.assert_not_called()
+
+    def fake_proc(self, root, processes):
+        for pid, comm in processes.items():
+            (root / pid).mkdir()
+            if comm is not None:
+                (root / pid / "comm").write_bytes(comm)
+        (root / "self").mkdir()
+
+    def test_shared_session_without_any_tmux_process_stops_without_a_pane(self):
+        document, environment = self.shared_identity()
+        signal = Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            self.fake_proc(root, {"1": b"python3\n", "944": b"node\n", "950": b"codex\n", "951": None})
+            with patch("cauce_container_restart.PROC", temporary), \
+                    patch("cauce_container_restart.os.geteuid", return_value=0), \
+                    patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                    patch("cauce_container_restart.process_environment", return_value=environment), \
+                    patch("cauce_container_restart.subprocess.run") as run:
+                self.assertIsNone(shared_pane(document))
+                with restart_fence(document):
+                    signal()
+            run.assert_not_called()
+        signal.assert_called_once_with()
+
+    def test_any_tmux_process_keeps_the_pane_checks(self):
+        for comm in (b"tmux: server\n", b"tmux: client\n", b"tmux\n"):
+            with self.subTest(comm=comm), tempfile.TemporaryDirectory() as temporary:
+                self.fake_proc(pathlib.Path(temporary), {"1": b"python3\n", "70": comm})
+                with patch("cauce_container_restart.PROC", temporary):
+                    self.assertFalse(tmux_absent())
+
+    def test_absence_still_requires_the_pinned_identity(self):
+        document, environment = self.shared_identity()
+        environment["TMUX_TMPDIR"] = "/foreign"
+        with patch("cauce_container_restart.tmux_absent", return_value=True), \
+                patch("cauce_container_restart.os.geteuid", return_value=0), \
+                patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                patch("cauce_container_restart.process_environment", return_value=environment), \
+                self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_DIRECTORY_UNKNOWN$"):
+            shared_pane(document)
+
+    def test_unreadable_process_table_holds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            self.fake_proc(root, {"1": b"python3\n"})
+            (root / "80").mkdir()
+            (root / "80" / "comm").mkdir()
+            with patch("cauce_container_restart.PROC", temporary), \
+                    self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_PROCESS_UNKNOWN$"):
+                tmux_absent()
+        with patch("cauce_container_restart.PROC", "/nonexistent-proc-root"), \
+                self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_PROCESS_UNKNOWN$"):
+            tmux_absent()
 
     def test_shared_pane_rejects_a_changed_process_identity_before_environment_access(self):
         document, _environment = self.shared_identity()

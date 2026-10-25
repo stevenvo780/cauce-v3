@@ -17,6 +17,7 @@ SGR = re.compile(r"\x1b\[([0-9;]*)m")
 PROMPT = re.compile(r"^\s*(?:│\s*)?([❯›»>])(?:\s|$)")
 HOOK_NAME = re.compile(r"[a-z][a-z0-9-]*")
 GUARD_COMMANDS = {"show-hooks", "show-options", "list-panes", "capture-pane", "if-shell", "set-option", "select-pane"}
+PROC = "/proc"
 
 
 def hold(reason: str) -> None:
@@ -215,7 +216,28 @@ def shared_pane(document: dict[str, Any]) -> RestartPane | None:
         return None
     if environment.get("CAUCE_SHARED_SESSION") != "1":
         hold("SHARED_SESSION_UNKNOWN")
-    return RestartPane(document, environment)
+    pane = RestartPane(document, environment)
+    return None if tmux_absent() else pane
+
+
+def tmux_absent() -> bool:
+    # A shared session that never got its TUI, or whose TUI died, has no composer left to protect.
+    # Any tmux process in this PID namespace, whatever its socket or user, keeps the fail-closed pane checks.
+    try:
+        entries = [entry.path for entry in os.scandir(PROC) if entry.name.isdigit()]
+    except OSError:
+        hold("TMUX_PROCESS_UNKNOWN")
+    for entry in entries:
+        try:
+            with open(os.path.join(entry, "comm"), "rb") as handle:
+                name = handle.read()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except OSError:
+            hold("TMUX_PROCESS_UNKNOWN")
+        if name.startswith(b"tmux"):
+            return False
+    return True
 
 
 def assert_restart_safe(document: dict[str, Any]) -> None:
