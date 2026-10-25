@@ -11,6 +11,7 @@ import {
 } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
+import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration, syntheticPerson,
   type V4Locator, type V4Page, type V4Person,
@@ -211,7 +212,8 @@ async function prepareLocal(frontendPort: number, pki: { key: string; cert: stri
   process.env.CAUCE_SPACE_BACKUP_DIRECTORY = join(directory, 'space-backups');
   let computer: ComputerHarness;
   try {
-    computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos', resourceOwner: OWNER });
+    computer = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [origin], workRoot: '/datos', resourceOwner: OWNER,
+      runtimeBundle: cancelDeployRuntime });
   } finally {
     if (previousBackupDirectory === undefined) delete process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
     else process.env.CAUCE_SPACE_BACKUP_DIRECTORY = previousBackupDirectory;
