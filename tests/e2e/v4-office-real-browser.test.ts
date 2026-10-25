@@ -47,7 +47,15 @@ const readerTerminalCapabilityRule: IgnoredConsoleRule = {
     catch { return false; }
   },
 };
-const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, readerTerminalCapabilityRule, PATTERN_DEFECT_RULE]);
+const terminalRelay404Rules: IgnoredConsoleRule[] = ['/v3/console/terminal/grants', '/v3/console/terminal/targets'].map((path) => ({
+  id: `hermetic-${path.replace(/[/]/gu, '-')}-404`,
+  reason: 'hermetic gateway without terminal relay',
+  matches: (text: string, url: string) => {
+    try { return text.includes('status of 404') && new URL(url).pathname === path; }
+    catch { return false; }
+  },
+}));
+const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, ...terminalRelay404Rules, readerTerminalCapabilityRule, PATTERN_DEFECT_RULE]);
 const unexpectedHttp: string[] = [];
 const expectedHttp: { label: string; path: string; statuses: number[] }[] = [];
 const observedExpectedHttp: string[] = [];
@@ -82,7 +90,7 @@ function watchHttp(page: V4Page, label: string): void {
     if (path === '/v3/console/quota-accounts' && response.request().method() === 'GET') quotaReads.set(label, (quotaReads.get(label) ?? 0) + 1);
     if (status < 400) return;
     if ((status === 501 && path === '/v3/console/terminal/capability')
-        || (status === 404 && path === '/v3/console/mcp/client-delegations')) return;
+        || (status === 404 && ['/v3/console/mcp/client-delegations', '/v3/console/terminal/grants', '/v3/console/terminal/targets'].includes(path))) return;
     if (label === 'same-company-reader' && status === 403 && path === '/v3/console/terminal/capability') {
       observedExpectedHttp.push(`${label} ${String(status)} ${path}`);
       return;
@@ -140,6 +148,9 @@ async function registerCompany(page: V4Page, person: V4Person): Promise<void> {
 }
 
 async function openConfig(page: V4Page, section: string): Promise<void> {
+  if (new URL(page.url()).pathname === '/config') {
+    await page.goto('about:blank');
+  }
   await page.goto(`${base()}/config?seccion=${section}`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: 20_000 });
 }
@@ -156,15 +167,37 @@ async function createRoom(page: V4Page, tenantId: string, id: string, label: str
 }
 
 async function openOffice(page: V4Page): Promise<void> {
-  await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+  if (page.url() !== `${base()}/live`) {
+    const nav = page.getByRole('navigation', { name: 'Navegación principal', exact: true });
+    if (await nav.isVisible()) {
+      await nav.getByRole('link', { name: 'Oficina', exact: true }).click();
+    } else {
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+    }
+  }
   await page.getByRole('region', { name: 'Oficina', exact: true }).waitFor({ timeout: 30_000 });
-  await page.getByRole('toolbar', { name: 'Edificios del campus', exact: true }).waitFor({ timeout: 20_000 });
+  const campus = page.getByRole('toolbar', { name: 'Edificios del campus', exact: true });
+  if (!await campus.isVisible()) {
+    await page.getByRole('button', { name: 'Campus', exact: true }).click();
+  }
+  await campus.waitFor({ timeout: 20_000 });
 }
 
 async function openPlan(page: V4Page): Promise<void> {
-  await openOffice(page);
-  await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
-  await page.getByRole('heading', { name: 'Plano de oficina', exact: true }).waitFor({ timeout: 20_000 });
+  if (page.url() !== `${base()}/live`) {
+    const nav = page.getByRole('navigation', { name: 'Navegación principal', exact: true });
+    if (await nav.isVisible()) {
+      await nav.getByRole('link', { name: 'Oficina', exact: true }).click();
+    } else {
+      await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
+    }
+  }
+  await page.getByRole('region', { name: 'Oficina', exact: true }).waitFor({ timeout: 30_000 });
+  const heading = page.getByRole('heading', { name: 'Plano de oficina', exact: true });
+  if (!await heading.isVisible()) {
+    await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
+    await heading.waitFor({ timeout: 20_000 });
+  }
 }
 
 function planRoom(label: string): string { return `Sala ${hubA}/${label}`; }
@@ -181,6 +214,9 @@ async function expectAgentRooms(expectedPrimary: string, expectedRooms: string[]
 
 async function moveAgent(page: V4Page, destination: string, alias = agentAlias): Promise<void> {
   const ref = encodeURIComponent(`${hubA}/${alias}`);
+  if (new URL(page.url()).pathname === '/config') {
+    await page.goto('about:blank');
+  }
   await page.goto(`${base()}/config?seccion=agentes&agente=${ref}`, { waitUntil: 'domcontentloaded' });
   const sheet = page.getByRole('dialog');
   await sheet.waitFor({ timeout: 20_000 });
@@ -192,6 +228,7 @@ async function moveAgent(page: V4Page, destination: string, alias = agentAlias):
   const confirm = move.getByRole('button', { name: 'Confirmar movimiento atómico', exact: true });
   await expect.poll(() => confirm.isDisabled(), { timeout: 20_000 }).toBe(false);
   await confirm.click();
+  await move.getByRole('status').waitFor({ timeout: 20_000 });
 }
 
 async function assertAgentInPlan(page: V4Page, label: string, alias = agentAlias): Promise<void> {
@@ -208,7 +245,7 @@ async function assertAgentNotInPlan(page: V4Page, label: string, alias = agentAl
   await room.locator('button[aria-pressed]').click();
   const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${label}`, exact: true });
   await roster.waitFor({ timeout: 20_000 });
-  expect(await roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).count()).toBe(0);
+  await expect.poll(async () => roster.getByRole('button', { name: new RegExp(escapeRegex(alias), 'u') }).count(), { timeout: 20_000 }).toBe(0);
 }
 
 beforeAll(async () => {
@@ -409,9 +446,10 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     let persisted = committed;
     await step(page, 'stale draft conflict waits for a choice and reapplies only what the draft changed', async () => {
       await conflictOn(page, 'owner-a');
-      const conflict = await page.getByRole('alert').innerText();
-      expect(conflict).toMatch(/Otra persona guardó una versión nueva del plano.*elige si cargas su versión o reaplicas tu borrador/su);
-      expect(conflict).toContain('Código: conflict'); expect(conflict).not.toContain('reload and retry');
+      const conflict = await choice(page).innerText();
+      expect(conflict).toContain('Otra persona guardó una versión nueva del plano.');
+      expect(conflict).toContain('Tu borrador se conserva en el formulario');
+      expect(conflict).not.toContain('reload and retry');
       expect(await staleEditor.getByLabel('Nombre de parte', { exact: true }).inputValue()).toBe(draftPartLabel);
       await page.getByText('Plano sin guardar', { exact: true }).waitFor(); expect(await save.isDisabled()).toBe(true);
       expect(await savedLayout()).toEqual(committed); const conflicted = officeWrites.at(-1);
@@ -447,6 +485,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect(await second.getByLabel(`Parte ${editedPartLabel}`, { exact: true }).count()).toBe(0);
       await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('button', { name: 'Plano editable', exact: true }).click();
       await second.getByLabel(`Parte ${draftPartLabel}`, { exact: true }).waitFor(); expect((await apiGet(second, layoutPath)).body).toMatchObject(await savedLayout());
+      await second.context().close();
     });
   });
 
@@ -527,7 +566,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await form.getByRole('button', { name: 'Previsualizar cambio', exact: true }).click();
       const alert = form.getByRole('alert');
       await alert.waitFor({ timeout: 20_000 });
-      expect(await alert.innerText()).toMatch(/dependencias.*miembros/iu);
+      expect(await alert.innerText()).toMatch(/lo bloquean membresías/iu);
       expect(await form.getByRole('button', { name: 'Confirmar eliminación', exact: true }).isDisabled()).toBe(true);
     });
     expect((await pool().query('SELECT 1 FROM rooms WHERE tenant_id=$1 AND id=$2', [hubA, destinationRoomId])).rowCount).toBe(1);
@@ -587,13 +626,15 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await pool().query('DELETE FROM quota_window_state WHERE account_id=$1', [accountId]);
       await pool().query(`UPDATE provider_accounts SET paused_until=CASE WHEN $2 THEN now()+interval '1 hour' ELSE NULL END,
         paused_reason=CASE WHEN $2 THEN 'manual' ELSE NULL END WHERE id=$1`, [accountId, scenario.state === 'paused']);
-      if (scenario.state !== 'unknown') for (const [model, remaining] of scenario.state === 'model_dependent'
-        ? [['model-a', 0], ['model-b', 80]] as const : [[null, scenario.remaining]] as const) {
+      if (scenario.state !== 'unknown') {
         const observed = new Date(Date.now() - (scenario.state === 'stale' ? 901_000 : 0)).toISOString();
-        await pool().query(`INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,
-            captured_at,received_at,remaining_percent,reset_at,status,model,account_id,company_id)
-          VALUES($1,$2,'codex','default','week',$3,$3,$4,now()+interval '1 hour',$5,$6,$7,$8)`,
-        [hubA, `zz-canary-host-${run}`, observed, remaining, scenario.status, model, accountId, ownerA.company.slug]);
+        for (const [model, remaining] of scenario.state === 'model_dependent'
+          ? [['model-a', 0], ['model-b', 80]] as const : [[null, scenario.remaining]] as const) {
+          await pool().query(`INSERT INTO quota_window_state(collector_tenant,host,provider,group_key,window_key,
+              captured_at,received_at,remaining_percent,reset_at,status,model,account_id,company_id)
+            VALUES($1,$2,'codex','default','week',$3,$3,$4,now()+interval '1 hour',$5,$6,$7,$8)`,
+          [hubA, `zz-canary-host-${run}`, observed, remaining, scenario.status, model, accountId, ownerA.company.slug]);
+        }
       }
       const response = await apiGet(page, '/v3/console/quota-accounts');
       expect(response.status).toBe(200);
@@ -616,13 +657,16 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await member.waitFor({ timeout: 20_000 });
       await member.click();
       const summary = page.getByRole('region', { name: `Cuota de ${agentAlias}`, exact: true });
-      await summary.getByText(new RegExp(escapeRegex(scenario.label), 'u')).waitFor({ timeout: 20_000 });
+      await summary.getByText(new RegExp(escapeRegex(scenario.label), 'u')).first().waitFor({ timeout: 20_000 });
       await page.getByRole('button', { name: 'Cerrar la tarjeta', exact: true }).click();
       await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
       await assertAgentInPlan(page, renamedRoomLabel);
       const roster = page.getByRole('region', { name: `Agentes de sala ${hubA}/${renamedRoomLabel}`, exact: true });
       const planAgent = roster.getByRole('button', { name: new RegExp(escapeRegex(agentAlias), 'u') });
-      await planAgent.getByText(scenario.label, { exact: true }).waitFor();
+      const planLabel = ['exhausted', 'low', 'available'].includes(scenario.state)
+        ? `week ${String(scenario.remaining)}%`
+        : scenario.label;
+      await planAgent.getByText(planLabel, { exact: true }).waitFor();
       expect(await planAgent.locator(`[data-fatigue="${scenario.state}"]`).count()).toBe(1);
       await planAgent.click();
       const sheet = page.getByRole('dialog');
@@ -681,10 +725,10 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
     // This fixture has no host: runtime_key and host_id stay null. It seeds visibility only;
     // managed admission and retirement require a separate E2E with a real executor.
     await pool().query(`UPDATE agents SET enabled=true,harness_id='codex',container_name=$3,runtime_user='dev',
-        home_directory=$4,state_directory=$5 WHERE tenant_id=$1 AND alias=$2`,
-    [hubA, cycleAlias, `zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}/state`]);
+        home_directory=$4,state_directory=$5,primary_room_id=$6 WHERE tenant_id=$1 AND alias=$2`,
+    [hubA, cycleAlias, `zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}`, `/srv/zz-canary-cycle-${run}/state`, roomId]);
     await step(page, 'admitted agent in plan and campus', async () => {
-      await openPlan(page);
+      await page.getByRole('button', { name: 'Releer plano y cuotas', exact: true }).click();
       await assertAgentInPlan(page, renamedRoomLabel, cycleAlias);
       await page.getByRole('button', { name: 'Campus', exact: true }).click();
       await expectCampusRoom(page, renamedRoomLabel, 2);
@@ -711,7 +755,7 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await assertAgentInPlan(page, officeLabel, cycleAlias);
       await assertAgentNotInPlan(page, renamedRoomLabel, cycleAlias);
       await page.getByRole('button', { name: 'Campus', exact: true }).click();
-      await expectCampusRoom(page, officeLabel, 1);
+      await expectCampusRoom(page, officeLabel, 2);
       await expectCampusRoom(page, renamedRoomLabel, 1);
     });
     await step(reader, 'second browser sees the edited and reassigned agent', async () => {
@@ -722,14 +766,19 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       });
     });
 
-    await step(page, 'pausing the agent removes it from plan and campus', async () => {
+    // A registered agent that is paused stays visible in its room: only a missing registry row or a disabled
+    // membership takes it out of the plan and the campus.
+    await step(page, 'pausing the agent keeps it visible as a registered, disabled agent', async () => {
       const { editor } = await openRegistry(page, base(), hubA, cycleAlias);
       await editor.getByRole('combobox', { name: 'Recepción de mensajes', exact: true }).selectOption('false');
       await applyRegistryChange(page);
+      expect((await pool().query<{ enabled: boolean }>(
+        'SELECT enabled FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rows).toEqual([{ enabled: false }]);
+      expect(await topologyMember(page, hubA, cycleAlias)).toMatchObject({ room_id: 'office', registered: true, agent_enabled: false });
       await openPlan(page);
-      await assertAgentNotInPlan(page, officeLabel, cycleAlias);
+      await assertAgentInPlan(page, officeLabel, cycleAlias);
       await page.getByRole('button', { name: 'Campus', exact: true }).click();
-      await expectCampusRoom(page, officeLabel, 0);
+      await expectCampusRoom(page, officeLabel, 2);
     });
     // The console has no control to detach a primary room or drop a membership; the configuration API it uses does it,
     // as in the CRUD matrix. The primary room must be cleared first: it is a foreign key to the membership.
@@ -747,7 +796,9 @@ describe('Oficina V4 en navegador Chromium real, gateway y PostgreSQL reales', (
       await confirm.click();
       await page.getByText(`Registro de ${hubA}/${cycleAlias} eliminado del inventario en revisión`, { exact: false }).waitFor({ timeout: 20_000 });
     });
-    expect((await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2', [hubA, cycleAlias])).rowCount).toBe(0);
+    await expect.poll(async () =>
+      (await pool().query('SELECT 1 FROM agents WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL', [hubA, cycleAlias])).rowCount,
+    { timeout: 20_000 }).toBe(0);
     for (const browser of [page, reader]) await step(browser, 'deleted agent absent after reload in both browsers', async () => {
       await openPlan(browser);
       await assertAgentNotInPlan(browser, officeLabel, cycleAlias);

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import { useApi } from '../../api/context';
 import { useResource } from '../../api/use-resource';
 import { ActionButton } from '../../components/action-button';
@@ -10,7 +10,7 @@ import type { Failure } from '../../api/error-message';
 import type { OfficeRoom } from '../../api/client/company-client';
 import type { TopologySnapshot } from '../../api/types';
 import { onNavClick } from '../../router';
-import { useQuotaAccounts } from '../../shell/fleet-context';
+import { FleetContext, useQuotaAccounts } from '../../shell/fleet-context';
 import { canManageCompany, useCompanyAuthority } from '../auth/company-authority';
 import { quotaReadFailure } from '../accounts/quota-messages';
 import { OfficeLayoutEditor } from './OfficeLayoutEditor';
@@ -25,6 +25,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent, now }: {
 }) {
   const api = useApi();
   const authority = useCompanyAuthority();
+  const fleet = useContext(FleetContext);
   const layout = useResource('office-layout', () => api.getOfficeLayout());
   // Plan, campus and agent sheet read the one shared quota snapshot of the fleet provider.
   const quotas = useQuotaAccounts();
@@ -121,6 +122,7 @@ export function OfficeWorkspace({ campus, topology, agents, onAgent, now }: {
   }
   async function rereadPlan() {
     setBusy(true);
+    void fleet?.topology.reload();
     const plan = layout.reload();
     void quotas.reload();
     const reread = await plan;
