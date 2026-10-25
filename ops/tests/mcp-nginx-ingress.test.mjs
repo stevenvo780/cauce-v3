@@ -5,11 +5,13 @@ import { test } from 'node:test';
 
 const config = (await readFile(new URL('../../deploy/console/nginx-console-tls.conf', import.meta.url), 'utf8'))
   .replace(/#[^\n]*/gu, '');
+const devConfig = (await readFile(new URL('../../console/nginx.conf', import.meta.url), 'utf8'))
+  .replace(/#[^\n]*/gu, '');
 const routes = ['/mcp', '/.well-known/oauth-protected-resource/mcp'];
 
-function locationBody(selector) {
+function locationBody(selector, source = config) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-  const blocks = [...config.matchAll(new RegExp(`^  location ${escaped} \\{([\\s\\S]*?)^  \\}`, 'gmu'))];
+  const blocks = [...source.matchAll(new RegExp(`^  location ${escaped} \\{([\\s\\S]*?)^  \\}`, 'gmu'))];
   assert.equal(blocks.length, 1, `exactly one location ${selector}`);
   return blocks[0][1];
 }
@@ -96,7 +98,7 @@ for (const route of routes) {
 test('every gateway proxy overwrites client IP headers and strips forwarded host and protocol', () => {
   const bodies = [...config.matchAll(/^ {2}location .+ \{([\s\S]*?)^ {2}\}/gmu)]
     .map(match => match[1]).filter(body => body.includes('proxy_pass https://gateway:8443;'));
-  assert.equal(bodies.length, 14);
+  assert.equal(bodies.length, 15);
   for (const body of bodies) {
     expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');
@@ -165,16 +167,45 @@ test('large ACKs use only the two exact runtime routes with the existing verifie
 
 test('space backup downloads stream unbuffered through the same verified gateway identity as /v3/', () => {
   const selector = '~ ^/v3/console/spaces/[^/]+/[^/]+/backups/[^/]+/download$';
-  const body = locationBody(selector);
   const pattern = new RegExp(selector.slice(2), 'u');
   assert.ok(pattern.test('/v3/console/spaces/One/agent/backups/00000000-0000-4000-8000-000000000050/download'));
   assert.ok(!pattern.test('/v3/console/spaces/One/agent/backups/id'));
-  expectDirective(body, 'proxy_buffering', 'off');
-  for (const directive of ['proxy_pass', 'proxy_ssl_server_name', 'proxy_ssl_name', 'proxy_ssl_verify',
-    'proxy_ssl_trusted_certificate', 'proxy_ssl_certificate', 'proxy_ssl_certificate_key', 'proxy_set_header', 'proxy_http_version']) {
-    assert.deepEqual(values(body, directive), values(locationBody('/v3/'), directive));
+  for (const source of [config, devConfig]) {
+    const body = locationBody(selector, source);
+    expectDirective(body, 'proxy_buffering', 'off');
+    for (const directive of ['proxy_read_timeout', 'proxy_send_timeout', 'send_timeout']) expectDirective(body, directive, '1800s');
+    for (const directive of ['proxy_pass', 'proxy_ssl_server_name', 'proxy_ssl_name', 'proxy_ssl_verify',
+      'proxy_ssl_trusted_certificate', 'proxy_ssl_certificate', 'proxy_ssl_certificate_key', 'proxy_set_header', 'proxy_http_version']) {
+      assert.deepEqual(values(body, directive), values(locationBody('/v3/', source), directive));
+    }
+    assert.deepEqual(values(locationBody('/v3/', source), 'proxy_buffering'), []);
   }
-  assert.deepEqual(values(locationBody('/v3/'), 'proxy_buffering'), []);
+});
+
+test('signed space backup uploads allow bounded chunks only for valid host paths with the existing gateway identity', () => {
+  const selector = '~ "^/v3/fleet/hosts/[a-z][a-z0-9_-]{0,63}/space-backups$"';
+  const pattern = new RegExp(selector.slice(3, -1), 'u');
+  for (const host of ['a', 'server2', 'server2-praxis', 'host_2-a', 'a'.repeat(64)]) {
+    assert.ok(pattern.test(`/v3/fleet/hosts/${host}/space-backups`));
+  }
+  for (const path of ['/v3/fleet/hosts/A/space-backups', '/v3/fleet/hosts/2host/space-backups',
+    '/v3/fleet/hosts//space-backups', '/v3/fleet/hosts/host/space-backups/',
+    '/v3/fleet/hosts/host/space-backups/append', '/v3/fleet/hosts/host/other',
+    `/v3/fleet/hosts/${'a'.repeat(65)}/space-backups`]) assert.ok(!pattern.test(path));
+  for (const source of [config, devConfig]) {
+    const body = locationBody(selector, source);
+    expectDirective(body, 'client_max_body_size', '8m');
+    expectDirective(body, 'proxy_request_buffering', 'off');
+    expectDirective(body, 'proxy_buffering', 'off');
+    for (const directive of ['proxy_read_timeout', 'proxy_send_timeout', 'send_timeout']) expectDirective(body, directive, '1800s');
+    for (const directive of ['proxy_pass', 'proxy_ssl_server_name', 'proxy_ssl_name', 'proxy_ssl_verify',
+      'proxy_ssl_trusted_certificate', 'proxy_ssl_certificate', 'proxy_ssl_certificate_key', 'proxy_set_header', 'proxy_http_version']) {
+      assert.deepEqual(values(body, directive), values(locationBody('/v3/', source), directive));
+    }
+    assert.deepEqual(values(locationBody('/v3/', source), 'client_max_body_size'), []);
+    const server = source.slice(0, source.indexOf('  location '));
+    assert.deepEqual(values(server, 'client_max_body_size'), []);
+  }
 });
 
 test('provider sign-in verify keeps the /v3/ proxy policy and only waits longer', () => {
