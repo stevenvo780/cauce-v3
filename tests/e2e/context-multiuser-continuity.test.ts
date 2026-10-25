@@ -1,12 +1,19 @@
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
+import { browserDocker } from './browser-owned-lifecycle.js';
 import { CONTEXT_ARTIFACT_DIR, CONTEXT_RUN, addConversationRoom, doneReply, isaTenant, jhonTenant,
   login, newPage, publish, readWitness, startContextFixture, startSyntheticAdapter, waitForDone, waitForLease } from './context-multiuser-continuity.fixtures.js';
 
 let fixture: Awaited<ReturnType<typeof startContextFixture>> | undefined;
+const receipts = '.delegados/v4/recibos/e2e-a10-contextos-1025b';
 
 beforeAll(async () => {
+  await mkdir(receipts, { recursive: true });
   fixture = await startContextFixture();
+  for (const tenant of [isaTenant, jhonTenant]) await prepareChatRuntimeIdentity(fixture, tenant);
+  await writeFile(`${receipts}/continuidad-volumenes.json`,
+    (await browserDocker(['inspect', '--format', '{{json .Mounts}}', fixture.database.container.getId()])).stdout, { mode: 0o600 });
   process.stdout.write(`context-multiuser owned resources ${JSON.stringify({ run: CONTEXT_RUN,
     postgres: fixture.database.container.getId(), browser: fixture.browserContainer,
     browserImage: fixture.browserRuntime.image, browserImageId: fixture.browserRuntime.imageId,
@@ -22,8 +29,7 @@ afterAll(async () => {
           ? { errors: value.errors.map((item: unknown) => describeError(item, depth + 1)) } : {}),
         ...(depth < 3 && value.cause !== undefined ? { cause: describeError(value.cause, depth + 1) } : {}) }
       : { type: typeof value };
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(`${CONTEXT_ARTIFACT_DIR}/${CONTEXT_RUN}-cleanup-failure.json`,
+    await writeFile(`${receipts}/${CONTEXT_RUN}-cleanup-failure.json`,
       JSON.stringify(describeError(error), null, 2), { mode: 0o600 });
     throw error;
   }
@@ -125,6 +131,10 @@ describe('continuidad multiusuario con ledger real y kernel CLI sintético', () 
     expect(owner.status).toBe(200);
     expect(foreign.status).toBe(404);
     expect(JSON.stringify(foreign.body)).not.toContain(a2Text);
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+      await pageA.setViewportSize(viewport);
+      await pageA.screenshot({ path: `${receipts}/continuidad-${String(viewport.width)}.png`, fullPage: true });
+    }
 
     const ledger = await active.database.pool.query<{ message_id: string; tenant_id: string; actor_alias: string; text: string; status: string; attempt: number }>(
       `SELECT m.id AS message_id,m.tenant_id,m.actor_alias,m.body->>'text' AS text,d.status,d.attempt FROM deliveries d JOIN messages m ON m.id=d.message_id
@@ -139,15 +149,14 @@ describe('continuidad multiusuario con ledger real y kernel CLI sintético', () 
         session_id: turn.session_id, resumed: turn.resumed, context: turn.context,
         input_contains_run_nonce: String(turn.input).includes(CONTEXT_RUN),
       })), deliveryIds: ids, fencedDoneAcks: [doneA1, doneB1, doneA2, doneNew].map((row) => ({
-        claim_token: row?.claim_token, epoch: row?.consumer_epoch,
+        claim_token_present: typeof row?.claim_token === 'string', epoch: row?.consumer_epoch,
       })), negativeObservations: { foreignReadStatus: foreign.status,
         BPromptExcludesA1: !String(turnB1.input).includes(a1Text),
         AResumedPromptExcludesB1: !String(turnA2.input).includes(b1Text),
         newConversationMemoryIsEmpty: doneReply(doneNew).includes('EMPTY_MEMORY'),
         runtimeAdoptionRows: adoption.rows[0]?.count }, profileAppliedRevision: profile.rows[0]?.applied_revision };
-    const { writeFile } = await import('node:fs/promises');
-    await writeFile(`${CONTEXT_ARTIFACT_DIR}/${CONTEXT_RUN}.json`, JSON.stringify(evidence, null, 2), { mode: 0o600 });
-    process.stdout.write(`context-multiuser evidence ${JSON.stringify({ run: CONTEXT_RUN, evidence: `${CONTEXT_ARTIFACT_DIR}/${CONTEXT_RUN}.json`,
+    await writeFile(`${receipts}/${CONTEXT_RUN}.json`, JSON.stringify(evidence, null, 2), { mode: 0o600 });
+    process.stdout.write(`context-multiuser evidence ${JSON.stringify({ run: CONTEXT_RUN, evidence: `${receipts}/${CONTEXT_RUN}.json`,
       postgres: active.database.container.getId(), witnessCounts: [witnessA.length, witnessB.length], deliveries: ledger.rows.length })}\n`);
   }, 240_000);
 });
