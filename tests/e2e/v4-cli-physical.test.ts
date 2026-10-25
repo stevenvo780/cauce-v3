@@ -142,7 +142,7 @@ describe.sequential('CLI physical execution and context application in the real 
         JSON.stringify({ gateway: current.gatewayUrl, origin: session.origin, cookie: session.cookie, csrf_token: session['x-csrf-token'] }));
       expect(sessionWritten.code, sessionWritten.stderr).toBe(0);
       const spaces = async <T>(operation: string, args: string[] = []) => checkedJson(await current.onComputer([
-        'bash', '/opt/cauce-cli/cauce', 'spaces', operation, '--tenant', tenant, '--session-file', sessionFile, ...args])) as T;
+        'bash', '/opt/cauce-cli/cauce', 'spaces', operation, '--json', '--tenant', tenant, '--session-file', sessionFile, ...args])) as T;
       const alias = `physical${run}`;
       const runtimeKey = `physical-${run}`;
       const containerName = `${prefix}-${runtimeKey}`;

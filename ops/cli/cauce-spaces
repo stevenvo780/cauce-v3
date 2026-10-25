@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import importlib
 import json
@@ -9,6 +10,7 @@ import pathlib
 import re
 import runpy
 import sys
+import unicodedata
 import urllib.parse
 
 CLI = pathlib.Path(__file__).resolve().parent
@@ -31,6 +33,160 @@ REGISTRY_EDIT_KEYS = frozenset({'display_name', 'enabled', 'max_concurrent_deliv
 AGENT_FIELDS = REGISTRY_KEYS | frozenset({'tenant_id', 'alias', 'runtime_key', 'runtime_mode', 'systemd_user',
     'primary_account_id', 'model_id', 'reasoning_effort', 'lifecycle_state', 'placement', 'retired_at', 'purged_at'})
 STATUSES = frozenset({'queued', 'running', 'awaiting_auth', 'cancelling', 'cancelled', 'failed', 'succeeded'})
+STATE_LABELS = {'queued': 'Pendiente', 'running': 'En ejecución', 'awaiting_auth': 'Espera de login',
+                'cancelling': 'Cancelando', 'cancelled': 'Cancelada', 'failed': 'Fallida', 'succeeded': 'Completada',
+                'draft': 'Borrador', 'provisioning': 'Preparando', 'auth_pending': 'Login pendiente',
+                'verifying': 'Verificando', 'ready': 'Listo', 'retiring': 'Retirando', 'retired': 'Retirado',
+                'purged': 'Purgado', 'disabled': 'Deshabilitado'}
+KIND_LABELS = {'create': 'Crear', 'update': 'Editar', 'start': 'Iniciar', 'stop': 'Detener',
+               'retire': 'Retirar', 'restore': 'Restaurar', 'purge': 'Purgar', 'recover': 'Recuperar'}
+MODE_LABELS = {'container': 'Contenedor', 'native': 'Nativo'}
+CHANGE_FIELDS = {'display_name': 'Nombre visible', 'harness_id': 'Arnés', 'host_id': 'Ordenador',
+                 'mode': 'Modo', 'primary_room_id': 'Sala principal', 'model_id': 'Modelo',
+                 'reasoning_effort': 'Esfuerzo', 'enabled': 'Habilitado',
+                 'max_concurrent_deliveries': 'Entregas simultáneas'}
+PRIVATE_FIELDS = {'runtime_key': 'Identidad de ejecución', 'primary_account_id': 'Cuenta de proveedor',
+                  'container_name': 'Contenedor', 'runtime_user': 'Usuario de ejecución',
+                  'home_directory': 'Directorio personal', 'state_directory': 'Directorio de estado',
+                  'systemd_user': 'Usuario del servicio'}
+PRIVATE_TEXT = re.compile(r'[/\\]|(?:\d{1,3}\.){3}\d{1,3}|(?:[a-f\d]{0,4}:){2,}[a-f\d:]*|'
+                          r'ssh-|ecdsa-|SHA256:|(?:[a-f\d]{32,})|[A-Za-z\d+_=.-]{48,}', re.IGNORECASE)
+
+
+def cell(value: object, width: int = 40) -> str:
+    if value is None:
+        return '—'
+    if type(value) is bool:
+        return 'Sí' if value else 'No'
+    if not isinstance(value, (str, int)):
+        return '—'
+    text = str(value)
+    if PRIVATE_TEXT.search(text) or any(unicodedata.category(char).startswith('C') for char in text):
+        return '[oculto]'
+    text = ' '.join(text.split())
+    return text if len(text) <= width else text[:width - 1] + '…'
+
+
+def timestamp(value: object) -> datetime.datetime | None:
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00')) if isinstance(value, str) else None
+        return parsed if parsed is not None and parsed.tzinfo is not None else None
+    except ValueError:
+        return None
+
+
+def age(operation: dict, now: datetime.datetime) -> str:
+    changed = timestamp(operation.get('updated_at')) or timestamp(operation.get('created_at'))
+    if changed is None:
+        return 'sin fecha'
+    seconds = max(0, int((now - changed).total_seconds()))
+    if seconds < 60:
+        return 'hace menos de 1 min'
+    if seconds < 3600:
+        return f'hace {seconds // 60} min'
+    if seconds < 86400:
+        return f'hace {seconds // 3600} h'
+    return f'hace {seconds // 86400} d'
+
+
+def human_inventory(result: dict) -> str:
+    now = datetime.datetime.now(datetime.UTC)
+    oldest = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+    operations = sorted(result['operations'], key=lambda row: timestamp(row.get('created_at')) or oldest, reverse=True)
+    latest = {}
+    for operation in operations:
+        selected = operation.get('target', {})
+        if selected.get('resource') == 'agent' and selected.get('tenant_id') == result['tenant_id']:
+            latest.setdefault(selected.get('alias'), operation)
+    headings = ['Alias', 'Nombre visible', 'Arnés', 'Ordenador', 'Modo', 'Ciclo de vida', 'Habilitado', 'Última operación']
+    rows = []
+    known = set()
+    for retired, agents in ((False, result['agents']), (True, result['retired_agents'])):
+        for agent in agents:
+            alias = agent.get('alias')
+            known.add(alias)
+            placement = agent.get('placement') if isinstance(agent.get('placement'), dict) else {}
+            state = agent.get('lifecycle_state') or ('retired' if retired else None)
+            operation = latest.get(alias)
+            summary = 'Sin operaciones recientes' if operation is None else ' / '.join([
+                KIND_LABELS.get(operation.get('kind'), 'Desconocida'),
+                STATE_LABELS.get(operation.get('status'), 'Desconocida'), age(operation, now)])
+            rows.append([cell(alias, 32), cell(agent.get('display_name'), 32), cell(agent.get('harness_id'), 16),
+                         cell(agent.get('host_id') or placement.get('host_id'), 24),
+                         MODE_LABELS.get(agent.get('runtime_mode') or placement.get('mode'), '—'),
+                         STATE_LABELS.get(state, 'Sin estado'), cell(agent.get('enabled')), summary])
+    for alias, operation in latest.items():
+        if alias not in known:
+            rows.append([cell(alias, 32), '—', '—', '—', '—', 'Sin registro visible', '—', ' / '.join([
+                KIND_LABELS.get(operation.get('kind'), 'Desconocida'),
+                STATE_LABELS.get(operation.get('status'), 'Desconocida'), age(operation, now)])])
+    heading = f"Espacio: {cell(result['tenant_id'])} · Revisión: {result['revision']}"
+    if not rows:
+        return heading + '\nNo hay agentes ni operaciones recientes en este espacio.'
+    widths = [max(len(row[index]) for row in [headings, *rows]) for index in range(len(headings))]
+    lines = ['  '.join(value.ljust(width) for value, width in zip(row, widths, strict=True)).rstrip() for row in [headings, *rows]]
+    return '\n'.join([heading, *lines, 'La antigüedad indica la última actualización; el historial reciente es limitado.'])
+
+
+def change_values(agent: dict, *, declarative: bool = False) -> dict:
+    placement = agent.get('placement') if isinstance(agent.get('placement'), dict) else {}
+    values = {**agent, **({'mode': agent['runtime_mode']} if 'runtime_mode' in agent else {}), **placement}
+    if declarative:
+        for key in ('display_name', 'primary_account_id', 'model_id', 'reasoning_effort'):
+            values.setdefault(key, None)
+        values.setdefault('systemd_user', 'stev')
+        values.setdefault('container_name', f"host:{values.get('host_id')}")
+    return values
+
+
+def human_change(result: dict, args) -> str:
+    preview = result['state'] == 'preview'
+    lines = [f"{'Previsualización' if preview else 'Resultado'}: "
+             f"{KIND_LABELS[{'edit': 'update'}.get(args.command, args.command)]} "
+             f"{cell(args.tenant)} · {cell(args.alias)}"]
+    if not preview:
+        lines.append('Estado: ' + STATE_LABELS.get(result['state'], 'Registro aplicado'))
+        lines.append(result['message'])
+        return '\n'.join(lines)
+    registry = result.get('registry_only', False)
+    receipt = result['receipt'] if registry else result['preview']
+    lines.append(f'Revisión esperada: {args.expected_revision}')
+    lines.append('Alcance: solo registro.' if registry else 'Alcance: operación de flota.')
+    desired = receipt['mutation'].get('value', {}) if registry else args.preview_request['parameters']
+    before = change_values(args.preview_current)
+    after = change_values(desired, declarative=not registry and args.command in ('create', 'edit'))
+    if args.command == 'retire':
+        lines.append('Cambio: eliminar el borrador del registro.' if registry else
+                     'Cambio: retirar el agente y solicitar la detención de su ejecución y la revocación de acceso.')
+    else:
+        for key, label in CHANGE_FIELDS.items():
+            if key in after and after[key] != before.get(key):
+                old, new = before.get(key), after[key]
+                values = [MODE_LABELS.get(value, '—') for value in (old, new)] if key == 'mode' else [
+                    'sin asignar' if value is None else cell(value) for value in (old, new)]
+                lines.append(f'{label}: {values[0]} → {values[1]}')
+        members = desired.get('memberships')
+        if isinstance(members, list):
+            lines.append(f'Membresías solicitadas: {len(members)}')
+            lines.append('Se reemplazan las membresías por:')
+            rooms = {room.get('id'): room.get('display_name') for room in getattr(args, 'preview_rooms', [])
+                     if isinstance(room, dict) and room.get('tenant_id') == args.tenant}
+            for member in members:
+                room = rooms.get(member['room_id']) or member['room_id']
+                lines.append(f"  Sala: {cell(room)} · Rol: {cell(member['role'])} · "
+                             f"Habilitada: {cell(member.get('enabled', True))}")
+        for key, label in PRIVATE_FIELDS.items():
+            if key in after and after[key] != before.get(key):
+                change = 'se elimina la asignación' if after[key] is None else 'cambia'
+                if not registry and key in ('systemd_user', 'container_name') and key not in desired.get('placement', {}):
+                    change = 'vuelve al valor predeterminado' if before.get(key) is not None else 'usa el valor predeterminado'
+                lines.append(f'{label}: {change} (detalle con --json).')
+    if not registry:
+        lines.append('Puede aplicarse: ' + cell(receipt['can_apply']))
+        lines.append(f"Dependencias detectadas: {len(receipt.get('dependencies', []))}")
+    lines.append('No se aplicó ningún cambio. Usa --apply con la misma revisión y clave para solicitarlo.' if not registry else
+                 'No se aplicó ningún cambio. Usa --apply con la misma revisión para solicitarlo.')
+    return '\n'.join(lines)
 
 
 class PrivateArgumentParser(argparse.ArgumentParser):
@@ -153,12 +309,16 @@ def fleet_change(client, args) -> dict:
     request = {'kind': {'edit': 'update'}.get(args.command, args.command), 'target': target(args),
                'expected_revision': args.expected_revision, 'idempotency_key': args.idempotency_key,
                'parameters': {} if args.command == 'retire' else parameters(input_document(args.input))}
+    args.preview_request = request
     if args.apply:
         prior = next((row for row in history(client, request['target'])
                       if row.get('request_sha256') == request_hash(request)), None)
         if prior is not None:
             return accepted_result(client.request('POST', OPERATIONS, request), request)
     current = snapshot(client, args.tenant)
+    args.preview_rooms = current.get('rooms', [])
+    args.preview_current = next((row for row in current.get('agents', [])
+                                 if row.get('tenant_id') == args.tenant and row.get('alias') == args.alias), {})
     if current['revision'] != args.expected_revision:
         raise ContextFailure('La revisión cambió; relee spaces list y prepara otra previsualización.')
     capability = client.request('GET', '/v3/console/fleet/capability')
@@ -209,6 +369,8 @@ def registry_value(args) -> dict:
 
 def registry_change(client, args) -> dict:
     current = snapshot(client, args.tenant)
+    args.preview_current = next((row for row in current.get('agents', [])
+                                 if row.get('tenant_id') == args.tenant and row.get('alias') == args.alias), {})
     if current['revision'] != args.expected_revision:
         raise ContextFailure('La revisión cambió; relee spaces list antes de cambiar el registro.')
     mutation = {'resource': 'agent', 'action': {'create': 'create', 'edit': 'update', 'retire': 'delete'}[args.command],
@@ -265,6 +427,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument('--gateway')
         command.add_argument('--origin')
         command.add_argument('--ca-file')
+        command.add_argument('--json', action='store_true', help='Muestra el JSON completo para scripts, incluidos los detalles internos.')
         command.add_argument('--tenant', required=True)
         command.add_argument('--alias', required=name != 'list')
         if name == 'list':
@@ -295,7 +458,8 @@ def main(argv=None) -> int:
             result = registry_change(client, args)
         else:
             result = fleet_change(client, args)
-        print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
+        print(json.dumps(result, ensure_ascii=False, separators=(',', ':')) if args.json else
+              human_inventory(result) if args.command == 'list' else human_change(result, args))
         return 1 if result['state'] == 'failed' else 0
     except ContextFailure as error:
         print('cauce spaces: ' + context_client.console_failure_message(error), file=sys.stderr)

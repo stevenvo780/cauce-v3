@@ -111,6 +111,7 @@ cauce AGENT_ALIAS
 cauce TENANT_ID/AGENT_ALIAS
 cauce AGENT_ALIAS --tenant TENANT_ID --mode shell
 cauce AGENT_ALIAS --tenant TENANT_ID --mode harness
+cauce AGENT_ALIAS estado
 ```
 
 La contraseña se pide sin eco; para automatización, `cauce login --password-stdin` la recibe por stdin. `--renew` renueva la sesión guardada. El archivo queda privado (`0600`), ligado al gateway y al origen. Su ruta predeterminada es `$XDG_STATE_HOME/cauce-v3/console-session.json`, o `$HOME/.local/state/cauce-v3/console-session.json` si no existe esa variable. `CAUCE_CONSOLE_SESSION_FILE` y `--session-file` permiten elegir otro archivo; no hace falta copiar cookies del navegador.
@@ -118,6 +119,8 @@ La contraseña se pide sin eco; para automatización, `cauce login --password-st
 En un servidor sin navegador, `--dispositivo` (alias `--device`) muestra una dirección de la consola y un código que caduca en diez minutos. Abre esa dirección en tu navegador habitual, inicia sesión si hace falta y comprueba el cliente, la hora, la IP enmascarada y la persona y empresa activa antes de pulsar «Autorizar». Autoriza solo solicitudes que tú hayas iniciado: el dispositivo obtiene una sesión de esa persona en esa empresa. «Rechazar» termina el intento sin conceder acceso. `--client-name "Mi terminal"` permite reconocer la solicitud. El CLI espera la aprobación y guarda la misma sesión privada que el login por contraseña; respeta el intervalo indicado por el gateway y lo amplía cuando este pide ralentizar. La caducidad o el rechazo requieren iniciar otra solicitud. `cauce login --status` comprueba también estas sesiones. Si el navegador usa un origen distinto del gateway, indícalo con `--origin`.
 
 Después del login, `cauce <alias>` consulta `/v3/console/terminal/targets`, solicita la sesión y su ticket de un solo uso en `/v3/console/terminal/sessions` y conecta al WebSocket publicado por el gateway. El relay llega al agente PTY del ordenador o contenedor; el cliente no necesita inventario local, acceso Docker ni SSH al destino. Un alias repetido exige `--tenant` o `tenant/alias`. El gateway decide visibilidad, permisos, modos y disponibilidad. Una sesión caducada, un destino sin autorización o un agente PTY desconectado producen un error.
+
+Con sesión nominal, `cauce <alias> estado` consulta el inventario autorizado en solo lectura aunque la terminal del agente esté desconectada. Un alias único entre los destinos autorizados permite deducir el tenant; si es ambiguo, el diagnóstico propone los valores concretos de `--tenant`. Un agente visible en el registro que todavía no tenga terminal publicada recibe un diagnóstico específico en `ver` y al entrar. Esa visibilidad no concede acceso a la terminal ni sustituye las concesiones del gateway.
 
 El servidor necesita el canal PTY aprovisionado según [el runbook de terminales](terminal-pty.md), con su identidad registrada, la unidad del alias instalada y una concesión para la persona. La TUI compartida debe tener una conversación iniciada por el agente. Esta preparación del servidor es una precondición del acceso: el enrolamiento del ordenador y `spaces create` no acreditan por sí solos que su terminal esté preparada. El recorrido del laboratorio comprueba esa preparación mediante el aprovisionador, el instalador y el launcher canónicos, y una entrega real al SDK; la aprobación por dispositivo y las entradas posteriores usan el CLI instalado.
 
@@ -135,14 +138,30 @@ El gateway concede el terminal si `grants.json` tiene una fila para el operador 
 
 ```sh
 cauce spaces list --tenant TENANT_ID
+cauce spaces list --tenant TENANT_ID --json
 cauce spaces create --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key crear-agente-001 --input /ruta/privada/parameters.json
 cauce spaces edit --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key editar-agente-001 --input /ruta/privada/parameters.json
 cauce spaces retire --tenant TENANT_ID --alias AGENT_ALIAS --expected-revision 7 --idempotency-key retirar-agente-001
 ```
 
-Estos comandos reutilizan la sesión de `cauce login`; cada subcomando admite `--session-file`, `--gateway`, `--origin` y `--ca-file`. `list` devuelve la revisión, los agentes y las operaciones durables del tenant elegido. `create`, `edit` y `retire` previsualizan por defecto; `--apply` solicita su aplicación con la revisión esperada y la misma clave de idempotencia. El JSON contiene los parámetros de ejecución: identidad del runtime, harness, sala, membresías y ubicación. La previsualización y las capacidades del gateway determinan si puede aplicarse.
+Estos comandos reutilizan la sesión de `cauce login`; cada subcomando admite `--session-file`, `--gateway`, `--origin` y `--ca-file`. `list` muestra una tabla en castellano con la revisión, alias, nombre visible, arnés, ordenador, modo, ciclo de vida, habilitación y última operación del espacio elegido. La operación más reciente se elige por su creación y su antigüedad se calcula desde la última actualización del recibo. El historial está acotado: «Sin operaciones recientes» no acredita que nunca haya habido una operación. Los agentes retirados y las operaciones cuyo agente aún no tiene registro visible también aparecen.
+
+```text
+Espacio: EJEMPLO · Revisión: 7
+Alias    Nombre visible  Arnés  Ordenador  Modo        Ciclo de vida  Habilitado  Última operación
+canario  Canario         codex  equipo     Contenedor  Borrador       No          Crear / Pendiente / hace 2 min
+La antigüedad indica la última actualización; el historial reciente es limitado.
+```
+
+`create`, `edit` y `retire` previsualizan por defecto con un resumen de los cambios y las dependencias detectadas. Por ejemplo, una edición muestra `Nombre visible: Canario → Canario de prueba` y `Puede aplicarse: Sí`. No se aplica nada hasta añadir `--apply`, que solicita el cambio con la revisión esperada y la misma clave de idempotencia. El resumen de aceptación conserva la diferencia entre pendiente, en ejecución, login pendiente, completado y fallido.
+
+Los cuatro subcomandos admiten `--json`: conserva exactamente el JSON anterior, completo y sin cambios de contrato, para scripts y detalle de recibos. Los scripts que consumen estos comandos deben solicitarlo explícitamente. La salida legible selecciona sólo campos de presentación; omite pasos, evidencias, claves, huellas, cuentas y rutas internas. También oculta esos contenidos cuando aparecen dentro de un nombre visible u otro campo mostrado. Los directorios y la identidad de ejecución que cambian se indican sin mostrar sus valores; `--json` permite consultarlos. El JSON de entrada conserva los parámetros de ejecución: identidad del runtime, harness, sala, membresías y ubicación. La previsualización y las capacidades del gateway determinan si puede aplicarse.
 
 `create` y `edit` admiten `--registry-only` para cambiar únicamente el registro. En ese modo el JSON contiene los campos del registro y un agente nuevo queda deshabilitado; no acredita creación del runtime. Una operación `queued`, `running` o `awaiting_auth` requiere consultar su recibo con `list`: la aceptación no significa que el efecto físico esté completado.
+
+La edición de flota es declarativa: omitir el nombre visible, modelo, esfuerzo o cuenta de proveedor elimina su asignación. Omitir el usuario del servicio o el nombre del contenedor restablece su valor predeterminado. La previsualización incluye esos cambios aunque los campos no aparezcan en el JSON de entrada. `--registry-only` conserva su edición parcial: los campos omitidos no cambian.
+
+Las membresías también se reemplazan: la previsualización enumera las salas, roles y habilitación solicitadas, incluso cuando la cantidad de membresías no cambia. Si no se especifica `enabled`, la asignación solicitada queda habilitada al completar la admisión.
 
 ## Administración de plataforma
 

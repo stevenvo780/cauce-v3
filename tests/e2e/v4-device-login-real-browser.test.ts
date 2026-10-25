@@ -108,7 +108,7 @@ describe('login nominal por dispositivo con CLI, Chromium y PostgreSQL reales', 
       authority: { acting_company: person(0).company.slug } });
     const nominal = await apiGet(page(0), '/v3/auth/session');
     const tenant = String(nominal.body.home_tenant);
-    const listed = await startCli(active(), ['spaces', 'list', '--tenant', tenant], file).result;
+    const listed = await startCli(active(), ['spaces', 'list', '--json', '--tenant', tenant], file).result;
     expect(listed.code).toBe(0);
     expect(JSON.parse(listed.stdout) as unknown).toMatchObject({ state: 'observed', tenant_id: tenant });
     await screenshot(anonymous, '02-autorizado');

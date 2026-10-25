@@ -199,6 +199,7 @@ raise SystemExit(int(os.environ.get('CAUCE_TEST_EXIT', '0')))
             environment.pop(name, None)
         environment.update({
             'HOME': str(self.home),
+            'XDG_STATE_HOME': str(self.home / '.local' / 'state'),
             'PATH': str(self.bin) + os.pathsep + environment.get('PATH', ''),
             'PYTHONDONTWRITEBYTECODE': '1',
             'CAUCE_TEST_CLI_HOME': str(self.home),
@@ -241,7 +242,7 @@ raise SystemExit(int(os.environ.get('CAUCE_TEST_EXIT', '0')))
         return document
 
     def spaces(self, command, *extra):
-        arguments = ['spaces', command, '--session-file', str(self.session), '--tenant', 'Alpha']
+        arguments = ['spaces', command, '--json', '--session-file', str(self.session), '--tenant', 'Alpha']
         if command != 'list':
             arguments += ['--alias', 'canary', '--expected-revision', '7']
         if command in ('create', 'edit'):
@@ -434,6 +435,11 @@ raise SystemExit(int(os.environ.get('CAUCE_TEST_EXIT', '0')))
         self.assertEqual(listed.returncode, 0, listed.stderr)
         self.assertEqual(diagnosed.returncode, 0, diagnosed.stderr)
         self.assertEqual(json.loads(diagnosed.stdout)['items'][0]['identifier'], 'trace-fixture')
+        nominal = self.cli('shared_alias', '--session-file', str(self.session), **fleet)
+        self.assertEqual(nominal.returncode, 1, nominal.stderr)
+        self.assertIn(('GET', '/v3/console/terminal/targets'), self.paths())
+        self.assertEqual(self.calls(), [])
+        self.session.unlink()
         before = len(self.httpd.observed)
         attached = self.cli('shared_alias', **fleet)
         self.assertEqual(attached.returncode, 0, attached.stderr)
@@ -451,7 +457,7 @@ raise SystemExit(int(os.environ.get('CAUCE_TEST_EXIT', '0')))
             self.assertIn('consola', refused.stderr)
         unknown = self.cli('missing-alias', **fleet)
         self.assertEqual(unknown.returncode, 2, unknown.stderr)
-        self.assertIn('not declared', unknown.stderr)
+        self.assertIn('no figura en el inventario aplicado', unknown.stderr)
         self.assertEqual(self.calls(), [])
         self.assertEqual(len(self.httpd.observed), before)
 

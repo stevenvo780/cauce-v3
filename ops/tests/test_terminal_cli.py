@@ -55,6 +55,18 @@ class TerminalTargetTests(unittest.TestCase):
         with self.assertRaisesRegex(context_client.ContextFailure, 'no coincide'):
             self.resolve(first, alias='Alpha/zz-canary-terminal', tenant='Beta')
 
+    def test_ambiguous_alias_suggests_only_visible_tenants(self):
+        with self.assertRaises(context_client.ContextFailure) as rejected:
+            self.resolve(target(tenant_id='Steven'), target(tenant_id='Miguel'))
+        self.assertIn('usa --tenant Miguel o usa --tenant Steven', str(rejected.exception))
+        self.assertNotIn('inexistente', str(rejected.exception))
+
+    def test_unique_authorized_target_is_inferred_without_tenant(self):
+        selected = target(tenant_id='Steven')
+        self.assertEqual(self.resolve(target(tenant_id='Miguel', authorized=False), selected), (selected, 'harness_rw'))
+        with self.assertRaisesRegex(context_client.ContextFailure, 'permisos'):
+            self.resolve(target(tenant_id='Miguel', authorized=False), selected, tenant='Miguel')
+
     def test_authorized_requires_boolean_true_and_online_pty(self):
         for value in (False, 1, 'true', None):
             with self.subTest(authorized=value), self.assertRaises(context_client.ContextFailure):
@@ -107,6 +119,81 @@ class TerminalTargetTests(unittest.TestCase):
 
 
 class TerminalMainTests(unittest.TestCase):
+    def run_cli(self, client, *arguments):
+        with patch.object(sys, 'argv', ['context_client', '--terminal', 'zz-canary-terminal', *arguments]), \
+                patch.object(sys, 'stdout', io.StringIO()) as stdout, \
+                patch.object(sys, 'stderr', io.StringIO()) as stderr, \
+                patch.object(context_client, 'ConsoleSessionClient', return_value=client), \
+                patch.object(context_client, 'terminal_transport') as transport:
+            result = context_client.terminal_main()
+        transport.assert_not_called()
+        return result, stdout.getvalue(), stderr.getvalue()
+
+    def test_status_works_offline_with_safe_fields_and_never_creates_a_terminal(self):
+        for state, label in (('online', 'En línea'), ('agent_offline', 'Fuera de línea'),
+                             ('unknown', 'Sin presencia confirmada'), ('not_installed', 'No instalado')):
+            with self.subTest(state=state):
+                private = {'container': '/private/terminal', 'runtime_user': 'private-user',
+                           'image': 'sha256:private-image', 'last_seen': '100.64.0.7',
+                           'reason': 'ssh-ed25519 private-key', 'harness': COOKIE,
+                           'shares_container_with': [{'alias': 'private-cohort'}]}
+                client = SimpleNamespace(request=Mock(return_value={'items': [target(pty_state=state, **private)]}))
+                with patch.object(context_client.shutil, 'which', return_value=None):
+                    code, output, error = self.run_cli(client, 'estado')
+                self.assertEqual((code, error), (0, ''))
+                self.assertIn('Destino: Alpha · zz-canary-terminal', output)
+                self.assertIn('Terminal: ' + label, output)
+                self.assertIn('Permiso de terminal: Autorizado', output)
+                for value in private.values():
+                    if isinstance(value, str):
+                        self.assertNotIn(value, output)
+                client.request.assert_called_once_with('GET', '/v3/console/terminal/targets')
+
+    def test_status_refuses_denied_targets_and_does_not_fallback_to_configuration(self):
+        client = SimpleNamespace(request=Mock(return_value={'items': [target(authorized=False)]}))
+        code, output, error = self.run_cli(client, 'estado')
+        self.assertEqual((code, output), (1, ''))
+        self.assertIn('revisa tus permisos', error)
+        client.request.assert_called_once_with('GET', '/v3/console/terminal/targets')
+
+    def test_visible_registry_without_terminal_is_diagnosed_without_authorizing_it(self):
+        for action in ('ver', 'estado', ''):
+            with self.subTest(action=action):
+                registry = {'agents': [target(tenant_id='Steven', home_directory='/private/agent')]}
+                client = SimpleNamespace(request=Mock(side_effect=[{'items': []}, registry]))
+                code, output, error = self.run_cli(client, *([action] if action else []))
+                if action == 'estado':
+                    self.assertEqual((code, error), (0, ''))
+                    self.assertIn('Destino: Steven · zz-canary-terminal', output)
+                    self.assertIn('Sin terminal publicada', output)
+                    self.assertIn('Permiso de terminal: No acreditado', output)
+                else:
+                    self.assertEqual((code, output), (1, ''))
+                    self.assertIn('existe en el registro visible, pero no publica una terminal', error)
+                self.assertNotIn('/private/agent', output + error)
+                self.assertEqual(client.request.call_args_list, [
+                    unittest.mock.call('GET', '/v3/console/terminal/targets'),
+                    unittest.mock.call('GET', '/v3/console/config')])
+
+    def test_absent_alias_and_registry_ambiguity_have_distinct_diagnostics(self):
+        for registry, expected in (({'agents': []}, 'no figura en el inventario visible'),
+                                   ({'agents': [target(tenant_id='Steven'), target(tenant_id='Miguel')]},
+                                    'usa --tenant Miguel o usa --tenant Steven')):
+            with self.subTest(expected=expected):
+                client = SimpleNamespace(request=Mock(side_effect=[{'items': []}, registry]))
+                code, output, error = self.run_cli(client, 'ver')
+                self.assertEqual((code, output), (1, ''))
+                self.assertIn(expected, error)
+                self.assertNotIn('no autorizado o ambiguo', error)
+
+    def test_status_accepts_options_before_or_after_action(self):
+        for arguments in (('estado', '--tenant', 'Steven'), ('--tenant', 'Steven', 'estado')):
+            with self.subTest(arguments=arguments):
+                client = SimpleNamespace(request=Mock(return_value={'items': [target(tenant_id='Steven')]}))
+                code, output, error = self.run_cli(client, *arguments)
+                self.assertEqual((code, error), (0, ''))
+                self.assertIn('Destino: Steven', output)
+
     def test_http_failures_offer_actions_without_forwarding_server_details(self):
         for code, action in ((401, 'cauce login'), (403, 'permisos'), (302, '--gateway'), (409, 'antes de reintentar')):
             with self.subTest(code=code), \
@@ -160,6 +247,39 @@ class TerminalMainTests(unittest.TestCase):
                     {key: issued[key] for key in ('request_id', 'owner_generation', 'owner_token')}))
                 for secret in (COOKIE, TICKET, PROOF):
                     self.assertNotIn(secret, stderr.getvalue())
+
+
+class TerminalActionRoutingTests(unittest.TestCase):
+    def test_nominal_actions_and_legacy_actions_remain_routed_separately(self):
+        with tempfile.TemporaryDirectory(prefix='cauce-terminal-wrapper-') as temporary:
+            root = pathlib.Path(temporary)
+            binaries = root / '.local/bin'
+            binaries.mkdir(parents=True)
+            scripts = {'getent': '#!/bin/sh\nprintf "synthetic:x:1000:1000::%s:/bin/bash\\n" "$HOME"\n',
+                       'python3': '#!/bin/sh\nif [ "$1" = -I ]; then printf "nominal\\n"; else printf "legacy-key\\n"; fi\n',
+                       'cauce-panel': '#!/bin/sh\nprintf "legacy\\n"\n',
+                       'cauce-estado': '#!/bin/sh\nprintf "legacy\\n"\n'}
+            for name, content in scripts.items():
+                path = binaries / name
+                path.write_text(content)
+                path.chmod(0o700)
+            environment = {'HOME': str(root), 'PATH': str(binaries) + os.pathsep + os.defpath,
+                           'XDG_STATE_HOME': str(root / 'state'), 'CAUCE_FLEET_RUNTIME_STATE': str(root / 'runtime.json')}
+            for nominal in (False, True):
+                selected = {**environment, **({'CAUCE_CONSOLE_SESSION_FILE': str(root / 'nominal.json')} if nominal else {})}
+                for action in ([], ['ver'], ['estado']):
+                    with self.subTest(nominal=nominal, action=action):
+                        result = subprocess.run(['bash', str(ROOT / 'ops/cli/cauce'), 'zz-canary-terminal', *action],
+                                                env=selected, capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout.strip(), 'nominal' if nominal else 'legacy')
+                for action in ([], ['ver'], ['estado'], ['--tenant', 'Steven', 'estado']):
+                    with self.subTest(action=action, options=True):
+                        result = subprocess.run(['bash', str(ROOT / 'ops/cli/cauce'), 'zz-canary-terminal',
+                                                 *action, '--tenant', 'Steven'],
+                                                env=environment, capture_output=True, text=True, timeout=5)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout.strip(), 'nominal')
 
 
 SERVER_WIRE = r'''

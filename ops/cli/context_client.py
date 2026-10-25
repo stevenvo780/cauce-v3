@@ -453,7 +453,11 @@ process.on('exit', restore);
 '''
 
 
-def terminal_target(snapshot: object, alias: str, tenant: str | None, mode: str | None) -> tuple[dict, str]:
+class TerminalTargetMissing(ContextFailure):
+    pass
+
+
+def terminal_selection(snapshot: object, alias: str, tenant: str | None) -> dict:
     if '/' in alias:
         qualified_tenant, alias = alias.split('/', 1)
         if tenant is not None and tenant != qualified_tenant:
@@ -466,15 +470,62 @@ def terminal_target(snapshot: object, alias: str, tenant: str | None, mode: str 
         raise ContextFailure('El gateway no publica el inventario de terminales.')
     matches = [item for item in items if isinstance(item, dict) and item.get('alias') == alias
                and (tenant is None or item.get('tenant_id') == tenant)]
+    if not matches:
+        raise TerminalTargetMissing('El alias no figura en el inventario visible de esta sesión; comprueba el alias, --tenant y la empresa activa.')
+    if tenant is None and len(matches) > 1:
+        authorized = [item for item in matches if item.get('authorized') is True]
+        if len(authorized) == 1:
+            matches = authorized
     if len(matches) != 1:
-        raise ContextFailure('Destino inexistente, no autorizado o ambiguo; comprueba --tenant y los permisos.')
+        tenants = sorted({item['tenant_id'] for item in matches
+                          if isinstance(item.get('tenant_id'), str) and IDENTITY.fullmatch(item['tenant_id'])})
+        suggestions = ' o '.join('usa --tenant ' + value for value in tenants)
+        raise ContextFailure('El alias es ambiguo en el inventario visible; ' + (suggestions or 'usa un tenant válido') + '.')
     target = matches[0]
+    if not isinstance(target.get('tenant_id'), str) or not IDENTITY.fullmatch(target['tenant_id']):
+        raise ContextFailure('La identidad del destino es inválida.')
+    return target
+
+
+def terminal_lookup(client: ConsoleSessionClient, alias: str, tenant: str | None) -> dict:
+    try:
+        return terminal_selection(client.request('GET', '/v3/console/terminal/targets'), alias, tenant)
+    except TerminalTargetMissing:
+        configuration = client.request('GET', '/v3/console/config')
+        if not isinstance(configuration, dict) or not isinstance(configuration.get('agents'), list):
+            raise ContextFailure('El gateway no publica el registro visible de agentes.') from None
+        retired = configuration.get('retired', {})
+        rows = configuration['agents'] + (retired.get('agents', []) if isinstance(retired, dict) else [])
+        identities = [{key: row.get(key) for key in ('tenant_id', 'alias')} for row in rows if isinstance(row, dict)]
+        registered = terminal_selection({'items': identities}, alias, tenant)
+        return {key: registered[key] for key in ('tenant_id', 'alias')} | {
+            'authorized': False, 'pty_state': 'not_published', 'registry_only': True,
+        }
+
+
+def terminal_status(target: dict) -> str:
+    states = {'online': 'En línea', 'offline': 'Fuera de línea', 'agent_offline': 'Fuera de línea',
+              'not_installed': 'No instalado', 'unknown': 'Sin presencia confirmada', 'not_published': 'Sin terminal publicada'}
+    modes = {'shell': 'Consola de comandos', 'harness': 'TUI solo lectura', 'harness_rw': 'TUI con control'}
+    lines = [f"Destino: {target['tenant_id']} · {target['alias']}",
+             'Terminal: ' + states.get(target.get('pty_state'), 'Sin presencia confirmada'),
+             'Permiso de terminal: ' + ('Autorizado' if target.get('authorized') is True else 'No acreditado')]
+    available = target.get('modes')
+    if isinstance(available, list):
+        lines.append('Modos disponibles: ' + (', '.join(label for mode, label in modes.items() if mode in available) or 'Ninguno'))
+    if target.get('pty_state') != 'online':
+        lines.append('Revisa el estado del agente y la autenticación del proveedor en la consola; no se abrió ninguna sesión terminal.')
+    return '\n'.join(lines)
+
+
+def terminal_target(snapshot: object, alias: str, tenant: str | None, mode: str | None) -> tuple[dict, str]:
+    target = terminal_selection(snapshot, alias, tenant)
+    if target.get('registry_only') is True:
+        raise ContextFailure('El agente existe en el registro visible, pero no publica una terminal; revisa su ejecución y la conexión al terminal-relay en la consola.')
     if target.get('authorized') is not True:
         raise ContextFailure('El servidor no autoriza esta terminal; revisa tus permisos y la empresa activa en la consola.')
     if target.get('pty_state') != 'online':
         raise ContextFailure('La terminal del agente no está conectada; revisa su estado y la autenticación del proveedor en la consola.')
-    if not isinstance(target.get('tenant_id'), str) or not IDENTITY.fullmatch(target['tenant_id']):
-        raise ContextFailure('La identidad del destino es inválida.')
     modes = target.get('modes')
     writable = target.get('writable_modes')
     if not isinstance(modes, list) or not isinstance(writable, list):
@@ -549,7 +600,7 @@ def terminal_main() -> int:
     parser = ContextArgumentParser(prog='cauce <alias>', allow_abbrev=False,
                                     description='Terminal remoto con la sesión nominal de cauce login')
     parser.add_argument('alias')
-    parser.add_argument('action', nargs='?', choices=('ver',), help='ver la TUI sin tomar el control')
+    parser.add_argument('action', nargs='?', choices=('ver', 'estado'), help='ver la TUI o consultar su estado sin abrir una sesión')
     parser.add_argument('--tenant')
     parser.add_argument('--gateway', default=os.environ.get('CAUCE_GATEWAY_URL'))
     parser.add_argument('--origin')
@@ -564,8 +615,14 @@ def terminal_main() -> int:
                                 run_name='cauce_console_session')
         client = ConsoleSessionClient(args.session_file or module['default_session_file'](),
                                       args.gateway, args.origin, args.ca_file)
-        target, mode = terminal_target(client.request('GET', '/v3/console/terminal/targets'),
-                                       args.alias, args.tenant, 'harness' if args.action == 'ver' else args.mode)
+        target = terminal_lookup(client, args.alias, args.tenant)
+        if args.action == 'estado':
+            if target.get('authorized') is not True and target.get('registry_only') is not True:
+                raise ContextFailure('El servidor no autoriza esta terminal; revisa tus permisos y la empresa activa en la consola.')
+            print(terminal_status(target))
+            return 0
+        target, mode = terminal_target({'items': [target]}, args.alias, args.tenant,
+                                       'harness' if args.action == 'ver' else args.mode)
         if shutil.which('node') is None:
             raise ContextFailure('Instala Node.js y el runtime Cauce para abrir el terminal.')
         size = shutil.get_terminal_size((100, 30))

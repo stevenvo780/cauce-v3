@@ -80,7 +80,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
   return await response.json() as T;
 }
 function spaces<T>(operation: string, args: string[] = []): Promise<T> {
-  return command(['spaces', operation, '--tenant', tenant, '--session-file', sessionFile, ...args]);
+  return command(['spaces', operation, '--json', '--tenant', tenant, '--session-file', sessionFile, ...args]);
 }
 function context<T>(operation: string, args: string[] = []): Promise<T> {
   return command(['context', '--gateway', gateway, '--origin', gateway, '--session-file', sessionFile,
@@ -193,7 +193,7 @@ describe.sequential('cauce lifecycle CLI against an owned real gateway and Postg
       .toEqual([{ enabled: false, runtime_key: null, lifecycle_state: 'draft' }]);
     const created = await spaces<Inventory>('list', ['--alias', alias]);
     expect(created.agents).toEqual([expect.objectContaining({ alias, display_name: `${prefix} draft` })]);
-    const edit = ['spaces', 'edit', '--tenant', tenant, '--session-file', sessionFile, '--alias', alias, '--registry-only',
+    const edit = ['spaces', 'edit', '--json', '--tenant', tenant, '--session-file', sessionFile, '--alias', alias, '--registry-only',
       '--input', await privateFile('registry-edit.json', { display_name: `${prefix} edited` }), '--expected-revision', String(created.revision), '--apply'];
     expect(await command(edit)).toMatchObject({ state: 'registry_applied' });
     const stale = await runCli(edit); safe(stale); expect(stale.code).toBe(1); expect(stale.stderr).toContain('La revisión cambió');
