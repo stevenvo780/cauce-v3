@@ -14,6 +14,24 @@ function sameSharedProcesses(before: Observation, after: Observation, peer: Acto
   sameProcess(oldPane.process, newPane.process);
   assert.ok(before.job && after.job); sameProcess(before.job, after.job);
 }
+async function preparePeerDraft(fixture: SharedWindowFixture, peer: Actor) {
+  const marker = 'S2D_OWNED_PEER_DRAFT';
+  await fixture.keys(peer, [marker], true);
+  await until(async () => (await fixture.provider(peer)).draftLength === marker.length ? true : undefined);
+  const pane = await fixture.pane(peer), input = await fixture.provider(peer);
+  return {
+    assertPreserved: async () => {
+      expect(await fixture.pane(peer) === pane, 'peer compositor changed during another adapter restart').toBe(true);
+      expect(await fixture.provider(peer)).toEqual(input);
+      return { compositor_unchanged: true, input_bytes_unchanged: true, input_bytes: input.inputBytes,
+        submits: input.submits, draft_length: input.draftLength, provider_pid: input.pid };
+    },
+    clear: async () => {
+      await fixture.keys(peer, ['C-u']);
+      await until(async () => (await fixture.provider(peer)).draftLength === 0 ? true : undefined);
+    },
+  };
+}
 async function holdDraft(fixture: SharedWindowFixture, actor: Actor, peer: Actor, phase: string) {
   await fixture.keys(actor, ['S2D_OWNED_UNSENT_DRAFT'], true);
   await until(async () => (await fixture.provider(actor)).draftLength > 0 ? true : undefined);
@@ -55,6 +73,7 @@ test('the canonical window bridges both legacy shared adapters without touching 
     for (const actor of fixture.actors) {
       const peer = fixture.actors.find(other => other.alias !== actor.alias); assert.ok(peer);
       await holdDraft(fixture, actor, peer, 'legacy');
+      const peerDraft = await preparePeerDraft(fixture, peer);
       const before = await fixture.snapshot(), oldSelf = before.actors[actor.alias]; assert.ok(oldSelf);
       expect(oldSelf.authority).toBeNull();
       const started = Date.now(), applied = await fixture.apply(actor, 'bridge');
@@ -66,12 +85,15 @@ test('the canonical window bridges both legacy shared adapters without touching 
       expect(own.adapter.ticks).not.toBe(oldSelf.adapter.ticks);
       expect(await fixture.gone(oldSelf.adapter)).toBe(true); expect(await fixture.gone(oldSelf.controller)).toBe(true);
       sameSharedProcesses(before, after, peer);
+      const peerDraftEvidence = await peerDraft.assertPreserved();
       await fixture.save('legacy-bridge-' + actor.harness, { before, after, window_receipt: applied.receipt,
-        peer_untouched: true, server_survived: true, orphan_job_survived: true, duration_ms: Date.now() - started });
+        peer_untouched: true, peer_draft: peerDraftEvidence, server_survived: true, orphan_job_survived: true, duration_ms: Date.now() - started });
+      await peerDraft.clear();
     }
     for (const actor of fixture.actors) {
       const peer = fixture.actors.find(other => other.alias !== actor.alias); assert.ok(peer);
       await holdDraft(fixture, actor, peer, 'current');
+      const peerDraft = await preparePeerDraft(fixture, peer);
       const before = await fixture.snapshot(), oldSelf = before.actors[actor.alias]; assert.ok(oldSelf);
       const stopped = await fixture.directStop(actor); expect(stopped.code, 'canonical supervisor stop must complete').toBe(0);
       await until(async () => await fixture.gone(oldSelf.adapter) && await fixture.gone(oldSelf.controller) ? true : undefined);
@@ -79,7 +101,9 @@ test('the canonical window bridges both legacy shared adapters without touching 
       const after = await fixture.snapshot(), own = after.actors[actor.alias]; assert.ok(own);
       expect(own.authority).toBe('adapter-leader-v1'); expect(own.adapter.ticks).not.toBe(oldSelf.adapter.ticks);
       sameSharedProcesses(before, after, peer);
-      await fixture.save('normal-restart-' + actor.harness, { before, after, peer_untouched: true, server_survived: true, orphan_job_survived: true });
+      const peerDraftEvidence = await peerDraft.assertPreserved();
+      await fixture.save('normal-restart-' + actor.harness, { before, after, peer_untouched: true, peer_draft: peerDraftEvidence, server_survived: true, orphan_job_survived: true });
+      await peerDraft.clear();
     }
   } catch (error) {
     try { await fixture.diagnostics(); } catch { /* Keep the original physical failure. */ }

@@ -268,7 +268,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
     const snapshot = async (): Promise<Observation> => {
       const metadata = JSON.parse(await docker(['exec', '--user', '0', wsName, 'python3', '-I', '-B', '-c',
         'import json,pathlib,sys;r={}\nfor alias in sys.argv[2:]:\n d=json.loads((pathlib.Path(sys.argv[1])/alias/"cauce-v3-adapter.json").read_bytes());r[alias]={k:d.get(k) for k in ("pid","starttime","controllerPid","controllerStarttime","stopAuthority")}\nprint(json.dumps(r))', control, ...actors.map(actor => actor.alias)])) as Record<string, { pid: number; starttime: number; controllerPid: number; controllerStarttime: number; stopAuthority: string | null }>;
-      const columnSeparator = String.fromCharCode(9), rowSeparator = String.fromCharCode(10);
+      const columnSeparator = '|', rowSeparator = String.fromCharCode(10);
       const format = ['#{session_name}', '#{session_id}', '#{pane_id}', '#{pane_pid}', '#{pid}'].join(columnSeparator);
       const rows = (await docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'list-panes', '-a', '-F', format]))
         .split(rowSeparator).map(row => row.split(columnSeparator));
