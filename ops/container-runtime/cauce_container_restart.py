@@ -151,7 +151,7 @@ def adapter_harness(document: dict[str, Any]) -> str:
         hold("ADAPTER_ENTRY_UNKNOWN")
     entries = []
     for argument in arguments[1:]:
-        match = re.fullmatch(r"/(?:[A-Za-z0-9_.-]+/)+packages/adapter-sdk/dist/src/bin/"
+        match = re.fullmatch(r"/(?:[A-Za-z0-9_.-]+/)+(?:packages/adapter-sdk/dist|adapter)/src/bin/"
                             r"(codex|claude|grok|muse|gemini)\.js", argument)
         if match and os.path.normpath(argument) == argument:
             entries.append(match.group(1))

@@ -294,14 +294,29 @@ class RestartGuardTests(unittest.TestCase):
             assert_empty_composer(pane, 6, 4, "codex")
 
     def test_harness_family_comes_from_the_pinned_adapter_command(self):
-        raw = b"node\0/opt/owned/packages/adapter-sdk/dist/src/bin/codex.js\0"
-        document = {"pid": 101, "runtimeUid": 1000, "runtimeGid": 1000,
-                    "executable": {"cmdlineSha256": framed_hash([raw])}}
-        with patch("cauce_container_restart.matched_fs_credentials", return_value=nullcontext()), \
-                patch("cauce_container_restart.pathlib.Path.read_bytes", return_value=raw):
-            self.assertEqual(adapter_harness(document), "codex")
-            document["executable"]["cmdlineSha256"] = framed_hash([b"changed"])
-            with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_PROCESS_COMMAND_CHANGED$"):
+        for entry in (b"/opt/owned/packages/adapter-sdk/dist/src/bin/codex.js",
+                      b"/opt/owned/adapter/src/bin/codex.js"):
+            raw = b"node\0" + entry + b"\0"
+            document = {"pid": 101, "runtimeUid": 1000, "runtimeGid": 1000,
+                        "executable": {"cmdlineSha256": framed_hash([raw])}}
+            with self.subTest(entry=entry), \
+                    patch("cauce_container_restart.matched_fs_credentials", return_value=nullcontext()), \
+                    patch("cauce_container_restart.pathlib.Path.read_bytes", return_value=raw):
+                self.assertEqual(adapter_harness(document), "codex")
+                document["executable"]["cmdlineSha256"] = framed_hash([b"changed"])
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_PROCESS_COMMAND_CHANGED$"):
+                    adapter_harness(document)
+
+    def test_harness_family_rejects_unrecognized_or_noncanonical_entries(self):
+        for entry in (b"/opt/owned/codex.js", b"/opt/../owned/adapter/src/bin/codex.js",
+                      b"relative/adapter/src/bin/codex.js"):
+            raw = b"node\0" + entry + b"\0"
+            document = {"pid": 101, "runtimeUid": 1000, "runtimeGid": 1000,
+                        "executable": {"cmdlineSha256": framed_hash([raw])}}
+            with self.subTest(entry=entry), \
+                    patch("cauce_container_restart.matched_fs_credentials", return_value=nullcontext()), \
+                    patch("cauce_container_restart.pathlib.Path.read_bytes", return_value=raw), \
+                    self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_ADAPTER_ENTRY_UNKNOWN$"):
                 adapter_harness(document)
 
     def test_input_rules_and_footer_words_do_not_close_the_composer(self):
