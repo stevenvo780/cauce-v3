@@ -265,6 +265,7 @@ export interface PtyEntry {
   inputTimer?: number;
   heartbeatTimer?: number;
   resizeObserver?: ResizeObserver;
+  resizeFrame?: number;
   geometriaDicha?: { cols: number; rows: number };
   columnasRemotas?: number;
   bloqueoEntrada?: () => void;

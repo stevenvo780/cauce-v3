@@ -3,11 +3,42 @@ import { chmod, lstat, readdir, rm, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { expect } from 'vitest';
 import { buildInstalledCli } from './v4-cli-flota-dinamica.install.js';
-import { apiGet } from './v4-console-real-browser.helpers.js';
+import { apiGet, type V4Page } from './v4-console-real-browser.helpers.js';
 import { ptyFleetAlias } from './v4-pty-flota-dinamica.flow.js';
 import { capturePtyFleet, ptyFleetReceipt, type PtyFleetFixture } from './v4-pty-flota-dinamica.helpers.js';
 
 export type PtyFleetCli = Awaited<ReturnType<typeof buildInstalledCli>>;
+
+async function observeBrowserErrors(page: V4Page): Promise<void> {
+  await page.evaluate(() => {
+    const state = window as Window & { h12BrowserErrors?: Record<string, unknown>[] };
+    if (state.h12BrowserErrors) return;
+    state.h12BrowserErrors = [];
+    const source = (value: string): string | null => {
+      try {
+        const path = new URL(value).pathname;
+        return path.startsWith('/src/') || path.startsWith('/node_modules/') ? path.slice(0, 250) : null;
+      } catch { return null; }
+    };
+    const capture = (type: string, value: unknown, message: string, filename: string): void => {
+      if (!state.h12BrowserErrors || state.h12BrowserErrors.length >= 40) return;
+      const name = value instanceof Error ? value.name : '';
+      const stack = value instanceof Error ? value.stack ?? '' : '';
+      const frames = stack.split('\n').slice(1, 9).flatMap(line => {
+        const url = /https?:\/\/[^\s)]+/u.exec(line)?.[0];
+        const path = url ? source(url) : null;
+        return path ? [path] : [];
+      });
+      state.h12BrowserErrors.push({ type, value_type: typeof value, error_object: value instanceof Error,
+        name: /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(name) ? name : null, frames, source: source(filename),
+        resize_observer_loop: message === 'ResizeObserver loop completed with undelivered notifications.'
+          || message === 'ResizeObserver loop limit exceeded' });
+    };
+    window.addEventListener('error', event => { capture(event.type, event.error, event.message, event.filename); });
+    window.addEventListener('unhandledrejection', event => { capture(event.type, event.reason, '', ''); });
+  });
+}
+
 function connection(fixture: PtyFleetFixture, cli: PtyFleetCli): string[] {
   return ['--gateway', fixture.baseUrl, '--origin', fixture.baseUrl, '--ca-file', fixture.caFile, '--session-file', cli.sessionFile];
 }
@@ -49,6 +80,7 @@ export async function usePtyFleetShells(fixture: PtyFleetFixture, cli: PtyFleetC
   const nonce = randomUUID(), marker = 'H12-WEB-' + nonce;
   await fixture.page.goto(fixture.baseUrl + '/terminal/' + encodeURIComponent(fixture.tenantId) + '/' + ptyFleetAlias
     + '?modo=terminal', { waitUntil: 'domcontentloaded' });
+  await observeBrowserErrors(fixture.page);
   await fixture.page.locator('[data-pty-shell][data-state="open"]').waitFor({ timeout: 30_000 });
   const sessionId = await fixture.page.locator('[data-session-id]').evaluate(element => element.getAttribute('data-session-id'));
   const input = fixture.page.locator('.xterm-helper-textarea');
@@ -79,6 +111,8 @@ export async function usePtyFleetShells(fixture: PtyFleetFixture, cli: PtyFleetC
      FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 ORDER BY issued_at`, [fixture.tenantId, ptyFleetAlias]);
   expect(durable.rows.some(row => row.id === sessionId && row.mode === 'shell' && row.closed && row.consumed)).toBe(true);
   expect(durable.rows.every(row => row.mode === 'shell' && row.operator_id === fixture.owner.email && row.closed && row.consumed)).toBe(true);
+  await ptyFleetReceipt(phase + '-browser-events', await fixture.page.evaluate(() =>
+    (window as Window & { h12BrowserErrors?: Record<string, unknown>[] }).h12BrowserErrors ?? []));
   await ptyFleetReceipt(phase + '-shells', { web: { session_id: sessionId, nonce_verified: true, uid, pwd: '/home/cauce' },
     cli: { code: result.code, nonce_verified: true, uid, pwd: '/home/cauce', installed: true }, sessions: durable.rows });
 }
