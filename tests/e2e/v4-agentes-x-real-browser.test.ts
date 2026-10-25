@@ -7,17 +7,19 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { canonicalJson, sha256Hex } from '../../packages/protocol/src/canonical.js';
+import { maintainConsoleUser } from '../../services/gateway/src/console-user-maintenance.js';
+import { hashPassword } from '../../services/gateway/src/password.js';
 import { docker, FIXTURE_PROVIDER_IDENTITY, hostEnrollments, startComputerHarness,
   type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { inviteSetupHost } from '../../services/gateway/src/fleet/host-setup.fixtures.js';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
-  openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
+  login, openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 
 const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
-const owner = 'e2e-a2-cobertura-w-1025';
+const owner = 'x-admision-efecto-1025';
 const run = randomUUID().slice(0, 8);
 const prefix = `zz-canary-${owner}-${run}`;
 const alias = `${prefix}-x`;
@@ -26,12 +28,21 @@ const container = `${prefix}-${runtime}`;
 const markerPath = `/home/cauce/.cauce/${runtime}/preserved-marker`;
 const network = `${prefix}-base`;
 const extraNetwork = `${prefix}-extra`;
-const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'x', run);
+const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'repro', run);
 const person = { ...syntheticPerson('extensions', run), name: prefix, email: `${prefix}@example.test`,
   company: { name: prefix, slug: prefix } };
+const reader = { ...person, email: `${prefix}-reader@example.test`, password: syntheticPerson('reader', run).password };
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE, {
   id: 'offline-send', reason: 'Chromium is deliberately offline for the idempotent resend',
   matches: text => text.includes('net::ERR_INTERNET_DISCONNECTED'),
+}]);
+const readerDeniedPaths = new Set(['/v3/console/terminal/capability', '/v3/console/fleet/hosts', '/v3/console/fleet/capability', '/v3/console/fleet/operations']);
+const readerErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, {
+  id: 'reader-capabilities-denied', reason: 'the actual reader role cannot request terminal or fleet write capabilities',
+  matches: (text, url) => {
+    try { return text.includes('status of 403') && readerDeniedPaths.has(new URL(url).pathname); }
+    catch { return false; }
+  },
 }]);
 interface Operation {
   id: string; kind: string; status: string; request_sha256: string; error: unknown;
@@ -56,6 +67,73 @@ const view = () => { if (!page) throw new Error('extension browser unavailable')
 const sheet = () => view().getByRole('dialog', { name: `Ampliaciones ${run}`, exact: true });
 const functions = evidence.functions as Record<string, unknown>;
 const pass = (ids: string[], details: unknown) => { for (const id of ids) functions[id] = { result: 'PASA', details }; };
+const admissionDiagnostics = String.raw`import json
+import pathlib
+import sys
+
+
+def document(path):
+    if not path.is_file() or path.is_symlink():
+        return None
+    return json.loads(path.read_bytes())
+
+
+def pointer(path):
+    value = document(path)
+    return {'exists': value is not None, 'generation': value.get('generation') if isinstance(value, dict) else None}
+
+
+root = pathlib.Path(sys.argv[1])
+runtime = sys.argv[2]
+result = []
+for filename in root.rglob('executor-policy.json'):
+    policy = document(filename)
+    state = pathlib.Path(policy['roots']['state'])
+    item = {
+        'policy': str(filename),
+        'stateRoot': str(state),
+        'hostId': policy.get('host_id'),
+        'desired': pointer(state / 'desired-fleet.json'),
+        'applied': pointer(state / 'applied-fleet.json'),
+        'templates': [{name: row.get(name) for name in ('harness_id', 'runtime_user', 'home_directory', 'state_root')}
+                      for row in policy.get('container_templates', [])],
+        'operations': [],
+        'generations': [],
+    }
+    for operation in (state / 'operations').glob('*'):
+        effects = document(operation / 'effects.json')
+        if not isinstance(effects, dict):
+            continue
+        verified = effects.get('verified')
+        item['operations'].append({
+            'id': operation.name,
+            'journalKeys': sorted(effects),
+            'attemptedSteps': effects.get('attempted'),
+            'verified': {name: verified.get(name) is True for name in
+                         ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')}
+                        if isinstance(verified, dict) else None,
+            'generation': effects.get('generation'),
+            'expectedApplied': effects.get('expected_applied'),
+            'bootstrapCredentialsPrepared': bool(effects.get('bootstrap_credentials')),
+            'normalCredentialsPrepared': bool(effects.get('normal_credentials')),
+            'admissionRecorded': isinstance(effects.get('admission'), dict),
+            'normalProofRecorded': isinstance(effects.get('admission_normal_proof'), dict),
+            'replacementRetirementRecorded': isinstance(effects.get('replacement_retirement'), dict),
+        })
+    for generation in (state / 'generations').glob('*'):
+        fleet = document(generation / 'flota.json')
+        if not isinstance(fleet, dict):
+            continue
+        public = {}
+        for section in ('fleet', 'bootstrap'):
+            row = fleet.get(section, {}).get(runtime)
+            public[section] = ({name: row.get(name) for name in ('tenant', 'alias', 'hostId', 'enabled',
+                               'lifecycleState', 'runtimeStateDirectory', 'home', 'room')}
+                              if isinstance(row, dict) else None)
+        item['generations'].append({'generation': generation.name, 'target': public,
+                                    'bootstrapPresent': runtime in fleet.get('bootstrap', {})})
+    result.append(item)
+print(json.dumps(result, sort_keys=True))`;
 
 async function capture(name: string, focus?: V4Locator): Promise<void> {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -99,7 +177,10 @@ async function captureOperationDetails(name: string, operation: Operation): Prom
   const details = panel.locator('details').first();
   if (!await details.evaluate(element => element.hasAttribute('open'))) await panel.getByText('Detalles técnicos', { exact: true }).click();
   const pre = panel.locator('pre'); await pre.waitFor(); expect(await pre.count()).toBe(1);
-  evidence[`${name}-details-have-physical-names`] = { container: (await pre.innerText()).includes(container) };
+  const published = await pre.innerText(); expect(published.length).toBeGreaterThan(0);
+  evidence[`${name}-published-details`] = { sha256: createHash('sha256').update(published).digest('hex'),
+    length: published.length, tail: published.slice(-256), container: published.includes(container) };
+  await pre.evaluate(element => { element.scrollTop = 0; });
   await capture(`${name}-details-start`, panel);
   await view().setViewportSize({ width: 390, height: 844 });
   const geometry = await panel.evaluate(async element => {
@@ -108,9 +189,11 @@ async function captureOperationDetails(name: string, operation: Operation): Prom
     const content = element.querySelector<HTMLElement>('pre');
     if (!body || !popup || !content) throw new Error('operation scroll regions are missing');
     const bounds = (node: HTMLElement) => ({ left: node.getBoundingClientRect().left, right: node.getBoundingClientRect().right,
-      top: node.getBoundingClientRect().top, bottom: node.getBoundingClientRect().bottom, width: node.clientWidth, scrollWidth: node.scrollWidth });
+      top: node.getBoundingClientRect().top, bottom: node.getBoundingClientRect().bottom, width: node.clientWidth, scrollWidth: node.scrollWidth,
+      height: node.clientHeight, scrollHeight: node.scrollHeight, scrollTop: node.scrollTop });
     const start = { body: bounds(body), panel: bounds(element), pre: bounds(content), popup: bounds(popup) };
     body.scrollTop = body.scrollHeight;
+    content.scrollTop = content.scrollHeight;
     await new Promise<void>(resolve => { requestAnimationFrame(() => { resolve(); }); });
     return { start, end: { body: bounds(body), panel: bounds(element), pre: bounds(content), popup: bounds(popup) },
       scrollTop: body.scrollTop, maxScroll: body.scrollHeight - body.clientHeight };
@@ -125,6 +208,8 @@ async function captureOperationDetails(name: string, operation: Operation): Prom
   expect(geometry.end.pre.bottom).toBeLessThanOrEqual(geometry.end.body.bottom + 1);
   expect(geometry.end.pre.bottom).toBeGreaterThan(geometry.end.body.top);
   expect(geometry.end.panel.bottom).toBeLessThanOrEqual(geometry.end.body.bottom + 1);
+  expect(Math.abs(geometry.end.pre.scrollTop - Math.max(0, geometry.end.pre.scrollHeight - geometry.end.pre.height))).toBeLessThanOrEqual(1);
+  expect(await pre.innerText()).toBe(published);
   await view().screenshot({ path: join(receiptDirectory, `${name}-details-end-390x844.png`) });
   (evidence.screenshots as string[]).push(`${name}-details-end-390x844.png`);
   await view().setViewportSize({ width: 1440, height: 900 });
@@ -132,6 +217,13 @@ async function captureOperationDetails(name: string, operation: Operation): Prom
 }
 async function enabled(locator: V4Locator): Promise<void> {
   await expect.poll(() => locator.isDisabled(), { timeout: 40_000 }).toBe(false);
+}
+async function inertControls(region: V4Locator, draft = false): Promise<void> {
+  const additions = region.getByRole('button', { name: /^Añadir ampliación /u });
+  expect(await additions.count()).toBeGreaterThan(0);
+  for (let index = 0; index < await additions.count(); index++) expect(await additions.nth(index).isDisabled()).toBe(true);
+  for (const name of ['Vista previa', 'Aplicar y recrear']) expect(await region.getByRole('button', { name, exact: true }).isDisabled()).toBe(true);
+  if (draft) expect(await region.getByRole('button', { name: 'Descartar borrador', exact: true }).isDisabled()).toBe(true);
 }
 async function operations(): Promise<Operation[]> {
   return (await active().pool.query<Operation>(`SELECT id,kind,status,request_hash AS request_sha256,error,steps FROM fleet_operations
@@ -167,6 +259,7 @@ async function discard(): Promise<void> {
 }
 async function apply(name: string, offline = false): Promise<Operation> {
   const known = new Set((await operations()).map(value => value.id));
+  const before = offline ? { id: (await inspect()).Id, extensions: await storedExtensions() } : undefined;
   const preview = sheet().getByRole('button', { name: 'Vista previa', exact: true });
   await enabled(preview); await preview.click();
   const button = sheet().getByRole('button', { name: 'Aplicar y recrear', exact: true });
@@ -198,7 +291,12 @@ async function apply(name: string, offline = false): Promise<Operation> {
         const frozen = JSON.parse(await sheet().getByLabel('Solicitud de ampliaciones', { exact: true }).innerText()) as Record<string, unknown>;
         expect(canonicalJson(frozen)).toEqual(canonicalJson(input)); expect(frozen.idempotency_key).toBe(input.idempotency_key);
         evidence[`${name}-offline-request`] = frozen;
-        expect(await operations()).toHaveLength(known.size); await capture(`${name}-offline`);
+        const alert = sheet().getByRole('alert'); await alert.waitFor(); expect((await alert.innerText()).length).toBeGreaterThan(0);
+        await sheet().getByRole('heading', { name: 'Borrador de ampliaciones (7)', exact: true }).waitFor();
+        await enabled(sheet().getByRole('button', { name: 'Reintentar envío', exact: true }));
+        expect(await operations()).toHaveLength(known.size);
+        evidence[`${name}-offline-block`] = { alert: await alert.innerText(), requestHash: sha256Hex(frozen), newOperations: 0, retryEnabled: true };
+        await capture(`${name}-offline`);
       } finally { await context.setOffline(false); }
       const resend = sheet().getByRole('button', { name: 'Reintentar envío', exact: true });
       await enabled(resend); await resend.click();
@@ -212,6 +310,15 @@ async function apply(name: string, offline = false): Promise<Operation> {
       evidence[`${name}-submitted-request`] = sent;
       const queued = (await operations()).find(value => !known.has(value.id));
       expect(queued?.status).toBe('queued'); expect(queued?.request_sha256).toBe(sha256Hex(input));
+      if (!queued) throw new Error('queued operation unavailable');
+      const pending = sheet().getByRole('region', { name: 'Operación de flota', exact: true });
+      await pending.getByText('En cola', { exact: true }).waitFor();
+      await pending.getByText('Detalles técnicos', { exact: true }).click();
+      await pending.getByText(queued.id, { exact: true }).waitFor();
+      await inertControls(sheet(), true);
+      expect(await operations()).toHaveLength(known.size + 1); expect(queued.steps.every(step => step.status === 'pending')).toBe(true);
+      expect((await inspect()).Id).toBe(before?.id); expect(await storedExtensions()).toEqual(before?.extensions);
+      evidence[`${name}-queued-block`] = { operation: queued.id, status: queued.status, newOperations: 1, controlsInert: true, runtimeUnchanged: true };
       await capture(`${name}-submitted`, submitted);
       const replay = await view().evaluate(async (request: Record<string, unknown>) => {
         const session = await (await fetch('/v3/auth/session', { credentials: 'include', cache: 'no-store' })).json() as { csrf_token?: string };
@@ -220,7 +327,7 @@ async function apply(name: string, offline = false): Promise<Operation> {
         const body = await response.json() as { operation_id?: string; operation?: { request_sha256?: string } };
         return { status: response.status, operationId: body.operation_id, requestHash: body.operation?.request_sha256 };
       }, sent);
-      expect(replay).toEqual({ status: 202, operationId: queued?.id, requestHash: sha256Hex(input) });
+      expect(replay).toEqual({ status: 202, operationId: queued.id, requestHash: sha256Hex(input) });
       expect(await operations()).toHaveLength(known.size + 1); evidence[`${name}-replay`] = replay;
     } finally {
       await context.setOffline(false);
@@ -323,9 +430,15 @@ afterAll(async () => {
   }
   if (computer) {
     evidence.operations = await operations().catch(() => []);
-    evidence.journal = (await computer.onComputer(['journalctl', '--user', '--no-pager', '-n', '100'])).stdout;
+    const unit = `cauce-v3-host-executor-${person.company.slug}-${hostId}.service`;
+    evidence.journal = (await computer.onComputer(['journalctl', '--user', '-u', unit, '--no-pager', '-n', '500'])).stdout;
+    evidence.admissionDiagnostics = await computer.onComputer(['python3', '-I', '-B', '-c', admissionDiagnostics, computer.installRoot, runtime]);
+    evidence.publicAgent = (await computer.pool.query(`SELECT tenant_id,alias,runtime_key,host_id,enabled,lifecycle_state,
+      state_directory,home_directory FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, alias])).rows;
+    evidence.runtimeState = await inspect().catch((error: unknown) => ({ unavailable: String(error) }));
   }
-  evidence.browser = { unexpected: errors.unexpected, ignored: Object.fromEntries(errors.ignored) };
+  evidence.browser = { unexpected: errors.unexpected, ignored: Object.fromEntries(errors.ignored),
+    readerUnexpected: readerErrors.unexpected, readerIgnored: Object.fromEntries(readerErrors.ignored) };
   for (const action of [async () => trusted?.close(), async () => vite?.close(), async () => {
     if (computer) {
       evidence.cleanup = await computer.close();
@@ -524,4 +637,59 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
     functions.X02 = { result: 'FALLA', details: 'Política de host publicada comprobada y gpu rechazada; estado no publicado no reproducido sin mocks.' };
     errors.assertClean();
   }, 400_000);
+
+  it('bloquea ampliaciones para un lector real y tras cambiar la sesión con logout sin red', async () => {
+    expect(evidence.safe, 'the safe runtime must have been restored').toBeDefined();
+    const previous = { operations: await operations(), extensions: await storedExtensions(), runtime: (await inspect()).Id };
+    const readerAlias = `${prefix}-reader`;
+    await active().pool.query('INSERT INTO agents(tenant_id,alias,enabled,company_id) VALUES($1,$2,false,$3)', [tenant, readerAlias, person.company.slug]);
+    await active().pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [tenant, readerAlias]);
+    await maintainConsoleUser(active().pool, { email: reader.email, name: 'Lector de ampliaciones', role: 'reader', tenant, alias: readerAlias,
+      updateOnly: false, activate: true }, await hashPassword(reader.password));
+    if (!trusted) throw new Error('trusted browser unavailable');
+    const readerContext = await trusted.browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: false, serviceWorkers: 'block' });
+    const readerPage = asV4Page(await readerContext.newPage()); readerErrors.watch(readerPage, 'extensions-reader');
+    try {
+      await login(readerPage, origin, reader);
+      await readerPage.goto(`${origin}/config?seccion=agentes&agente=${encodeURIComponent(`${tenant}/${alias}`)}`, { waitUntil: 'domcontentloaded' });
+      const region = readerPage.getByRole('dialog', { name: `Ampliaciones ${run}`, exact: true }); await region.waitFor();
+      await region.getByRole('tab', { name: 'Ampliaciones', exact: true }).click();
+      await region.getByRole('note').filter({ hasText: 'Edición de ampliaciones en solo lectura' }).waitFor();
+      await inertControls(region);
+      expect(await storedExtensions()).toEqual(previous.extensions); expect(await operations()).toEqual(previous.operations);
+      expect((await inspect()).Id).toBe(previous.runtime);
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await readerPage.setViewportSize(viewport);
+        await region.getByRole('note').filter({ hasText: 'Edición de ampliaciones en solo lectura' }).evaluate(element => { element.scrollIntoView({ block: 'center' }); });
+        const filename = `07-reader-${String(viewport.width)}x${String(viewport.height)}.png`;
+        await readerPage.screenshot({ path: join(receiptDirectory, filename), fullPage: true }); (evidence.screenshots as string[]).push(filename);
+      }
+    } finally { await readerContext.close(); }
+    await openExtensions(); await add('Red adicional', [['Nombre de la red Docker', extraNetwork]]);
+    await enabled(sheet().getByRole('button', { name: 'Vista previa', exact: true }));
+    // Native import expressions must remain strings so the runner cannot rewrite them for SSR.
+    const scriptPage = view() as unknown as { evaluate<T>(expression: string): Promise<T> };
+    expect(await scriptPage.evaluate<string>('import("/src/api/client.ts").then(({cauceApi}) => typeof cauceApi.logout)')).toBe('function');
+    const context = view().context() as ReturnType<V4Page['context']> & { setOffline(value: boolean): Promise<void> };
+    try {
+      await context.setOffline(true);
+      const logout = await scriptPage.evaluate<{ rejected: boolean; error: string }>(`import("/src/api/client.ts").then(async ({cauceApi}) => {
+        try { await cauceApi.logout(); return { rejected: false, error: '' }; }
+        catch (error) { return { rejected: true, error: String(error) }; }
+      })`);
+      expect(logout.rejected).toBe(true); expect(logout.error).toMatch(/fetch|network|red/iu);
+      await sheet().getByRole('alert').filter({ hasText: 'La sesión cambió.' }).waitFor();
+      await inertControls(sheet(), true); await capture('07-session-changed', sheet().getByRole('alert').filter({ hasText: 'La sesión cambió.' }));
+      expect(await storedExtensions()).toEqual(previous.extensions); expect(await operations()).toEqual(previous.operations);
+      expect((await inspect()).Id).toBe(previous.runtime);
+      evidence.X23 = { reader: 'actual reader account, inert controls and unchanged target', logout, sessionMessage: true, mutations: 0 };
+    } finally {
+      await context.setOffline(false);
+      const recovered = await scriptPage.evaluate<boolean>('import("/src/api/client.ts").then(({cauceApi}) => cauceApi.getAuthSession()).then(session => session.authenticated)');
+      expect(recovered).toBe(true);
+      await sheet().getByRole('button', { name: 'Cerrar', exact: true }).click();
+      await sheet().getByRole('button', { name: 'Descartar y cerrar', exact: true }).click();
+    }
+    readerErrors.assertClean(); errors.assertClean(); pass(['X23'], evidence.X23);
+  }, 120_000);
 });
