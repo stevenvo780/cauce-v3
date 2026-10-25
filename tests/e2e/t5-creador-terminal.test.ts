@@ -132,6 +132,9 @@ describe.sequential('terminal del creador: alta, panel, negativa con botón y re
       await conceder.waitFor({ timeout: 20_000 });
       const visibleText = await page.locator('body').innerText();
       expect(visibleText).not.toContain('no_grant');
+      expect(visibleText).not.toContain('grants.json');
+      expect(visibleText).not.toContain('fichero');
+      expect(visibleText).not.toMatch(/\bbus\b/i);
       await page.screenshot({ path: join(artifacts, `negativa-boton-${run}.png`), fullPage: true });
       await conceder.click();
       await panel.getByRole('heading', { name: 'Concesiones de terminal', exact: true }).waitFor({ timeout: 30_000 });
