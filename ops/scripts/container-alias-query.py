@@ -34,10 +34,10 @@ def failure_message(error: Exception) -> str:
         return 'El alias es ambiguo; indica TENANT/ALIAS para elegir su empresa.'
     if message.startswith('runtime identity is not declared:'):
         return 'El alias no figura en el inventario aplicado; comprueba su estado en la consola.'
-    if 'digest' in message:
-        return 'No se pudo verificar el digest del inventario aplicado; revisa su generación antes de reintentar.'
     if 'applied-fleet.json' in message:
         return 'No se pudo verificar applied-fleet.json; revisa el inventario aplicado antes de reintentar.'
+    if message.startswith('desired fleet ') and 'digest' in message:
+        return 'No se pudo verificar el digest del inventario aplicado; revisa su generación antes de reintentar.'
     return 'No se pudo verificar el alias o el inventario aplicado; revisa la empresa, la generación y los permisos.'
 
 

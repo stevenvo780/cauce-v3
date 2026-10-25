@@ -78,6 +78,17 @@ class RuntimeFleetQueryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("applied-fleet.json", result.stderr)
 
+    def test_missing_applied_fleet_in_a_digest_named_directory_is_not_a_digest_failure(self) -> None:
+        state = pathlib.Path(self.temporary.name) / "digest-state"
+        state.mkdir()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPTS / "container-alias-query.py"), "kant", "--runtime-key"],
+            capture_output=True, text=True, check=False,
+            env={**os.environ, "CAUCE_FLEET_RUNTIME_STATE": str(state), "PYTHONDONTWRITEBYTECODE": "1"})
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("applied-fleet.json", result.stderr)
+        self.assertNotIn("No se pudo verificar el digest", result.stderr)
+
     def test_applied_remote_route_keeps_the_selected_systemd_user(self) -> None:
         self.apply({"physical-two": {"dockerHost": "server2", "systemdUser": "server"}})
         result = self.query("Otro/shared_alias", "--route")
