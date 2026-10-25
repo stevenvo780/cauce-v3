@@ -10,8 +10,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from cauce_container_base import PermanentError
-from cauce_container_proc import matched_fs_credentials, open_pidfd, pidfd_matches_starttime
+from cauce_container_base import IDENTITY_ENV_KEYS, PermanentError
+from cauce_container_proc import expected_environment, matched_fs_credentials, open_pidfd, pidfd_matches_starttime
 
 SGR = re.compile(r"\x1b\[([0-9;]*)m")
 PROMPT = re.compile(r"^\s*(?:│\s*)?([❯›»>])(?:\s|$)")
@@ -96,9 +96,19 @@ def process_environment(pid: int, uid: int, gid: int) -> dict[str, str]:
     try:
         with matched_fs_credentials(uid, gid):
             data = (pathlib.Path("/proc") / str(pid) / "environ").read_bytes()
-        wanted = {b"HOME", b"CAUCE_ALIAS", b"CAUCE_SHARED_SESSION"}
-        return {key.decode(): value.decode() for item in data.split(b"\0") if b"=" in item
-                for key, value in [item.split(b"=", 1)] if key in wanted}
+        wanted = {b"HOME", b"CAUCE_SHARED_SESSION", b"TMUX_TMPDIR"} | {key.encode() for key in IDENTITY_ENV_KEYS}
+        values = {}
+        for item in data.split(b"\0"):
+            if b"=" not in item:
+                continue
+            key, value = item.split(b"=", 1)
+            if key not in wanted:
+                continue
+            name = key.decode()
+            if name in values:
+                hold("PROCESS_ENVIRONMENT_UNKNOWN")
+            values[name] = value.decode()
+        return values
     except (OSError, UnicodeError):
         hold("PROCESS_ENVIRONMENT_UNKNOWN")
     raise AssertionError
@@ -108,14 +118,19 @@ class RestartPane:
     def __init__(self, document: dict[str, Any], environment: dict[str, str]):
         alias = environment.get("CAUCE_ALIAS")
         if not alias or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", alias) \
-                or alias != document.get("wireAlias", document["alias"]):
+                or {key: environment[key] for key in IDENTITY_ENV_KEYS if key in environment} != expected_environment(document):
             hold("SESSION_IDENTITY_UNKNOWN")
         home = environment.get("HOME", "")
         if not home.startswith("/") or "\0" in home:
             hold("HOME_UNKNOWN")
-        self.target = "=cauce-" + alias + ":agente"
+        temporary = environment.get("TMUX_TMPDIR")
+        if ("wireAlias" in document or temporary is not None) and temporary != document["stateDirectory"]:
+            hold("TMUX_DIRECTORY_UNKNOWN")
+        self.target = "=cauce-" + document["alias"] + ":agente"
         self.uid, self.gid = document["runtimeUid"], document["runtimeGid"]
         self.environment = {"HOME": home, "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+        if temporary is not None:
+            self.environment["TMUX_TMPDIR"] = document["stateDirectory"]
         self.credentials = {"user": self.uid, "group": self.gid, "extra_groups": [self.gid]} if os.geteuid() == 0 else {}
         if os.geteuid() != 0 and (os.getuid() != self.uid or os.getgid() != self.gid):
             hold("RUNTIME_IDENTITY_UNKNOWN")
