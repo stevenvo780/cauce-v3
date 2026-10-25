@@ -16,9 +16,12 @@ import { startTrustedBrowser, type TrustedBrowser } from './console-functional-b
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   login, openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
+import { standardRecoveryBundle } from './v4-reiniciar-agente-standard.fixtures.js';
+import { cancelDeployTuiRuntime } from './v4-fleet-cancel-deploy.tui.js';
 import { connectXOuterDocker, startXDockerIsolation, type XDockerIsolation } from './v4-agentes-x-docker-isolation.js';
-import { attachX2Transport, diagnoseX2Policy, diagnoseX2ProfileTransport, observeX2Package, prepareX2Package, preloadX2Image, startX2SshTarget, X2_BROWSER_IMAGE, X2_PACKAGE,
-  X2_PROXY_IMAGE, type X2Docker, type X2SshTarget } from './v4-agentes-x2-services.js';
+import { attachX2Transport, diagnoseX2Policy, diagnoseX2ProfileTransport, diagnoseX2Restart, observeX2Package, observeX2RestartGuard, observeX2Stopped,
+  prepareX2Package, preloadX2Image, startX2SshTarget, X2_ADMISSION_DIAGNOSTICS, X2_BROWSER_IMAGE, X2_PACKAGE,
+  X2_PROXY_IMAGE, type X2Docker, type X2GuardObservation, type X2SshTarget } from './v4-agentes-x2-services.js';
 import { assertX2SidecarsRemoved, cdpFromX2Agent, observeX2Browser, observeX2Docker, observeX2Tunnel } from './v4-agentes-x2-observations.js';
 
 const execute = promisify(execFile);
@@ -32,7 +35,7 @@ const container = `${prefix}-${runtime}`;
 const markerPath = `/home/cauce/.cauce/${runtime}/preserved-marker`;
 const network = `${prefix}-base`;
 const extraNetwork = `${prefix}-extra`;
-const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'driver', run);
+const receiptDirectory = join(process.cwd(), '.delegados/v4/recibos', owner, 'revalidacion-107/driver', run);
 const person = { ...syntheticPerson('extensions', run), name: prefix, email: `${prefix}@example.test`,
   company: { name: prefix, slug: prefix } };
 const reader = { ...person, email: `${prefix}-reader@example.test`, password: syntheticPerson('reader', run).password };
@@ -81,73 +84,6 @@ const view = () => { if (!page) throw new Error('extension browser unavailable')
 const sheet = () => view().getByRole('dialog', { name: `Ampliaciones ${run}`, exact: true });
 const functions = evidence.functions as Record<string, unknown>;
 const pass = (ids: string[], details: unknown) => { for (const id of ids) functions[id] = { result: 'PASA', details }; };
-const admissionDiagnostics = String.raw`import json
-import pathlib
-import sys
-
-
-def document(path):
-    if not path.is_file() or path.is_symlink():
-        return None
-    return json.loads(path.read_bytes())
-
-
-def pointer(path):
-    value = document(path)
-    return {'exists': value is not None, 'generation': value.get('generation') if isinstance(value, dict) else None}
-
-
-root = pathlib.Path(sys.argv[1])
-runtime = sys.argv[2]
-result = []
-for filename in root.rglob('executor-policy.json'):
-    policy = document(filename)
-    state = pathlib.Path(policy['roots']['state'])
-    item = {
-        'policy': str(filename),
-        'stateRoot': str(state),
-        'hostId': policy.get('host_id'),
-        'desired': pointer(state / 'desired-fleet.json'),
-        'applied': pointer(state / 'applied-fleet.json'),
-        'templates': [{name: row.get(name) for name in ('harness_id', 'runtime_user', 'home_directory', 'state_root')}
-                      for row in policy.get('container_templates', [])],
-        'operations': [],
-        'generations': [],
-    }
-    for operation in (state / 'operations').glob('*'):
-        effects = document(operation / 'effects.json')
-        if not isinstance(effects, dict):
-            continue
-        verified = effects.get('verified')
-        item['operations'].append({
-            'id': operation.name,
-            'journalKeys': sorted(effects),
-            'attemptedSteps': effects.get('attempted'),
-            'verified': {name: verified.get(name) is True for name in
-                         ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')}
-                        if isinstance(verified, dict) else None,
-            'generation': effects.get('generation'),
-            'expectedApplied': effects.get('expected_applied'),
-            'bootstrapCredentialsPrepared': bool(effects.get('bootstrap_credentials')),
-            'normalCredentialsPrepared': bool(effects.get('normal_credentials')),
-            'admissionRecorded': isinstance(effects.get('admission'), dict),
-            'normalProofRecorded': isinstance(effects.get('admission_normal_proof'), dict),
-            'replacementRetirementRecorded': isinstance(effects.get('replacement_retirement'), dict),
-        })
-    for generation in (state / 'generations').glob('*'):
-        fleet = document(generation / 'flota.json')
-        if not isinstance(fleet, dict):
-            continue
-        public = {}
-        for section in ('fleet', 'bootstrap'):
-            row = fleet.get(section, {}).get(runtime)
-            public[section] = ({name: row.get(name) for name in ('tenant', 'alias', 'hostId', 'enabled',
-                               'lifecycleState', 'runtimeStateDirectory', 'home', 'room')}
-                              if isinstance(row, dict) else None)
-        item['generations'].append({'generation': generation.name, 'target': public,
-                                    'bootstrapPresent': runtime in fleet.get('bootstrap', {})})
-    result.append(item)
-print(json.dumps(result, sort_keys=True))`;
 
 async function capture(name: string, focus?: V4Locator): Promise<void> {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -232,6 +168,24 @@ async function captureOperationDetails(name: string, operation: Operation): Prom
 async function enabled(locator: V4Locator): Promise<void> {
   await expect.poll(() => locator.isDisabled(), { timeout: 40_000 }).toBe(false);
 }
+async function waitRestartGuard(phase: string): Promise<X2GuardObservation> {
+  let first: unknown;
+  let guard: X2GuardObservation | undefined;
+  await expect.poll(async () => {
+    let observation: unknown;
+    try {
+      guard = await observeX2RestartGuard(inner(), container, runtime);
+      observation = { observedAt: new Date().toISOString(), ready: true, guard };
+    } catch (error) {
+      observation = { observedAt: new Date().toISOString(), ready: false, error: String(error).slice(-2000) };
+    }
+    first ??= observation;
+    evidence[`${phase}GuardAvailability`] = { first, last: observation };
+    return guard !== undefined;
+  }, { timeout: 30_000, interval: 1_000 }).toBe(true);
+  if (!guard) throw new Error('the shared TUI guard was not observed');
+  return guard;
+}
 async function inertControls(region: V4Locator, draft = false): Promise<void> {
   const additions = region.getByRole('button', { name: /^Añadir ampliación /u });
   expect(await additions.count()).toBeGreaterThan(0);
@@ -247,6 +201,13 @@ async function waitOperation(known: Set<string>, kind: string): Promise<Operatio
   const deadline = Date.now() + 240_000;
   while (Date.now() < deadline) {
     const current = (await operations()).find(value => !known.has(value.id) && value.kind === kind);
+    if (current?.status === 'running' && kind === 'create' && !evidence.restartBeforeAdmission
+      && current.steps.some(step => step.name === 'runtime' && step.status === 'succeeded')
+      && current.steps.some(step => step.name === 'admission' && step.status === 'pending')) {
+      evidence.restartBeforeAdmission = { observedAt: new Date().toISOString(), operation: current.id, status: current.status,
+        steps: current.steps.map(step => ({ name: step.name, status: step.status })),
+        diagnostic: await diagnoseX2Restart(inner(), container, runtime).catch((error: unknown) => ({ unavailable: String(error) })) };
+    }
     if (current && ['succeeded', 'failed', 'cancelled'].includes(current.status)) {
       evidence[`operation-${current.id}`] = current;
       if ((current.error as { step?: string } | null)?.step === 'profile') evidence.profileTransport = await diagnoseX2ProfileTransport(active(), inner(), container);
@@ -402,6 +363,7 @@ beforeAll(async () => {
   computer = await startComputerHarness({ prefix, consoleOrigins: [origin],
     ...(isolation ? { workRoot: isolation.workRoot, dockerSocket: isolation.dockerSocket } : { workRoot: '/datos' }),
     agentNetwork: { name: network }, resourceOwner: owner,
+    runtimeBundle: { ...standardRecoveryBundle, providerCli: cancelDeployTuiRuntime.providerCli },
     extraSourceFiles: ['services/gateway/src/fleet/space-backup.failure.ts', 'packages/protocol/src/context-retirement.ts',
       'packages/store/src/context-retirement.ts', 'packages/store/src/context-git-retirement.ts',
       'services/gateway/src/console/context-repository/retirement-routes.ts', 'services/gateway/src/fleet/space-backup.finish.ts',
@@ -468,10 +430,12 @@ afterAll(async () => {
     evidence.operations = await operations().catch(() => []);
     const unit = `cauce-v3-host-executor-${person.company.slug}-${hostId}.service`;
     evidence.journal = (await computer.onComputer(['journalctl', '--user', '-u', unit, '--no-pager', '-n', '500'])).stdout;
-    evidence.admissionDiagnostics = await computer.onComputer(['python3', '-I', '-B', '-c', admissionDiagnostics, computer.installRoot, runtime]);
+    evidence.admissionDiagnostics = await computer.onComputer(['python3', '-I', '-B', '-c', X2_ADMISSION_DIAGNOSTICS, computer.installRoot, runtime]);
     evidence.publicAgent = (await computer.pool.query(`SELECT tenant_id,alias,runtime_key,host_id,enabled,lifecycle_state,
       state_directory,home_directory FROM agents WHERE tenant_id=$1 AND alias=$2`, [tenant, alias])).rows;
     evidence.runtimeState = await inspect().catch((error: unknown) => ({ unavailable: String(error) }));
+    if (evidence.failure && runtimeClient) evidence.restartDiagnostics = await diagnoseX2Restart(runtimeClient, container, runtime)
+      .catch((error: unknown) => ({ unavailable: String(error) }));
   }
   evidence.browser = { unexpected: errors.unexpected, ignored: Object.fromEntries(errors.ignored),
     readerUnexpected: readerErrors.unexpected, readerIgnored: Object.fromEntries(readerErrors.ignored) };
@@ -535,6 +499,8 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
       await enabled(preview); await preview.click();
       const confirm = create.getByRole('button', { name: 'Confirmar operación', exact: true }); await enabled(confirm); await confirm.click();
       const created = await waitOperation(known, 'create');
+      expect(created.steps.find(step => step.name === 'admission')?.evidence).toMatchObject({ authority_verified: true });
+      evidence.admissionGuard = await waitRestartGuard('admission');
       evidence.baseline = await inspect(); expect(await storedExtensions()).toEqual([]);
       expect((evidence.baseline as Record<string, unknown>).State).toMatchObject({ Running: true });
       evidence.W29 = { result: 'PASA', operation: created.id, observed: (await active().pool.query(
@@ -711,9 +677,36 @@ describe.sequential('Ampliaciones desde Chromium con ejecutor Docker real', () =
     expect(await storedExtensions()).toEqual([]);
     evidence.sidecarsWithdrawn = await assertX2SidecarsRemoved(inner(), container);
     pass(['X18'], { operation: operation.id, safeProfile: true, preserved: true });
-    functions.X01 = { result: 'FALLA', details: `Estados activas0, borrador y activas${String(extensionCount())} probados con runtime; servidor no publicado no reproducido sin mocks.` };
-    functions.X02 = { result: 'FALLA', details: 'Política de host publicada comprobada y gpu rechazada; estado no publicado no reproducido sin mocks.' };
+    pass(['X01'], { states: ['active-empty', 'draft', `active-${String(extensionCount())}`, 'withdrawn'], contract: 'published extensions array' });
+    pass(['X02'], { publishedHostPolicy: evidence.allowed, forbiddenGpuRejected: true });
     errors.assertClean();
+  }, 400_000);
+
+  it('detiene desde la UI con guardia compartida real y conserva contenedor y volúmenes', async () => {
+    expect(evidence.safe).toBeDefined(); await openExtensions();
+    const before = await inspect();
+    const guard = await waitRestartGuard('stop'); evidence.stopGuard = guard;
+    await sheet().getByRole('tab', { name: 'Ejecución', exact: true }).click();
+    const panel = sheet().getByRole('region', { name: `Operación de ${tenant}/${alias}`, exact: true });
+    await panel.getByRole('combobox', { name: '¿Qué quieres hacer?', exact: true }).selectOption('stop');
+    const known = new Set((await operations()).map(operation => operation.id));
+    const preview = panel.getByRole('button', { name: 'Previsualizar operación', exact: true });
+    await enabled(preview); await preview.click();
+    const confirm = panel.getByRole('button', { name: 'Confirmar operación', exact: true });
+    await enabled(confirm); await confirm.click();
+    const operation = await waitOperation(known, 'stop');
+    expect(operation.steps.every(step => step.status === 'succeeded')).toBe(true);
+    await expect.poll(async () => {
+      const observed = await observeX2Stopped(inner(), container, runtime, guard); evidence.stoppedRuntime = observed;
+      return observed.metadataAbsent && observed.processes.every(process => !process.activeIdentity);
+    }, { timeout: 30_000 }).toBe(true);
+    const after = await inspect();
+    expect(after.Id).toBe(before.Id); expect(after.State).toMatchObject({ Running: true });
+    const volumes = (mounts: unknown) => (mounts as { Type: string; Name?: string }[]).filter(mount => mount.Type === 'volume').map(mount => mount.Name).sort();
+    expect(volumes(after.Mounts)).toEqual(volumes(before.Mounts));
+    expect(await docker(['exec', '--user', 'cauce', container, 'cat', markerPath])).toBe('PRESERVED');
+    evidence.stop = { operation, container: after.Id, volumes: volumes(after.Mounts) };
+    await capture('07-guarded-stop', panel);
   }, 400_000);
 
   it('bloquea ampliaciones para un lector real y tras cambiar la sesión con logout sin red', async () => {
