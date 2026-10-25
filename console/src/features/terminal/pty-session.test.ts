@@ -207,7 +207,7 @@ it('sale de CONNECTING si el upgrade nunca responde y no reutiliza el ticket de 
   }
 });
 
-it('guarda el fence de ready sólo en memoria, nunca en storage, URL ni logs de la vista', () => {
+it('guarda el fence de ready solo en memoria, nunca en storage, URL ni logs de la vista', () => {
   const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
   const socket = open();
   socket.emitControl(ready());

@@ -199,7 +199,7 @@ export function openSocket(
     publish({
       state: 'error',
       message: `La conexión WebSocket no completó el handshake en ${String(Math.round(PTY_HANDSHAKE_TIMEOUT_MS / 1000))} s. `
-        + 'No se reutilizó el ticket de un solo uso; pedí una sesión nueva.',
+        + 'No se reutilizó el ticket de un solo uso; pide una sesión nueva.',
       closeCode: undefined,
     });
     entry.onClosed?.(entry.view);

@@ -112,7 +112,7 @@ it('does not restore ownership or send another release after relay close 4410 du
   act(() => { socket.emitClose(4410, 'control_released'); });
   await screen.findByText(/Esta sesión ya no tiene el control de la TUI/);
   await completeTake();
-  expect(screen.queryByText(/Tenés el teclado de esta TUI/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Tienes el teclado de esta TUI/)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Devolver el control/i })).not.toBeInTheDocument();
   expect(document.querySelector('[data-pty-shell]')).toHaveAttribute('data-read-only', 'true');
   expect(controls.filter(call => call.body.action === 'release')).toHaveLength(0);
@@ -138,7 +138,7 @@ it('does not adopt a delayed take after the same session receives a replacement 
   await waitFor(() => { expect(controls).toHaveLength(1); });
   view.rerender(control(grant('new'), onControlCambia));
   await completeTake();
-  expect(screen.queryByText(/Tenés el teclado/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Tienes el teclado/)).not.toBeInTheDocument();
   expect(onControlCambia).not.toHaveBeenCalledWith(true);
   expect(controls.filter(call => call.body.action === 'release')).toEqual([{ sid: WRITABLE_SESSION,
     body: { action: 'release', request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner',
@@ -154,13 +154,13 @@ it('cleans the old owner without clearing or releasing a newer mounted owner hol
   oldView.unmount();
   const newView = render(control(grant('new')));
   await requestTake();
-  expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+  expect(await screen.findByText(/Tienes el teclado/)).toBeInTheDocument();
   await completeTake();
   const releases = controls.filter(call => call.body.action === 'release');
   expect(releases).toHaveLength(1);
   expect(releases[0].body).toMatchObject({ request_id: 'old-request', owner_generation: '1', owner_token: 'old-owner',
     authority_proof: old.authority_proof });
-  expect(screen.getByText(/Tenés el teclado/)).toBeInTheDocument();
+  expect(screen.getByText(/Tienes el teclado/)).toBeInTheDocument();
   newView.unmount();
   await waitFor(() => { expect(controls.filter(call => call.body.action === 'release')).toHaveLength(2); });
   expect(controls.at(-1)?.body).toMatchObject({ request_id: 'new-request', owner_generation: '2', owner_token: 'new-owner',

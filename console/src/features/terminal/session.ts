@@ -50,7 +50,7 @@ export function operatorRouteForMailbox(topology: TopologySnapshot | undefined, 
     .some((member) => same(member.alias, actor.alias) && member.enabled === true) ? [room.id] : [])).sort();
   return sourceRoomIds.length
     ? { allowed: true, sourceRoomIds, membership: true, reason: 'Sala propia habilitada.' }
-    : { allowed: false, sourceRoomIds, membership: false, reason: 'No tenés una sala habilitada desde la cual escribir.' };
+    : { allowed: false, sourceRoomIds, membership: false, reason: 'No tienes una sala habilitada desde la cual escribir.' };
 }
 
 function membershipSummary(states: (boolean | null | undefined)[]): boolean | undefined {
@@ -75,7 +75,7 @@ export function operatorRouteForAgent(
   if (!actor) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer tu identidad de operador, así que no hay de dónde derivar un room de origen.' };
 
   const actorTenant = (topology?.tenants ?? []).find((tenant) => same(tenant.id, actor.tenantId));
-  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer la topología de tu cliente, así que no se sabe a qué salas pertenecés.' };
+  if (!actorTenant) return { allowed: false, sourceRoomIds: [], membership: undefined, reason: 'No se pudo leer la topología de tu cliente, así que no se sabe a qué salas perteneces.' };
 
   const sameTenant = same(actor.tenantId, agent.tenantId);
   if (!sameTenant) {
@@ -90,7 +90,7 @@ export function operatorRouteForAgent(
         sourceRoomIds: [],
         membership: recipientMembership,
         reason: recipientMembership === undefined
-          ? 'No se pudo comprobar si el destinatario es miembro de una sala compartida con vos.'
+          ? 'No se pudo comprobar si el destinatario es miembro de una sala compartida contigo.'
           : 'El destinatario no tiene membership habilitada en su tenant.',
       };
     }

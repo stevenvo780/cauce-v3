@@ -73,7 +73,7 @@ export function useReplyAlerts(): void {
       const last = result.settled.at(-1);
       // Android Chrome refuses the constructor even with permission; the title and favicon still tell.
       try {
-        if (last) new Notification(last.ok ? `${last.alias} respondió` : `${last.alias}: la entrega falló`, { body: 'Abrí Cauce para verlo.', tag: 'cauce-reply' });
+        if (last) new Notification(last.ok ? `${last.alias} respondió` : `${last.alias}: la entrega falló`, { body: 'Abre Cauce para verlo.', tag: 'cauce-reply' });
       } catch { /* the badge is enough */ }
     }
   }, [fleet.messages.data, me]);

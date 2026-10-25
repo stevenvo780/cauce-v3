@@ -92,7 +92,7 @@ async function openPtyChannel(user: ReturnType<typeof userEvent.setup>) {
   return StubWebSocket.last();
 }
 
-it('en /terminal sólo manda a elegir un agente en la barra lateral y no escribe mensajes, replay ni cancel', async () => {
+it('en /terminal solo manda a elegir un agente en la barra lateral y no escribe mensajes, replay ni cancel', async () => {
   let messagePosts = 0;
   let replayPosts = 0;
   let cancelPosts = 0;
@@ -104,7 +104,7 @@ it('en /terminal sólo manda a elegir un agente en la barra lateral y no escribe
   renderWithApi(<TerminalPage />);
 
   expect(await screen.findByRole('heading', { level: 1, name: 'Terminal de agentes' })).toBeInTheDocument();
-  expect(await screen.findByRole('heading', { level: 2, name: 'Elegí un agente en la barra lateral' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { level: 2, name: 'Elige un agente en la barra lateral' })).toBeInTheDocument();
   for (const textoIngles of ['Ultimate Terminal', 'Fleet live', 'Capability gates', 'Adapters', 'No active target']) {
     expect(screen.queryByText(textoIngles), `rótulo visible sin traducir: ${textoIngles}`).not.toBeInTheDocument();
   }

@@ -160,7 +160,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     expect(StubWebSocket.last().readyState).toBe(3);
   });
 
-  it('si la vista se desmonta antes del 201 compensa sólo el grant exacto que llega tarde', async () => {
+  it('si la vista se desmonta antes del 201 compensa solo el grant exacto que llega tarde', async () => {
     const gate = deferred();
     const borrados: string[] = [];
     let posts = 0;
@@ -278,7 +278,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     await waitFor(() => { expect(borrados.map(item => item.sid)).toContain('sid-pending-2'); });
   });
 
-  it('salir y volver crea otra intención y la respuesta vieja sólo compensa su propio owner', async () => {
+  it('salir y volver crea otra intención y la respuesta vieja solo compensa su propio owner', async () => {
     const pending: {
       gate: Deferred<void>;
       body: Record<string, unknown>;
@@ -317,7 +317,7 @@ describe('la sesión no sobrevive a la vista que la abrió', () => {
     const vista = renderAt('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(1); });
     go('/terminal');
-    await screen.findByText('Elegí un agente en la barra lateral');
+    await screen.findByText('Elige un agente en la barra lateral');
 
     go('/terminal/Steven/zeus');
     await waitFor(() => { expect(pending).toHaveLength(2); });
@@ -386,7 +386,7 @@ describe('la salida de la trampa cuando el tope ya está gastado', () => {
     expect(await screen.findByLabelText('Sesiones de terminal que siguen ocupando plaza'))
       .toHaveTextContent('tales');
     expect(await screen.findByText(/Esta pestaña no conserva la prueba original/))
-      .toHaveTextContent('Volvé a la pestaña que la abrió o esperá a que venza');
+      .toHaveTextContent('Vuelve a la pestaña que la abrió o espera a que venza');
   });
 
   it('concilia un grant mal formado por GET visible y no revoca el id no confiable', async () => {

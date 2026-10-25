@@ -191,7 +191,7 @@ afterEach(async () => {
   restaurarSocket();
 });
 
-describe('el botón sólo existe si el gateway publica un modo con escritura', () => {
+describe('el botón solo existe si el gateway publica un modo con escritura', () => {
   it('la toma inicial durante un turno usa allow_busy sin una segunda acción', async () => {
     const user = userEvent.setup();
     const { controles } = escenario();
@@ -209,7 +209,7 @@ describe('el botón sólo existe si el gateway publica un modo con escritura', (
     await tomarElControl(user, controles);
     expect(controles[0]?.body).toMatchObject({ action: 'take', allow_busy: true });
     expect(controles[0]?.body).not.toHaveProperty('reason');
-    expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+    expect(await screen.findByText(/Tienes el teclado/)).toBeInTheDocument();
     expect(controles).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Tomar control durante el turno' })).not.toBeInTheDocument();
   });
@@ -250,7 +250,7 @@ describe('con el control tomado', () => {
     const socket = await tomarElControl(user, controles);
 
     await screen.findByRole('button', { name: /devolver el control/i });
-    expect(screen.getByText(/Tenés el teclado/).closest('[role="status"]')).toHaveAttribute('title', expect.stringContaining('cola'));
+    expect(screen.getByText(/Tienes el teclado/).closest('[role="status"]')).toHaveAttribute('title', expect.stringContaining('cola'));
     await waitFor(() => {
       expect(document.querySelector('[data-pty-shell][data-read-only]')).toBeNull();
     }, { timeout: 5000 });
@@ -383,7 +383,7 @@ describe('la toma espera al enganche del relay', () => {
     expect(controles).toHaveLength(1);
     servirControl(controles);
     await user.click(retry);
-    expect(await screen.findByText(/Tenés el teclado/)).toBeInTheDocument();
+    expect(await screen.findByText(/Tienes el teclado/)).toBeInTheDocument();
     expect(controles.filter(call => call.body.action === 'take')).toHaveLength(2);
   }, 20_000);
 
@@ -484,7 +484,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
     await abrirZeus();
     engancharLaTui();
     await tomarElControl(user, controles);
-    await screen.findByText(/Tenés el teclado de esta TUI/i);
+    await screen.findByText(/Tienes el teclado de esta TUI/i);
 
     server.use(http.post('*/v3/console/terminal/sessions/:sid/control', () => HttpResponse.json(
       { error: 'conflict', reason },
@@ -495,7 +495,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
 
     await waitFor(() => { expect(document.querySelector(`[data-negativa][data-codigo="${reason}"]`)).toBeInTheDocument(); });
     expect(screen.queryByText(/El bus volvió a entregarle/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tienes el teclado de esta TUI/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
     expect(screen.getByText(/Esta sesión ya no tiene el control de la TUI de zeus/i)).toBeInTheDocument();
     expect(screen.getByText(/Otra sesión puede mantener el bus en pausa/i)).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe('la toma no se dispara dos veces y la devolución tolera un CSRF rotado
 
     await user.click(await screen.findByRole('button', { name: /devolver el control/i }));
 
-    await screen.findByText(/Tenés el teclado de esta TUI/i);
+    await screen.findByText(/Tienes el teclado de esta TUI/i);
     expect(screen.getByRole('button', { name: /devolver el control/i })).toBeEnabled();
     expect(screen.queryByText(/Esta sesión ya no tiene el control/i)).not.toBeInTheDocument();
   }, 20_000);

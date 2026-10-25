@@ -153,7 +153,7 @@ it('keeps tenants that differ only by case as distinct identities', () => {
 
 const zeus = { id: 'Steven:zeus', tenantId: 'Steven', alias: 'zeus', roomIds: [], roomMembership: {}, leaseState: 'online' as const };
 
-it('sólo declara TUI en vivo cuando el servidor publica el modo harness', () => {
+it('solo declara TUI en vivo cuando el servidor publica el modo harness', () => {
   expect(resolveLiveTui([target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] })], zeus))
     .toMatchObject({ status: 'available' });
 
@@ -173,7 +173,7 @@ it('propaga el motivo del destino cuando la puerta se cierra antes de llegar al 
     .toBe('blocked');
 });
 
-it('cuenta sólo los destinos que pueden emitir la TUI viva', () => {
+it('cuenta solo los destinos que pueden emitir la TUI viva', () => {
   expect(countLiveTuiTargets(null)).toBeUndefined();
   expect(countLiveTuiTargets([
     target({ tenant_id: 'Steven', alias: 'zeus', modes: ['shell', 'harness'] }),

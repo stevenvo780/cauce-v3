@@ -50,17 +50,17 @@ export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el cana
 function terminalRelaySinComprobarReason(status?: number, detalle?: string): string {
   if (status === undefined) {
     return 'No se pudo consultar o alcanzar el relay de terminales'
-      + `${detalle ? `: ${detalle}` : ''}. Reintentá; este fallo de transporte no permite saber `
+      + `${detalle ? `: ${detalle}` : ''}. Reintenta; este fallo de transporte no permite saber `
       + 'si el canal PTY está disponible.';
   }
   if (UPSTREAM_INALCANZABLE.includes(status)) {
     return `No se pudo alcanzar el relay de terminales a través del gateway (HTTP ${String(status)})`
-      + `${detalle ? `: ${detalle}` : ''}. Reintentá; el upstream no contestó y eso no permite `
+      + `${detalle ? `: ${detalle}` : ''}. Reintenta; el upstream no contestó y eso no permite `
       + 'afirmar el estado del despliegue.';
   }
   return `El servidor respondió HTTP ${String(status)} al preguntar por el relay de terminales`
     + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el relay falte —la ruta contestó—, `
-    + 'sólo que esa consulta no se pudo completar. Reintentá; si sigue igual, es de la consola o '
+    + 'solo que esa consulta no se pudo completar. Reintenta; si sigue igual, es de la consola o '
     + 'del gateway, no de tu permiso.';
 }
 

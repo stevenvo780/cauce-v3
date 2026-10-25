@@ -88,7 +88,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, authorit
         <p
           className={cn(STRIP, 'm-0 truncate border-b bg-warn/15 text-warn-ink')}
           role="status"
-          title={`La ventana del agente mide ${String(view.columnasRemotas ?? COLUMNAS_MINIMAS)} columnas y acá entran ${String(view.columnas)} incluso con el cuerpo más chico. Girá el teléfono o abrila en una pantalla más ancha.`}
+          title={`La ventana del agente mide ${String(view.columnasRemotas ?? COLUMNAS_MINIMAS)} columnas y acá entran ${String(view.columnas)} incluso con el cuerpo más chico. Gira el teléfono o abrila en una pantalla más ancha.`}
         >
           Caben {String(view.columnas)} columnas y la TUI del agente mide {String(view.columnasRemotas ?? COLUMNAS_MINIMAS)}: se corta por la derecha.
         </p>
@@ -123,7 +123,7 @@ export default function PtyTerminal({ websocketPath, sessionId, ticket, authorit
       ) : null}
       {finished ? (
         <p className={cn(STRIP, 'm-0 border-t text-white/50')}>
-          La consola sólo reanuda automáticamente una interrupción de transporte mientras el relay
+          La consola solo reanuda automáticamente una interrupción de transporte mientras el relay
           conserva el mismo PTY. Este cierre ya terminó el canal: abrir otro exige una sesión nueva
           y una nueva auditoría.
         </p>

@@ -220,7 +220,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
       setMotivoReconciliacionPlaza(undefined);
     } catch (error) {
       if (error instanceof TerminalApiError && error.code === 'missing_authority_proof') {
-        setErrorCierrePlaza('Esta pestaña no conserva la prueba original para cerrar esa sesión. Volvé a la pestaña que la abrió o esperá a que venza.');
+        setErrorCierrePlaza('Esta pestaña no conserva la prueba original para cerrar esa sesión. Vuelve a la pestaña que la abrió o espera a que venza.');
       }
       await revisarPlazas();
     } finally {
@@ -392,8 +392,8 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
           </ErrorBoundary>
         ) : phone && !agentId && agents.length > 0 ? (
           <div className="grid flex-1 place-content-center gap-3 p-6 text-center">
-            <h2 className="m-0 text-base font-semibold tracking-tight">Elegí un agente para abrir su terminal</h2>
-            <p className="m-0 text-[13px] text-muted">Elegilo en Chat y volvé a Terminal.</p>
+            <h2 className="m-0 text-base font-semibold tracking-tight">Elige un agente para abrir su terminal</h2>
+            <p className="m-0 text-[13px] text-muted">Elígelo en Chat y vuelve a Terminal.</p>
             <LinkButton href="/messages" onClick={(event) => { onNavClick(event, '/messages'); }}>Elegir agente</LinkButton>
           </div>
         ) : (

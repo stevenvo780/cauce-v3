@@ -112,7 +112,7 @@ function servirSesiones(registro: SesionPedida[]): void {
   );
 }
 
-/** El gateway sólo acepta /control sobre una sesión que el relay ya redimió. */
+/** El gateway solo acepta /control sobre una sesión que el relay ya redimió. */
 const enganchadas = new Set<string>();
 
 function engancharSocket(socket: StubWebSocket, listo: Record<string, unknown> = READY): StubWebSocket {
@@ -198,7 +198,7 @@ describe('T041 · la toma de teclado exige persona con nombre', () => {
     );
 
     // Sin teclado: ni estado sostenido ni tecla viajando al relay.
-    expect(screen.queryByText(/Tenés el teclado de esta TUI/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Tienes el teclado de esta TUI/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /devolver el control/i })).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Escritura no disponible' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /reintentar la toma/i })).not.toBeInTheDocument();
@@ -211,7 +211,7 @@ describe('T042 · abrir shell y leer sigue permitido (dejar como está)', () => 
     const user = userEvent.setup();
     const sesiones: SesionPedida[] = [];
     habilitarCapacidad();
-    // Sólo shell: nada se autoabre y el canal bajo prueba es el interactivo.
+    // Solo shell: nada se autoabre y el canal bajo prueba es el interactivo.
     servirDestinos([destino({ modes: [SHELL_MODE], writable_modes: [] })]);
     servirSesiones(sesiones);
     renderWithApi(<TerminalPage params={['Steven', 'zeus']} />);
@@ -326,7 +326,7 @@ describe('T041 · la caída del relay se anuncia de inmediato', () => {
     expect(estado.textContent).toMatch(/cerró el canal PTY/);
     expect(estado.textContent).toContain('relay_shutdown');
     expect(await screen.findByRole('button', { name: /pedir sesión nueva/i })).toBeInTheDocument();
-    expect(screen.getByText(/sólo reanuda automáticamente una interrupción de transporte/i)).toBeInTheDocument();
+    expect(screen.getByText(/solo reanuda automáticamente una interrupción de transporte/i)).toBeInTheDocument();
     // Un 1001 no es una interrupción 1006: no se finge una reanudación del mismo PTY.
     expect(screen.queryByText(/reanudando el mismo PTY/i)).not.toBeInTheDocument();
 

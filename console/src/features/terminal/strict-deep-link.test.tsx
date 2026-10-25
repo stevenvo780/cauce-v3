@@ -80,7 +80,7 @@ it('CONTROL: StrictMode opening by in-app navigation from the bare route also re
 
   window.history.pushState({}, '', '/terminal');
   renderRouted(() => <StrictMode><RoutedTerminal /></StrictMode>);
-  await screen.findByRole('heading', { level: 2, name: 'Elegí un agente en la barra lateral' });
+  await screen.findByRole('heading', { level: 2, name: 'Elige un agente en la barra lateral' });
   act(() => { navigate('/terminal/Steven/kant'); });
 
   await waitFor(() => { expect(requests).toHaveLength(1); });

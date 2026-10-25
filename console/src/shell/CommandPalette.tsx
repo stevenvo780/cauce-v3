@@ -64,7 +64,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               aria-controls={listId}
               aria-activedescendant={commands[current] ? `${listId}-${String(current)}` : undefined}
               aria-label="Buscar agente, acción o sección"
-              placeholder="Buscá un agente o una sección…"
+              placeholder="Busca un agente o una sección…"
               className="h-12 min-w-0 flex-1 border-0 bg-transparent text-[15px] text-fg outline-none placeholder:text-muted"
             />
             <kbd className="rounded border border-line px-1.5 text-[11px] text-muted">Esc</kbd>

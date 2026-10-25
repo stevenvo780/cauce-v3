@@ -14,33 +14,33 @@ function copia(items: number, aLaVista: number, motivo: MotivoReconciliacionPlaz
     return {
       titulo: 'No se pudo leer qué sesiones están ocupando el tope',
       cuerpo: items === 0
-        ? 'El inventario del gateway no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintentá la lectura antes de decidir qué cerrar.'
+        ? 'El inventario del gateway no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintenta la lectura antes de decidir qué cerrar.'
         : `No se pudo actualizar el inventario. Las ${String(items)} filas de abajo son el último inventario verificable y pueden estar desactualizadas; no prueban cuántas plazas siguen ocupadas ahora.`,
     };
   }
   if (vacio && motivo === 'session_limit') {
     return {
       titulo: 'El tope se liberó antes de terminar la verificación',
-      cuerpo: 'El POST recibió 409, pero el GET exacto posterior ya no encontró ninguna sesión ocupando plaza. Hubo una liberación concurrente: no hay nada que cerrar y podés reintentar la apertura.',
+      cuerpo: 'El POST recibió 409, pero el GET exacto posterior ya no encontró ninguna sesión ocupando plaza. Hubo una liberación concurrente: no hay nada que cerrar y puedes reintentar la apertura.',
     };
   }
   if (vacio && motivo === 'invalid_grant_receipt') {
     return {
       titulo: 'El grant fue inválido y no hay una reserva visible',
-      cuerpo: 'No se revocó el session_id del recibo roto porque no era confiable. El inventario exacto posterior no muestra una reserva que puedas cerrar; reintentá sólo después de releer si el estado cambia.',
+      cuerpo: 'No se revocó el session_id del recibo roto porque no era confiable. El inventario exacto posterior no muestra una reserva que puedas cerrar; reintenta solo después de releer si el estado cambia.',
     };
   }
   if (motivo === 'invalid_grant_receipt' && items > 0) {
     return {
       titulo: 'El grant fue inválido; estas son las reservas visibles',
-      cuerpo: 'No se usó el session_id del recibo roto para borrar nada. Las filas de abajo vienen del GET exacto posterior: cerrá una sólo si reconocés que esa reserva ya no debe seguir viva.',
+      cuerpo: 'No se usó el session_id del recibo roto para borrar nada. Las filas de abajo vienen del GET exacto posterior: cierra una solo si reconoces que esa reserva ya no debe seguir viva.',
     };
   }
   if (items === 0) {
     return {
       titulo: `Tope de sesiones alcanzado: las ${String(items + aLaVista)} que lo gastan están abiertas acá`,
       cuerpo: 'El tope de sesiones simultáneas es por operador y ya lo gastaste con las sesiones abiertas en esta pantalla. '
-        + 'Cerrá una desde el menú de la sesión y volvé a pedir la que querías: se libera al instante.',
+        + 'Cierra una desde el menú de la sesión y vuelve a pedir la que querías: se libera al instante.',
     };
   }
   return {
