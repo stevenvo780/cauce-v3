@@ -14,6 +14,7 @@ export interface SessionProviderState {
 export interface SessionDelivery {
   id: string; status: string; last_error: string | null; execution_started_at: Date | null;
 }
+interface SessionPointerState { exists: boolean; initialized: boolean; nativeId: string | null }
 export interface AutomaticOperation {
   id: string; actor_subject: string | null; status: string; version: string; expected_revision: string;
   desired_revision: string | null; applied_revision: string | null; steps: { name: string; status: string; evidence?: unknown }[];
@@ -22,6 +23,14 @@ export interface AutomaticOperation {
 
 const stateRoot = (actor: CancelDeployActor) => '/home/cauce/.cauce/' + actor.runtime;
 const controlRoot = (actor: CancelDeployActor) => stateRoot(actor) + '/space/projects/.h13-provider/';
+
+export async function sessionPointerState(actor: CancelDeployActor): Promise<SessionPointerState> {
+  return JSON.parse(await docker(['exec', '--user', 'cauce', actor.container, 'python3', '-I', '-B', '-c',
+    'import json,pathlib,sys;p=pathlib.Path(sys.argv[1]);d=json.loads(p.read_text()) if p.exists() else {};'
+      + 'v=d.get("sessions",{}).get("codex:"+sys.argv[2]+":shared:"+sys.argv[2]);'
+      + 'print(json.dumps({"exists":v is not None,"initialized":v is not None and v.get("initialized") is True,'
+      + '"nativeId":v.get("native_id") if v else None}))', stateRoot(actor) + '/sessions.json', actor.alias])) as SessionPointerState;
+}
 
 export async function sessionKeys(actor: CancelDeployActor, keys: string[], literal = false): Promise<void> {
   await docker(['exec', '--user', 'cauce', '--env', 'TMUX_TMPDIR=' + stateRoot(actor), actor.container,

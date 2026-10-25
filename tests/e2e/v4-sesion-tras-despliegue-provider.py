@@ -133,7 +133,7 @@ def submit() -> None:
 
 
 if not transcript.exists():
-    append('session_meta', {'id': native, 'source': 'cli', 'model': model})
+    append('session_meta', {'id': native, 'source': 'cli', 'model': model, 'cwd': str(workspace)})
 tty.setraw(sys.stdin.fileno())
 sys.stdout.write('\x1b[?2004h')
 render()

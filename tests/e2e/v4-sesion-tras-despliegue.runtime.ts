@@ -12,7 +12,7 @@ const readerName = 'v4-sesion-tras-despliegue-quota.py';
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 
 export async function stageSessionDescriptors(adapter: string): Promise<Record<string, string>> {
-  const source = JSON.parse(await readFile(join(process.cwd(), 'packages/adapter-sdk/descriptors/codex.json'), 'utf8')) as {
+  const source = JSON.parse(await readFile(join(adapter, 'descriptors/codex.json'), 'utf8')) as {
     provider: { quota_argv: string[] };
   };
   source.provider.quota_argv = ['/usr/local/bin/' + readerName, '/home/node/.codex'];
@@ -35,11 +35,12 @@ export async function controlledSessionRuntime(): Promise<ComputerRuntimeBundle>
   } };
 }
 
-export async function prepareSessionQuotaImage(fixture: CancelDeployFixture): Promise<{ id: string; reference: string }> {
-  const directory = join(cancelDeployReceipts, 'quota-image');
+export async function prepareSessionQuotaImage(fixture: CancelDeployFixture, scope?: 'security'): Promise<{ id: string; reference: string }> {
+  const suffix = scope === undefined ? '' : '-' + scope;
+  const directory = join(cancelDeployReceipts, 'quota-image' + suffix);
   await mkdir(directory, { recursive: true });
   const reader = await readFile(join(process.cwd(), 'tests/e2e', readerName));
-  const base = fixture.computer.prefix + ':h13b-base', reference = fixture.computer.prefix + ':h13b-quota';
+  const base = fixture.computer.prefix + ':h13b-base' + suffix, reference = fixture.computer.prefix + ':h13b-quota' + suffix;
   for (const name of [base, reference]) {
     const existing = await command('docker', ['image', 'inspect', '--format', '{{.Id}}', name]);
     if (existing.code === 0 || !/no such image|not found/iu.test(existing.stderr)) throw new Error('the owned image name is unavailable: ' + name);

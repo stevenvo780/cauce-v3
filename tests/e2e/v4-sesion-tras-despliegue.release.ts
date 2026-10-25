@@ -164,6 +164,9 @@ export async function buildSessionRelease(fixture: CancelDeployFixture, phase: s
   }
   await writeFile(join(stage, 'adapter/package.json'), '{"type":"module"}\n');
   await compile(directory, 'packages/adapter-sdk/src/bin/codex.ts', 'adapter/src/bin/codex.js', source);
+  if (source.files['packages/adapter-sdk/src/bin/shared-session.ts']) {
+    await compile(directory, 'packages/adapter-sdk/src/bin/shared-session.ts', 'adapter/src/bin/shared-session.js', source);
+  }
   await compile(directory, 'services/gateway/src/fleet/main.ts', 'services/gateway/dist/fleet/main.js', source);
   const epoch = (await execute('git', ['show', '-s', '--format=%ct', source.revision], { cwd: root })).stdout.trim();
   const releaseDirectory = join(directory, 'packed'), packer = join(directory, 'source/ops/scripts/host-release.py');
