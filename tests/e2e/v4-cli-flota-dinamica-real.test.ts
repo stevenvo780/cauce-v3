@@ -318,6 +318,7 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
   }, 300_000);
 
   it('explica agente detenido y recupera su terminal con el inicio autorizado', async () => {
+    const original = await active().probeTmux(alias);
     const previous = await active().runtimeFor(alias);
     await docker(['stop', '--time', '10', previous.id]);
     expect(await docker(['inspect', '--format', '{{.State.Running}}', previous.id])).toBe('false');
@@ -326,11 +327,15 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     expect(stoppedCli.code).toBe(1); expect(stoppedCli.stderr).toMatch(/terminal.*no está conectada/iu);
     await startOwnedAgent();
     runtime = await active().runtimeFor(alias);
+    await active().resumeTerminal(alias, marker);
+    const restarted = await active().probeTmux(alias);
+    expect(restarted.nativeId).toBe(original.nativeId);
     expect(await waitTerminalPresence(), 'the canonical terminal must reconnect after its agent starts').toBe(true);
     const resumed = await cli().run(terminal(), { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
     successful(resumed, 'terminal after owned agent start');
     await assertTerminalReleased();
-    await receipt('07-stopped-and-started', { operations, stopped_message: true, same_conversation_recovered: true });
+    await receipt('07-stopped-and-started', { operations, stopped_message: true,
+      server_resume_method: 'explicit_real_sdk_delivery_before_cli_attach', same_conversation_recovered: true });
   }, 300_000);
 
   it('edita el espacio con configuración aplicada al proceso y persistida en la BD', async () => {

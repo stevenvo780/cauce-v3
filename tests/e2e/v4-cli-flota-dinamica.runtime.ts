@@ -161,10 +161,12 @@ except (OSError,ValueError): result['log_state']='unreadable'
 print(json.dumps(result))
 `;
 
-export const fleetCliPrepareDelivery = `import json,pathlib,ssl,sys,urllib.error,urllib.request,uuid
+export const fleetCliPrepareDelivery = `import json,pathlib,re,ssl,sys,urllib.error,urllib.request,uuid
 class MissingEnvironment(Exception): pass
 def publish():
- pid=sys.argv[1];marker=sys.argv[2]
+ pid,action,marker=sys.argv[1:4]
+ if action not in {'REMEMBER','RECALL'} or not re.fullmatch(r'[A-Za-z0-9-]{1,128}',marker):
+  raise ValueError('invalid fixture publication command')
  names={'CAUCE_ALIAS','CAUCE_TENANT_ID','CAUCE_ROOM','CAUCE_CERT_PATH','CAUCE_KEY_PATH','CAUCE_CA_PATH','CAUCE_GATEWAY_URL'}
  raw=pathlib.Path('/proc/'+pid+'/environ').read_bytes().split(bytes([0]))
  env={key.decode():value.decode() for key,value in (part.split(b'=',1) for part in raw if b'=' in part) if key.decode() in names}
@@ -174,12 +176,18 @@ def publish():
  context.load_cert_chain(env['CAUCE_CERT_PATH'],env['CAUCE_KEY_PATH'])
  body={'room_id':env['CAUCE_ROOM'],
   'recipients':[{'tenant_id':tenant,'alias':alias}],
-  'body':{'type':'text','text':'REMEMBER '+marker},'idempotency_key':'zz-l2-terminal-prepare-'+str(uuid.uuid4())}
+  'body':{'type':'text','text':'REMEMBER '+marker if action=='REMEMBER' else 'RECALL'},
+  'idempotency_key':'zz-l2-terminal-prepare-'+str(uuid.uuid4())}
  request=urllib.request.Request(env['CAUCE_GATEWAY_URL']+'/v3/messages',data=json.dumps(body).encode(),
   headers={'content-type':'application/json'},method='POST')
  with urllib.request.urlopen(request,context=context,timeout=15) as response:
   result=json.load(response)
-  print(json.dumps({'message_id':result['message_id'],'delivery_ids':result['delivery_ids']}))
+  def canonical_id(value):
+   return isinstance(value,str) and str(uuid.UUID(value,version=4))==value
+  message=result['message_id'];deliveries=result['delivery_ids']
+  if not canonical_id(message) or not isinstance(deliveries,list) or len(deliveries)!=1 or not all(map(canonical_id,deliveries)):
+   raise ValueError('invalid fixture publication receipt')
+  print(json.dumps({'message_id':message,'delivery_ids':deliveries}))
 try: publish()
 except urllib.error.HTTPError as error: raise SystemExit('canonical bus publication returned HTTP '+str(error.code)) from None
 except urllib.error.URLError as error:

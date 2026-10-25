@@ -49,6 +49,7 @@ export interface FleetCliFixture {
   advanceClock(ms: number): void; resetClock(): void;
   runtimeFor(alias: string): Promise<FleetCliRuntime>;
   prepareTerminal(alias: string): Promise<FleetCliRuntime>;
+  resumeTerminal(alias: string, expectedMarker: string): Promise<FleetCliRuntime>;
   probeTmux(alias: string): Promise<{ panePid: number; nativeId: string; capture: string; clients: number; runtime: FleetCliRuntime }>;
   close(): Promise<void>;
 }
@@ -287,12 +288,12 @@ export async function startFleetCliFixture(options: { candidateSource: string })
       runtimeByAlias.set(alias, runtime);
       return runtime;
     };
-    const prepareTerminal = async (alias: string): Promise<FleetCliRuntime> => {
+    const deliverToRuntime = async (alias: string, action: 'REMEMBER' | 'RECALL', marker: string) => {
+      if (!/^[A-Za-z0-9-]{1,128}$/u.test(marker)) throw new Error('the owned SDK marker is outside the fixture contract');
       const runtime = await runtimeFor(alias);
       const observed = await observedAdapter(runtime.id, runtime.runtimeKey, alias, runtime.stateDirectory);
-      const bootstrapMarker = `SERVER-PRECONDITION-${fleetCliRun}`;
       const published = await command('docker', ['exec', '--user', COMPUTER_RUNTIME.user, runtime.id, 'python3', '-B', '-c',
-        fleetCliPrepareDelivery, String(observed.pid), bootstrapMarker]);
+        fleetCliPrepareDelivery, String(observed.pid), action, marker]);
       if (published.code !== 0) {
         const httpStatus = /canonical bus publication returned HTTP (\d{3})/u.exec(published.stderr)?.[1];
         const knownKind = /canonical bus publication failed: (tls|urlopen|missing_env|local_io|invalid_response)/u.exec(published.stderr)?.[1];
@@ -302,18 +303,36 @@ export async function startFleetCliFixture(options: { candidateSource: string })
         throw new Error(`canonical runtime mTLS publication failed: ${failure.failure_kind}${httpStatus ? ` HTTP ${httpStatus}` : ''}`);
       }
       const delivery = JSON.parse(published.stdout) as { message_id: string; delivery_ids: string[] };
+      if (Object.keys(delivery).sort().join(',') !== 'delivery_ids,message_id'
+        || typeof delivery.message_id !== 'string' || !Array.isArray(delivery.delivery_ids)
+        || delivery.delivery_ids.length !== 1 || delivery.delivery_ids.some(id => typeof id !== 'string')) {
+        throw new Error('the canonical SDK publication returned an invalid delivery receipt');
+      }
+      const expectedReply = `${action === 'REMEMBER' ? 'STORED' : 'RECALLED'}:${marker}`;
       let delivered = false;
       const deliveryDeadline = Date.now() + 120_000;
       while (!delivered && Date.now() < deliveryDeadline) {
         const row = (await active.pool.query<{ status: string; reply: string | null }>(`SELECT status,result->'output'->>'reply' AS reply
           FROM deliveries WHERE message_id=$1 AND recipient_tenant=$2 AND recipient_alias=$3`, [delivery.message_id, tenantId, alias])).rows[0];
         if (row?.status === 'done') {
-          if (!row.reply?.includes(`STORED:${bootstrapMarker}`)) throw new Error('the canonical SDK delivery did not return its owned preparation marker');
+          if (row.reply !== expectedReply) throw new Error('the canonical SDK delivery did not verify its owned marker');
           delivered = true;
         } else if (row && ['dead', 'failed'].includes(row.status)) throw new Error('the canonical SDK preparation delivery failed');
         else await new Promise<void>(resolve => { setTimeout(resolve, 250); });
       }
       if (!delivered) throw new Error('the canonical SDK preparation delivery did not complete before its deadline');
+      return { runtime, delivery };
+    };
+    const resumeTerminal = async (alias: string, expectedMarker: string): Promise<FleetCliRuntime> => {
+      const { runtime, delivery } = await deliverToRuntime(alias, 'RECALL', expectedMarker);
+      await writeFile(join(fleetCliReceipts, 'terminal-server-resume.json'), JSON.stringify({
+        mode: 'canonical_real_mtls_delivery', marker_verified: true, delivery, runtime,
+      }, null, 2) + '\n', { mode: 0o600 });
+      return runtime;
+    };
+    const prepareTerminal = async (alias: string): Promise<FleetCliRuntime> => {
+      const { runtime, delivery } = await deliverToRuntime(alias, 'REMEMBER', `SERVER-PRECONDITION-${fleetCliRun}`);
+      const observed = await observedAdapter(runtime.id, runtime.runtimeKey, alias, runtime.stateDirectory);
       const policy = join(active.installRoot, owner.company.slug, hostId, 'executor-policy.json');
       const readPolicy = await active.onComputer(['python3', '-B', '-c',
         'import json,sys;print(json.dumps({"state":json.load(open(sys.argv[1]))["roots"]["state"]}))', policy]);
@@ -398,7 +417,7 @@ print(json.dumps({'panePid':pane,'nativeId':native[0],'capture':capture,'clients
     };
     return { computer: active, gateway, page, errors, baseUrl, directory, caFile: pki.ca, owner, tenantId, hostId, unit, room, accountId,
       prefix: fleetCliPrefix, run: fleetCliRun, receipts: fleetCliReceipts, registry, advanceClock: ms => { offset += ms; },
-      resetClock: () => { offset = 0; }, runtimeFor, prepareTerminal, probeTmux, close };
+      resetClock: () => { offset = 0; }, runtimeFor, prepareTerminal, resumeTerminal, probeTmux, close };
   } catch (error) {
     try {
       if (page) await writeFile(join(fleetCliReceipts, 'bootstrap-failure.json'), JSON.stringify({
