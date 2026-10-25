@@ -10,7 +10,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/people');
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/people');
 function registration(label: string): V4Person {
   const person = syntheticPerson(`admins-${label}`, run);
   const slug = `zz-canary-admins-${label}-${run}`;

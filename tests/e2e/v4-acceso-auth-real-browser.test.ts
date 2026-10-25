@@ -13,7 +13,7 @@ import {
 } from './v4-console-real-browser.helpers.js';
 
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
-const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/auth');
+const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/auth');
 const person = (label: string): V4Person => ({
   ...syntheticPerson(label, run), name: `zz-canary-acceso-${label}-${run}`,
   email: `zz-canary-acceso-${label}-${run}@example.test`,

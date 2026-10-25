@@ -11,7 +11,7 @@ const prefix = `zz-canary-e2e-a1-acceso-1025b-${run}`;
 const owner = { ...syntheticPerson('people-flows', run), email: `${prefix}@example.test`, name: prefix,
   company: { name: prefix, slug: prefix } };
 const invited = { email: `${prefix}-invite@example.test`, name: `${prefix}-invite`, password: syntheticPerson('invited', run).password };
-const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/people');
+const evidence = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/people');
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let browser: V4Page | undefined;
 let invitedBrowser: V4Page | undefined;

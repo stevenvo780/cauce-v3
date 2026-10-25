@@ -6,7 +6,7 @@ import {
   apiGet, syntheticPerson, type V4Locator, type V4Page, type V4Person,
 } from './v4-console-real-browser.helpers.js';
 
-export const companiesReceiptDirectory = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/companies');
+export const companiesReceiptDirectory = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/companies');
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 
 export function companyPerson(label: string): V4Person {

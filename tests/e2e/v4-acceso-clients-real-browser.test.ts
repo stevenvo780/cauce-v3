@@ -12,7 +12,7 @@ import { plazo } from '../helpers/plazos.js';
 
 const issuer = 'https://cauce-access.example.invalid';
 const resource = `${issuer}/mcp`;
-const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-acceso-1025b/clients');
+const receipts = join(process.cwd(), '.delegados/v4/recibos/e2e-a1-commit-1025/clients');
 const path = '/v3/console/mcp/client-delegations';
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let auth: PasswordAuthProvider | undefined;
