@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
-  FleetCapabilitySchema, FleetTargetSchema, FleetOperationControlSchema, FleetOperationPreviewSchema,
+  ConsoleFleetOperationSchema, FleetCapabilitySchema, FleetTargetSchema, FleetOperationControlSchema, FleetOperationPreviewSchema,
   FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, sha256Hex,
-  type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
+  type ConsoleFleetOperation, type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
 import { FleetOperationError, StoreError, type CompanyAuthoritySource } from '@cauce/store';
 import { FleetHostUnavailableError } from '../fleet/gateway-config.js';
@@ -13,6 +13,7 @@ import { consoleHumanAccess } from '../console-human-authority.js';
 
 export interface FleetOperationsRepositoryBinding {
   forAuthority?(source: CompanyAuthoritySource): FleetOperationsRepositoryBinding;
+  display?(operation: FleetOperation): Promise<ConsoleFleetOperation>;
   list?(actorTenant: Tenant, actorAlias: string, target: FleetTarget, actorSubject?: string): Promise<unknown>;
   listRecent?(actorTenant: Tenant, actorAlias: string, limit: number, actorSubject?: string): Promise<unknown>;
   preview(actorTenant: Tenant, actorAlias: string, input: FleetOperationRequest, actorSubject?: string): Promise<unknown>;
@@ -47,6 +48,15 @@ function operationReceipt(value: unknown, id?: string, expectedVersion?: number)
   if (!receipt.success || (id !== undefined && receipt.data.id !== id)
       || (expectedVersion !== undefined && receipt.data.version < expectedVersion)) invalidReceipt();
   return receipt.data;
+}
+
+async function displayReceipt(repository: FleetOperationsRepositoryBinding, operation: FleetOperation): Promise<ConsoleFleetOperation> {
+  const expected = sha256Hex(operation);
+  const shown = ConsoleFleetOperationSchema.parse(repository.display ? await repository.display(operation) : operation);
+  const canonical = { ...shown, actor: { ...shown.actor } };
+  delete canonical.actor.display_name;
+  if (sha256Hex(canonical) !== expected) invalidReceipt();
+  return shown;
 }
 
 function enqueueReceipt(value: unknown, actor: Principal, input: FleetOperationRequest): FleetOperation {
@@ -113,7 +123,7 @@ export function registerFleetOperationRoutes(
         if (!active.list) throw new StoreError('conflict', 'fleet history is unavailable');
         const rows = z.array(FleetOperationSchema).max(100).parse(await active.list(actor.tenant_id, actor.alias, target, humanSubject(actor)));
         if (rows.some((row) => !sameTarget(row.target, target))) invalidReceipt();
-        return { operations: rows };
+        return { operations: await Promise.all(rows.map(row => displayReceipt(active, row))) };
       });
     } catch (error) { fleetError(reply, error); }
   });
@@ -123,7 +133,7 @@ export function registerFleetOperationRoutes(
         const { limit } = FleetOperationRecentQuerySchema.parse(request.query);
         if (!active.listRecent) throw new StoreError('conflict', 'fleet history is unavailable');
         const rows = z.array(FleetOperationSchema).max(limit).parse(await active.listRecent(actor.tenant_id, actor.alias, limit, humanSubject(actor)));
-        return { operations: rows };
+        return { operations: await Promise.all(rows.map(row => displayReceipt(active, row))) };
       });
     } catch (error) { fleetError(reply, error); }
   });
@@ -144,7 +154,8 @@ export function registerFleetOperationRoutes(
     try {
       return await withAccess(request, reply, async (active, actor) => {
         const input = FleetOperationSubmissionSchema.parse(request.body);
-        const operation = enqueueReceipt(await active.enqueue(actor.tenant_id, actor.alias, input, humanSubject(actor)), actor, input);
+        const canonical = enqueueReceipt(await active.enqueue(actor.tenant_id, actor.alias, input, humanSubject(actor)), actor, input);
+        const operation = await displayReceipt(active, canonical);
         return await reply.code(202).send({ operation_id: operation.id, status: operation.status, operation });
       });
     } catch (error) { fleetError(reply, error); }
@@ -154,7 +165,7 @@ export function registerFleetOperationRoutes(
     try {
       return await withAccess(request, reply, async (active, actor) => {
         const id = OperationIdSchema.parse(request.params.id);
-        return operationReceipt(await active.get(actor.tenant_id, actor.alias, id, humanSubject(actor)), id);
+        return displayReceipt(active, operationReceipt(await active.get(actor.tenant_id, actor.alias, id, humanSubject(actor)), id));
       });
     } catch (error) { fleetError(reply, error); }
   });
@@ -165,9 +176,10 @@ export function registerFleetOperationRoutes(
         return await withAccess(request, reply, async (active, actor) => {
           const id = OperationIdSchema.parse(request.params.id);
           const input = FleetOperationControlSchema.parse(request.body);
-          return operationReceipt(
+          const operation = operationReceipt(
             await active[action](actor.tenant_id, actor.alias, id, input.expected_version, humanSubject(actor)), id, input.expected_version,
           );
+          return displayReceipt(active, operation);
         });
       } catch (error) { fleetError(reply, error); }
     });

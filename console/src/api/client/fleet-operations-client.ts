@@ -1,8 +1,9 @@
 import {
   FleetOperationControlSchema, FleetOperationPreviewSchema, FleetOperationRequestSchema,
-  FleetOperationSchema, FleetTargetSchema,
-  type FleetCapability, type FleetOperation, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget,
+  FleetTargetSchema,
+  type FleetCapability, type FleetOperationPreview, type FleetOperationRequest, type FleetTarget,
 } from '@cauce/protocol/fleet-operation';
+import { ConsoleFleetOperationSchema as FleetOperationSchema, type ConsoleFleetOperation as FleetOperation } from '@cauce/protocol/console-fleet-operation';
 import { FleetCapabilitySchema } from '@cauce/protocol/fleet-operation';
 import { ApiError } from './core';
 import type { RequestFn } from './system-client';

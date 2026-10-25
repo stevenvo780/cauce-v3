@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { FleetCapability, FleetOperationRequest } from '@cauce/protocol';
 import { FleetOperationError, FleetOperationsRepository, assertFleetAuthority, fleetHostAvailability, lockFleetRevision, withTransaction, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { assertFleetPlacement, assertFleetProviderAccount } from '../console/fleet-capability.js';
+import { displayFleetOperation } from '../console/fleet-operation-display.js';
 import { readPrivateJson } from './provider-login.js';
 import { HostProviderAuthService } from './auth-bridge-client.js';
 import { createFleetProviderAuthRouter } from './auth-router.js';
@@ -113,6 +114,7 @@ export async function configuredFleetGateway(pool: DatabasePool, capability: Fle
     const scoped=source===undefined?selected:selected.forAuthority(source);
     return {
       forAuthority: authority=>bind(selected,authority),
+      display: operation=>displayFleetOperation(pool,operation),
       list: scoped.list.bind(scoped), listRecent: scoped.listRecent.bind(scoped), get: scoped.get.bind(scoped),
       cancel: scoped.cancel.bind(scoped),
       resume: async (tenant,alias,id,expected,subject)=>withTransaction(pool,async client=>{

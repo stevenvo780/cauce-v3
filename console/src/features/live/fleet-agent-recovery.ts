@@ -1,4 +1,5 @@
-import { FleetOperationSchema, type FleetOperation, type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { ConsoleFleetOperationSchema as FleetOperationSchema, type ConsoleFleetOperation as FleetOperation } from '@cauce/protocol/console-fleet-operation';
 import { type NativeRuntimeIdentity, type AgentSessionOutcome } from '@cauce/protocol/native-admin';
 import { fleetRequestHash, type FleetOperationsClient } from '../../api/client/fleet-operations-client';
 
@@ -28,8 +29,9 @@ function exact(value: FleetOperation, input: FleetOperationRequest, hash: string
     || operation.target.tenant_id !== input.target.tenant_id || operation.target.alias !== input.target.alias
     || operation.expected_revision !== input.expected_revision || operation.request_sha256 !== hash
     || previous && (operation.id !== previous.id || operation.version < previous.version
-      || JSON.stringify(operation.actor) !== JSON.stringify(previous.actor) || operation.created_at !== previous.created_at
-      || operation.version === previous.version && JSON.stringify(operation) !== JSON.stringify(previous))) {
+      || JSON.stringify([operation.actor.tenant_id, operation.actor.alias, operation.actor.actor_subject])
+        !== JSON.stringify([previous.actor.tenant_id, previous.actor.alias, previous.actor.actor_subject]) || operation.created_at !== previous.created_at
+      || operation.version === previous.version && JSON.stringify({ ...operation, actor: previous.actor }) !== JSON.stringify(previous))) {
     throw new Error('El recibo no acredita esta recuperación ni su conversación.');
   }
   return operation;

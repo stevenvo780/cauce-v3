@@ -1,4 +1,5 @@
-import type { FleetOperation, FleetOperationPreview } from '@cauce/protocol/fleet-operation';
+import type { FleetOperationPreview } from '@cauce/protocol/fleet-operation';
+import type { ConsoleFleetOperation as FleetOperation } from '@cauce/protocol/console-fleet-operation';
 import { AlertTriangle, Ban, Check, CheckCircle2, Circle, Clock, KeyRound, Loader2, X } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button, Pill } from '../../components/kit';
@@ -55,9 +56,14 @@ export function OperationStatusPill({ operation }: { operation: FleetOperation }
   return <Pill tone={meta.tone}><OperationStatusIcon status={operation.status} size={12} />{meta.label}</Pill>;
 }
 
+function operationActor(operation: FleetOperation): string {
+  return operation.actor.actor_subject?.startsWith('console:')
+    ? operation.actor.display_name ?? 'Persona de la consola' : operation.actor.alias;
+}
+
 export function OperationMetaLine({ operation, className }: { operation: FleetOperation; className?: string }) {
   return <span className={cn('text-xs text-muted', className)}>
-    por {operation.actor.alias} · <Time value={operation.created_at} relativo /> · <Time value={operation.created_at} />
+    por {operationActor(operation)} · <Time value={operation.created_at} relativo /> · <Time value={operation.created_at} />
   </span>;
 }
 
@@ -260,7 +266,7 @@ export function AgentFleetOperation({ operation, busy, current, control, onAuthR
         <p className="m-0">ID: <code>{operation.id}</code> · Versión: {operation.version}</p>
         <p className="m-0">Huella: <code>{operation.request_sha256}</code></p>
         <p className="m-0">Revisión esperada: {operation.expected_revision} · Revisión deseada: {operation.desired_revision ?? 'Sin publicar'} · Revisión aplicada: {operation.applied_revision ?? 'Sin acreditar'}</p>
-        <p className="m-0">Objetivo: <code>{JSON.stringify(operation.target)}</code> · Actor: {operation.actor.tenant_id}/{operation.actor.alias}</p>
+        <p className="m-0">Objetivo: <code>{JSON.stringify(operation.target)}</code> · Actor: {operationActor(operation)}</p>
         {error ? <p className="m-0">Código: <code>{error.code}</code>{error.step ? <> · Paso: <code>{error.step}</code></> : null} · Reintentable: {error.retryable ? 'sí' : 'no'}</p> : null}
         {operation.steps.some((step) => step.evidence) ? <pre className="m-0 overflow-auto whitespace-pre-wrap">{JSON.stringify(operation.steps.map((step) => ({ paso: step.name, estado: step.status, evidencia: step.evidence ?? null })), null, 2)}</pre> : null}
       </div>

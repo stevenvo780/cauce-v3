@@ -1,5 +1,6 @@
-import { FleetOperationRequestSchema, FleetOperationSchema, FleetPlacementSchema, RuntimeKeySchema,
-  type FleetCapability, type FleetOperation, type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { FleetOperationRequestSchema, FleetPlacementSchema, RuntimeKeySchema,
+  type FleetCapability, type FleetOperationRequest } from '@cauce/protocol/fleet-operation';
+import { ConsoleFleetOperationSchema as FleetOperationSchema, type ConsoleFleetOperation as FleetOperation } from '@cauce/protocol/console-fleet-operation';
 import type { ConfigurationSnapshot } from '../../api/types';
 import type { Resource } from '../../api/use-resource';
 import { fleetRequestHash, type FleetOperationsClient } from '../../api/client/fleet-operations-client';
@@ -70,8 +71,9 @@ function exactOperation(value: FleetOperation, request: FleetOperationRequest, h
     || value.target.tenant_id !== request.target.tenant_id || value.target.alias !== request.target.alias
     || value.kind !== request.kind || value.expected_revision !== request.expected_revision || value.request_sha256 !== hash
     || (previous && (value.id !== previous.id || value.version < previous.version
-      || JSON.stringify(value.actor) !== JSON.stringify(previous.actor) || value.created_at !== previous.created_at
-      || (value.version === previous.version && JSON.stringify(value) !== JSON.stringify(previous))))) {
+      || JSON.stringify([value.actor.tenant_id, value.actor.alias, value.actor.actor_subject])
+        !== JSON.stringify([previous.actor.tenant_id, previous.actor.alias, previous.actor.actor_subject]) || value.created_at !== previous.created_at
+      || (value.version === previous.version && JSON.stringify({ ...value, actor: previous.actor }) !== JSON.stringify(previous))))) {
     throw new Error('El estado durable no coincide con el recibo de este reinicio.');
   }
   return value;
