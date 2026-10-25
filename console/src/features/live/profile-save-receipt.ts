@@ -78,6 +78,36 @@ export function pendingProfileReceipt(
   }
   return remaining.size === 0 ? { revision: Number(row.revision), generation: verification.generation } : undefined;
 }
+export function desiredProfileReceipt(
+  value: unknown, before: AgentPerfil | undefined, refreshed: AgentPerfil | undefined,
+  fields: AgentPerfilCampos, tenant: string, alias: string,
+): { revision: number; appliedRevision: number | null } | undefined {
+  const row = object(value);
+  const priorRevision = before?.revision;
+  const priorApplied = before?.applied_revision;
+  const nextRevision = priorRevision === null ? 1
+    : typeof priorRevision === 'number' && before !== undefined
+      ? priorRevision + (profileMatchesDraft(before, fields) ? 0 : 1) : undefined;
+  const keys = ['ok', 'state', 'tenant_id', 'alias', 'revision', 'applied_revision',
+    'acknowledgements', 'runtime_verification', 'runtime_adoption', 'message'];
+  if (before?.publicado !== true || before.agent_enabled !== true || before.tenant_id !== tenant || before.alias !== alias
+    || (before.exists === false ? priorRevision !== null || priorApplied !== null
+      : before.exists !== true || !Number.isSafeInteger(priorRevision) || Number(priorRevision) < 1)
+    || (priorApplied !== null && (typeof priorApplied !== 'number' || !Number.isSafeInteger(priorApplied)
+      || priorApplied < 1 || priorRevision === null || priorApplied > Number(priorRevision)))
+    || row?.ok !== true || row.state !== 'pending_session_refresh' || row.tenant_id !== tenant || row.alias !== alias
+    || !Number.isSafeInteger(row.revision) || Number(row.revision) < 1 || row.revision !== nextRevision
+    || row.applied_revision !== priorApplied || row.runtime_verification !== null || row.runtime_adoption !== null
+    || !Array.isArray(row.acknowledgements) || row.acknowledgements.length !== 0
+    || Object.keys(row).some(key => !keys.includes(key))
+    || (row.message !== undefined && typeof row.message !== 'string')
+    || refreshed?.publicado !== true || refreshed.tenant_id !== tenant || refreshed.alias !== alias
+    || refreshed.agent_enabled !== true || refreshed.exists !== true || refreshed.revision !== row.revision
+    || refreshed.applied_revision !== priorApplied || refreshed.runtime_state !== 'pending'
+    || refreshed.runtime_verification !== null || refreshed.runtime_adoption !== null
+    || !profileMatchesDraft(refreshed, fields)) return undefined;
+  return { revision: Number(row.revision), appliedRevision: priorApplied };
+}
 export function preparedProfileReceipt(
   value: unknown, before: AgentPerfil | undefined, fields: AgentPerfilCampos, tenant: string, alias: string,
 ): { revision: number; appliedRevision: number | null } | undefined {

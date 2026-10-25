@@ -18,7 +18,7 @@ import { ProfileFields } from './ProfileFields';
 import { AvisoDeContaminacion, RecargaDeContexto } from './RecargaDeContexto';
 import { ContextReconciliation } from './ContextReconciliation';
 import { ProfileStatus } from './ProfileStatus';
-import { pendingProfileReceipt, preparedProfileReceipt, profileIsAdopted } from './profile-save-receipt';
+import { desiredProfileReceipt, pendingProfileReceipt, preparedProfileReceipt, profileIsAdopted } from './profile-save-receipt';
 import { draftFields, draftRevisionConflict, editProfileDraft, profileMatchesDraft, type ProfileDraft, type ProfileOutcome, type ProfileSettlement } from './profile-draft';
 import {
   CAMPOS_DE_LISTA, CAMPOS_DE_TEXTO, CONTAMINACION_ILEGIBLE, ETIQUETAS, MENSAJES_DE_APLICACION,
@@ -219,6 +219,17 @@ export function PerfilTab({
         && result.state === 'pending_session_refresh') {
         const receipt = pendingProfileReceipt(result, tenantId, alias, ficheros.map((file) => file.nombre));
         const refreshed = await readAfterMutation();
+        const desired = refreshed.error ? undefined
+          : desiredProfileReceipt(result, perfil.data, refreshed.data, campos, tenantId, alias);
+        if (desired !== undefined) {
+          setMotivo('');
+          settle({
+            tone: 'parcial',
+            text: `Perfil deseado guardado en la revisión ${String(desired.revision)}; pendiente de aplicar en el próximo turno del agente. `
+              + `La revisión aplicada sigue siendo ${String(desired.appliedRevision ?? 'ninguna')}. Aún no se acreditan los ficheros ni la adopción.`,
+          }, { draft: undefined });
+          return;
+        }
         if (receipt === undefined || refreshed.data?.revision !== receipt.revision
           || refreshed.data.runtime_verification?.state !== 'current'
           || refreshed.data.runtime_verification.generation !== receipt.generation
