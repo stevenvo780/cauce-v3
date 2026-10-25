@@ -79,7 +79,7 @@ aunque se haya puesto en `0` para migrar. Si falla después de confirmar 043, ma
 apagada: restaurar **base y volumen juntos** desde el respaldo previo antes de volver al runtime
 anterior, o corregir hacia adelante. Restaurar solo pines antiguos bajo 043 dejaría PUT roto.
 
-**Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes):
+**Comando** (dueño presente, root, `df -h /` con holgura para dos imágenes nuevas o `docker builder prune -f` antes; si el build se queda sin espacio, [disco lleno por despliegues](#disco-lleno-por-despliegues)):
 ```bash
 export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 : "${CAUCE_DEPLOY_GATES_RECEIPT:?Define la ruta absoluta del recibo verde del candidato}"
@@ -532,6 +532,8 @@ SELECT action, decision, metadata->>'reason' AS reason, metadata->>'phase' AS ph
  LIMIT 20;
 ```
 
+Si esa fila la tiene todavía la unidad del host anterior, sigue [lease tomado por una unidad heredada](#lease-tomado-por-una-unidad-heredada). Un rechazo `consumer_placement_mismatch` significa que el saludo heredado no obtuvo el arriendo: no pares el adaptador que está colocado.
+
 El médico (`ops/guardias/cauce-v3-medico-monitor`) aplica un veto adicional antes de reiniciar un
 adaptador: consulta dos veces las entregas `leased`, `accepted` o `started`, una al entrar al ciclo y
 otra inmediatamente antes de `systemctl restart`. La captura conserva solo identificadores y
@@ -659,6 +661,126 @@ estado actual del host para evitar falsos resultados. En pruebas puede limitarse
 `--runtime-key-prefix` al prefijo único de la operación. Los gates físicos y simulacros añaden un
 inventario de nombres canarios propios para detectar también contenedores y volúmenes sin
 etiquetas, y exigen un barrido limpio después de su limpieza antes de cerrar la base de prueba.
+
+## Recuperación puntual
+
+Estos procedimientos se siguen además de los apartados anteriores. Donde el paso solo existe en una herramienta de la sesión operativa, se nombra esa herramienta: vive en `.delegados/v4/` y no se publica con el repositorio.
+
+El despliegue con corte lateral y gate ya está en [Desplegar V4](#desplegar-v4): `scripts/release-gates.sh`, después `.delegados/v4/corte.sh`, `.delegados/v4/deploy1-local.sh` y las fases `pre`, `backup`, `clone`, `enclave0` y `deploy` de `.delegados/v4/deploy1-vps.sh`. La actualización del controlador y del enclave después de esa migración está en [Enclave de autoridad firmada](#enclave-de-autoridad-firmada-de-la-flota) y en [el controlador](v3.5-controlador-despliegue.md): el directorio del socket va antes de `deploy.sh`; `fleet-controller-upgrade.py` pasa a la release desplegada; `fleet-authority-install.py` se repite sin `--apply` y después con `--apply` usando el export de esa misma release. Hasta ese paso el enclave sigue en la release anterior. El cambio a los roles de mínimo privilegio está en [runbook-rol-runtime.md](runbook-rol-runtime.md). La consola en 502 tras reiniciar el VPS está más arriba, en «Consola en 502 después de reiniciar el VPS».
+
+### Preparar varias identidades en un ordenador
+
+`cauce hosts setup` sin `--identity-directory` solo sigue si hay una `identity.json` bajo la raíz de estado. Con dos, el error es `pass --identity-directory: expected exactly one enrolled identity under the state root`. Si las dos empresas comparten raíz de estado o de instalación, el error es `this system user already runs the executor of company …` y no se instala nada: cada empresa usa su propio directorio de identidad y, si hace falta, su `--install-root`.
+
+La publicación en serie está en `.delegados/v4/desplegar-rapido.sh`. No lanza dos setup a la vez: las sondas de capacidad agotan su presupuesto de 30 s y de 180 s. Para cada identidad repite el comando hasta tres veces y espera 20 s entre fallos. Después comprueba que cada unidad de usuario del ejecutor está activa.
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+cauce hosts setup --identity-directory <directorio-de-identidad>
+cauce hosts setup --identity-directory <directorio-de-la-otra-identidad> --install-root <raiz-de-instalacion>
+cauce hosts status --identity-directory <directorio-de-identidad>
+systemctl --user is-active <unidad-del-ejecutor>
+```
+
+Sustituye los marcadores por las rutas de esa instalación. No copies `identity.json` ni claves entre directorios. Un `HTTP 429` pide esperar un minuto; un `HTTP 409` durante la descarga pide repetir el mismo `setup`.
+
+### Actualizar un adaptador vivo
+
+`.delegados/v4/adaptador-vivo.sh` actualiza el adaptador de los alias medidos en su inventario sin modificar terminales ni credenciales. Por defecto solo simula. Elige `--agente <alias>` (se puede repetir) o `--todos`, nunca los dos. `--ref` es el commit desplegado, de 7 a 40 hexadecimales, y tiene que ser ancestro verificable del árbol desde el que se lanza.
+
+```bash
+bash .delegados/v4/adaptador-vivo.sh --ref <commit> --agente <alias>
+```
+
+La simulación imprime JSON con `simulated: true` y `writes: false`. Un alias fuera del inventario sale con `selected alias is not in the measured inventory`. Un alias de transporte local fuera del laboratorio sale con `local lifecycle is only available in the laboratory` y no se para ningún runtime.
+
+Para ejecutar hace falta un recibo nuevo, una sonda revisada y su SHA-256. `--sesion` usa la sonda incluida y la sesión local ya autenticada; si esa sesión no está autenticada, sale con `canonical local operator session preflight failed; no runtime was stopped`.
+
+```bash
+umask 077
+bash .delegados/v4/adaptador-vivo.sh --ref <commit> --agente <alias> --ejecutar \
+  --recibo <ruta-nueva-del-recibo> --sesion <archivo-de-sesion> \
+  --gateway https://<consola> --origin https://<consola>
+```
+
+`--timeout` va de 1 a 600 segundos y el valor predeterminado es 180. Si algún alias queda `blocked`, el comando sale 1 con `runtime_changes: false` y no continúa. El recibo de reversión tiene que ser el original, modo `0600`, un solo enlace y del mismo usuario. Sin él, `rollback requires its original receipt`. Si la mutación anterior no tiene un final conocido, el error es `previous mutation has unknown completion; retain receipt and prove canonical settlement before rollback`: se conserva el recibo y no se revierte a ciegas.
+
+```bash
+bash .delegados/v4/adaptador-vivo.sh --revertir --recibo <recibo-original> --agente <alias> --ejecutar \
+  --sesion <archivo-de-sesion> --gateway https://<consola> --origin https://<consola>
+```
+
+### Autoridad PTY
+
+`.delegados/v4/autoridad-pty.sh` publica el allowlist PTY en el controlador y el enclave mediante el instalador canónico. Se ejecuta como root. Sin `--aplicar` no escribe: la salida lleva `simulation: true` y `writes: false`. `--simular` y `--aplicar` juntos salen con `--simular y --aplicar son incompatibles`. Pasar `--apply` o `--socket-directory-only` al envoltorio sale con `Usa --aplicar y la instalación completa`.
+
+```bash
+bash .delegados/v4/autoridad-pty.sh --ops-root <ruta-de-la-release>
+bash .delegados/v4/autoridad-pty.sh --ops-root <ruta-de-la-release> --aplicar
+```
+
+`--ops-root` es el checkout de la release ya instalada. Si no contiene el emisor, el error es `La release instalada no tiene issuer; publica primero la release canónica`. El allowlist predeterminado es `/etc/cauce-v3/terminal/pty_agent_identities.json`; otro archivo se indica con `--allowlist`. Tiene que ser regular, sin enlaces, de uid 1000 y modo `0440`. Si `command.v1.json` no concuerda con `authority_command`, o la política no coincide con su pin, no se instala nada.
+
+`--aplicar` escribe un recibo. Si esa ruta ya existe, `El recibo ya existe; usa otro nombre o --revertir`. Si la unidad activa no acredita sus `ReadWritePaths`, la compensación intenta volver atrás con CAS. Si el CAS lo impide, el estado queda `failed-requires-reconciliation`: se conservan el recibo y los backups y no se arranca una mezcla de ficheros. La reversión exige el recibo:
+
+```bash
+bash .delegados/v4/autoridad-pty.sh --ops-root <ruta-de-la-release> --revertir --recibo <recibo>
+```
+
+Sin `--recibo`, `--revertir exige --recibo`.
+
+### Lease tomado por una unidad heredada
+
+Una unidad heredada que sigue habilitada en el host anterior puede volver a arrancar al reiniciar ese host y quedar como dueña de `connection_leases`. El adaptador de contenedor se anuncia como `systemd-container-<alias>` (`CAUCE_INSTANCE_ID` en `ops/scripts/container-adapter-supervisor.sh`). El censo del recolector trata también `systemd-<alias>` como consumidor de la generación anterior.
+
+```sql
+SELECT alias, instance_id, epoch, lease_until > now() AS vigente
+  FROM connection_leases
+ WHERE alias = '<alias>';
+```
+
+Si `instance_id` es `systemd-container-<alias>` o `systemd-<alias>` y el agente ya está colocado en otro host, la unidad vieja tiene el arriendo. En el host anterior, con el usuario de esa unidad, deshabilítala y párala. No la vuelvas a arrancar ni uses `reset-failed` para iniciarla:
+
+```bash
+systemctl --user disable --now cauce-v3-container-<alias>.service
+```
+
+Para un agente nativo del host la unidad es `cauce-v3-alias-<alias>`. El adaptador colocado que recibe `TAKEOVER_REJECTED` espera, con pausa creciente, hasta `lease_expires_at`. No borres la fila: el gateway sigue admitiendo un solo dueño. Cuando el arriendo anterior vence, el adaptador colocado lo toma y el `epoch` sube. Vuelve a leer `instance_id` y comprueba que ya no es el de la unidad heredada.
+
+Si el diario muestra `connection_lease_identity_rejected` y `consumer_placement_mismatch`, el saludo heredado fue rechazado y no tomó el arriendo. No pares el adaptador colocado. El cercado está en [identidad rechazada del arriendo](#identidad-rechazada-del-arriendo).
+
+### Disco lleno por despliegues
+
+`deploy.sh` no arranca el build si no hay sitio para dos imágenes nuevas. `docker builder prune -f` libera la caché de build. En el ordenador de un agente, `docker load rechazó la imagen de agentes` se recupera con `df -h /var/lib/docker`, espacio libre y otro `cauce hosts setup`.
+
+En el host que publica los paquetes de ordenadores, `.delegados/v4/desplegar-rapido.sh` hace esta higiene al terminar, porque cada paquete ocupa hasta 1,7 GB. Conserva los tres directorios más nuevos de `/var/lib/cauce-v3/host-releases` y nunca borra el directorio que `CAUCE_FLEET_HOST_RELEASE_DIR` nombra en el archivo de instancia. Borra solo restos de `/var/lib/cauce-v3/host-releases-staging` con más de 120 minutos. Después poda la caché de build y vuelve a medir:
+
+```bash
+df -h /
+pin=$(sed -n 's|^CAUCE_FLEET_HOST_RELEASE_DIR=||p' /etc/cauce-v3/prod.env | tail -1)
+cd /var/lib/cauce-v3/host-releases
+ls -1t | tail -n +4 | while read -r d; do
+  [ "/var/lib/cauce-v3/host-releases/$d" = "$pin" ] || rm -rf -- "/var/lib/cauce-v3/host-releases/$d"
+done
+find /var/lib/cauce-v3/host-releases-staging -mindepth 1 -maxdepth 1 -mmin +120 -exec rm -rf {} +
+docker builder prune -f
+df -h /
+```
+
+No borres el directorio pinneado ni el release anterior que todavía sea la ruta de rollback. Si `find` no tiene staging, omite esa línea.
+
+### Copias de espacios y sincronización de contextos
+
+Solicitar, comprobar, restaurar y ensayar la vuelta atrás de una copia de espacio está en el [runbook de copias](v4-runbook-copias.md). La consola pide la copia en **Perfil y contexto** y solo descarga un recibo `ready`. La restauración es `cauce spaces restore` sobre un directorio nuevo o vacío. Eliminar una copia de la consola no restaura el espacio.
+
+Si la publicación del contexto falla, el cambio durable se conserva. **Perfil y contexto → Versiones y aplicación** muestra **Error de sincronización**. El aviso `context_push_failed` dice que no se pudo enviar al repositorio remoto. El preflight de [archivos y contextos](v4-archivos-contextos.md#preflight-del-broker) falla entonces en `main_matches_origin` y `push_dry_run`. Restaura el remoto del broker, vuelve a pasar el preflight y pulsa **Reintentar sincronización**, o el mismo reintento desde el CLI:
+
+```bash
+cauce context --gateway https://<consola> --origin https://<consola> \
+  --session-file <archivo-de-sesion> --tenant <tenant> --alias <alias> retry
+```
+
+Espera el estado sincronizado y un `git_commit` alcanzable con `ls-remote`. El ensayo que corta el remoto a propósito está en [ensayo del fallo de sincronización](v4-archivos-contextos.md#ensayo-del-fallo-de-sincronización). Guardar una versión no acredita que el agente ya la use: **Aplicar al agente** o el siguiente turno natural son otra vía, y `cauce context … apply` no acredita el consumo.
 
 ## 7. Reglas de oro
 

@@ -125,7 +125,7 @@ Esa disponibilidad se dibuja como barra de vida en la ficha del agente, en la ho
 
 En **Chat**, abre la tarjeta del agente aunque diga **Sin preparar**. Escribe en **Mensaje para …** y pulsa Enter. Sin ordenador el envío queda en cola: verás **Lease sin dato · envío en cola** y **recibiendo…**. No es un fallo de la caja.
 
-En la terminal, confirma el agente y el modo permitido antes de escribir. Desde el CLI puedes iniciar tu sesión con `cauce login`, abrir `cauce <tenant>/<alias>` y salir con `Ctrl-]`. Si expira el acceso, usa `cauce login --renew`. Comandos y permisos: [CLI](v4-cli.md), [terminal](terminal-pty.md).
+En la terminal, confirma el agente y el modo permitido antes de escribir. Desde el CLI puedes iniciar tu sesión con `cauce login`, abrir `cauce <tenant>/<alias>` y salir con `Ctrl-]`. Si expira el acceso, usa `cauce login --renew`. En un equipo sin navegador, `cauce login --dispositivo` muestra un código: ábrelo en `/dispositivo`, pulsa **Consultar solicitud** y después **Autorizar** o **Rechazar**. Comandos y permisos: [CLI](v4-cli.md), [terminal](terminal-pty.md).
 
 ## Recuperar la TUI tras un Ctrl+C
 
@@ -145,7 +145,7 @@ Un agente V3 que todavía entra por el canal PTY directo reanuda esa misma conve
 
 ## Descargar y recuperar una copia del espacio
 
-En **Perfil y contexto** está **Backup del espacio**. Pulsa **Crear backup del espacio** y espera a que esté lista antes de descargar. Revisa el tamaño, SHA-256 y las omisiones de `space-manifest.json`: las credenciales, sesiones, logs y temporales no viajan; los proyectos se copian sin `.git`.
+En **Perfil y contexto** está **Backup del espacio**. Pulsa **Crear backup del espacio** y espera a que esté lista antes de descargar. **Actualizar estado del backup** relee el recibo; **Actualizar copias** relee la lista. Con la copia lista, **Descargar backup ZIP** guarda el archivo y comprueba su SHA-256. **Eliminar copia** pide confirmación (**Eliminar copia definitivamente** o **Conservar copia**) y borra esa copia almacenada, no el espacio del agente. Revisa el tamaño, SHA-256 y las omisiones de `space-manifest.json`: las credenciales, sesiones, logs y temporales no viajan; los proyectos se copian sin `.git`.
 
 La restauración se hace con `cauce spaces restore` en un directorio nuevo o vacío, validando la identidad del agente. Luego se reautentican sus proveedores. Sigue los comandos del [runbook de copias](v4-runbook-copias.md).
 

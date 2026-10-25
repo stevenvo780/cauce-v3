@@ -172,7 +172,9 @@ cauce hosts enroll --gateway https://cauce.example.invalid --invitation-stdin
 cauce hosts heartbeat --identity-directory /ruta/privada/identidad-del-host
 ```
 
-`enroll` admite `--state-root /ruta/privada`. Su raíz predeterminada es `$HOME/.local/state/cauce-v3/hosts/<company>/<host>`. Genera una identidad Ed25519 propia; no requiere copiar sesiones ni `auth.json` de otro ordenador. No se pone la invitación en argv ni en comandos guardados en el historial del shell.
+`enroll` admite `--state-root /ruta/privada`. El valor predeterminado es `$HOME/.local/state/cauce-v3/hosts`; la identidad queda en `<company>/<host>` dentro de esa raíz. Genera una identidad Ed25519 propia; no requiere copiar sesiones ni `auth.json` de otro ordenador. No se pone la invitación en argv ni en comandos guardados en el historial del shell.
+
+`cauce hosts setup` y `cauce hosts status` admiten `--identity-directory`, `--state-root` y `--install-root`. `setup` admite además `--dry-run` y `--signer-fingerprint`. Sin `--identity-directory`, el comando exige exactamente una `identity.json` bajo la raíz de estado; si hay otra, sale con `pass --identity-directory: expected exactly one enrolled identity under the state root`. La raíz de instalación predeterminada es `$HOME/.local/share/cauce-v3/hosts`. Dos empresas en la misma raíz de estado o de instalación se rechazan con `this system user already runs the executor of company …`. Prepara una identidad cada vez. El orden y el reintento están en [preparar varias identidades](operacion.md#preparar-varias-identidades-en-un-ordenador).
 
 La identidad enrolada y el executor preparado son estados distintos. Un heartbeat firmado confirma identidad y presencia; las capacidades de ejecución necesitan un catálogo firmado vigente del executor y la política admitida por el gateway. No basta con el heartbeat para habilitar creación, autenticación o administración de entornos.
 

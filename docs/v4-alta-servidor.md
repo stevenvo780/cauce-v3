@@ -112,6 +112,8 @@ cauce hosts setup --dry-run   # qué va a hacer, sin escribir nada
 cauce hosts setup             # descarga el paquete firmado, escribe la política e instala el servicio
 ```
 
+Si en ese usuario hay más de una identidad, `setup` y `status` salen con `pass --identity-directory: expected exactly one enrolled identity under the state root`. Pasa `--identity-directory` de cada una y, si no comparten la raíz de instalación, `--install-root`. Dos empresas en la misma raíz de estado o de instalación se rechazan con `this system user already runs the executor of company …`. Prepara una identidad cada vez: los setup a la vez agotan las sondas de capacidad. El reintento y el orden están en [preparar varias identidades](operacion.md#preparar-varias-identidades-en-un-ordenador).
+
 `setup` comprueba que el paquete lo firmó la plataforma que anclaste con la invitación y descarga del propio gateway el ejecutor (unos 35 MB) y la imagen de los agentes (unos 700 MB), verificando el SHA-256 firmado de cada fichero. Carga la imagen en Docker y comprueba que su `Id` es el de la plantilla. Después valida la política con el ejecutor e instala y arranca el servicio de usuario `cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service`. Si la plataforma aprobó la receta de login del proveedor, instala también la política que deja autenticar el proveedor de cada agente desde la consola (paso 5 de [Asignar agentes](#5-asignar-agentes)).
 
 - La primera vez tarda unos minutos y la salida dice `"image_loaded": true`. Si la conexión se corta, la descarga se reanuda sola desde donde iba, hasta cinco intentos.
@@ -142,7 +144,7 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
 2. Elige el espacio de trabajo, el alias, el nombre visible, la clave física de ejecución y sus grupos.
 3. En **Host operativo**, elige `<empresa>-<nombre>`; en **Plantilla de ejecución**, la que ofrece esa computadora; en **Cuenta principal de ejecución**, la cuenta del proveedor que pagará al agente.
 4. **Previsualizar operación** y, si el resumen es correcto, **Confirmar operación**. La operación avanza paso a paso. La primera vez que un agente usa su cuenta en esta computadora se para en **«Esperando autenticación»**: su contenedor ya existe, pero el proveedor todavía no tiene sesión dentro.
-5. **Autentica el proveedor del agente** desde la consola, en el mismo recibo de la operación o en la pestaña **Operación** de la ficha del agente:
+5. **Autentica el proveedor del agente** desde la consola, en el mismo recibo de la operación o en la pestaña **Ejecución** de la ficha del agente:
    1. En **«Autenticar la cuenta principal»** comprueba el proveedor, la cuenta y la computadora, y pulsa **Iniciar sesión**.
    2. Se abre un terminal con el login del proveedor, que corre dentro del contenedor del agente en tu máquina. Sigue lo que pide: con Codex, abre en tu navegador la dirección que muestra y escribe el código; con Claude, abre la dirección y pega en el terminal el código que te devuelve. Entra con la cuenta que elegiste como «Cuenta principal de ejecución».
    3. Cuando el terminal confirme el inicio de sesión, pulsa **Verificar conexión**. Cauce comprueba que la identidad es la de esa cuenta y que el CLI del proveedor responde; aparece **«Cuenta e identidad verificadas»**.
@@ -151,7 +153,7 @@ El ejecutor publica su estado cada 30 segundos; si deja de hacerlo, la fila pasa
    La sesión del proveedor se queda en el volumen de perfiles del agente, en tu máquina; ni el terminal ni el código pasan a la plataforma. Si la operación no se para en «Esperando autenticación», la cuenta ya tenía sesión en ese agente y puedes saltar este paso.
 6. Escríbele en su sala: el agente tiene que contestar.
 
-En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` muestra su contenedor. Para pararlo, arrancarlo, cambiar su configuración o retirarlo, usa la pestaña **Operación** del agente; nunca `docker stop` ni `docker rm` a mano: el ejecutor lo detectaría como divergencia.
+En la máquina, `docker ps --filter label=cauce.fleet.host=<empresa>-<nombre>` muestra su contenedor. Para pararlo, arrancarlo o cambiar su ejecución, abre la pestaña **Ejecución** y confirma con **Previsualizar operación** y **Confirmar operación**. Para retirarlo o eliminarlo, usa **Estado**. Nunca `docker stop` ni `docker rm` a mano: el ejecutor lo detectaría como divergencia. Algunos avisos del servidor todavía dicen «pestaña Operación»: es esta misma pestaña, cuyo identificador interno es `operacion` y cuyo rótulo es **Ejecución**.
 
 ## 6. Si algo falla
 
@@ -195,7 +197,7 @@ Los mensajes de `cauce hosts setup` y `status` salen con el prefijo `cauce:`; lo
 
 ## 7. Dar de baja la computadora
 
-1. **Agentes primero.** En la pestaña **Operación** de cada agente de esa computadora: **stop**, después **retire**, y luego **Eliminar definitivamente** (escribe el alias para confirmar). La consola no deja eliminar una computadora con agentes.
+1. **Agentes primero.** En **Estado** de cada agente de esa computadora, **Retirar o eliminar…** detiene la ejecución y conserva el registro; cuando termine, **Releer inventario** y **Eliminar definitivamente…**. Si no tuvo entorno de ejecución, **Ir a eliminar…** abre **Ajustes** y **Eliminar registro**. La consola no deja eliminar una computadora con agentes. El paro y el arranque previos, si hacen falta, se confirman en **Ejecución**.
 2. **Para el servicio** en la máquina, como `cauce-<empresa>`:
    ```bash
    systemctl --user disable --now cauce-v3-host-executor-<empresa>-<empresa>-<nombre>.service

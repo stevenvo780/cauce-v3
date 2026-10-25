@@ -20,11 +20,15 @@ El límite de exportación y ZIP es 1 GiB, con 128 MiB por archivo; las cuotas d
 Rutas:
 
 ```text
-POST /v3/console/spaces/:tenant_id/:alias/backups
-GET  /v3/console/spaces/:tenant_id/:alias/backups/:id
-GET  /v3/console/spaces/:tenant_id/:alias/backups/:id/download
-POST /v3/fleet/hosts/:host_id/space-backups
+POST   /v3/console/spaces/:tenant_id/:alias/backups
+GET    /v3/console/spaces/:tenant_id/:alias/backups
+GET    /v3/console/spaces/:tenant_id/:alias/backups/:id
+GET    /v3/console/spaces/:tenant_id/:alias/backups/:id/download
+DELETE /v3/console/spaces/:tenant_id/:alias/backups/:id
+POST   /v3/fleet/hosts/:host_id/space-backups
 ```
+
+`DELETE` exige CSRF, el cuerpo exacto `{"confirm": true}` y responde `204`. Caduca las copias almacenadas de ese identificador. No restaura ni borra el espacio del agente. La consola lo ofrece como **Eliminar copia** y confirma con **Eliminar copia definitivamente**.
 
 El recibo expone `pending|running|ready|failed`, bytes/hashes completos cuando están disponibles, error cerrado y URL de descarga sólo en ready. Una solicitud expirada conserva metadata y devuelve `EXPIRED` sin URL, también en el replay idempotente.
 
