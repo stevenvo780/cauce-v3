@@ -5,7 +5,8 @@ import { mkdir } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { CauceRepository } from '@cauce/store';
 import {
-  isaTenant, newTrustedPage, startConsoleFunctionalFixture, type BrowserPage, type FunctionalTenant,
+  isaTenant, newTrustedPage, startConsoleFunctionalFixture,
+  type BrowserContext, type BrowserPage, type FunctionalTenant, type Locator,
 } from './console-functional-browser.fixtures.js';
 
 const execFileAsync = promisify(execFile);
@@ -36,6 +37,8 @@ interface PageControls {
   unroute(url: string): Promise<void>;
   keyboard: { press(combo: string): Promise<void> };
 }
+interface PageEvents { waitForEvent(event: 'page', options?: { timeout?: number }): Promise<BrowserPage> }
+interface ClosablePage { close(): Promise<void> }
 interface Publicado { messageId: string; deliveryId: string; traceId: string }
 
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
@@ -45,6 +48,19 @@ function controls(page: BrowserPage): asserts page is BrowserPage & PageControls
   if (!('route' in page) || !('unroute' in page) || !('keyboard' in page)) {
     throw new Error('the browser page does not expose route or keyboard');
   }
+}
+
+function controlClick(locator: Locator): Promise<void> {
+  const click: (options: { modifiers: 'Control'[] }) => Promise<void> = locator.click.bind(locator);
+  return click({ modifiers: ['Control'] });
+}
+
+function pageEvents(context: BrowserContext): asserts context is BrowserContext & PageEvents {
+  if (!('waitForEvent' in context)) throw new Error('browser context does not expose waitForEvent');
+}
+
+function closable(page: BrowserPage): asserts page is BrowserPage & ClosablePage {
+  if (!('close' in page)) throw new Error('browser page does not expose close');
 }
 
 async function pause(ms: number) {
@@ -390,7 +406,8 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
       );
       expect(stillPending.rows).toEqual([{ status: 'pending' }]);
       await confirmDelivery(operator, 'cancel', cancelable.deliveryId);
-      await operator.getByText('MUERTA', { exact: true }).waitFor({ timeout: 20_000 });
+      const compactCancel = `${cancelable.deliveryId.slice(0, 8)}…${cancelable.deliveryId.slice(-6)}`;
+      await operator.locator('tr').filter({ hasText: compactCancel }).getByText('MUERTA', { exact: true }).waitFor({ timeout: 20_000 });
       const cancelled = await active.database.pool.query<{ status: string; audit_count: string }>(
         `SELECT delivery.status,(SELECT count(*)::text FROM audit_events audit
             WHERE audit.action='delivery.cancel' AND audit.delivery_id=delivery.id AND audit.decision='allow') AS audit_count
@@ -548,6 +565,18 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
         expect(await page.getByText(label, { exact: true }).count()).toBeGreaterThan(0);
       }
       await page.getByText('En escritorio, pliega y despliega la barra lateral.', { exact: true }).waitFor();
+      await page.getByText('Abre enlaces en una pestaña independiente. En macOS, Cmd + Clic.', { exact: true }).waitFor();
+      const accounts = page.locator('#mapa a[href="/accounts"]');
+      const context = page.context();
+      pageEvents(context);
+      const opened = context.waitForEvent('page', { timeout: 15_000 });
+      await controlClick(accounts);
+      const tab = await opened;
+      await tab.getByRole('heading', { name: 'Cuentas', exact: true }).waitFor({ timeout: 20_000 });
+      expect(new URL(tab.url()).pathname).toBe('/accounts');
+      expect(new URL(page.url()).pathname).toBe('/ayuda');
+      closable(tab);
+      await tab.close();
       for (const ancla of ['#mapa', '#terminal', '#conceptos', '#estados', '#atajos']) {
         await page.locator(`a[href="${ancla}"]`).click();
         expect(new URL(page.url()).hash).toBe(ancla);
