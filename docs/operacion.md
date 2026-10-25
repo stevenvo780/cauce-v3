@@ -438,9 +438,9 @@ done
 Repetir el bloque no cambia nada. Verificación: al volver a entrar, `GET /v3/auth/session` muestra
 `role=platform_admin` para el administrador de plataforma y `role=company_owner`, `scope=company` para el dueño de la empresa.
 
-### Humanos de un agente OpenClaw de flota
+### Humanos de un agente de flota con TUI compartida
 
-El gateway añade a cada fila OpenClaw del snapshot de flota los dueños y admins activos de la empresa del agente (`tenant:uuid`, hasta 32; nunca de otra empresa). `export-fleet-snapshot.py` los valida y los escribe en `sharedHumanIds` de `flota.json`; el ejecutor los publica como `CAUCE_SHARED_HUMAN_IDS` en el contenedor y los incluye en la prueba de entorno (`sdk_environment_proof`). La lista debe coincidir también cuando no se espera ninguna: si se retira al último admin la lista queda vacía y el contenedor con la lista vieja deja de ser admitido, así que se recrea. Para una sesión canónica de OpenClaw el adaptador anuncia `human_message_initiator_v1`; sin eso el gateway no envía el iniciador y la lista nunca casa. Los otros arneses usan sesiones humanas aisladas.
+El gateway añade a cada fila de un arnés con TUI compartida (OpenClaw, claude, codex, grok y muse) del snapshot de flota los dueños y admins activos de la empresa del agente (`tenant:uuid`, hasta 32; nunca de otra empresa). `export-fleet-snapshot.py` los valida y los escribe en `sharedHumanIds` de `flota.json`; el ejecutor los publica como `CAUCE_SHARED_HUMAN_IDS` en el contenedor y los incluye en la prueba de entorno (`sdk_environment_proof`). La lista debe coincidir también cuando no se espera ninguna: si se retira al último admin la lista queda vacía y el contenedor con la lista vieja deja de ser admitido, así que se recrea. Con sesión compartida el adaptador anuncia `human_message_initiator_v1`; sin eso el gateway no envía el iniciador y la lista nunca casa. Un humano de la lista habla en la TUI compartida; en claude y codex, un humano fuera de la lista usa su sesión humana aislada, y en grok, muse y OpenClaw recibe `UNSUPPORTED_HUMAN_ISOLATION`.
 
 ### Detener e iniciar desde la web
 
