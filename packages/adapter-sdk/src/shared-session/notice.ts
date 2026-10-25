@@ -95,6 +95,9 @@ export function degradationNotice(
   const remedio = degradation.reason === "modal_blocking"
     ? `Para restablecerlo: contesta el diálogo abierto en el panel de \`cauce ${alias}\``
       + ` (mecanismo: ${mecanismo}).`
+    : degradation.reason === "input_busy"
+      ? `Para restablecerlo: abre \`cauce ${alias}\` o su terminal web, envía o borra el texto que`
+        + ` quedó en la caja de entrada y vuelve a mandar este pedido (mecanismo: ${mecanismo}).`
     : degradation.reason === "tui_generating"
       ? `No hay nada roto: la terminal de \`cauce ${alias}\` seguía ocupada con otro turno; el pedido`
         + ` se reintenta solo cuando se libere (mecanismo: ${mecanismo}).`

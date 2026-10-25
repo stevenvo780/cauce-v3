@@ -3,6 +3,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { DEGRADED_MARK, degradationNotice } from "../src/shared-session/notice.js";
 import { inputBoxState } from "../src/shared-session/pane.js";
 import {
   ACQUIRE_MODAL_TIMEOUT_MS,
@@ -24,6 +25,21 @@ test("la caja de entrada se reconoce ocupada en los casos medidos", () => {
   // Fail closed: without a legible panel, no input is injected.
   assert.equal(inputBoxState(undefined).occupied, true);
   assert.equal(inputBoxState("sin caja de entrada").occupied, true);
+});
+
+test("el aviso de caja ocupada dice qué hacer con el texto a medio escribir", () => {
+  const notice = degradationNotice("kratos", "claude", {
+    reason: "input_busy",
+    detail: "otra exclusión de input ya protege la caja",
+    occurredAt: "2026-10-25T15:10:28.000Z",
+    fellBack: false,
+    executionPrevented: true,
+  });
+  const lines = notice.split("\n");
+  assert.equal(lines[0], DEGRADED_MARK);
+  assert.match(lines[1] ?? "", /^Este turno NO pasó por la terminal de kratos: .*\(input_busy\)/u);
+  assert.equal(lines[3], "Para restablecerlo: abre `cauce kratos` o su terminal web, envía o borra el texto que"
+    + " quedó en la caja de entrada y vuelve a mandar este pedido (mecanismo: tmux + registro de claude).");
 });
 
 test("tmux no hereda la identidad de ciclo de vida del adaptador", () => {
