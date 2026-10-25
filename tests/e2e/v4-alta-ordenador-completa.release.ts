@@ -11,7 +11,7 @@ const task = 'h11b-rechazo-setup-tres-vm-1025';
 export const COMPLETE_RELEASE_PROVIDER_IDENTITY = 'host-setup@example.test';
 export const COMPLETE_RELEASE_RUNTIME = { user: 'cauce', uid: 1500, home: '/home/cauce',
   stateRoot: '/home/cauce/.cauce', python: '/usr/local/bin/python3.12' } as const;
-const releaseParts = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent/reap_orphan_agent.py',
+const releaseParts = ['ops/cli', 'ops/scripts', 'ops/container-runtime', 'ops/schemas', 'ops/pty-agent',
   'ops/guardias/cauce-estado', 'ops/guardias/cauce-sesiones', 'ops/guardias/cauce-attach'];
 const sourceParts = [...releaseParts, 'services/gateway/src', 'packages/store/src', 'packages/store/package.json',
   'packages/protocol/src', 'packages/protocol/package.json', 'packages/adapter-sdk/src', 'packages/adapter-sdk/descriptors',
@@ -61,6 +61,7 @@ export interface CompleteReleaseSourceManifest {
   files: Record<string, ArchivedFile>;
   bundles: Record<string, BuildProof>;
   provider: { synthetic: true; sha256: string; identity: string; vendorAuthentication: false };
+  profile: { terminalRequired: false; sharedTui: false };
 }
 export interface CompleteRelease {
   releaseDirectory: string;
@@ -97,7 +98,8 @@ async function archiveSources(revision: string, directory: string): Promise<Comp
     files[name] = { mode, gitBlob: expected, sha256: digest(value) };
   }
   return { revision, archive: { file: sourceArchive, sha256: digest(await readFile(sourceArchive)) }, files, bundles: {},
-    provider: { synthetic: true, sha256: digest(provider), identity: COMPLETE_RELEASE_PROVIDER_IDENTITY, vendorAuthentication: false } };
+    provider: { synthetic: true, sha256: digest(provider), identity: COMPLETE_RELEASE_PROVIDER_IDENTITY, vendorAuthentication: false },
+    profile: { terminalRequired: false, sharedTui: false } };
 }
 
 async function compile(tree: string, stage: string, entry: string, output: string, proof: CompleteReleaseSourceManifest): Promise<void> {
@@ -219,6 +221,7 @@ export async function buildCompleteRelease(options: { revision: string; director
     const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: '@pin:hook_sha256@', argv: [], user: '@user@' };
     const setupConfig = HostSetupFileSchema.parse({ version: 1, signing_key_file: signingKeyFile, release_directory: releaseDirectory,
       files: [], policy: {
+        terminal: { required: false },
         bundles: { codex: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
           executable_sha256: null, argv: ['@release@/adapter/src/bin/codex.js'], shared_tui: false,
           descriptor_sha256: digest(await readFile(join(tree, 'packages/adapter-sdk/descriptors/codex.json'))) } },

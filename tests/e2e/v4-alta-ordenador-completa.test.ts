@@ -270,6 +270,11 @@ describe.sequential('complete computer installation through the released CLI and
     const status = JSON.parse(checked(await host().user(['cauce', 'hosts', 'status']), 'released CLI status')) as Record<string, unknown>;
     expect(status).toMatchObject({ host_id: hostId, service_active: true, executor_ready: true, linger: true });
     await record('installed', { host_id: hostId, unit, status, signer_fingerprint: signerFingerprint });
+    const installedProfile = JSON.parse(checked(await host().user(['python3', '-I', '-B', '-c',
+      "import json,pathlib;files=list((pathlib.Path.home()/'.local/share/cauce-v3/hosts').glob('*/*/executor-policy.json'));assert len(files)==1;policy=json.loads(files[0].read_text());print(json.dumps({'terminal_required':policy['terminal']['required'],'shared_tui':policy['bundles']['codex']['shared_tui']}))"]),
+    'installed laboratory profile')) as Record<string, unknown>;
+    expect(installedProfile).toEqual({ terminal_required: false, shared_tui: false });
+    await record('installed-profile', installedProfile);
     const readyHost = (await until('signed host heartbeat', hosts, list => list.some(item => item.host_id === hostId
       && item.status === 'reachable' && item.status_source === 'controller' && item.approved))).find(item => item.host_id === hostId);
     await record('host-online', readyHost);
