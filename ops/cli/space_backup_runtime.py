@@ -6,6 +6,7 @@ import os
 import pathlib
 import pwd
 import re
+import resource
 import subprocess
 import sys
 import uuid
@@ -107,7 +108,8 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
             if os.geteuid() != 0:
                 raise SafeFailure('space backup executor is not the exact runtime owner')
             command = ['/usr/sbin/runuser', '-u', agent['runtime_user'], '--', *command]
-    result = subprocess.run(command, input=json.dumps(local).encode(), capture_output=True, timeout=120,
+    result = subprocess.run(command, input=json.dumps(local).encode(), capture_output=True,
+                            timeout=1750 if request['action'] == 'export' else 120,
                             env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
     if binding is not None:
         _, after = read_container_binding(policy, agent)
@@ -120,11 +122,18 @@ def execute(policy_file: pathlib.Path, request: dict) -> dict:
         if record is not None:
             raise BackupEffectFailure(record)
         raise SafeFailure(f'space backup helper exited with status {result.returncode}')
-    if len(result.stdout) > 131072:
+    if len(result.stdout) > 8 * 1024 * 1024:
         raise SafeFailure('space backup export receipt exceeds its limit')
     output = json.loads(result.stdout)
     if not isinstance(output, dict):
         raise SafeFailure('space backup export receipt is unavailable')
+    if request['action'] == 'export' and 'error' not in output:
+        measured = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss + resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+        metrics = output.get('metrics', {})
+        if not isinstance(metrics, dict) or set(metrics) - {'peak_rss_kib'} \
+                or type(metrics.get('peak_rss_kib', 0)) is not int or metrics.get('peak_rss_kib', 0) < 0:
+            raise SafeFailure('space backup memory receipt is invalid')
+        output['metrics'] = {'peak_rss_kib': max(measured, metrics.get('peak_rss_kib', 0))}
     return output
 
 

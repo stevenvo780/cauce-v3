@@ -78,7 +78,7 @@ class UpgradePinTests(UpgradeFixture):
         ops = SCRIPT.parent.parent
         closure = set().union(*(lib.python_closure(ops, entry) for entry in self.kit.OPS_ENTRIES))
         self.assertTrue({'cli/space_backup_runtime.py', 'cli/space_backup_local.py',
-                         'cli/space_archive.py', 'cli/space_backup_validate.py'} <= closure,
+                         'cli/space_archive.py', 'cli/space_archive_stream.py', 'cli/space_backup_validate.py'} <= closure,
                         'a clean host upgrade must install both backup workers and their helpers')
 
 class UpgradeConfigurationTests(UpgradeFixture):

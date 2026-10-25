@@ -14,7 +14,7 @@ WORK=$(mktemp -d)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-ESPERADOS=(cauce cauce-platform cauce-diagnose cauce-login cauce-spaces host_enrollment.py host_channel_client.py host_setup.py host_image.py context_client.py context_native.py space_archive.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
+ESPERADOS=(cauce cauce-platform cauce-diagnose cauce-login cauce-spaces host_enrollment.py host_channel_client.py host_setup.py host_image.py context_client.py context_native.py space_archive.py space_archive_stream.py cauce-credenciales.lib.sh cauce-panel cauce-huerfanas cauce-reponer cauce-estado cauce-sesiones cauce-attach)
 
 # py_compile writes `<dir>/__pycache__/<name>.pyc` a level deeper, so the probe reaches depth 2.
 MARCA="$WORK/marca"

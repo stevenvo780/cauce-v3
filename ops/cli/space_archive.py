@@ -10,7 +10,41 @@ import stat
 import sys
 import zipfile
 
-ROOTS = frozenset({'context', 'directives', 'projects', 'config', 'data'})
+from space_archive_stream import (
+    ARCHIVE_CHUNK_BYTES as ARCHIVE_CHUNK_BYTES,
+)
+from space_archive_stream import (
+    ARCHIVE_OVERHEAD as ARCHIVE_OVERHEAD,
+)
+from space_archive_stream import (
+    AWS_SECRET_LITERAL,
+    CONFIG_ASSIGNMENT,
+    MAX_ARCHIVE,
+    MAX_BUFFERED_FILE,
+    MAX_ENTRIES,
+    MAX_FILE,
+    MAX_MANIFEST,
+    MAX_TOTAL,
+    NPM_AUTH_LITERAL,
+    RESTORABLE_SCHEMAS,
+    ROOTS,
+    SCHEMA_VERSION,
+    URL_USERINFO,
+    VERIFIED_CREDENTIAL,
+    SpaceArchiveFailure,
+    backup_preflight,
+    fingerprint,
+    open_directory,
+    open_relative_directory,
+    read_file,
+    relative_path,
+    require_free_space,
+    stream_content,
+)
+from space_archive_stream import (
+    SecretScanner as SecretScanner,
+)
+
 IDENTITY_FIELDS = frozenset({'company_id', 'tenant_id', 'alias', 'runtime_key'})
 IDENTIFIER = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 CREDENTIAL_FILE = re.compile(
@@ -21,45 +55,12 @@ CREDENTIAL_DIRECTORIES = frozenset({'.codex', '.claude', '.config', '.ssh', '.gn
 # .git config embeds remote URLs and hooks, and object stores break the entry cap or the hardlink check; the remote is the source of truth.
 VCS_DIRECTORY = '.git'
 OMISSION_REASONS = frozenset({'sensitive_path', 'sensitive_content', 'vcs_metadata', 'external_mount', 'special_file'})
-SCHEMA_VERSION = 2
-RESTORABLE_SCHEMAS = frozenset({1, 2})
-VERIFIED_CREDENTIAL = re.compile(rb'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{20,}'
-    rb'|(?-i:\bgh[pous]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bglpat-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}'
-    rb'|\bAKIA[0-9A-Z]{16}\b|\bnpm_[A-Za-z0-9]{36}\b)', re.I)
-AWS_SECRET_LITERAL = re.compile(
-    rb'aws_secret_access_key["\x27]?(?:\s{0,16}(?:=>|[:=]|>)|\s{1,16})\s{0,16}["\x27]?(?!\$\{)(?!process\.env\b)[A-Za-z0-9/+]{20,}', re.I)
-NPM_AUTH_LITERAL = re.compile(
-    rb'_authToken["\x27]?\s{0,16}[:=]\s{0,16}["\x27]?(?!\$\{|process\.env\b)[^\s"\x27]{8,}', re.I)
-URL_USERINFO = re.compile(rb'://([^\s/:@"\x27]+):([^\s/@"\x27]+)@')
-CONFIG_ASSIGNMENT = re.compile(
-    rb'["\x27]?(?:access_token|refresh_token|client_secret|api_key|password)["\x27]?\s*[:=]\s*["\x27]?[^\s"\x27]{6,}', re.I)
-MAX_FILE = 128 * 1024 * 1024
-MAX_TOTAL = 1024 * 1024 * 1024
-MAX_ENTRIES = 20_000
-MAX_MANIFEST = 8 * 1024 * 1024
-
-
-class SpaceArchiveFailure(ValueError):
-    pass
-
 
 def identity(value: dict) -> dict:
     if not isinstance(value, dict) or set(value) != IDENTITY_FIELDS \
             or any(not isinstance(item, str) or not IDENTIFIER.fullmatch(item) for item in value.values()):
         raise SpaceArchiveFailure('space identity is invalid')
     return value.copy()
-
-
-def relative_path(value: str) -> str:
-    if not isinstance(value, str):
-        raise SpaceArchiveFailure('archive path is outside the space allowlist')
-    path = pathlib.PurePosixPath(value)
-    if str(path) != value or path.is_absolute() or len(value.encode()) > 1024 \
-            or len(path.parts) > 32 or any(part in ('', '.', '..') or '\\' in part \
-                or any(ord(character) < 32 or ord(character) == 127 for character in part) for part in path.parts) \
-            or not path.parts or path.parts[0] not in ROOTS:
-        raise SpaceArchiveFailure('archive path is outside the space allowlist')
-    return value
 
 
 def external_mount_path(value: str) -> str:
@@ -122,47 +123,6 @@ def excluded(value: str) -> bool:
     return omission_reason(value) is not None
 
 
-def open_directory(location: str, private: bool = True) -> int:
-    path = pathlib.PurePosixPath(location)
-    if not path.is_absolute() or str(path) != location or '..' in path.parts or location == '/':
-        raise SpaceArchiveFailure('space directory must be canonical and absolute')
-    descriptor = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        for part in path.parts[1:]:
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = following
-            info = os.fstat(descriptor)
-            sticky = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
-            if info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022 and not sticky:
-                raise SpaceArchiveFailure('space directory has an unsafe owner or mode')
-        info = os.fstat(descriptor)
-        if private and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
-            raise SpaceArchiveFailure('space directory must be private and owned by the selected user')
-        return descriptor
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
-def open_relative_directory(root: int, relative: str) -> int:
-    if relative != '.':
-        relative_path(relative)
-    descriptor = os.dup(root)
-    try:
-        for part in pathlib.PurePosixPath(relative).parts:
-            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = following
-            info = os.fstat(descriptor)
-            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                raise SpaceArchiveFailure('restored space directory has an unsafe owner or mode')
-        return descriptor
-    except BaseException:
-        os.close(descriptor)
-        raise
-
-
 def literal_userinfo(data: bytes) -> bool:
     for _user, password in URL_USERINFO.findall(data):
         lowered = password.lower()
@@ -180,32 +140,13 @@ def sensitive_content(path: str, data: bytes, schema_version: int = SCHEMA_VERSI
     return path.startswith('config/') and CONFIG_ASSIGNMENT.search(data) is not None
 
 
-def fingerprint(info: os.stat_result) -> tuple:
-    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
-
-
-def read_file(parent: int, name: str, limit: int = MAX_FILE) -> tuple[bytes, int]:
-    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
-    try:
-        before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or before.st_nlink != 1 \
-                or before.st_mode & 0o022 or before.st_size > limit:
-            raise SpaceArchiveFailure('space file has an unsafe owner, type, size or links')
-        with os.fdopen(descriptor, 'rb', closefd=False) as stream:
-            data = stream.read(limit + 1)
-        if len(data) > limit or fingerprint(os.fstat(descriptor)) != fingerprint(before):
-            raise SpaceArchiveFailure('space file changed during its read')
-        return data, 0o700 if before.st_mode & stat.S_IXUSR else 0o600
-    finally:
-        os.close(descriptor)
-
-
 def zip_entry(path: str, mode: int, directory: bool = False) -> zipfile.ZipInfo:
     item = zipfile.ZipInfo(path + '/' if directory else path)
     item.create_system = 3
     item.external_attr = ((stat.S_IFDIR if directory else stat.S_IFREG) | mode) << 16
     item.compress_type = zipfile.ZIP_STORED
     return item
+
 
 
 def verify_context_identity(raw: bytes, expected: dict) -> None:
@@ -232,6 +173,8 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
     omissions = [{'path': path, 'reason': 'external_mount'} for path in outside_mounts]
     size = 0
     try:
+        source_bytes, _ = backup_preflight(root, lambda path: omission_reason(path, mounts))
+        require_free_space(parent, source_bytes)
         file_descriptor = os.open(destination.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         created_identity = os.fstat(file_descriptor).st_ino
         with os.fdopen(file_descriptor, 'wb', closefd=False) as output, zipfile.ZipFile(output, 'w') as zipped:
@@ -261,17 +204,37 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                     if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
                         omissions.append({'path': path, 'reason': 'special_file'})
                         continue
-                    data, mode = read_file(descriptor, name)
-                    if sensitive_content(path, data):
-                        omissions.append({'path': path, 'reason': 'sensitive_content'})
-                        continue
-                    if path == 'config/context-state.json':
-                        verify_context_identity(data, expected)
-                    size += len(data)
-                    if size > MAX_TOTAL:
-                        raise SpaceArchiveFailure('space archive exceeds its total byte limit')
-                    files.append({'path': path, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'mode': mode})
-                    zipped.writestr(zip_entry(path, mode), data)
+                    source_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+                    try:
+                        original = os.fstat(source_fd)
+                        if not stat.S_ISREG(original.st_mode) or original.st_uid != os.geteuid() or original.st_nlink != 1 \
+                                or original.st_mode & 0o022 or original.st_size > MAX_FILE \
+                                or fingerprint(original) != fingerprint(details):
+                            raise SpaceArchiveFailure('space file has an unsafe owner, type, size or links')
+                        mode = 0o700 if original.st_mode & stat.S_IXUSR else 0o600
+                        with os.fdopen(source_fd, 'rb', closefd=False) as incoming:
+                            sha256, count, sensitive, metadata = stream_content(incoming, path)
+                            if count != original.st_size or fingerprint(os.fstat(source_fd)) != fingerprint(original):
+                                raise SpaceArchiveFailure('space file changed during its read')
+                            if sensitive:
+                                omissions.append({'path': path, 'reason': 'sensitive_content'})
+                                continue
+                            if path == 'config/context-state.json':
+                                verify_context_identity(metadata, expected)
+                            size += count
+                            if size > MAX_TOTAL:
+                                raise SpaceArchiveFailure('space archive exceeds its total byte limit')
+                            incoming.seek(0)
+                            entry = zip_entry(path, mode)
+                            entry.file_size = count
+                            with zipped.open(entry, 'w', force_zip64=True) as outgoing:
+                                copied = stream_content(incoming, path, output=outgoing)
+                            if copied[:3] != (sha256, count, False) or fingerprint(os.fstat(source_fd)) != fingerprint(original) \
+                                    or fingerprint(os.stat(name, dir_fd=descriptor, follow_symlinks=False)) != fingerprint(original):
+                                raise SpaceArchiveFailure('space file changed during backup')
+                            files.append({'path': path, 'bytes': count, 'sha256': sha256, 'mode': mode})
+                    finally:
+                        os.close(source_fd)
                 if fingerprint(os.fstat(descriptor)) != fingerprint(before):
                     raise SpaceArchiveFailure('space directory changed during backup')
             for name in sorted(ROOTS):
@@ -296,6 +259,9 @@ def backup_space(source: str, archive: str, expected_identity: dict) -> dict:
                 raise SpaceArchiveFailure('space manifest exceeds its limit')
             zipped.writestr(zip_entry('space-manifest.json', 0o600), encoded)
         os.fsync(file_descriptor)
+        if os.fstat(file_descriptor).st_size > MAX_ARCHIVE:
+            raise SpaceArchiveFailure('space archive exceeds its archive byte limit')
+        os.fsync(parent)
         return {'state': 'backed_up', 'archive': archive, 'identity': expected, 'files': len(files),
                 'bytes': size, 'omissions': omissions, 'manifest_sha256': hashlib.sha256(encoded).hexdigest()}
     except BaseException:
@@ -376,11 +342,12 @@ def validated_archive(zipped: zipfile.ZipFile, expected: dict) -> tuple[dict, by
         entry = zipped.getinfo(item['path'])
         if entry.file_size != item['bytes'] or entry.external_attr >> 16 != stat.S_IFREG | item['mode']:
             raise SpaceArchiveFailure('space archive entry differs from its receipt')
-        data = zipped.read(entry)
-        if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data, manifest['schema_version']):
+        with zipped.open(entry) as stream:
+            sha256, count, sensitive, metadata = stream_content(stream, item['path'], manifest['schema_version'])
+        if sha256 != item['sha256'] or count != item['bytes'] or sensitive:
             raise SpaceArchiveFailure('space archive digest or content is invalid')
         if item['path'] == 'config/context-state.json':
-            verify_context_identity(data, expected)
+            verify_context_identity(metadata, expected)
     return manifest, encoded
 
 
@@ -388,64 +355,117 @@ def restore_space(archive: str, destination: str, expected_identity: dict) -> di
     expected = identity(expected_identity)
     source = pathlib.Path(archive)
     archive_parent = open_directory(str(source.parent))
-    descriptor = os.open(source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=archive_parent)
-    root = None
+    descriptor, root, destination_parent = None, None, None
+    made_root = False
+    made_files, made_directories = [], []
+    path = pathlib.Path(destination)
     try:
+        descriptor = os.open(source.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=archive_parent)
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode) or before.st_uid != os.geteuid() or before.st_mode & 0o077 \
-                or before.st_nlink != 1 or before.st_size > MAX_TOTAL + MAX_MANIFEST + 32 * 1024 * 1024:
+                or before.st_nlink != 1 or before.st_size > MAX_ARCHIVE:
             raise SpaceArchiveFailure('space archive must be private and owned by the selected user')
         with os.fdopen(descriptor, 'rb', closefd=False) as stream, zipfile.ZipFile(stream) as zipped:
             manifest, encoded = validated_archive(zipped, expected)
-            path = pathlib.Path(destination)
-            parent = open_directory(str(path.parent))
+            destination_parent = open_directory(str(path.parent))
             try:
-                try:
-                    os.mkdir(path.name, 0o700, dir_fd=parent)
-                except FileExistsError:
-                    pass
                 root = open_directory(destination)
-            finally:
-                os.close(parent)
-            if os.listdir(root):
+            except FileNotFoundError:
+                pass
+            if root is not None and os.listdir(root):
                 raise SpaceArchiveFailure('space restore destination must be new or empty')
+            require_free_space(root if root is not None else destination_parent, manifest['bytes'],
+                               len(manifest['files']) + len(manifest['directories']) + 1)
+            if root is None:
+                os.mkdir(path.name, 0o700, dir_fd=destination_parent)
+                made_root = True
+                root = open_directory(destination)
             for directory in sorted(manifest['directories'], key=lambda value: (len(pathlib.PurePosixPath(value).parts), value)):
                 parent = open_relative_directory(root, str(pathlib.PurePosixPath(directory).parent))
                 try:
-                    os.mkdir(pathlib.PurePosixPath(directory).name, 0o700, dir_fd=parent)
+                    name = pathlib.PurePosixPath(directory).name
+                    os.mkdir(name, 0o700, dir_fd=parent)
+                    details = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    made_directories.append((directory, (details.st_dev, details.st_ino)))
                 finally:
                     os.close(parent)
             for item in manifest['files']:
                 parent = open_relative_directory(root, str(pathlib.PurePosixPath(item['path']).parent))
                 try:
-                    data = zipped.read(item['path'])
-                    if hashlib.sha256(data).hexdigest() != item['sha256'] or sensitive_content(item['path'], data, manifest['schema_version']):
-                        raise SpaceArchiveFailure('space archive changed before file restoration')
                     target = os.open(pathlib.PurePosixPath(item['path']).name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, item['mode'], dir_fd=parent)
+                    details = os.fstat(target)
+                    made_files.append((item['path'], (details.st_dev, details.st_ino)))
                     with os.fdopen(target, 'wb') as output:
-                        output.write(data)
+                        with zipped.open(item['path']) as incoming:
+                            sha256, count, sensitive, metadata = stream_content(incoming, item['path'], manifest['schema_version'], output)
+                        if sha256 != item['sha256'] or count != item['bytes'] or sensitive:
+                            raise SpaceArchiveFailure('space archive changed before file restoration')
+                        if item['path'] == 'config/context-state.json':
+                            verify_context_identity(metadata, expected)
                         output.flush()
                         os.fsync(output.fileno())
-                    readback, _ = read_file(parent, pathlib.PurePosixPath(item['path']).name)
-                    if hashlib.sha256(readback).hexdigest() != item['sha256']:
-                        raise SpaceArchiveFailure('restored space file readback differs')
+                    readback = os.open(pathlib.PurePosixPath(item['path']).name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                    try:
+                        initial = os.fstat(readback)
+                        with os.fdopen(readback, 'rb', closefd=False) as incoming:
+                            verified = stream_content(incoming, item['path'], manifest['schema_version'])
+                        if (initial.st_dev, initial.st_ino) != made_files[-1][1] or verified[:3] != (item['sha256'], item['bytes'], False) \
+                                or not stat.S_ISREG(initial.st_mode) or initial.st_uid != os.geteuid() \
+                                or initial.st_nlink != 1 or stat.S_IMODE(initial.st_mode) != item['mode'] \
+                                or fingerprint(os.fstat(readback)) != fingerprint(initial):
+                            raise SpaceArchiveFailure('restored space file readback differs')
+                    finally:
+                        os.close(readback)
                 finally:
                     os.close(parent)
-            if fingerprint(os.fstat(descriptor)) != fingerprint(before):
+            if fingerprint(os.fstat(descriptor)) != fingerprint(before) \
+                    or fingerprint(os.stat(source.name, dir_fd=archive_parent, follow_symlinks=False)) != fingerprint(before):
                 raise SpaceArchiveFailure('space archive changed during restore')
             receipt = {'state': 'restored', 'identity': expected, 'files': len(manifest['files']), 'bytes': manifest['bytes'],
                        'omissions': manifest['omissions'], 'manifest_sha256': hashlib.sha256(encoded).hexdigest()}
             target = os.open('space-restore-receipt.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=root)
+            details = os.fstat(target)
+            made_files.append(('space-restore-receipt.json', (details.st_dev, details.st_ino)))
             with os.fdopen(target, 'w') as output:
                 json.dump(receipt, output, sort_keys=True)
                 output.flush()
                 os.fsync(output.fileno())
             os.fsync(root)
+            visible = os.stat(path.name, dir_fd=destination_parent, follow_symlinks=False)
+            pinned = os.fstat(root)
+            if (visible.st_dev, visible.st_ino) != (pinned.st_dev, pinned.st_ino):
+                raise SpaceArchiveFailure('space restore directory changed')
+            os.fsync(destination_parent)
             return {**receipt, 'directory': destination}
+    except BaseException:
+        if root is not None:
+            try:
+                for directory, entries, remove in ((False, made_files, os.unlink), (True, made_directories, os.rmdir)):
+                    for relative, pinned in reversed(entries):
+                        parent = open_relative_directory(root, str(pathlib.PurePosixPath(relative).parent))
+                        try:
+                            name = pathlib.PurePosixPath(relative).name
+                            details = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                            if (details.st_dev, details.st_ino) != pinned or stat.S_ISDIR(details.st_mode) != directory:
+                                raise SpaceArchiveFailure('owned restore partial changed identity')
+                            remove(name, dir_fd=parent)
+                        finally:
+                            os.close(parent)
+                if made_root:
+                    details, pinned = os.stat(path.name, dir_fd=destination_parent, follow_symlinks=False), os.fstat(root)
+                    if (details.st_dev, details.st_ino) != (pinned.st_dev, pinned.st_ino):
+                        raise SpaceArchiveFailure('owned restore directory changed identity')
+                    os.rmdir(path.name, dir_fd=destination_parent)
+            except OSError as cleanup:
+                raise SpaceArchiveFailure('space restore failed and owned partial cleanup could not be confirmed') from cleanup
+        raise
     finally:
         if root is not None:
             os.close(root)
-        os.close(descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+        if destination_parent is not None:
+            os.close(destination_parent)
         os.close(archive_parent)
 
 
@@ -463,7 +483,7 @@ def write_all(descriptor: int, data: bytes) -> None:
         view = view[os.write(descriptor, view):]
 
 
-def stream_file(parent: int, name: str, output: int | None = None, keep: bool = False) -> tuple[str, int, int, bytes | None]:
+def stream_file(parent: int, name: str, output: int | None = None, keep: bool = False, scanner: SecretScanner | None = None) -> tuple[str, int, int, bytes | None]:
     """Hashes a regular file without following links and optionally copies it; content is kept only for the secret scan."""
     descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     try:
@@ -474,13 +494,17 @@ def stream_file(parent: int, name: str, output: int | None = None, keep: bool = 
         while chunk := os.read(descriptor, CHUNK_BYTES):
             digest.update(chunk)
             size += len(chunk)
-            if keep and size <= MAX_FILE:
+            if keep and before.st_size <= MAX_BUFFERED_FILE and size <= MAX_BUFFERED_FILE:
                 kept += chunk
+            if scanner is not None:
+                scanner.feed(chunk)
             if output is not None:
                 write_all(output, chunk)
+        if scanner is not None:
+            scanner.feed(b'', final=True)
         if size != before.st_size or fingerprint(os.fstat(descriptor)) != fingerprint(before):
             raise SpaceArchiveFailure('tree file changed during its read')
-        return digest.hexdigest(), size, before.st_mtime_ns, bytes(kept) if keep and size <= MAX_FILE else None
+        return digest.hexdigest(), size, before.st_mtime_ns, bytes(kept) if keep and size <= MAX_BUFFERED_FILE else None
     finally:
         os.close(descriptor)
 
@@ -518,12 +542,16 @@ def tree_entries(location: str, private: bool, skip: str | None = None, annotate
             elif stat.S_ISLNK(details.st_mode):
                 entry.update(kind='symlink', target=os.readlink(name, dir_fd=descriptor))
             elif stat.S_ISREG(details.st_mode):
-                sha256, size, _, content = stream_file(descriptor, name, keep=annotate is not None)
+                scanner = SecretScanner(entry['path']) if annotate is not None else None
+                sha256, size, _, content = stream_file(descriptor, name, keep=annotate is not None, scanner=scanner)
                 entry.update(kind='file', bytes=size, sha256=sha256)
+                if scanner is not None:
+                    entry['_sensitive_content'] = scanner.found
             else:
                 entry['kind'] = 'special'
             if annotate is not None:
                 annotate(entry, content)
+            entry.pop('_sensitive_content', None)
             entries.append(entry)
             if entry['kind'] == 'directory':
                 child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
@@ -556,7 +584,7 @@ def backup_reason(entry: dict, content: bytes | None) -> str | None:
         return 'special_file'
     if entry['bytes'] > MAX_FILE:
         return 'exceeds_file_limit'
-    return 'sensitive_content' if content is not None and sensitive_content(entry['path'], content) else None
+    return 'sensitive_content' if entry.get('_sensitive_content') or content is not None and sensitive_content(entry['path'], content) else None
 
 
 def migration_reason(entry: dict) -> str | None:
@@ -591,6 +619,11 @@ def verify_space_identity(root: int, expected: dict) -> None:
 def inventory_space(directory: str, expected_identity: dict, workspace: str | None = None) -> dict:
     """Dry run that writes nothing: path, size, sha256, place in the layout and backup exclusion of every entry, never content."""
     expected = identity(expected_identity)
+    root = open_directory(directory)
+    try:
+        verify_space_identity(root, expected)
+    finally:
+        os.close(root)
 
     def annotate(entry: dict, content: bytes | None) -> None:
         entry['classification'] = classification(entry['path'])

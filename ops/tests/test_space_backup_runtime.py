@@ -83,7 +83,11 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(reconstructed).hexdigest(), receipt['sha256'])
         archive = self.state / f"space-backup-{self.claim['id']}-1.zip"
         before = archive.stat()
-        self.assertEqual(self.exported(), receipt)
+        repeated = self.exported()
+        self.assertEqual({key: value for key, value in repeated.items() if key != 'metrics'},
+                         {key: value for key, value in receipt.items() if key != 'metrics'})
+        self.assertGreater(receipt['metrics']['peak_rss_kib'], 0)
+        self.assertGreater(repeated['metrics']['peak_rss_kib'], 0)
         self.assertEqual(archive.stat().st_mtime_ns, before.st_mtime_ns)
         with zipfile.ZipFile(archive) as zipped:
             manifest_raw = zipped.read('space-manifest.json')
@@ -156,7 +160,7 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
 
     def test_file_or_total_size_limit_is_explicit_and_removes_partial_archive(self):
         with (self.space / 'projects/large.txt').open('wb') as output:
-            output.truncate(128 * 1024 * 1024 + 1)
+            output.truncate(space_backup_local.space_archive.MAX_FILE + 1)
         result = self.invoke('export')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {'error': 'LIMIT_EXCEEDED'})
@@ -164,7 +168,7 @@ class SpaceBackupRuntimeTest(unittest.TestCase):
         (self.space / 'projects/large.txt').unlink()
         for index in range(9):
             with (self.space / 'data' / str(index)).open('wb') as output:
-                output.truncate(128 * 1024 * 1024)
+                output.truncate(space_backup_local.space_archive.MAX_TOTAL // 8)
         result = self.invoke('export')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {'error': 'LIMIT_EXCEEDED'})

@@ -93,7 +93,7 @@ COPY --from=build --chown=node:node /app/packages/mcp-fleet-monitor/dist ./packa
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/src ./packages/adapter-sdk/dist/src
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/bridge ./packages/adapter-sdk/dist/bridge
 COPY --from=build --chown=node:node /app/packages/adapter-sdk/dist/descriptors ./packages/adapter-sdk/dist/descriptors
-COPY --chown=node:node ops/cli/space_archive.py ops/cli/space_backup_validate.py ./ops/cli/
+COPY --chown=node:node ops/cli/space_archive.py ops/cli/space_archive_stream.py ops/cli/space_backup_validate.py ./ops/cli/
 RUN chmod -R 0555 ./packages/adapter-sdk/dist/bridge
 COPY --chown=node:node deploy/runtime/runtime-store.package.json ./packages/store/package.json
 COPY --chown=node:node deploy/runtime/readiness-probe.mjs deploy/runtime/local-readiness-probe.mjs deploy/runtime/unix-readiness-probe.mjs deploy/runtime/postgres-tls.mjs deploy/runtime/migrate.mjs deploy/runtime/migration-integrity.mjs deploy/runtime/schema-version.mjs deploy/runtime/fleet-snapshot.mjs deploy/runtime/outbox-metrics.mjs deploy/runtime/outbox-metrics-core.mjs deploy/runtime/release-state-metrics.mjs deploy/runtime/reconcile-stale-console-outbox.mjs deploy/runtime/reconcile-stale-console-outbox-core.mjs deploy/runtime/runtime-package-smoke.mjs ./deploy/

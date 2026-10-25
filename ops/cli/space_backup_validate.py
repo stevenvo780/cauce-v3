@@ -11,8 +11,8 @@ import zipfile
 
 import space_archive
 
-MAX_BYTES = 1024 * 1024 * 1024
-CHUNK_BYTES = 64 * 1024
+MAX_BYTES = space_archive.MAX_ARCHIVE
+CHUNK_BYTES = 4 * 1024 * 1024
 
 
 def verified_archive(archive: str, expected: dict, manifest_sha256: str | None = None) -> dict:

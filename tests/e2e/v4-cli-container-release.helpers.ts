@@ -39,7 +39,7 @@ async function checked(file: string, args: string[], timeout?: number): Promise<
 
 async function snapshotBuildContext(directory: string): Promise<{ files: number; digest: string; revision: string }> {
   const paths = ['.dockerignore', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'tsconfig.json', 'tsconfig.build.json',
-    'vitest.config.ts', 'packages', 'services', 'console', 'deploy', 'ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py',
+    'vitest.config.ts', 'packages', 'services', 'console', 'deploy', 'ops/cli/space_archive.py', 'ops/cli/space_archive_stream.py', 'ops/cli/space_backup_validate.py',
     'tests/terminal-pty/certs.mjs', 'tests/terminal-pty/certs.d.mts'];
   const listing = await checked('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', ...paths]);
   const selected = [...new Set(listing.split('\0').filter(Boolean))];

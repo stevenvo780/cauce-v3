@@ -51,7 +51,7 @@ function pathsOf(domain, tree) {
 
 // 1. Domain composition: full is exactly the union, and nothing is stranded outside every domain.
 const runtimePaths = pathsOf('runtime');
-for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py']) {
+for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_archive_stream.py', 'ops/cli/space_backup_validate.py']) {
   assert(runtimePaths.has(helper), `runtime domain must cover copied helper ${helper}`);
 }
 const consolePaths = pathsOf('console');
@@ -171,7 +171,7 @@ for (const sentinel of [
 //    verification domain.
 assert(
   ![...runtimePaths].some((entry) => entry.startsWith('ops/')
-    && !['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py'].includes(entry)),
+    && !['ops/cli/space_archive.py', 'ops/cli/space_archive_stream.py', 'ops/cli/space_backup_validate.py'].includes(entry)),
   'operational QA must not invalidate runtime-image evidence',
 );
 assert(verificationPaths.has('ops/scripts/fault-compose.sh'), 'verification lost the live fault driver');
@@ -496,7 +496,7 @@ try {
     assert.equal(digestOf('full', sandbox), beforeSymlink.full, 'removing symlink must restore full');
   }
 
-  for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_backup_validate.py']) {
+  for (const helper of ['ops/cli/space_archive.py', 'ops/cli/space_archive_stream.py', 'ops/cli/space_backup_validate.py']) {
     const beforeHelper = digestOf('runtime', sandbox);
     await write(helper, 'print("runtime helper")\n');
     assert.notEqual(digestOf('runtime', sandbox), beforeHelper, `copied helper ${helper} must invalidate runtime evidence`);

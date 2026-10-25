@@ -6,10 +6,12 @@ import os
 import pathlib
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
 import zipfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'cli'))
@@ -435,6 +437,128 @@ class SpaceArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(SpaceArchiveFailure, 'unsafe owner or mode'):
             self.backup()
         self.assertFalse(self.archive.exists())
+
+    def test_streaming_scanner_preserves_secret_detection_and_templates_across_every_boundary(self):
+        sensitive = [b'sk-' + b'A' * 24, b'-----BEGIN RSA PRIVATE KEY-----', b'ghp_' + b'B' * 24,
+                     b'aws_secret_access_key = ' + b'C' * 24, b'_authToken=abcdefgh1234',
+                     b'https://deploy:hunter2@example.invalid/repo', b'password = abcdefgh']
+        safe = [b'_authToken=${NPM_TOKEN}', b'_authToken=process.env.NPM_TOKEN',
+                b'https://user:${PASSWORD}@example.invalid', b'https://user:process.env.PASSWORD@example.invalid']
+        for value, expected in [(value, True) for value in sensitive] + [(value, False) for value in safe]:
+            for boundary in range(len(value) + 1):
+                scanner = space_archive.SecretScanner('config/settings.txt' if value.startswith(b'password') else 'projects/source.txt')
+                scanner.feed(value[:boundary])
+                scanner.feed(value[boundary:])
+                scanner.feed(b'', final=True)
+                self.assertEqual(scanner.found, expected, (value[:16], boundary))
+        for password, expected in [(b'Z' * 8192, True), (b'${PASSWORD}' + b'Z' * 8192, False),
+                                   (b'process.env.PASSWORD' + b'Z' * 8192, False)]:
+            scanner = space_archive.SecretScanner('projects/source.txt')
+            value = b'https://' + b'U' * 8192 + b':' + password + b'@example.invalid'
+            for offset in range(0, len(value), 31):
+                scanner.feed(value[offset:offset + 31])
+            scanner.feed(b'', final=True)
+            self.assertEqual(scanner.found, expected)
+        scanner = space_archive.SecretScanner('config/settings.txt')
+        for value in (b'password', b' ' * 8192, b'=', b' ' * 8192, b'abcdefgh'):
+            scanner.feed(value)
+        scanner.feed(b'', final=True)
+        self.assertTrue(scanner.found)
+
+    def test_backup_omits_cross_chunk_secrets_before_opening_their_zip_entries(self):
+        target = self.space / 'projects/boundary.txt'
+        target.write_bytes(b'ordinary\n' * (space_archive.ARCHIVE_CHUNK_BYTES // 9) + b'\nsk-' + b'S' * 32)
+        result = self.backup()
+        self.assertIn({'path': 'projects/boundary.txt', 'reason': 'sensitive_content'}, result['omissions'])
+        with zipfile.ZipFile(self.archive) as archive:
+            self.assertNotIn('projects/boundary.txt', archive.namelist())
+
+    def test_low_disk_preflight_creates_neither_archive_nor_restore_destination(self):
+        low = SimpleNamespace(f_bavail=1, f_frsize=4096, f_favail=10_000)
+        with patch.object(space_archive.os, 'fstatvfs', return_value=low):
+            with self.assertRaisesRegex(SpaceArchiveFailure, 'insufficient free space'):
+                self.backup()
+        self.assertFalse(self.archive.exists())
+        self.backup()
+        with patch.object(space_archive.os, 'fstatvfs', return_value=low):
+            with self.assertRaisesRegex(SpaceArchiveFailure, 'insufficient free space'):
+                restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertFalse(self.restored.exists())
+
+    def test_restore_disk_full_cleans_only_owned_partials_and_preserves_an_existing_empty_root(self):
+        self.backup()
+        original = space_archive.stream_content
+
+        def fail_write(stream, path, schema_version=space_archive.SCHEMA_VERSION, output=None):
+            if output is not None:
+                output.write(b'partial')
+                raise OSError(errno.ENOSPC, 'No space left on device')
+            return original(stream, path, schema_version)
+
+        for existing in (False, True):
+            if existing:
+                self.restored.mkdir(mode=0o700)
+                before = self.restored.stat().st_ino
+            with patch.object(space_archive, 'stream_content', side_effect=fail_write):
+                with self.assertRaises(OSError):
+                    restore_space(str(self.archive), str(self.restored), self.identity)
+            if existing:
+                self.assertEqual(self.restored.stat().st_ino, before)
+                self.assertEqual(list(self.restored.iterdir()), [])
+            else:
+                self.assertFalse(self.restored.exists())
+
+    def test_changed_source_between_scan_and_zip_copy_aborts_without_a_partial(self):
+        original = space_archive.stream_content
+
+        def replace_during_copy(stream, path, schema_version=space_archive.SCHEMA_VERSION, output=None):
+            if output is not None and path == 'context/mission.md':
+                (self.space / path).write_bytes(b'different source bytes\n')
+            return original(stream, path, schema_version, output)
+
+        with patch.object(space_archive, 'stream_content', side_effect=replace_during_copy):
+            with self.assertRaisesRegex(SpaceArchiveFailure, 'changed during backup'):
+                self.backup()
+        self.assertFalse(self.archive.exists())
+
+    def test_many_small_files_stream_restore_with_the_same_manifest_hashes(self):
+        for index in range(1000):
+            (self.space / 'projects' / f'file-{index}').write_bytes(f'ordinary file {index}\n'.encode())
+        copied = self.backup()
+        restored = restore_space(str(self.archive), str(self.restored), self.identity)
+        self.assertEqual(restored['files'], copied['files'])
+        self.assertEqual(restored['manifest_sha256'], copied['manifest_sha256'])
+        for index in range(1000):
+            self.assertEqual((self.restored / 'projects' / f'file-{index}').read_bytes(), f'ordinary file {index}\n'.encode())
+
+    def test_inventory_scans_secrets_beyond_the_buffered_content_budget(self):
+        source = self.space / 'projects/large-source.txt'
+        source.write_bytes(b'ordinary project data\n' * 300 + b'\nsk-' + b'S' * 32)
+        with patch.object(space_archive, 'MAX_BUFFERED_FILE', 128):
+            result = space_archive.inventory_space(str(self.space), self.identity)
+        entry = next(item for item in result['entries'] if item['path'] == 'projects/large-source.txt')
+        self.assertEqual(entry['backup'], 'sensitive_content')
+        self.assertNotIn('_sensitive_content', entry)
+
+    def test_one_gb_file_roundtrip_under_a_fixed_address_space_limit(self):
+        program = r'''import hashlib,json,pathlib,resource,sys
+sys.path.insert(0,sys.argv[1]);import space_archive
+resource.setrlimit(resource.RLIMIT_AS,(192*1024*1024,192*1024*1024))
+root=pathlib.Path(sys.argv[2]);space=root/'large-space';space.mkdir(mode=0o700)
+(space/'projects').mkdir(mode=0o700);source=space/'projects/large.bin'
+with source.open('wb') as stream:stream.truncate(1_000_000_000)
+copied=space_archive.backup_space(str(space),str(root/'large.zip'),json.loads(sys.argv[3]))
+restored=space_archive.restore_space(str(root/'large.zip'),str(root/'large-restored'),json.loads(sys.argv[3]))
+assert copied['bytes']==restored['bytes']==1_000_000_000
+assert (root/'large-restored/projects/large.bin').stat().st_size==1_000_000_000
+print(json.dumps({'bytes':restored['bytes'],'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}))
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', program, str(pathlib.Path(space_archive.__file__).parent),
+                                 str(self.root), json.dumps(self.identity)], capture_output=True, text=True, timeout=600)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads(result.stdout)
+        self.assertEqual(receipt['bytes'], 1_000_000_000)
+        self.assertLess(receipt['peak_rss_kib'], 192 * 1024)
 
 
 class SpaceMigrationTests(unittest.TestCase):

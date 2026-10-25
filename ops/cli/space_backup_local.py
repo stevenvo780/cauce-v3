@@ -19,10 +19,6 @@ import space_archive
 from space_backup_validate import CHUNK_BYTES, MAX_BYTES, verified_archive
 
 
-class LimitExceeded(ValueError):
-    pass
-
-
 def failure_record(cause_type: str, message: str, stage: str) -> dict:
     if stage not in {'runtime', 'local'}:
         raise ValueError('invalid backup failure stage')
@@ -55,16 +51,6 @@ def exception_record(error: BaseException, stage: str) -> dict:
     else:
         message = str(error)
     return failure_record(type(error).__name__, message, stage)
-
-
-def bounded_read_file(parent: int, name: str, limit: int = space_archive.MAX_FILE) -> tuple[bytes, int]:
-    details = os.stat(name, dir_fd=parent, follow_symlinks=False)
-    if stat.S_ISREG(details.st_mode) and details.st_size > limit:
-        raise LimitExceeded('space file exceeds its limit')
-    return original_read_file(parent, name, limit)
-
-
-original_read_file = space_archive.read_file
 
 
 def archive_path(request: dict) -> pathlib.Path:
@@ -115,10 +101,11 @@ def execute(request: dict) -> dict:
             except FileNotFoundError:
                 signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
                 resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_BYTES, MAX_BYTES))
-                space_archive.MAX_TOTAL = MAX_BYTES
-                space_archive.read_file = bounded_read_file
                 space_archive.backup_space(str(archive.parent / 'space'), str(archive), request['identity'])
-            return verified_archive(str(archive), request['identity'])
+            receipt = verified_archive(str(archive), request['identity'])
+            receipt['metrics'] = {'peak_rss_kib': int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                                                    + resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)}
+            return receipt
         offset = request['offset']
         if type(offset) is not int or not 0 <= offset < MAX_BYTES:
             raise ValueError('invalid backup read offset')
@@ -143,7 +130,7 @@ def main() -> int:
         raise TimeoutError('space export deadline elapsed')
 
     signal.signal(signal.SIGALRM, expired)
-    signal.alarm(110)
+    signal.alarm(1700)
     try:
         raw = sys.stdin.buffer.read(16385)
         if len(raw) > 16384:
@@ -151,9 +138,10 @@ def main() -> int:
         print(json.dumps(execute(json.loads(raw)), separators=(',', ':')))
         return 0
     except (OSError, ValueError, TypeError, KeyError, zipfile.BadZipFile, RuntimeError) as error:
-        if isinstance(error, LimitExceeded) or isinstance(error, OSError) and error.errno == errno.EFBIG or isinstance(error, space_archive.SpaceArchiveFailure) \
+        if isinstance(error, OSError) and error.errno == errno.EFBIG or isinstance(error, space_archive.SpaceArchiveFailure) \
                 and str(error) in {'space archive exceeds its total byte limit', 'space contains too many archive entries',
-                                   'space manifest exceeds its limit'}:
+                                   'space manifest exceeds its limit', 'space file exceeds its size limit',
+                                   'space archive exceeds its archive byte limit'}:
             print(json.dumps({'error': 'LIMIT_EXCEEDED'}))
             return 0
         print(json.dumps(exception_record(error, 'local'), separators=(',', ':')), file=sys.stderr)

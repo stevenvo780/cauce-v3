@@ -66,6 +66,7 @@ fuentes=(
   cli/context_client.py
   cli/context_native.py
   cli/space_archive.py
+  cli/space_archive_stream.py
   cli/cauce-credenciales.lib.sh
   cli/cauce-panel
   cli/cauce-huerfanas
