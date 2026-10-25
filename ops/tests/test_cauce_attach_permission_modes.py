@@ -29,7 +29,7 @@ class TestPermissionModes(unittest.TestCase):
 
     def test_codex_resume_uses_full_bypass(self):
         command = self.attach.resume_cli('codex', 'fixture-session')
-        self.assertEqual(command, ['codex', '--yolo', 'resume', 'fixture-session'])
+        self.assertEqual(command, ['codex', '--yolo', '--no-daemon', 'resume', 'fixture-session'])
         self.assertTrue(self.attach.resumes_session(command, 'fixture-session'))
 
     def test_detector_accepts_legacy_argv_and_rejects_other_sessions(self):

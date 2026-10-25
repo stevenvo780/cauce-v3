@@ -86,7 +86,7 @@ def resume_cli(harness, native):
                 'bypassPermissions', '--resume', native]
     if harness == 'grok':
         return ['grok', '--always-approve', '--resume', native]  # THE conversation the bus resumes.
-    return ['codex', '--yolo', 'resume', native]
+    return ['codex', '--yolo', '--no-daemon', 'resume', native]
 
 
 def resumes_session(argv, native):

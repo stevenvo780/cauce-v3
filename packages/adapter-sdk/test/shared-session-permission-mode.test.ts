@@ -27,7 +27,31 @@ test("adaptador y CLI arrancan la TUI con los mismos flags de permisos", () => {
   assert.deepEqual(adapter?.harnessArguments, ["--dangerously-skip-permissions"]);
   assert.deepEqual(cli.harnessArguments, adapter.harnessArguments);
   const codex = cliSharedSessionSpec("codex", "socrates", "/workspace", "/home/dev", environment);
-  assert.deepEqual(codex.harnessArguments, ["--yolo"]);
+  assert.deepEqual(codex.harnessArguments, ["--yolo", "--no-daemon"]);
+});
+
+test('Codex adapter and CLI isolate new TUIs from a shared daemon without changing selection requirements', () => {
+  const environment = { HOME: '/home/dev', CAUCE_SHARED_SESSION: '1', CAUCE_MODEL_ID: 'gpt-5.4', CAUCE_REASONING_EFFORT: 'high' };
+  const adapter = loadSharedSessionConfig('codex', 'zz-canary-k1', '/state', environment);
+  const cli = cliSharedSessionSpec('codex', 'zz-canary-k1', '/workspace', '/home/dev', environment);
+  assert.deepEqual(adapter?.harnessArguments, ['--yolo', '--no-daemon', '--model', 'gpt-5.4', '-c', 'model_reasoning_effort=high']);
+  assert.deepEqual(cli.harnessArguments, adapter.harnessArguments);
+  assert.deepEqual(adapter.requiredArguments, ['--model', 'gpt-5.4', '-c', 'model_reasoning_effort=high']);
+  assert.deepEqual(cli.requiredArguments, adapter.requiredArguments);
+});
+
+test('Codex keeps daemon isolation before fresh and resumed native arguments', async () => {
+  for (const resumed of [false, true]) {
+    const { home, workspace } = await freshState('codex-daemon-isolation');
+    const tmux = new FakeTmux();
+    tmux.sessionExists = false; tmux.windows = [];
+    const spec = cliSharedSessionSpec('codex', 'zz-canary-k1', workspace, home, { HOME: home });
+    await ensureSharedSession(tmux, { ...spec,
+      resume: { args: ['resume', '--last'], hasPreviousConversation: () => Promise.resolve(resumed) },
+    }, { sleep: immediate, readyTimeoutMs: 30 });
+    const launched = tmux.calls.find(call => call[0] === 'new-session')?.at(-1);
+    assert.equal(launched, `exec env CODEX_HOME='${home}/.codex' codex --yolo --no-daemon${resumed ? ' resume --last' : ''}`);
+  }
 });
 
 test("los flags de permisos van SIEMPRE en el argv del panel, haya o no conversación que reanudar", async () => {

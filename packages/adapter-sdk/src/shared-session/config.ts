@@ -60,6 +60,11 @@ export function claudePermissionArguments(
   }
 }
 
+function sharedHarnessArguments(harness: SharedSessionHarness, environment: NodeJS.ProcessEnv): readonly string[] {
+  const permissions = claudePermissionArguments(harness, environment);
+  return harness === 'codex' ? [...permissions, '--no-daemon'] : permissions;
+}
+
 export function museReasoningEffort(environment: NodeJS.ProcessEnv): string {
   const durable = environment.CAUCE_REASONING_EFFORT;
   const legacy = environment.MUSE_REASONING_EFFORT;
@@ -172,7 +177,7 @@ export function cliSharedSessionSpec(
     workspace,
     environment: sharedSessionPaneEnvironment(harness, home, environment, alias),
     ...(harness === 'muse' ? { unsetEnvironment: MUSE_CREDENTIAL_OVERRIDES } : {}),
-    harnessArguments: projectSelectionArguments(harness, claudePermissionArguments(harness, environment), selection),
+    harnessArguments: projectSelectionArguments(harness, sharedHarnessArguments(harness, environment), selection),
     requiredArguments: selectionArguments(harness, selection),
     ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),
     resume: sharedSessionResume(
@@ -226,7 +231,7 @@ export function loadSharedSessionConfig(
     configDirectory: harnessConfigDirectory(harnessId, home, environment, alias),
     paneEnvironment: sharedSessionPaneEnvironment(harnessId, home, environment, alias),
     ...(harnessId === 'muse' ? { unsetEnvironment: MUSE_CREDENTIAL_OVERRIDES } : {}),
-    harnessArguments: projectSelectionArguments(harnessId, claudePermissionArguments(harnessId, environment), selection),
+    harnessArguments: projectSelectionArguments(harnessId, sharedHarnessArguments(harnessId, environment), selection),
     requiredArguments: selectionArguments(harnessId, selection),
     ...(pins === undefined ? {} : { command: pins.command, commandPins: pins }),
   };
