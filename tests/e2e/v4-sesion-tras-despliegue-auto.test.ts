@@ -180,7 +180,7 @@ describe('actualización automática de ejecuciones V4 tras una release', () => 
       expect(executor.invocationId).not.toBe((evidence.executorBefore as Awaited<ReturnType<typeof observeSessionExecutor>>).invocationId);
       console.info('H13B_PHASE', 'release-b-installed');
       evidence.draftDeferred = await assertDeferred(draft, fixture, releaseB, ['composer_busy', 'tui_unreadable']);
-      evidence.turnDeferred = await assertDeferred(turn, fixture, releaseB, ['pending_deliveries', 'turn_active']);
+      evidence.turnDeferred = await assertDeferred(turn, fixture, releaseB, ['pending_deliveries', 'turn_active', 'tui_unreadable']);
       assertUnchanged(heldDraft, await observeAutomaticActor(draft.actor));
       assertUnchanged(heldTurn, await observeAutomaticActor(turn.actor));
       evidence.idleUpdated = await assertUpdated(idle, fixture, releaseB);
