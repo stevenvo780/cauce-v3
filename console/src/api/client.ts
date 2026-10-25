@@ -30,6 +30,8 @@ import { hostEnrollmentClient, type HostEnrollmentClient } from './client/host-e
 import { spaceBackupsClient, type SpaceBackupsClient } from './client/space-backups-client';
 import { terminalGrantsClient, type TerminalGrantsClient } from './client/terminal-grants-client';
 import { readBoundedBlob } from './client/bounded-blob';
+import { recordConnectionEvent } from './connection-diagnostics';
+import { startHeartbeat } from './connection-heartbeat';
 /**
  * A 401 on ANY data call is the session dying, and until it is noticed the console keeps painting
  * error cards inside a shell that no longer has a session behind it. The gate polls every 60 s, so
@@ -117,8 +119,33 @@ export class CauceApi {
     if (notice?.kind !== 'write-failed' && notice !== undefined && this.connectionNoticeState?.kind === 'write-failed') return;
     if (notice === undefined && this.connectionNoticeState?.kind === 'write-failed') return;
     if (notice?.kind === 'reconnecting' && this.connectionNoticeState?.kind === 'unreachable') return;
+    if (notice?.kind !== this.connectionNoticeState?.kind) recordConnectionEvent('aviso', notice?.kind ?? 'ninguno');
     this.connectionNoticeState = notice;
     for (const listener of [...this.connectionListeners]) listener(notice);
+  }
+
+  /**
+   * Latido del canal de tiempo real. Un servidor colgado no devuelve error: la lectura espera 30 s.
+   * El latido (`/v3/auth/session`, la misma ruta que ya consulta la sesión) avisa a los ~8 s con
+   * dos fallos seguidos y retira el aviso en cuanto el servidor contesta, aunque ninguna vista
+   * esté sondeando. Devuelve la función que lo detiene.
+   */
+  startHeartbeat(): () => void {
+    return startHeartbeat({
+      ping: async (signal) => {
+        const response = await (this.fetcher ?? fetch)(`${this.baseUrl}/v3/auth/session`, {
+          credentials: 'include', cache: 'no-store', signal,
+          headers: { Accept: 'application/json', 'X-Cauce-Console': '1' },
+        });
+        void response.body?.cancel().catch(() => undefined);
+        return ![502, 503, 504].includes(response.status);
+      },
+      onDown: () => { this.setConnectionNotice({ kind: 'unreachable' }); },
+      onUp: () => {
+        const kind = this.connectionNoticeState?.kind;
+        if (kind === 'unreachable' || kind === 'reconnecting') this.setConnectionNotice(undefined);
+      },
+    });
   }
 
   dismissConnectionNotice(): void {
@@ -171,6 +198,7 @@ export class CauceApi {
     }
     // A gateway that still does not answer stays visible (with an action) until a read succeeds;
     // clearing here made the banner flicker or vanish while the chat stayed frozen.
+    if (this.connectionNoticeState?.kind !== 'unreachable') recordConnectionEvent('lectura-agotada', lastCause instanceof ApiError ? String(lastCause.status) : 'red');
     this.setConnectionNotice(isTransientFailure(lastCause) || isTimeout(lastCause) ? { kind: 'unreachable' } : undefined);
     throw lastCause;
   }

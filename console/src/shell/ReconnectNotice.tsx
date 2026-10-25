@@ -9,6 +9,7 @@ export function ReconnectNotice() {
   const [notice, setNotice] = useState<ConnectionNotice | undefined>(api.connectionNotice);
   const [retrying, setRetrying] = useState(false);
   useEffect(() => api.onConnectionNotice(setNotice), [api]);
+  useEffect(() => api.startHeartbeat(), [api]);
   if (!notice) return null;
   if (notice.kind === 'reconnecting') {
     return (

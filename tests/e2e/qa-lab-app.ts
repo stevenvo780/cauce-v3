@@ -23,7 +23,7 @@ const execute = promisify(execFile);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 interface ConsoleServer { close(): Promise<void>; listen(): Promise<void> }
 interface QaViteServer extends ConsoleServer {
-  middlewares: { use(path: string, handler: (request: IncomingMessage, response: ServerResponse) => void): void };
+  middlewares: { use(path: string, handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): void };
 }
 export interface QaLabApplication {
   relay: { available: boolean; instanceId: string };
@@ -57,8 +57,12 @@ export async function startQaLabApplication(options: {
   let gateway: Awaited<ReturnType<typeof buildGateway>> | undefined;
   let transport: Agent | undefined, vite: ConsoleServer | undefined;
   let relay: Awaited<ReturnType<typeof startPtyFleetRelay>> | undefined;
+  let onRestartSignal: (() => void) | undefined;
+  // Mientras el gateway reinicia, el proxy de Vite contesta 502 como haría Caddy en producción (el suyo por defecto es 500).
+  let gatewayRestarting = false;
   const close = async (): Promise<void> => {
     const failures: unknown[] = [];
+    if (onRestartSignal) process.off('SIGUSR2', onRestartSignal);
     for (const action of [async () => vite?.close(), async () => relay?.close(), async () => gateway?.close(),
       async () => transport?.destroy()]) {
       try { await action(); } catch (error) { failures.push(error); }
@@ -89,16 +93,39 @@ export async function startQaLabApplication(options: {
       claimLeaseSeconds: 150, maxSessionsPerOperator: 2, operatorHeader: 'x-cauce-operator', operators: new Set([email]),
       writableTuiEnabled: true, controlHoldSeconds: 300 };
     const uid = process.geteuid?.() ?? 0;
-    gateway = await buildGateway({ pool: computer.pool, repository: new CauceRepository(computer.pool), logger: false,
+    const startGateway = async (): Promise<Awaited<ReturnType<typeof buildGateway>>> => {
+      const instance = await buildGateway({ pool: computer.pool, repository: new CauceRepository(computer.pool), logger: false,
       consoleOrigins: origins, authProvider: auth, hostSetup: computer.packager,
       agentProviderAuthBroker: computer.agentProviderAuthBroker,
       fleetOperationsRepository: new FleetOperationsRepository(computer.pool),
       signedFleetAuthorityClient: new SignedFleetAuthorityClient(join(authority, 'signed.sock'), { ownerUid: uid, peerUid: uid }),
       https: { key: await readFile(pki.server.key), cert: await readFile(pki.server.cert), ca: await readFile(pki.ca),
         requestCert: true, rejectUnauthorized: true }, terminalCapability: terminalCapabilityAnnouncement(config) });
-    await gateway.register(registerTerminalControlPlane, { pool: computer.pool, authProvider: auth, config, registry });
+      await instance.register(registerTerminalControlPlane, { pool: computer.pool, authProvider: auth, config, registry });
+      return instance;
+    };
+    gateway = await startGateway();
     await options.releasePorts();
     const gatewayUrl = await gateway.listen({ host: '127.0.0.1', port: ports.gateway });
+    // Reinicio real del gateway para las pruebas de reconexión de la consola: SIGUSR2 cierra el
+    // servidor (conexiones incluidas), espera `gateway-restart-down-ms` (por defecto 6 s) y lo vuelve a
+    // levantar en el mismo puerto, con la misma base de datos. Vite y el relay siguen vivos.
+    let restarting = false;
+    const restartGateway = async (): Promise<void> => {
+      if (restarting) return;
+      restarting = true;
+      try {
+        const raw = await readFile(join(directory, 'gateway-restart-down-ms'), 'utf8').catch(() => '');
+        const down = Number.parseInt(raw.trim(), 10);
+        const old = gateway; gateway = undefined; gatewayRestarting = true;
+        await old?.close();
+        await new Promise<void>(resolve => { setTimeout(resolve, Number.isFinite(down) && down >= 0 ? down : 6_000); });
+        gateway = await startGateway();
+        await gateway.listen({ host: '127.0.0.1', port: ports.gateway });
+      } finally { restarting = false; gatewayRestarting = false; }
+    };
+    const onRestart = (): void => { void restartGateway().catch(() => undefined); };
+    onRestartSignal = onRestart; process.on('SIGUSR2', onRestart);
     transport = new Agent({ cert: await readFile(pki.console.cert), key: await readFile(pki.console.key),
       ca: await readFile(pki.ca), rejectUnauthorized: true });
     const relayPath = `/v3/console/terminal/relays/${pki.relayId}/ws`;
@@ -108,6 +135,11 @@ export async function startQaLabApplication(options: {
         if (proxy) config.server.proxy = { [relayPath]: proxy[relayPath], ...proxy };
       },
       configureServer(server: QaViteServer) {
+      server.middlewares.use('/v3', (_request, response, next) => {
+        if (!gatewayRestarting) { next(); return; }
+        response.writeHead(502, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        response.end('{"message":"bad gateway"}');
+      });
       server.middlewares.use('/__qa/status', (request, response) => {
         void (async () => {
           let ready = false;

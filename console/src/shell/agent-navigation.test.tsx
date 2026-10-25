@@ -64,7 +64,7 @@ it.each([1440, 360, 390])('keeps the selected agent across Chat, Terminal and Of
   await screen.findByRole('heading', { level: 2, name: 'kratos' });
   await user.click(nav('Chat'));
   expect(window.location.pathname).toBe('/messages');
-  expect(write).not.toHaveBeenCalled();
+  expect(write.mock.calls.filter(([key]) => key !== 'cauce.diagnostico.conexion')).toEqual([]); // solo el registro de conexión (sin datos personales) puede escribir
   expect(remove).not.toHaveBeenCalled();
 });
 
