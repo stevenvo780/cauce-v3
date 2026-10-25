@@ -11,6 +11,9 @@ import { asV4Page, type V4Page } from './v4-console-real-browser.helpers.js';
 const run = randomUUID().replaceAll('-', '').slice(0, 8);
 const markerV1 = `ZZ-CONTEXTO-MUSE-${run}-V1`;
 const markerV2 = `ZZ-CONTEXTO-MUSE-${run}-V2`;
+const markerV3 = `ZZ-CONTEXTO-MUSE-${run}-V3`;
+const markerNuevo = `ZZ-CONTEXTO-MUSE-${run}-NUEVO`;
+const falla = `FALLA-${run}`;
 const artifacts = join(process.cwd(), '.delegados/v4/recibos/c2d-muse-tui-lab-1025');
 let fixture: Awaited<ReturnType<typeof startContextFixture>> | undefined;
 let adapter: ChildProcess | undefined;
@@ -24,6 +27,14 @@ async function appliedVersion(): Promise<number> {
     [isaTenant.tenant, isaTenant.target],
   );
   return Number(row.rows[0]?.applied_version ?? -1);
+}
+
+async function appliedState(): Promise<{ version: number; at: string }> {
+  const row = await active().database.pool.query<{ applied_version: string; applied_at: string }>(
+    'SELECT applied_version::text AS applied_version, applied_at::text AS applied_at FROM agent_context_state WHERE tenant_id=$1 AND alias=$2',
+    [isaTenant.tenant, isaTenant.target],
+  );
+  return { version: Number(row.rows[0]?.applied_version ?? -1), at: row.rows[0]?.applied_at ?? '' };
 }
 
 async function startMuseAdapter(home: string): Promise<void> {
@@ -57,10 +68,16 @@ setInterval(()=>{},60000);
 let buffer='';let timer;
 async function turn(prompt){
   debug('turn '+prompt.length);
-  const marker=prompt.includes(${JSON.stringify(markerV2)})?${JSON.stringify(markerV2)}:prompt.includes(${JSON.stringify(markerV1)})?${JSON.stringify(markerV1)}:'';
+  const marker=prompt.includes(${JSON.stringify(markerNuevo)})?${JSON.stringify(markerNuevo)}:prompt.includes(${JSON.stringify(markerV3)})?${JSON.stringify(markerV3)}:prompt.includes(${JSON.stringify(markerV2)})?${JSON.stringify(markerV2)}:prompt.includes(${JSON.stringify(markerV1)})?${JSON.stringify(markerV1)}:'';
   const answer=JSON.stringify({reply:marker?'CONTEXTO MUSE EN USO '+marker:'SIN CONTEXTO MUSE',messages:[],notify:[],status:'done',retryable:false,artifacts:[]});
   const iid=randomUUID();
   const intent=rec('runtime.user_intent.accepted',{intent_id:iid,model_messages:[{content:[{kind:'text',text:prompt}]}]});
+  if(prompt.includes(${JSON.stringify(falla)})){
+    const failTerm=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'terminal',terminal:'failed'}});
+    await appendFile(file,intent+failTerm,{mode:0o600});
+    process.stdout.write('error\\n> ');
+    return;
+  }
   const msg=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'assistant_message_committed',text:answer}});
   const term=rec('runtime.session',{kind:'run',run_id:iid,event:{kind:'terminal',terminal:'completed'}});
   await appendFile(file,intent+msg+term,{mode:0o600});
@@ -169,5 +186,46 @@ describe('adopción de contexto versionado por un agente Muse V4 en sesión comp
     await expect.poll(appliedVersion, { timeout: 60_000 }).toBe(2);
     await page.screenshot({ path: join(artifacts, `muse-adoptado-${run}-1440.png`) });
     await writeFile(join(artifacts, `muse-adoptado-${run}.json`), JSON.stringify({ run, applied_version: 2 }, null, 2), { mode: 0o600 });
+  }, 300_000);
+
+  it('la versión N+1 con un fichero nuevo acredita en el turno siguiente y un turno fallido no avanza', async () => {
+    const fx = active();
+    const before = await appliedState();
+    expect(before.version).toBe(2);
+    const page: V4Page = asV4Page(await newTrustedPage(fx, { width: 1440, height: 900 }));
+    await login(page, fx, isaTenant);
+    await page.goto(`${fx.baseUrl}/messages/${isaTenant.tenant}/${isaTenant.target}?view=context`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
+    const versions = page.getByRole('region', { name: 'Versiones de contexto', exact: true });
+    await versions.waitFor({ timeout: 20_000 });
+    await versions.getByLabel('Contenido de context/mission.md', { exact: true }).fill(`Misión ${markerV3}`);
+    await versions.getByLabel('Nuevo archivo', { exact: true }).fill('context/dato-nuevo.md');
+    await versions.getByRole('button', { name: 'Añadir archivo', exact: true }).click();
+    await versions.getByLabel('Contenido de context/dato-nuevo.md', { exact: true }).fill(`Dato ${markerNuevo}`);
+    await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
+
+    const third = await publish(page, fx, isaTenant, isaTenant.room, `turno muse ${run} tres`);
+    const doneThird = await waitForDone(fx, third.deliveryId);
+    expect(doneThird.result).toMatchObject({ output: { reply: `CONTEXTO MUSE EN USO ${markerNuevo}`, status: 'done' } });
+    await expect.poll(appliedVersion, { timeout: 60_000 }).toBe(3);
+    const after = await appliedState();
+    expect(after.version).toBe(3);
+    expect(after.at > before.at).toBe(true);
+
+    const failedTurn = await publish(page, fx, isaTenant, isaTenant.room, `turno muse ${run} ${falla}`);
+    const deadline = Date.now() + 35_000;
+    let failedStatus = '';
+    while (Date.now() < deadline) {
+      const rows = await fx.database.pool.query<{ status: string }>(
+        'SELECT status FROM deliveries WHERE id=$1', [failedTurn.deliveryId]);
+      failedStatus = rows.rows[0]?.status ?? '';
+      if (failedStatus === 'failed' || failedStatus === 'dead') break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    expect(['failed', 'dead']).toContain(failedStatus);
+    const unchanged = await appliedState();
+    expect(unchanged.version).toBe(3);
+    expect(unchanged.at).toBe(after.at);
+    await writeFile(join(artifacts, `muse-adoptado-n1-${run}.json`), JSON.stringify({ run, applied_version: 3, applied_at: after.at }, null, 2), { mode: 0o600 });
   }, 300_000);
 });
