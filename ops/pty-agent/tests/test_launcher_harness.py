@@ -266,7 +266,7 @@ class DynamicDescriptorTest(unittest.TestCase):
 
 class ApprovedFleetTuiTest(unittest.TestCase):
     def capability(self, harness, approved, *, explicit=False, managed=True, session_live=True, marker_harness=None,
-                   tmux_path='/usr/bin/tmux'):
+                   tmux_path='/usr/bin/tmux', native_available=False):
         import tempfile
 
         text = LAUNCHER.read_text(encoding='utf-8')
@@ -280,8 +280,14 @@ declare -A CONFIG=()
 CONFIG[HARNESS_COMMAND]=${FIXTURE_COMMAND:-}
 wire_alias=logical_alias
 state_directory=/home/runtime/state
+OPENCLAW_HISTORY_LIMIT=200
 read_adapter_generation() { :; }
-derive_openclaw_tui_command() { exit 98; }
+derive_openclaw_tui_command() {
+  [[ $FIXTURE_NATIVE_TUI == 1 ]] || return 1
+  OPENCLAW_NODE_FOUND=/usr/bin/node
+  OPENCLAW_ENTRY=/usr/lib/node_modules/openclaw/dist/index.js
+  OPENCLAW_LOCAL_FOUND=0
+}
 die_transient() { die "$1" 75; }
 ''' + '\nADAPTER_V4_MANAGED=' + str(int(managed)) + '\n'
             if approved is not None:
@@ -290,7 +296,8 @@ die_transient() { die "$1" 75; }
             script += '\n  printf "%s\\n" "$tmux_tui" "$openclaw_tui" "$harness_command"\n}\npublish_bundle\n'
             return subprocess.run(['bash', '-c', script], capture_output=True, text=True, check=False,
                 env={'PATH': '/usr/bin:/bin', 'FAKE_DOCKER': str(fake),
-                     'FIXTURE_COMMAND': '["/foreign/command"]' if explicit else ''})
+                     'FIXTURE_COMMAND': '["/foreign/command"]' if explicit else '',
+                     'FIXTURE_NATIVE_TUI': str(int(native_available))})
 
     def test_each_approved_shared_harness_uses_the_pinned_physical_tmux_identity(self):
         for harness in ('claude', 'codex', 'muse', 'grok'):
@@ -335,6 +342,29 @@ die_transient() { die "$1" 75; }
         result = self.capability('claude', None, explicit=True, managed=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(list(map(json.loads, result.stdout.splitlines())), [None, None, ['/foreign/command']])
+
+    def test_openclaw_without_shared_sdk_approval_preserves_its_canonical_native_resolver(self):
+        for approved in ('0', None):
+            with self.subTest(approved=approved):
+                result = self.capability('openclaw', approved, native_available=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                tmux, native, command = map(json.loads, result.stdout.splitlines())
+                self.assertIsNone(tmux)
+                self.assertIsNone(command)
+                self.assertEqual(native, {'node': '/usr/bin/node', 'entry': '/usr/lib/node_modules/openclaw/dist/index.js',
+                                           'state_directory': '/home/runtime/state', 'history_limit': 200})
+
+    def test_openclaw_still_rejects_incompatible_or_malformed_shared_sdk_approval(self):
+        for approved in ('1', '2'):
+            with self.subTest(approved=approved):
+                result = self.capability('openclaw', approved, native_available=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, '')
+
+    def test_openclaw_without_an_accredited_native_resolver_advertises_shell_only(self):
+        result = self.capability('openclaw', '0')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(list(map(json.loads, result.stdout.splitlines())), [None, None, None])
 
 
 class FleetPhysicalIdentityTest(unittest.TestCase):
