@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import type { VersionedContext } from "@cauce/protocol";
 import { consumptionWitness, inputDigest } from "../src/shared-session/consumption.js";
 import { validateStructuredOutput } from "../src/sdk/output-parser.js";
 import { SpawnCommandRunner } from "../src/sdk/process-runner.js";
@@ -132,8 +133,9 @@ test("a receipt uses the native transcript input identifier, not an SDK-generate
 });
 
 for (const harness of ["claude", "codex"] as const) {
-  test(`${harness} dedicated human engine persists genuine child evidence for A/B/A`, async () => {
+  test(`${harness} dedicated human engine persists genuine child evidence for A/B/A and changed context`, async () => {
     const context = await setup(harness);
+    const previous = process.env.CAUCE_SPACE_ROOT; process.env.CAUCE_SPACE_ROOT = context.workspace;
     try {
       const store = await DurableStore.open(join(context.root, "durable")); await store.activateEpoch(1);
       const calls: CommandRunRequest[] = []; const events: DeliveryEvent[] = []; let manualCalls = 0;
@@ -148,21 +150,47 @@ for (const harness of ["claude", "codex"] as const) {
       }, headless);
       const engine = new AdapterEngine({ store, harness: selected.harness,
         harnessForDelivery: humanHarnessSelector(selected.harness, selected.humanHarness),
+        ownTenantId: "Steven",
         executionIntentMode: "local-test-only", publish: async (event) => { events.push(event); } });
-      for (const human of [HUMAN_A, HUMAN_B, HUMAN_A]) await engine.handleDelivery(humanDelivery(human));
-      const finals = events.filter((event) => event.phase === "done"); assert.equal(finals.length, 3);
+      const deliveries = [HUMAN_A, HUMAN_B, HUMAN_A, HUMAN_A, HUMAN_A].map((human, index) => {
+        const version = Math.max(1, index - 1);
+        const files = [{ path: "context/mission.md", content: `Version ${String(version)} instructions.` }];
+        const versioned: VersionedContext = { company_id: "context_alpha", tenant_id: "Steven", alias: "argos",
+          version, files, digest: inputDigest(JSON.stringify(files)) };
+        return { ...humanDelivery(human), versioned_context: versioned };
+      });
+      for (const delivery of deliveries) await engine.handleDelivery(delivery);
+      const finals = events.filter((event) => event.phase === "done"); assert.equal(finals.length, deliveries.length);
       const proofs = finals.map((event) => event.harness_consumption_v1);
       for (const [index, event] of finals.entries()) {
+        const delivery = deliveries[index]; assert.ok(delivery);
+        const request = calls[index]; assert.ok(request);
+        assert.equal(event.delivery_id, delivery.delivery_id);
+        assert.equal(store.getDelivery(delivery.delivery_id)?.state, "done");
         assert.ok(event.harness_consumption_v1); assert.equal(event.harness_consumption_v1.harness_id, harness);
-        assert.equal(event.harness_consumption_v1.input_sha256, inputDigest(calls[index]?.stdin ?? ""));
+        assert.equal(event.harness_consumption_v1.input_sha256, inputDigest(request.stdin));
+        assert.deepEqual(event.context_adoption, { version: delivery.versioned_context.version,
+          digest: delivery.versioned_context.digest, input_sha256: event.harness_consumption_v1.input_sha256 });
         assert.deepEqual(store.pendingEvents().find((pending) => pending.event_id === event.event_id), event);
       }
       assert.notEqual(proofs[0]?.native_session_id, proofs[1]?.native_session_id);
       assert.equal(proofs[0]?.native_session_id, proofs[2]?.native_session_id);
       assert.notEqual(proofs[0]?.native_turn_id, proofs[2]?.native_turn_id);
       assert.equal(calls[0]?.resumeSession, false); assert.equal(calls[2]?.resumeSession, true);
+      for (const index of [3, 4]) {
+        const proof = proofs[index]; assert.ok(proof);
+        const request = calls[index]; assert.ok(request);
+        const file = deliveries[index]?.versioned_context.files[0]; assert.ok(file);
+        assert.equal(proof.native_session_id, proofs[0]?.native_session_id);
+        assert.notEqual(proof.native_turn_id, proofs[index - 1]?.native_turn_id);
+        assert.equal(request.resumeSession, true);
+        assert.ok(request.stdin.includes(file.content));
+      }
       assert.equal(manualCalls, 0);
-    } finally { await context.clean(); }
+    } finally {
+      if (previous === undefined) delete process.env.CAUCE_SPACE_ROOT; else process.env.CAUCE_SPACE_ROOT = previous;
+      await context.clean();
+    }
   });
 }
 
