@@ -82,7 +82,12 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const shown = sheetAgent ?? sheetRetired;
   const sheetRef = shown ? `${shown.tenantId}/${shown.alias}` : undefined;
   // A link to an agent that is gone (deleted, or never existed) must not leave a dead param behind.
-  useEffect(() => { if (openRef && !shown) setOpenRef(undefined); }, [openRef, shown, setOpenRef]);
+  useEffect(() => {
+    if (openRef && !shown) {
+      setOpenRef(undefined);
+      createTrigger.current?.focus();
+    }
+  }, [openRef, shown, setOpenRef]);
 
   const open = (agent: SettingsAgent, tab: SheetIntent['tab'] = 'resumen', kind?: 'retire' | 'purge' | 'remove') => {
     const ref = `${agent.tenantId}/${agent.alias}`;
