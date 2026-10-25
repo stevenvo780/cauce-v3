@@ -225,6 +225,7 @@ export async function ensureSharedSessionStartup(
     logger({ event: 'shared_session_degraded', alias: shared.alias,
       reason: signal.aborted ? 'startup_cancelled' : readiness === 'changed'
         ? 'session_identity_unverified' : result.failure ?? 'tui_absent',
+      detail: `ensure: ${result.detail}; readiness: ${readiness ?? 'none'}`,
       error_message: 'La TUI canónica no quedó acreditada al adquirir el lease.' });
     throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE', 'La terminal canónica no está disponible para iniciar el consumidor', false);
   }

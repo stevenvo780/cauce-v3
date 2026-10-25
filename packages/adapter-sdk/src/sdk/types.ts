@@ -409,6 +409,8 @@ export interface AdapterLog {
   error_message?: string;
   /** Connection failure code, or why a claim renewal ended. */
   reason?: string;
+  /** Internal cause detail for degraded startups (never a prompt, token or file content). */
+  detail?: string;
   /** Discriminator of the offending frame (`ack`, `hello`, `heartbeat`); never its body. */
   frame_type?: string;
   /** Fields a schema rejected. Set on `outbound_frame_invalid` and `inbound_frame_invalid`. */

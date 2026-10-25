@@ -576,3 +576,19 @@ test('the real HarnessAdapter preserves the explicit retryable login error befor
   await assert.rejects(executeHarness(adapter), loginError);
   assert.equal(tmux.used('paste-buffer'), false); assert.equal(tmux.submittedCount, 0);
 });
+
+
+test('startup degraded log carries the ensure detail and the readiness outcome', async () => {
+  const { state, home, workspace } = await freshState('startup-degraded-detail');
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, {
+    HOME: home, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+  });
+  assert.ok(configured);
+  const tmux = new FakeTmux(); tmux.sessionName = 'cauce-socrates'; tmux.sessionOptions.set('@cauce_harness', 'claude');
+  const logs: AdapterLog[] = [];
+  await assert.rejects(ensureSharedSessionStartup(configured, (entry) => { logs.push(entry); }, tmux),
+    (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
+  assert.equal(logs.length, 1);
+  assert.match(logs[0]?.detail ?? '', /^ensure: /u);
+  assert.match(logs[0]?.detail ?? '', /readiness: /u);
+});
