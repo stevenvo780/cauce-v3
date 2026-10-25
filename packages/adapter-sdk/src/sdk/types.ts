@@ -301,6 +301,7 @@ export interface CommandRunResult {
   readonly exitCode: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
+  readonly timeoutReason?: string;
   readonly cancelled: boolean;
   /**
    * Start-witness verdict. `true` it fired, `false` it did NOT (positive proof the turn did not

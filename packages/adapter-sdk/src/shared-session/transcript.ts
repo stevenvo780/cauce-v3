@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { envelopeHasCorrelation, stripJsonFence } from "./envelope.js";
 import { transcriptDirectoryIn } from "./session.js";
-import type { TranscriptReader, TranscriptSlice } from "./types.js";
+import type { TranscriptReader, TranscriptSlice, TurnOutcome } from "./types.js";
 
 export { stripJsonFence } from "./envelope.js";
 
@@ -22,6 +22,7 @@ export interface TranscriptEntry {
   readonly compactMetadata?: unknown;
   readonly isSidechain?: unknown;
   readonly isMeta?: unknown;
+  readonly isApiErrorMessage?: unknown;
   readonly sessionId?: unknown;
   readonly message?: unknown;
 }
@@ -284,18 +285,30 @@ export function findFinalAssistant(
   entries: readonly TranscriptEntry[],
   userUuid: string,
 ): { readonly text: string; readonly sessionId?: string } | undefined {
+  const outcome = findClaudeOutcome(entries, userUuid);
+  if (outcome?.kind !== "answer") return undefined;
+  return outcome.sessionId === undefined
+    ? { text: outcome.text }
+    : { text: outcome.text, sessionId: outcome.sessionId };
+}
+
+function findClaudeOutcome(entries: readonly TranscriptEntry[], userUuid: string): TurnOutcome | undefined {
   const byUuid = indexByUuid(entries);
   const positions = positionByUuid(entries);
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (entry === undefined) continue;
     if (entry.type !== "assistant" || entry.isSidechain === true) continue;
-    if (stopReason(entry) !== "end_turn") continue;
     if (!descendsFrom(byUuid, entry, userUuid, positions)) continue;
+    const reason = stopReason(entry);
+    if (entry.isApiErrorMessage === true && (reason === "stop_sequence" || reason === "end_turn")) {
+      return { kind: "failed", detail: "Claude reported a terminal API error for the correlated turn; provider details omitted" };
+    }
+    if (reason !== "end_turn") return undefined;
     const text = assistantText(entry);
-    if (text === undefined) continue;
+    if (text === undefined) return undefined;
     const sessionId = asString(entry.sessionId);
-    return sessionId === undefined ? { text } : { text, sessionId };
+    return sessionId === undefined ? { kind: "answer", text } : { kind: "answer", text, sessionId };
   }
   return undefined;
 }
@@ -312,7 +325,7 @@ export function findEnvelopeTurn(
   for (let index = entries.length - 1; index >= floor; index -= 1) {
     const entry = entries[index];
     if (entry === undefined) continue;
-    if (entry.type !== "assistant" || entry.isSidechain === true) continue;
+    if (entry.type !== "assistant" || entry.isSidechain === true || entry.isApiErrorMessage === true) continue;
     if (stopReason(entry) !== "end_turn") continue;
     const text = assistantText(entry);
     if (text === undefined || !envelopeHasCorrelation(text, correlationId)) continue;
@@ -343,8 +356,8 @@ export function claudeTranscript(
     },
     provesConsumption: claudeProvesConsumption,
     findAnswer: (entries, key) => {
-      const answer = findFinalAssistant(entries, key);
-      if (answer === undefined) return undefined;
+      const answer = findClaudeOutcome(entries, key);
+      if (answer?.kind !== "answer") return answer;
       const text = stripJsonFence(answer.text);
       return answer.sessionId === undefined
         ? { kind: "answer", text }

@@ -180,6 +180,62 @@ test("una pantalla ociosa tras Escape no acredita cierre y la misma generación 
   assert.equal(tmux.panePid, pid, "la generación exacta sigue viva");
   assert.match(outcome.stderr, /no alcanzó un límite terminal.*cuarentena/u);
   assert.match(tmux.sessionOptions.get("@cauce_quarantined_pane") ?? "", /^\$0:@0:%0:4242$/u);
+
+  const next = await runner.run({
+    command: "claude", args: [], harness: "claude", stdin: "no pegar sin cierre correlacionado",
+    timeoutMs: 10_000, signal: new AbortController().signal,
+  });
+  assertExecutionPrevented(runner, next, "session_identity_unverified");
+  assert.equal(tmux.submittedCount, 1);
+});
+
+test("timeout correlacionado conserva pending con panel ocioso hasta rescatar el sobre tardío", async () => {
+  const { state, home, workspace } = await freshState("timeout-idle-preserves-late-result");
+  const quarantineFile = join(state, "quarantine");
+  const sessionId = randomUUID();
+  const transcript = join(transcriptDirectory(home, workspace), `${sessionId}.jsonl`);
+  const head = randomUUID();
+  await appendFile(transcript, `${userEntry(head, null, "earlier", sessionId)}\n`);
+  const tmux = new FakeTmux();
+  let injected = "";
+  let submitted = "";
+  tmux.onSubmit = async (prompt) => {
+    submitted = prompt;
+    injected = randomUUID();
+    await appendFile(transcript, `${userEntry(injected, head, prompt, sessionId)}\n`);
+    tmux.paneContent = "✻ Working… (esc to interrupt)\n❯ ";
+  };
+  const runner = claudeRunner({
+    alias: "kratos", home, workspace, tmux, quarantineFile, turnTimeoutMs: 80,
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(ms, 1))),
+  });
+  const request = { command: "claude", args: [], harness: "claude" as const, stdin: "slow tool",
+    timeoutMs: 10_000, signal: new AbortController().signal };
+  assert.equal((await runner.run(request)).timedOut, true);
+  const correlationId = correlationIdFromPrompt(submitted);
+  const pending = `${quarantineFile}.${correlationId}.pending`;
+
+  tmux.paneContent = "❯ ";
+  const blocked = await runner.run({ ...request, stdin: "must not overlap the slow tool" });
+  assertExecutionPrevented(runner, blocked, "session_identity_unverified");
+  assert.equal(tmux.submittedCount, 1);
+  assert.match(await readFile(pending, "utf8"), /^\$0:@0:%0:4242\n$/u);
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), true);
+
+  await appendFile(transcript,
+    `${assistantEntry(randomUUID(), injected, envelopeText("late tool result", correlationId), sessionId)}\n`);
+  tmux.onSubmit = async (prompt) => {
+    const user = randomUUID();
+    await appendFile(transcript, `${userEntry(user, injected, prompt, sessionId)}\n`
+      + `${assistantEntry(randomUUID(), user, envelopeText("next result", correlationIdFromPrompt(prompt)), sessionId)}\n`);
+  };
+  const next = await runner.run({ ...request, stdin: "continue after verified terminal" });
+  assert.equal(next.exitCode, 0);
+  assert.match(next.stdout, /next result/u);
+  assert.equal(tmux.submittedCount, 2);
+  await assert.rejects(readFile(pending, "utf8"), { code: "ENOENT" });
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
+  assert.match(await readFile(join(state, "resultados-tardios", `${correlationId}.json`), "utf8"), /late tool result/u);
 });
 
 test("la cuarentena en disco sobrevive a otro runner si tmux no pudo guardar su opción", async () => {

@@ -106,7 +106,7 @@ test("un panel que ya no se puede capturar no cuenta como vivo y la entrega se s
   const empezo = Date.now();
   await assert.rejects(
     execute(adapter),
-    (error: Error) => /execution deadline/iu.test(error.message),
+    (error: Error) => /correlation deadline of 20 ms/iu.test(error.message),
   );
   assert.ok(Date.now() - empezo < 9_000, `tardó ${String(Date.now() - empezo)} ms`);
 });

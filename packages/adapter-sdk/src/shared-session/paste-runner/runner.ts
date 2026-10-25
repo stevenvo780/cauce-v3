@@ -70,17 +70,13 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const target = identity.paneId;
 
     await this.reconcileTerminalPending(identity);
-    let quarantine = await this.quarantineState(identity);
-    if (quarantine === "current") {
-      await this.healCurrentQuarantine(identity, request.signal);
-      if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
-      quarantine = await this.quarantineState(identity);
-    }
+    const quarantine = await this.quarantineState(identity);
     if (quarantine === "current") {
       return this.degrade(
         "session_identity_unverified",
-        "la generación exacta de la TUI conserva un turno cancelado de finalización ambigua;"
-          + " no recibirá más input hasta que el pane/proceso cambie",
+        "la generación exacta de la TUI conserva un turno de finalización ambigua;"
+          + " no recibirá más input hasta rescatar un resultado terminal correlacionado"
+          + " o cambiar la generación del pane/proceso",
         request,
       );
     }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -10,6 +10,7 @@ import type { StructuredOutput } from "../src/sdk/types.js";
 import { FakeTmux, adapterFor, assistantEntry, claudeRunner, correlationIdFromPrompt, envelopeText, freshState, userEntry } from "./shared-session-fixtures.js";
 import { EmissionRuntime } from "../src/sdk/mcp-emission/runtime.js";
 import { renewableDelivery } from "./client-fixtures.js";
+import { rescatarResultadoTardio } from "../src/shared-session/paste-runner/resultado-tardio.js";
 
 const OUTPUT: StructuredOutput = { reply: "deposited result", messages: [], notify: [], status: "done", retryable: false, artifacts: [] };
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,6 +89,62 @@ test("a restarted shared runner rescues a durable MCP deposit without a textual 
   assert.equal(next.timedOut, false);
   const rescued = JSON.parse(await readFile(join(state, "resultados-tardios", `${correlation}.json`), "utf8")) as { texto: string };
   assert.match(rescued.texto, /deposited result/u);
+});
+
+test("late shared-session results are private and retries preserve the verified archive", async () => {
+  const { state } = await freshState("late-result-private-idempotent");
+  const correlationId = "a".repeat(64);
+  const options = { quarantineFile: join(state, "quarantine"), correlationId, texto: "synthetic late result" };
+  const rescued = await rescatarResultadoTardio(options);
+  assert.ok(rescued);
+  const original = await readFile(rescued.ruta, "utf8");
+  assert.equal((await stat(rescued.ruta)).mode & 0o777, 0o600);
+  assert.equal((await stat(join(state, "resultados-tardios"))).mode & 0o777, 0o700);
+  assert.deepEqual(await rescatarResultadoTardio(options), rescued);
+  assert.equal(await readFile(rescued.ruta, "utf8"), original);
+  assert.equal(await rescatarResultadoTardio({ ...options, texto: "different result" }), undefined);
+  assert.equal(await readFile(rescued.ruta, "utf8"), original);
+});
+
+test("failed late-result persistence keeps the same runner quarantined until a durable retry", async () => {
+  const { state, home, workspace } = await freshState("late-result-failure-keeps-quarantine");
+  const nativeId = randomUUID();
+  const file = join(transcriptDirectory(home, workspace), `${nativeId}.jsonl`);
+  await writeFile(file, `${userEntry(randomUUID(), null, "earlier", nativeId)}\n`, { mode: 0o600 });
+  const tmux = new FakeTmux();
+  let lostPrompt = "";
+  tmux.onSubmit = (prompt) => { lostPrompt = prompt; };
+  const quarantineFile = join(state, "quarantine");
+  const runner = claudeRunner({ alias: "zeus", home, workspace, tmux, quarantineFile,
+    correlationTimeoutMs: 20, quietTimeoutMs: 20, sleep: delay });
+  const request = { command: "claude", args: [], harness: "claude" as const, stdin: "lost turn",
+    timeoutMs: 2_000, signal: new AbortController().signal };
+  assert.equal((await runner.run(request)).timedOut, true);
+  const correlation = correlationIdFromPrompt(lostPrompt);
+  const pending = `${quarantineFile}.${correlation}.pending`;
+  await appendFile(file, `${assistantEntry(randomUUID(), randomUUID(), envelopeText("late result", correlation), nativeId)}\n`);
+  const archiveDirectory = join(state, "resultados-tardios");
+  await writeFile(archiveDirectory, "synthetic archive obstruction");
+  tmux.onSubmit = async (prompt) => {
+    const id = randomUUID();
+    await appendFile(file, `${userEntry(id, null, prompt, nativeId)}\n${assistantEntry(randomUUID(), id, envelopeText("next result", correlationIdFromPrompt(prompt)), nativeId)}\n`);
+  };
+
+  await runner.run({ ...request, stdin: "must remain blocked" });
+  assert.equal(runner.takeDegradation()?.reason, "session_identity_unverified");
+  assert.equal(tmux.submittedCount, 1);
+  assert.match(await readFile(pending, "utf8"), /^\$0:@0:%0:4242\n$/u);
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), true);
+
+  await rm(archiveDirectory);
+  const next = await runner.run({ ...request, stdin: "retry after restoring persistence" });
+  assert.equal(next.exitCode, 0);
+  assert.match(next.stdout, /next result/u);
+  assert.equal(tmux.submittedCount, 2);
+  await assert.rejects(readFile(pending, "utf8"), { code: "ENOENT" });
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
+  const saved = await readFile(join(archiveDirectory, `${correlation}.json`), "utf8");
+  assert.match(saved, /late result/u);
 });
 
 // A paste that lands while the TUI is still generating is queued by claude as a `queued_command`

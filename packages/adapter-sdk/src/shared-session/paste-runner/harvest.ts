@@ -61,8 +61,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     const noProgress = request.timeoutKind === "no-progress";
     const injectTimeoutMs = this.options.injectTimeoutMs ?? DEFAULT_INJECT_TIMEOUT_MS;
     const injectDeadline = Date.now() + injectTimeoutMs;
-    const correlationDeadline = Date.now()
-      + (this.options.correlationTimeoutMs ?? DEFAULT_CORRELATION_TIMEOUT_MS);
+    const correlationMs = this.options.correlationTimeoutMs ?? DEFAULT_CORRELATION_TIMEOUT_MS;
+    const correlationDeadline = enteredAt + correlationMs;
     const quietMs = this.options.quietTimeoutMs ?? DEFAULT_QUIET_MS;
     let injected: { file: string; key: string; sessionId?: string } | undefined;
     let started = false;
@@ -301,44 +301,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           };
         }
 
-        const localized = injected;
-        if (localized !== undefined && lingering === undefined && pendingWake === undefined
-          && Date.now() - lastActivityAt >= quietMs) {
-          const idle = await beforeAbort(
-            () => this.paneIsIdle(activeIdentity, request.signal),
-            request.signal,
-          );
-          if (idle.aborted) continue;
-          if (idle.value) {
-            const rescued = await beforeAbort(
-              () => this.lastEnvelope(baseline, localized, correlationId),
-              request.signal,
-            );
-            if (rescued.aborted) continue;
-            const rescuedEnvelope = rescued.value;
-            if (rescuedEnvelope !== undefined) {
-              const harvested = await beforeAbort(
-                () => this.harvested(rescuedEnvelope, localized.sessionId, generating),
-                request.signal,
-              );
-              if (harvested.aborted) continue;
-              return { result: harvested.value, terminalBoundary: true };
-            }
-            await this.disarmPendingQuarantine(pending);
-            return {
-              result: result({
-                timedOut: true,
-                stderr: "el turno correlacionado terminó sin sobre y el panel volvió al prompt libre;"
-                  + " el estado de ejecución es ambiguo y el panel queda utilizable",
-              }),
-              terminalBoundary: false,
-            };
-          }
-        }
         if (dispatch !== undefined && injected === undefined && !started && Date.now() - enteredAt >= dispatchGraceMs
           && await port.promptDispatch?.state(dispatch) === "queued" // Queued, never handed to the model, pane idle: never started.
           && !await this.paneStillGenerating(activeIdentity, request.signal) && !signalAborted(request.signal)) {
-          this.undispatched.add(pending.correlationId); // May still run from grok's held queue: quarantined, never retried.
           const quarantined = await this.quarantine(activeIdentity, pending);
           const detail = `la terminal encoló el pedido (${String(dispatch.bytes)} bytes) y no se lo pasó al modelo en`
             + ` ${String(Math.round(dispatchGraceMs / 1000))} s; puede seguir en su cola y correr más tarde; caja: `
@@ -351,8 +316,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           return {
             result: await this.quarantineTimedOut(
               activeIdentity,
-              `la TUI no registró un turno correlacionado en ${String(Math.round(injectTimeoutMs / 1000))}`
-                + " s después de aceptar paste+Enter",
+              `injection deadline of ${String(injectTimeoutMs)} ms exceeded after paste+Enter;`
+                + " the TUI did not register a correlated turn",
               pending,
             ),
             terminalBoundary: false,
@@ -391,7 +356,11 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             return {
               result: await this.quarantineTimedOut(
                 activeIdentity,
-                "accepted paste+Enter never reached a correlated boundary in the transcript",
+                `correlation deadline of ${String(correlationMs)} ms exceeded after`
+                  + ` ${String(Date.now() - enteredAt)} ms since paste+Enter and`
+                  + ` ${String(Date.now() - lastActivityAt)} ms without activity`
+                  + ` (quiet window ${String(quietMs)} ms);`
+                  + " accepted paste+Enter never reached a correlated boundary in the transcript",
                 pending,
               ),
               terminalBoundary: false,
@@ -424,8 +393,8 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             result: await this.quarantineTimedOut(
               activeIdentity,
               noProgress
-                ? `the transcript did not advance for ${String(Math.round(budget / 60_000))} min; the turn is declared hung`
-                : "budget ended with no correlated outcome for the already-injected turn",
+                ? `no-progress window of ${String(budget)} ms exceeded; the transcript did not advance; the turn is declared hung`
+                : `execution deadline of ${String(budget)} ms exceeded; budget ended with no correlated outcome for the already-injected turn`,
               pending,
             ),
             terminalBoundary: false,
@@ -657,6 +626,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     const quarantineDetail = await this.quarantine(identity, pending);
     return result({
       timedOut: true,
+      timeoutReason: detail,
       stderr: `${detail}; ${quarantineDetail}`,
     });
   }

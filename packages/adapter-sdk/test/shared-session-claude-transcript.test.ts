@@ -6,6 +6,7 @@ import test from "node:test";
 import { DEGRADED_MARK, RESET_MARK } from "../src/shared-session/notice.js";
 import { readDegradations } from "../src/shared-session/degradation-log.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
+import { claudeTranscript, type TranscriptEntry } from "../src/shared-session/transcript.js";
 import {
   FakeTmux,
   TmuxResult,
@@ -18,6 +19,43 @@ import {
   freshState,
   userEntry,
 } from "./shared-session-fixtures.js";
+
+test("Claude terminal API errors fail without waiting for a silence timeout or leaking provider text", async () => {
+  const { state, home, workspace } = await freshState("terminal-api-error");
+  const sessionId = randomUUID();
+  const file = join(transcriptDirectory(home, workspace), `${sessionId}.jsonl`);
+  const tmux = new FakeTmux();
+  tmux.onSubmit = async (text) => {
+    const input = randomUUID();
+    await appendFile(file, `${userEntry(input, null, text, sessionId)}\n${JSON.stringify({
+      type: "assistant", uuid: randomUUID(), parentUuid: input, sessionId, isApiErrorMessage: true,
+      message: { role: "assistant", stop_reason: "stop_sequence", content: [{ type: "text", text: "PRIVATE_PROVIDER_ERROR" }] },
+    })}\n`);
+    tmux.paneContent = "❯ ";
+  };
+  const runner = claudeRunner({ alias: "zeus", home, workspace, tmux });
+  const adapter = await adapterFor(runner, state, "zeus", "claude");
+  await assert.rejects(execute(adapter), (error: Error & { code?: string; retryable?: boolean }) => {
+    assert.equal(error.code, "PROCESS_EXIT_AMBIGUOUS");
+    assert.equal(error.retryable, false);
+    assert.match(error.message, /terminal API error/u);
+    assert.doesNotMatch(error.message, /PRIVATE_PROVIDER_ERROR|timed out/u);
+    return true;
+  });
+});
+
+test("Claude API errors require the current correlated branch and yield to a later continuation", () => {
+  const reader = claudeTranscript("/unused", "/unused");
+  const user = { type: "user", uuid: "injected", parentUuid: null };
+  const failure = { type: "assistant", uuid: "error", parentUuid: "injected", isApiErrorMessage: true,
+    message: { stop_reason: "stop_sequence", content: [{ type: "text", text: "PRIVATE_PROVIDER_ERROR" }] } };
+  const entries: TranscriptEntry[] = [user, failure];
+  assert.equal(reader.findAnswer(entries, "injected")?.kind, "failed");
+  assert.equal(reader.findAnswer([user, { ...failure, isSidechain: true }], "injected"), undefined);
+  assert.equal(reader.findAnswer([user, { ...failure, parentUuid: "other-user" }], "injected"), undefined);
+  assert.equal(reader.findAnswer([...entries, { type: "assistant", uuid: "continued", parentUuid: "error",
+    message: { stop_reason: "tool_use", content: [] } }], "injected"), undefined);
+});
 
 // ---------------------------------------------------------------------------
 // 1. The bus keeps producing the envelope, and it does so through the real TUI.

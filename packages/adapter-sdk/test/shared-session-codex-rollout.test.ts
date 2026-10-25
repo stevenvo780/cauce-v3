@@ -292,8 +292,16 @@ test("Enter aceptado sin startedTurn queda ambiguo y bloquea un segundo pegado",
     timeoutMs: 2_000,
     signal: new AbortController().signal,
   });
-  assert.equal(tmux.submittedCount, 2, "el tercer pedido sí entra por la caja de codex");
-  assert.match(third.stdout, /codex recuperado/u);
+  assertExecutionPrevented(runner, third, "session_identity_unverified");
+  assert.equal(tmux.submittedCount, 1, "una caja libre no acredita cierre del pedido anterior");
+
+  tmux.panePid = "9999";
+  const fourth = await runner.run({
+    command: "codex", args: [], harness: "codex", stdin: "continuar en una generación nueva",
+    timeoutMs: 2_000, signal: new AbortController().signal,
+  });
+  assert.equal(tmux.submittedCount, 2, "la generación nueva sí recibe el pedido siguiente");
+  assert.match(fourth.stdout, /codex recuperado/u);
   assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false);
 });
 

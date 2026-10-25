@@ -63,8 +63,6 @@ export abstract class PasteSessionRunnerBase<E> {
   protected exactSessionId: string | undefined;
   /** In-memory fallback if tmux could not persist the quarantine mark. */
   protected locallyQuarantined: PaneIdentity | undefined;
-  protected readonly heldQuarantines = new Map<string, PendingQuarantine>();
-  protected readonly undispatched = new Set<string>(); // Held in the TUI's own queue: only a late envelope or a new generation lifts them.
 
   protected constructor(protected readonly options: PasteSessionOptions<E>) {}
 
@@ -135,24 +133,20 @@ export abstract class PasteSessionRunnerBase<E> {
         }
       }
       if (sobreTardio === undefined) continue;
+      const rescued = await beforeDeadline(rescatarResultadoTardio({
+        quarantineFile, correlationId: candidate.correlationId, texto: sobreTardio,
+      }), this.quarantineDeadline());
+      if (!rescued.completed || rescued.value === undefined) continue;
       const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(candidate.file),
         this.quarantineDeadline(),
       );
       if (cleared.completed && cleared.value === true) {
         clearedCurrent = true;
-        const rescatado = await rescatarResultadoTardio({
-          quarantineFile,
-          correlationId: candidate.correlationId,
-          texto: sobreTardio,
-        });
-        if (rescatado !== undefined) {
-          this.options.onNotice?.(
-            "un turno terminó DESPUÉS de que su entrega muriera y su respuesta se habría perdido:"
-              + ` rescatada en ${rescatado.ruta} (correlación ${candidate.correlationId})`,
-          );
-        }
-        this.heldQuarantines.delete(candidate.correlationId);
+        this.options.onNotice?.(
+          "un turno terminó DESPUÉS de que su entrega muriera y su respuesta se habría perdido:"
+            + ` rescatada en ${rescued.value.ruta} (correlación ${candidate.correlationId})`,
+        );
       }
     }
     if (!clearedCurrent) return;
@@ -299,7 +293,6 @@ export abstract class PasteSessionRunnerBase<E> {
 
   /** Called only after proven no-paste or a correlated/generation-aware terminal boundary. */
   protected async disarmPendingQuarantine(pending: PendingQuarantine): Promise<void> {
-    this.heldQuarantines.delete(pending.correlationId);
     if (pending.file !== undefined) {
       await beforeDeadline(
         this.quarantinePersistence().clear(pending.file),
@@ -381,7 +374,6 @@ export abstract class PasteSessionRunnerBase<E> {
     forceTerminate = false,
   ): Promise<string> {
     this.locallyQuarantined = identity;
-    this.heldQuarantines.set(pending.correlationId, pending);
     const fileMarked = this.options.quarantineFile === undefined
       ? false
       : (await beforeDeadline(

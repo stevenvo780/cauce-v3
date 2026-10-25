@@ -457,10 +457,10 @@ export class HarnessAdapter {
     if (result.timedOut) {
       throw new ProcessExecutionError(
         "EXECUTION_TIMEOUT_AMBIGUOUS",
-        request.timeoutKind === "no-progress"
-          ? `Harness timed out: ${String(Math.round(request.timeoutMs / 60_000))} min without progress, or an earlier`
-            + " harness-specific deadline (see the harness log); completion state is unknown and requires manual replay"
-          : "Harness exceeded its execution deadline; completion state is unknown and requires manual replay",
+        `Harness timed out: ${result.timeoutReason ?? (request.timeoutKind === "no-progress"
+          ? `no progress for ${String(request.timeoutMs)} ms`
+          : `execution deadline of ${String(request.timeoutMs)} ms exceeded`)};`
+          + " completion state is unknown and requires manual replay",
         false,
       );
     }
