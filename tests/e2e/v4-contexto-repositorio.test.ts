@@ -6,22 +6,23 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { newTrustedPage } from './console-functional-browser.fixtures.js';
+import { startContextBackupFixture } from './context-backup-browser.fixtures.js';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page,
 } from './v4-console-real-browser.helpers.js';
 
 const execute = promisify(execFile);
-const task = 'e2e-a10-contextos-1025b';
+const task = 'e2e-copias-404-1025';
 const run = randomUUID().slice(0, 8);
 const owner = syntheticPerson('repository', run);
 const alias = `zz-canary-repo-${run}`;
-const evidence = resolve('.delegados/v4/recibos', task, 'repository-runtime');
+const evidence = resolve('.delegados/v4/recibos', task, run, 'repository');
 const mission = 'Contexto guardado antes de recuperar el remoto de laboratorio.';
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
 const initialDeadlineFactor = process.env.CAUCE_PLAZOS_FACTOR;
-let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
+let fixture: Awaited<ReturnType<typeof startContextBackupFixture>> | undefined;
 let directory = '';
 let broker = '';
 let remote = '';
@@ -93,7 +94,7 @@ beforeAll(async () => {
   await git(broker, ['remote', 'add', 'origin', `git://127.0.0.1:${String(port)}/origin.git`]);
   const previous = process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
   process.env.CAUCE_CONTEXT_REPOSITORY_ROOT = broker;
-  try { fixture = await startConsoleFunctionalFixture(); }
+  try { fixture = await startContextBackupFixture(); }
   finally {
     if (previous === undefined) delete process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
     else process.env.CAUCE_CONTEXT_REPOSITORY_ROOT = previous;
@@ -134,9 +135,32 @@ describe('repositorio de contexto con Chromium, PostgreSQL y Git reales', () => 
         VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`,
       [tenant, alias, `zz-canary-${run}`, join(directory, 'agent'), join(directory, 'agent/state'), owner.company.slug]);
       await active().database.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,'office',$2,'agent')", [tenant, alias]);
-      errors.expectHttpError(`/v3/console/spaces/${tenant}/${alias}/backups`, 404);
       await page.goto(`${active().baseUrl}/messages/${tenant}/${alias}?view=context`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 20_000 });
+      const emptyBackups = page.getByRole('region', { name: 'Backup del espacio', exact: true })
+        .getByText('No hay copias guardadas de este espacio.', { exact: true });
+      await emptyBackups.waitFor({ timeout: 20_000 });
+      const backupPath = `/v3/console/spaces/${tenant}/${alias}/backups`;
+      const backups = await apiGet(page, backupPath);
+      expect(backups).toEqual({ status: 200, body: { backups: [] } });
+      const storedBackups = await active().database.pool.query<{ count: number }>(
+        'SELECT count(*)::integer AS count FROM space_backups WHERE tenant_id=$1 AND alias=$2', [tenant, alias]);
+      expect(storedBackups.rows).toEqual([{ count: 0 }]);
+      const screenshots: string[] = [];
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await emptyBackups.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
+        expect(await emptyBackups.isVisible()).toBe(true);
+        const file = `empty-backups-${String(viewport.width)}x${String(viewport.height)}.png`;
+        await page.screenshot({ path: join(evidence, file) });
+        screenshots.push(file);
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await writeFile(join(evidence, 'empty-backups.json'), JSON.stringify({
+        run, tenant, alias, request: { method: 'GET', path: backupPath, ...backups },
+        postgres: { table: 'space_backups', count: storedBackups.rows[0]?.count },
+        ui: 'No hay copias guardadas de este espacio.', screenshots,
+      }, null, 2), { mode: 0o600 });
       await page.getByRole('tab', { name: 'Git', exact: true }).click();
       await page.getByText('Esta instancia todavía no tiene un repositorio Git vinculado por el servidor.', { exact: true }).waitFor({ timeout: 20_000 });
       expect(await page.getByLabel('Commit completo', { exact: true }).count()).toBe(0);
@@ -189,7 +213,6 @@ describe('repositorio de contexto con Chromium, PostgreSQL y Git reales', () => 
       expect(persisted.body).toMatchObject({ version: 1, files: [{ path: 'context/mission.md', content: mission }],
         sync: { state: 'synced', git_commit: failed.git_commit } });
       expect((await active().database.pool.query('SELECT version FROM agent_context_versions WHERE tenant_id=$1 AND alias=$2', [tenant, alias])).rowCount).toBe(1);
-      errors.expectHttpError(`/v3/console/spaces/${tenant}/${alias}/backups`, 404);
       await page.reload({ waitUntil: 'domcontentloaded' });
       const reloaded = await showVersions(page);
       await reloaded.getByText('Sincronizado', { exact: true }).waitFor({ timeout: 20_000 });

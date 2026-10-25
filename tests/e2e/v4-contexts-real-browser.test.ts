@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { newTrustedPage } from './console-functional-browser.fixtures.js';
+import { startContextBackupFixture } from './context-backup-browser.fixtures.js';
 import { browserDocker } from './browser-owned-lifecycle.js';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, login,
@@ -16,11 +18,11 @@ const teammateAlias = `testigo-${run}`;
 const agentAlias = `contexto-${run}`;
 const initialMission = 'Misión inicial del agente de prueba.';
 const updatedMission = 'Misión revisada por la persona dueña.';
-const artifactDirectory = '.delegados/v4/recibos/e2e-a10-contextos-1025b';
+const artifactDirectory = join('.delegados/v4/recibos/e2e-copias-404-1025', run, 'contexts');
 const secretMission = 'No guardar esta directiva.\npassword: hunter2hunter2';
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
 const originalDeadlineFactor = process.env.CAUCE_PLAZOS_FACTOR;
-let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
+let fixture: Awaited<ReturnType<typeof startContextBackupFixture>> | undefined;
 let tenant = '';
 let ownerId = '';
 
@@ -51,7 +53,6 @@ async function register(page: V4Page, person: typeof owner): Promise<void> {
 }
 
 async function openAgentContext(page: V4Page): Promise<void> {
-  errors.expectHttpError(`/v3/console/spaces/${tenant}/${agentAlias}/backups`, 404);
   await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
   await page.getByRole('region', { name: `Sala ${tenant}/office`, exact: true }).getByRole('button').first().click();
@@ -79,7 +80,7 @@ beforeAll(async () => {
   const repositoryRoot = process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
   delete process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
   try {
-    fixture = await startConsoleFunctionalFixture();
+    fixture = await startContextBackupFixture();
     await mkdir(artifactDirectory, { recursive: true });
     await writeFile(`${artifactDirectory}/versiones-volumenes.json`,
       (await browserDocker(['inspect', '--format', '{{json .Mounts}}', fixture.database.container.getId()])).stdout, { mode: 0o600 });
@@ -138,6 +139,32 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     });
     const versions = page.getByRole('region', { name: 'Versiones de contexto', exact: true });
     await mkdir(artifactDirectory, { recursive: true });
+    await step(page, 'acreditar el espacio sin copias guardadas', async () => {
+      const emptyBackups = page.getByRole('region', { name: 'Backup del espacio', exact: true })
+        .getByText('No hay copias guardadas de este espacio.', { exact: true });
+      await emptyBackups.waitFor({ timeout: 20_000 });
+      const backupPath = `/v3/console/spaces/${tenant}/${agentAlias}/backups`;
+      const backups = await apiGet(page, backupPath);
+      expect(backups).toEqual({ status: 200, body: { backups: [] } });
+      const storedBackups = await pool().query<{ count: number }>(
+        'SELECT count(*)::integer AS count FROM space_backups WHERE tenant_id=$1 AND alias=$2', [tenant, agentAlias]);
+      expect(storedBackups.rows).toEqual([{ count: 0 }]);
+      const screenshots: string[] = [];
+      for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        await emptyBackups.evaluate(element => { element.scrollIntoView({ block: 'center' }); });
+        expect(await emptyBackups.isVisible()).toBe(true);
+        const file = `empty-backups-${String(viewport.width)}x${String(viewport.height)}.png`;
+        await page.screenshot({ path: join(artifactDirectory, file) });
+        screenshots.push(file);
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await writeFile(join(artifactDirectory, 'empty-backups.json'), JSON.stringify({
+        run, tenant, alias: agentAlias, request: { method: 'GET', path: backupPath, ...backups },
+        postgres: { table: 'space_backups', count: storedBackups.rows[0]?.count },
+        ui: 'No hay copias guardadas de este espacio.', screenshots,
+      }, null, 2), { mode: 0o600 });
+    });
     await versions.getByText('No hay contextos guardados. Añade un archivo para comenzar.', { exact: true }).waitFor();
     await page.screenshot({ path: `${artifactDirectory}/versiones-vacias-desktop.png`, fullPage: true });
     await step(page, 'crear versión base de la misión', async () => {
@@ -232,7 +259,6 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
     const second = await freshPage('cas-second');
     for (const page of [first, second]) {
       await login(page, base(), owner);
-      errors.expectHttpError(`/v3/console/spaces/${tenant}/${agentAlias}/backups`, 404);
       await page.goto(agentPageUrl(), { waitUntil: 'domcontentloaded' });
       await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
       await page.getByText(/Versión 3 · Restauración · owner/u).waitFor({ timeout: 20_000 });
@@ -305,7 +331,6 @@ describe('contextos versionados en navegador real contra gateway y PostgreSQL re
   it('pagina versiones anteriores en móvil sin duplicados ni pérdida de historial', async () => {
     const page = await freshPage('history-pagination');
     await login(page, base(), owner);
-    errors.expectHttpError(`/v3/console/spaces/${tenant}/${agentAlias}/backups`, 404);
     await page.goto(agentPageUrl(), { waitUntil: 'domcontentloaded' });
     await page.getByRole('tab', { name: 'Versiones y aplicación', exact: true }).click();
     const versions = page.getByRole('region', { name: 'Versiones de contexto', exact: true });
