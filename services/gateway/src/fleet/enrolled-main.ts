@@ -66,7 +66,7 @@ export async function runEnrolledFleetHost(config: FleetHostConfig): Promise<voi
   const authFault = authOptions === undefined ? undefined : await hostProviderAuthPolicyFault(authOptions);
   if (authFault !== undefined) process.stderr.write(`Host provider authentication policy is unusable: ${authFault}\n`);
   const backups = new SpaceBackupHost(channel, { python: config.command.python, policyFile: config.command.policyFile,
-    projectRoot: config.projectRoot, ...(config.command.timeoutMs === undefined ? {} : { timeoutMs: config.command.timeoutMs }) });
+    projectRoot: config.projectRoot });
   const authentication = new QuotaHostAuthentication(channel, quotaSource, { host: config.host, command: config.command,
     projectRoot: config.projectRoot,
     verify: (execution, signal) => verifyQuotaAuthenticationHostCommand(config.command, execution, signal) });
