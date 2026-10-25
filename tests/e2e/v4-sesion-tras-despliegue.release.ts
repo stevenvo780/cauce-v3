@@ -4,6 +4,7 @@ import { cp, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { expect } from 'vitest';
+import { docker, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { HostReleaseManifestSchema, HostSetupConfigSchema } from '../../services/gateway/src/fleet/host-setup.js';
 import { cancelDeployReceipts, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import { cancelDeployTuiRuntime } from './v4-fleet-cancel-deploy.tui.js';
@@ -26,6 +27,7 @@ interface SourceProof {
   builds: Record<string, { sha256: string; inputs: string[] }>;
   lifecycleClosure?: unknown;
   sourceArchiveSha256?: string;
+  fixture?: { providerSha256: string; descriptors: Record<string, string>; imageBuilder: string; imageReference: string };
 }
 export interface SessionRelease {
   phase: string;
@@ -33,6 +35,7 @@ export interface SessionRelease {
   directory: string;
   source: SourceProof;
   manifest: ReturnType<typeof HostReleaseManifestSchema.parse>;
+  imageBuilder?: string;
 }
 
 async function jsonFile(filename: string, value: unknown): Promise<void> {
@@ -134,7 +137,8 @@ print(json.dumps({'packetClosed':True,'modules':modules,'sha256':proof}))
 `;
 
 export async function buildSessionRelease(fixture: CancelDeployFixture, phase: string, reference: string,
-  workingTree = false): Promise<SessionRelease> {
+  workingTree = false, overlay?: { runtime: ComputerRuntimeBundle; image: string; imageReference: string;
+    stageDescriptors(adapter: string): Promise<Record<string, string>> }): Promise<SessionRelease> {
   const directory = join(cancelDeployReceipts, 'release-' + phase);
   await mkdir(directory, { recursive: true });
   const source = await snapshotSource(directory, reference, workingTree), stage = join(directory, 'stage');
@@ -150,34 +154,54 @@ export async function buildSessionRelease(fixture: CancelDeployFixture, phase: s
   for (const destination of ['adapter/descriptors', 'adapter/packages/adapter-sdk/dist/descriptors']) {
     await cp(join(directory, 'source/packages/adapter-sdk/descriptors'), join(stage, destination), { recursive: true });
   }
-  await writeFile(join(stage, 'adapter/provider-cli.py'), cancelDeployTuiRuntime.providerCli, { mode: 0o755 });
+  const runtime = overlay?.runtime ?? cancelDeployTuiRuntime;
+  await writeFile(join(stage, 'adapter/provider-cli.py'), runtime.providerCli, { mode: 0o755 });
+  if (overlay) {
+    if (fixture.deploymentImages.get(overlay.imageReference) !== overlay.image) throw new Error('the fixture image is not owned by this run');
+    expect(await docker(['image', 'inspect', '--format', '{{.Id}}', overlay.imageReference])).toBe(overlay.image);
+    source.fixture = { providerSha256: sha256(runtime.providerCli),
+      descriptors: await overlay.stageDescriptors(join(stage, 'adapter')), imageBuilder: overlay.image, imageReference: overlay.imageReference };
+  }
   await writeFile(join(stage, 'adapter/package.json'), '{"type":"module"}\n');
   await compile(directory, 'packages/adapter-sdk/src/bin/codex.ts', 'adapter/src/bin/codex.js', source);
   await compile(directory, 'services/gateway/src/fleet/main.ts', 'services/gateway/dist/fleet/main.js', source);
   const epoch = (await execute('git', ['show', '-s', '--format=%ct', source.revision], { cwd: root })).stdout.trim();
   const releaseDirectory = join(directory, 'packed'), packer = join(directory, 'source/ops/scripts/host-release.py');
   const packed = await execute('python3', [packer, 'pack', '--stage', stage, '--out', releaseDirectory, '--revision', source.revision,
-    '--epoch', epoch, '--image', fixture.computer.agentImage], { timeout: 600_000, maxBuffer: 8 * 1024 * 1024 });
+    '--epoch', epoch, '--image', overlay?.imageReference ?? fixture.computer.agentImage], { timeout: 600_000, maxBuffer: 8 * 1024 * 1024 });
   const manifest = HostReleaseManifestSchema.parse(JSON.parse(packed.stdout));
+  if (overlay) {
+    expect(await docker(['image', 'inspect', '--format', '{{.Id}}', overlay.image])).toBe(overlay.image);
+    if (!manifest.image) throw new Error('the controlled fixture release lacks its image');
+    fixture.deploymentImages.set('cauce-host-image:' + manifest.image.id.replace(/^sha256:/u, ''), overlay.image);
+  }
   const verified = await execute('python3', [packer, 'verify', releaseDirectory, '--revision', source.revision], { timeout: 600_000 });
   await writeFile(join(directory, 'pack.log'), packed.stdout + packed.stderr + verified.stdout + verified.stderr, { mode: 0o600 });
   await jsonFile(join(directory, 'source-manifest.json'), { ...source, syntheticProvider: true,
-    providerSha256: sha256(cancelDeployTuiRuntime.providerCli), builderImage: fixture.computer.agentImage,
+    providerSha256: sha256(runtime.providerCli), builderImage: overlay?.image ?? fixture.computer.agentImage,
     archiveConfigImage: manifest.image?.id });
-  return { phase, revision: source.revision, directory: releaseDirectory, source, manifest };
+  return { phase, revision: source.revision, directory: releaseDirectory, source, manifest,
+    ...(overlay === undefined ? {} : { imageBuilder: overlay.image }) };
 }
 
 export async function installSessionRelease(fixture: CancelDeployFixture, release: SessionRelease): Promise<unknown> {
   const current = fixture.setup.approvedConfiguration(), bundle = current.policy.bundles.codex;
   const { manifest } = release;
   if (!bundle || !manifest.image || !manifest.pins.adapter_digest) throw new Error('the release lacks its measured bundle or image');
-  expect(manifest.image.id).toBe(fixture.computer.configImage);
+  const imageId = manifest.image.id;
+  if (release.imageBuilder === undefined) expect(manifest.image.id).toBe(fixture.computer.configImage);
+  else {
+    expect(fixture.deploymentImages.get('cauce-host-image:' + manifest.image.id.replace(/^sha256:/u, ''))).toBe(release.imageBuilder);
+    expect(await docker(['image', 'inspect', '--format', '{{.Id}}', release.imageBuilder])).toBe(release.imageBuilder);
+  }
   fixture.setup.publish(HostSetupConfigSchema.parse({ ...current,
     release: { name: 'release', revision: release.revision, path: join(release.directory, manifest.release.file),
       sha256: manifest.release.sha256, size: manifest.release.size },
     image: { name: 'agent-image', path: join(release.directory, manifest.image.file),
       sha256: manifest.image.sha256, size: manifest.image.size, id: manifest.image.id },
-    policy: { ...current.policy, bundles: { ...current.policy.bundles, codex: { ...bundle, digest: manifest.pins.adapter_digest, shared_tui: true } } },
+    policy: { ...current.policy,
+      container_templates: current.policy.container_templates.map(template => ({ ...template, image: imageId })),
+      bundles: { ...current.policy.bundles, codex: { ...bundle, digest: manifest.pins.adapter_digest, shared_tui: true } } },
   }));
   const result = await fixture.computer.cli(['setup', '--install-root', fixture.computer.installRoot]);
   await jsonFile(join(cancelDeployReceipts, 'setup-' + release.phase + '.json'), result);

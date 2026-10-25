@@ -106,14 +106,16 @@ export async function assertNativeSessionTurn(actor: CancelDeployActor, live: Re
   return { deliveryId: row.id, witness };
 }
 
-export async function collectSessionFailure(fixture: CancelDeployFixture, actor: CancelDeployActor | undefined): Promise<void> {
+export async function collectSessionFailure(fixture: CancelDeployFixture, actor: CancelDeployActor | undefined, label = ''): Promise<void> {
+  if (label && !/^[a-z0-9-]+$/u.test(label)) throw new Error('the diagnostic label is unsupported');
+  const prefix = label ? label + '-' : '';
   const journal = await fixture.computer.onComputer(['journalctl', '--user', '-u', fixture.unit, '--no-pager', '-n', '250']);
-  await writeFile(join(cancelDeployReceipts, 'executor-journal.log'), journal.stdout + journal.stderr, { mode: 0o600 });
+  await writeFile(join(cancelDeployReceipts, prefix + 'executor-journal.log'), journal.stdout + journal.stderr, { mode: 0o600 });
   if (actor) {
     const log = await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c',
       'import pathlib,sys;p=pathlib.Path("/home/cauce/.cauce")/sys.argv[1]/".cauce-adapter.log";print(p.read_text()[-262144:] if p.exists() else "")',
       actor.runtime]);
-    await writeFile(join(cancelDeployReceipts, 'adapter.log'), log, { mode: 0o600 });
+    await writeFile(join(cancelDeployReceipts, prefix + 'adapter.log'), log, { mode: 0o600 });
   }
   const fixturePath = join(process.cwd(), 'tests/e2e/v4-fleet-cancel-deploy.helpers.ts');
   await sessionReceipt('harness-overlay', { path: 'tests/e2e/v4-fleet-cancel-deploy.helpers.ts',
