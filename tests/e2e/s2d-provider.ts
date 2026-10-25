@@ -14,7 +14,10 @@ const transcript=path.join(transcriptRoot,harness==='codex'?'rollout-owned-'+nat
 function append(value){fs.appendFileSync(transcript,JSON.stringify(value)+'\n',{mode:0o600});}
 if(harness==='codex')append({type:'session_meta',payload:{id:native,source:'cli'}});
 let pending='',draft='',inputBytes=0,submits=0,cursorAtStart=false,cursorLine=0,cursorColumn=0;
-const status=()=>fs.writeFileSync(path.join(config,'s2d-provider-state.json'),JSON.stringify({inputBytes,submits,draftLength:draft.length,pid:process.pid}),{mode:0o600});
+const status=()=>{
+ const target=path.join(config,'s2d-provider-state.json'),temporary=target+'.tmp-'+process.pid;
+ fs.writeFileSync(temporary,JSON.stringify({inputBytes,submits,draftLength:draft.length,pid:process.pid}),{mode:0o600});fs.renameSync(temporary,target);
+};
 const render=()=>{
  const composed=draft.split('\n').map((line,index)=>(index?'  ':'')+line).join('\r\n');
  const content=draft===''?'\x1b[2m'+${JSON.stringify(IDLE_PLACEHOLDER)}+'\x1b[22m':'\x1b[38;2;225;225;225m'+composed+'\x1b[0m';
