@@ -39,6 +39,25 @@ class ProbeFailure(ProviderProofError):
         self.reason = reason
 
 
+def space_turn_tmpdir(state_directory: str) -> str:
+    """Private turn temp for a container agent: `<state>/space/tmp`, created at 0700 when missing.
+
+    The container root is read-only, so the turn cannot use it. A profile directory the provider
+    still needs stays under its own variable; this path is only TMPDIR.
+    """
+    space = pathlib.Path(state_directory) / 'space'
+    target = space / 'tmp'
+    for directory in (space, target):
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError('space temp path is not a private directory') from None
+        else:
+            os.chmod(directory, 0o700)
+    return str(target)
+
+
 def probe_timeout(elapsed: float, message: str = 'provider command timed out') -> ProbeFailure:
     return ProbeFailure(f'probe_timeout after {min(9999, max(0, math.floor(elapsed)))}s', message)
 

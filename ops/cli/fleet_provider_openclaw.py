@@ -94,12 +94,19 @@ def environment(binding: dict, agent: dict) -> dict:
     key = agent['runtime_key']
     if re.fullmatch(r'[a-z][a-z0-9-]{0,63}', key) is None:
         raise ValueError('OpenClaw runtime identity is invalid')
+    from fleet_provider_identity import space_turn_tmpdir
+    state = pathlib.Path(agent['state_directory'])
+    # space/projects is already the container cwd. A sibling state/workspace is the native profile
+    # layout only. NODE_COMPILE_CACHE stays in the profile: node must keep it across turns.
+    container = agent.get('runtime_mode') == 'container'
     return {'OPENCLAW_HOME': str(root), 'OPENCLAW_STATE_DIR': str(root), 'OPENCLAW_CONFIG_PATH': str(root / 'openclaw.json'),
             'OPENCLAW_AGENT_DIR': str(root / 'agents' / key / 'agent'), 'CAUCE_OPENCLAW_AGENT_ID': key,
-            'CAUCE_OPENCLAW_WORKSPACE': str(pathlib.Path(agent['state_directory']) / 'workspace'), 'CAUCE_OPENCLAW_LOCAL': '1', 'CAUCE_OPENCLAW_DIST_DIR': str(pathlib.Path(binding['openclaw']['auth_list_source']).parent),
+            'CAUCE_OPENCLAW_WORKSPACE': str(state / 'space' / 'projects' if container else state / 'workspace'),
+            'CAUCE_OPENCLAW_LOCAL': '1', 'CAUCE_OPENCLAW_DIST_DIR': str(pathlib.Path(binding['openclaw']['auth_list_source']).parent),
             'CODEX_HOME': str(root / '.external-cli-disabled'),
             'CLAUDE_CONFIG_DIR': str(root / ('claude' if claude_cli(binding['openclaw']) else '.external-cli-disabled')),
-            'TMPDIR': str(root / 'tmp'), 'NODE_COMPILE_CACHE': str(root / 'tmp' / 'node-compile-cache')}
+            'TMPDIR': space_turn_tmpdir(agent['state_directory']) if container else str(root / 'tmp'),
+            'NODE_COMPILE_CACHE': str(root / 'tmp' / 'node-compile-cache')}
 
 
 def profile_id(account: str) -> str:

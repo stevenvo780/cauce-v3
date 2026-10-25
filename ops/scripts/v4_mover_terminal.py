@@ -142,7 +142,7 @@ def mapping(request, config):
                  stateDirectory=placement['state_directory'], dockerHost=placement['host_id'],
                  systemdUser=placement['systemd_user'])
     if entry['harness'] in ('openclaw', 'muse'):
-        entry['workspace'] = placement['state_directory'] + ('/workspace' if entry['harness'] == 'openclaw' else '/space/projects')
+        entry['workspace'] = placement['state_directory'] + '/space/projects'
     else:
         entry.pop('workspace', None)
     return {**config, 'aliases': {**config['aliases'], alias: entry}}

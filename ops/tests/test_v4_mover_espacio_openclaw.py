@@ -35,25 +35,29 @@ class SeedWorkspaceTest(unittest.TestCase):
 
     def test_marked_legacy_root_seeds_its_top_level_documents_without_bootstrap(self):
         self.assertEqual(host.seed_workspace(self.request), ['AGENTS.md', 'DIRECTIVAS-OPERATIVAS.md', 'IDENTITY.md'])
-        workspace = self.state / 'workspace'
-        self.assertEqual(workspace.stat().st_mode & 0o777, 0o700)
-        self.assertEqual(sorted(path.name for path in workspace.iterdir()), ['AGENTS.md', 'DIRECTIVAS-OPERATIVAS.md', 'IDENTITY.md'])
+        workspace = self.space / 'projects'
+        self.assertFalse((self.state / 'workspace').exists())
         self.assertEqual((workspace / 'IDENTITY.md').read_text(), '- **Name:** Argos\n')
-        self.assertTrue(all(path.stat().st_mode & 0o777 == 0o600 and not path.is_symlink() for path in workspace.iterdir()))
-        self.assertTrue((self.space / 'projects' / 'argos-clawd' / 'AGENTS.md').exists())
+        for name in ('AGENTS.md', 'DIRECTIVAS-OPERATIVAS.md', 'IDENTITY.md'):
+            path = workspace / name
+            self.assertFalse(path.is_symlink())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertTrue((workspace / 'argos-clawd' / 'AGENTS.md').exists())
+        self.assertFalse((workspace / 'BOOTSTRAP.md').exists())
 
     def test_existing_workspace_content_is_never_overwritten(self):
-        workspace = self.state / 'workspace'
-        workspace.mkdir(mode=0o700)
+        workspace = self.space / 'projects'
         (workspace / 'AGENTS.md').write_text('otro\n')
         with self.assertRaises(ValueError):
             host.seed_workspace(self.request)
         self.assertEqual((workspace / 'AGENTS.md').read_text(), 'otro\n')
+        self.assertFalse((self.state / 'workspace').exists())
 
     def test_without_a_marked_root_nothing_is_created(self):
         self.request['roots'][0].pop('workspace')
         self.assertEqual(host.seed_workspace(self.request), [])
         self.assertFalse((self.state / 'workspace').exists())
+        self.assertFalse((self.space / 'projects' / 'AGENTS.md').exists())
 
 
 class PlanWorkspaceMarkTest(unittest.TestCase):

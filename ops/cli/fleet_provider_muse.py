@@ -18,6 +18,7 @@ from fleet_provider_identity import (
     probe_failed,
     profile_jwt_candidates,
     read_profile_json,
+    space_turn_tmpdir,
     validate_provider_binding,
     validate_provider_selection,
 )
@@ -46,12 +47,14 @@ def environment(binding: dict, agent: dict) -> dict:
     root = validate_provider_binding(binding, agent, 'muse')
     validate_provider_selection(agent, 'muse', EFFORTS)
     validate_definition(binding.get('muse'), binding['provider'])
-    # The container root is read-only: Muse's reviewer sandbox needs a writable temp root inside the profile.
+    # The container root is read-only. The prompt file muse-cauce writes follows TMPDIR, so a container
+    # turn uses the space tmp. Native probes keep the profile temp: they have no space layout.
+    container = agent.get('runtime_mode') == 'container'
     return {'XDG_CONFIG_HOME': str(root / 'config'), 'XDG_DATA_HOME': str(root / 'data'), 'MUSE_NO_AUTO_UPDATE': '1',
             'CAUCE_MUSE_CLI_COMMAND': binding['command'], 'CAUCE_MUSE_CLI_SHA256': binding['command_sha256'],
-            'TMPDIR': str(root / 'tmp'),
+            'TMPDIR': space_turn_tmpdir(agent['state_directory']) if container else str(root / 'tmp'),
             **({'CAUCE_MUSE_WORKSPACE': str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')}
-               if agent.get('runtime_mode') == 'container' else {})}
+               if container else {})}
 
 
 def validate_binding(binding: dict, agent: dict) -> None:

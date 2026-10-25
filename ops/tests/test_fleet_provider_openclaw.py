@@ -179,6 +179,24 @@ class OpenClawProviderTest(unittest.TestCase):
                 driver.prepare(self.binding, self.agent)
         self.assertEqual(list(self.state.iterdir()), [self.state / 'workspace'])
 
+    def test_container_turn_temp_is_the_space_and_the_sibling_workspace_is_not_created(self):
+        state = self.root / 'container-state'
+        state.mkdir(mode=0o700)
+        agent = {**self.agent, 'runtime_mode': 'container', 'state_directory': str(state)}
+        (self.profile / 'openclaw.json').unlink()
+        env = driver.environment(self.binding, agent)
+        temporary = state / 'space' / 'tmp'
+        self.assertEqual(env['TMPDIR'], str(temporary))
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(temporary.is_symlink())
+        self.assertEqual(env['NODE_COMPILE_CACHE'], str(self.profile / 'tmp' / 'node-compile-cache'))
+        self.assertEqual(env['CAUCE_OPENCLAW_WORKSPACE'], str(state / 'space' / 'projects'))
+        driver.prepare(self.binding, agent)
+        self.assertFalse((state / 'workspace').exists())
+        self.assertEqual((state / 'space' / 'projects').stat().st_mode & 0o777, 0o700)
+        written = json.loads((self.profile / 'openclaw.json').read_text())
+        self.assertEqual(written['agents']['list'][0]['workspace'], env['CAUCE_OPENCLAW_WORKSPACE'])
+
     def test_config_is_idempotent_and_rejects_foreign_changes_without_overwrite(self):
         config = self.profile / 'openclaw.json'
         before = config.read_bytes()

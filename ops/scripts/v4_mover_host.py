@@ -140,13 +140,12 @@ def unpack(request, work):
 
 
 def seed_workspace(request):
-    """Give a moved OpenClaw agent its own documents where V4 OpenClaw reads them.
+    """Copy a moved OpenClaw agent's identity documents into `space/projects`.
 
-    V4 OpenClaw reads `<state_directory>/workspace` (fleet_provider_openclaw.environment), a sibling of the restored
-    space, while the copy puts the legacy workspace (`clawd`) under `space/<target>`. Without this step the new
-    workspace starts empty and the agent loses its identity (Argos, 21-oct). The root the plan marks `workspace`
-    lends its top-level Markdown documents —AGENTS, SOUL, IDENTITY, USER, MEMORY and the files they cite— as new
-    private copies; the restored space stays the verified copy. OpenClaw's first-run BOOTSTRAP.md is never carried.
+    That directory is the container cwd. The copy puts the legacy workspace (`clawd`) under `space/<target>`,
+    so the top-level Markdown would stay inside that subtree and the cwd would start without it (Argos, 21-oct).
+    The marked root lends those documents as new private copies beside the restored tree. A sibling
+    `state/workspace` is not created. An existing document is refused. BOOTSTRAP.md is never carried.
     """
     roots = [item for item in request['roots'] if item.get('workspace') is True]
     if not roots:
@@ -158,15 +157,19 @@ def seed_workspace(request):
     try:
         source = descend(parent, space.name + '/' + roots[0]['target'])
         try:
-            target = descend(parent, 'workspace', create=True)
+            target = descend(parent, space.name + '/projects', create=True)
             try:
-                if os.listdir(target):
-                    raise ValueError('destination OpenClaw workspace is not empty')
                 seeded = []
                 for name in sorted(os.listdir(source)):
                     if name.startswith('.') or not name.endswith('.md') or name == 'BOOTSTRAP.md' \
                             or not stat.S_ISREG(os.stat(name, dir_fd=source, follow_symlinks=False).st_mode):
                         continue
+                    try:
+                        os.stat(name, dir_fd=target, follow_symlinks=False)
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise ValueError('destination OpenClaw workspace is not empty')
                     with os.fdopen(os.open(name, OPEN_FILE, dir_fd=source), 'rb') as incoming:
                         if not stat.S_ISREG(os.fstat(incoming.fileno()).st_mode):
                             raise ValueError('workspace document changed while seeding')

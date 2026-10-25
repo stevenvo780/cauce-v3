@@ -55,10 +55,16 @@ class IsolatedProviderTests(unittest.TestCase):
         self.assertEqual(driver.environment(self.binding, self.agent), {'GROK_HOME': self.binding['path']})
         self.assertEqual(driver.login_command(self.binding), [str(self.cli), 'login', '--device-auth'])
 
-    def test_grok_container_profile_points_tmpdir_into_its_home(self):
+    def test_grok_container_profile_points_tmpdir_into_the_space(self):
         driver = self.driver('grok')
         values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container'})
-        self.assertEqual(values['TMPDIR'], values['GROK_HOME'] + '/tmp')
+        temporary = self.state / 'space' / 'tmp'
+        self.assertEqual(values['TMPDIR'], str(temporary))
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(temporary.is_symlink())
+        self.assertEqual(values['CAUCE_GROK_WORKSPACE'], str(self.state / 'space' / 'projects'))
+        self.assertNotEqual(values['TMPDIR'], values['GROK_HOME'] + '/tmp')
+        self.assertFalse((pathlib.Path(values['GROK_HOME']) / 'tmp').exists())
 
     def test_muse_profile_environment_separates_auth_and_sessions(self):
         driver = self.driver('muse')
@@ -70,6 +76,17 @@ class IsolatedProviderTests(unittest.TestCase):
         self.assertEqual(values['CAUCE_MUSE_CLI_SHA256'], self.binding['command_sha256'])
         self.assertEqual(driver.login_command(self.binding), [str(self.cli), 'login'])
         self.assertNotIn('HOME', values)
+        self.assertEqual(values['TMPDIR'], self.binding['path'] + '/tmp')
+        self.assertNotIn('CAUCE_MUSE_WORKSPACE', values)
+
+    def test_muse_container_tmpdir_is_the_space(self):
+        driver = self.driver('muse')
+        values = driver.environment(self.binding, {**self.agent, 'runtime_mode': 'container'})
+        temporary = self.state / 'space' / 'tmp'
+        self.assertEqual(values['TMPDIR'], str(temporary))
+        self.assertEqual(temporary.stat().st_mode & 0o777, 0o700)
+        self.assertFalse(temporary.is_symlink())
+        self.assertEqual(values['CAUCE_MUSE_WORKSPACE'], str(self.state / 'space' / 'projects'))
 
     def test_driver_rejects_foreign_harness_owner_and_profile_paths(self):
         for provider in ('grok', 'muse'):

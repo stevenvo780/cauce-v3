@@ -13,6 +13,7 @@ from fleet_provider_identity import (
     note_probe_exception,
     probe_failed,
     read_profile_json,
+    space_turn_tmpdir,
     validate_provider_binding,
     validate_provider_selection,
 )
@@ -29,7 +30,8 @@ def environment(binding: dict, agent: dict) -> dict:
         # The adapter seeds AGENTS.md where the harness runs (start_container's working directory).
         values['CAUCE_GROK_WORKSPACE'] = str(pathlib.Path(agent['state_directory']) / 'space' / 'projects')
         # Read-only container root: the adapter stages fd 0 under TMPDIR and grok writes temp files there.
-        values['TMPDIR'] = str(root / 'tmp')
+        # GROK_HOME stays the profile; the writable directory is the space tmp.
+        values['TMPDIR'] = space_turn_tmpdir(agent['state_directory'])
     return values
 
 

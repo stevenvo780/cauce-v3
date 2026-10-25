@@ -201,7 +201,7 @@ def target_parameters(fleet, original, plan):
 
 
 def check_workspace_mark(plan, target):
-    """V4 OpenClaw reads a workspace outside the copied space: unmarked, the moved agent starts with no identity."""
+    """OpenClaw's cwd is space/projects: the marked root is what gets seeded there."""
     marked = sum(item.get('workspace') is True for item in plan['roots'])
     if marked != (1 if target.get('harness_id') == 'openclaw' else 0):
         raise ValueError('un agente OpenClaw marca con workspace la raíz de su espacio de trabajo heredado; otro arnés no')

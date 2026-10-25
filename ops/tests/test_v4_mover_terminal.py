@@ -172,6 +172,10 @@ class TerminalMigrationTest(unittest.TestCase):
                 (self.home / 'container-aliases.json').write_text(json.dumps(generated))
                 loaded = load_container_aliases(self.home, resolve_runtime=False)
                 self.assertEqual(loaded[self.alias]['container'], 'owned')
+                if harness == 'codex':
+                    self.assertNotIn('workspace', loaded[self.alias])
+                else:
+                    self.assertEqual(loaded[self.alias]['workspace'], placement['state_directory'] + '/space/projects')
 
 
 if __name__ == '__main__':
