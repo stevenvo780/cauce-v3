@@ -148,10 +148,28 @@ async function registerOwner(page: V4Page, owner: V4Person): Promise<void> {
 
 async function openSection(page: V4Page, section: string): Promise<void> {
   const target = `${base()}/config?seccion=${section}`;
-  if (page.url() !== target) {
-    await page.goto(target, { waitUntil: 'domcontentloaded' });
+  const heading = page.getByRole('heading', { name: 'Ajustes', exact: true });
+  const visible = (): Promise<boolean> => heading.isVisible().catch(() => false);
+  // A shared-checkout reload keeps the URL and empties the document. Skipping goto
+  // then waits on a blank page. A navigation that overlaps that reload never reaches
+  // DOMContentLoaded; the next attempt does.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (page.url() === target && await visible()) return;
+    try {
+      await page.goto(target, { waitUntil: 'domcontentloaded' });
+    } catch (cause) {
+      const timedOut = cause instanceof Error && cause.message.includes('Timeout');
+      if (!timedOut || attempt === 1) throw cause;
+      continue;
+    }
+    try {
+      await heading.waitFor({ timeout: plazo(20_000) });
+      return;
+    } catch (cause) {
+      if (attempt === 1) throw cause;
+    }
   }
-  await page.getByRole('heading', { name: 'Ajustes', exact: true }).waitFor({ timeout: plazo(20_000) });
+  throw new Error('Ajustes did not render');
 }
 
 async function openPeopleAdmin(page: V4Page): Promise<void> {
