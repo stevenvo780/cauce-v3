@@ -11,6 +11,7 @@ import type { FleetHost } from '@cauce/protocol/fleet-hosts';
 import { fleetHostUsable } from '@cauce/protocol/fleet-hosts';
 import { agentHostIdOf, agentWriteBlock } from './agent-registry-create';
 import { hostUnavailableReason } from './use-fleet-hosts';
+import { placementHosts, quotaOnlyHostIds, useQuotaOnlyInputs } from './quota-only-hosts';
 import { AgentQuotaBinding } from './AgentQuotaBinding';
 import { diffConflictFields, type ConflictFieldDiff } from '../../components/conflict';
 import { ConflictNotice } from '../../components/ConflictNotice';
@@ -166,7 +167,11 @@ function AgentRegistryForm({
   const editDisabled = disabled || deleting;
   const canDelete = !hasRuntime(agent);
   const currentHost = agentHostIdOf(agent);
-  const hostOptions = [...(hosts ?? []), ...(currentHost && !hosts?.some((host) => host.host_id === currentHost)
+  const quotaInputs = useQuotaOnlyInputs(hostEditable(agent));
+  const placeable = useMemo(() => placementHosts(hosts ?? [],
+    quotaOnlyHostIds(hosts ?? [], quotaInputs.quota, quotaInputs.enrollments), draft.hostId || currentHost),
+  [hosts, quotaInputs.quota, quotaInputs.enrollments, draft.hostId, currentHost]);
+  const hostOptions = [...placeable, ...(currentHost && !hosts?.some((host) => host.host_id === currentHost)
     ? [{ host_id: currentHost, display_name: currentHost, enabled: true, status: 'unknown' } as FleetHost] : [])];
   const deletion: ConfigMutation = { resource: 'agent', action: 'delete', tenant_id: agent.tenant_id, alias: agent.alias };
 

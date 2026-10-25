@@ -246,3 +246,24 @@ it('lets a runtime agent without a host receive one and sends host_id', async ()
     resource: 'agent', action: 'update', tenant_id: 'A', alias: 'one', value: { host_id: 'torre' },
   });
 });
+
+it('no ofrece el ordenador que solo ejecuta cuotas al asignar computadora, salvo el ya elegido', async () => {
+  server.use(
+    registryAccess(),
+    http.get('http://localhost/v3/console/fleet/hosts', () => HttpResponse.json({
+      hosts: [host, { ...host, host_id: 'consulta', display_name: 'Consulta' }],
+    })),
+    http.get('http://localhost/v3/console/quota-environments', () => HttpResponse.json({
+      company_id: 'one', environments: [], operations: [], capabilities: { available: true, providers: ['codex'], actions: [],
+        hosts: [{ host_id: 'consulta', display_name: 'Consulta', providers: ['codex'], provider_actions: {} }] },
+    })),
+    http.get('http://localhost/v3/console/fleet/hosts/enrollments', () => HttpResponse.json({ enrollments: [] })),
+    http.get('http://localhost/v3/console/config', () => HttpResponse.json(snapshot)),
+  );
+  const user = userEvent.setup();
+  renderSettings({ ...snapshot, agents: [{ ...fullAgent, runtime_key: 'runtime-one', host_id: null }] });
+  await agentAction(user, 'A/one', 'Cambiar ajustes');
+  await screen.findByRole('combobox', { name: /Computadora/ });
+  await waitFor(() => { expect(screen.getByRole('option', { name: 'Torre' })).toBeInTheDocument(); });
+  await waitFor(() => { expect(screen.queryByRole('option', { name: 'Consulta' })).not.toBeInTheDocument(); });
+});
