@@ -149,6 +149,7 @@ beforeAll(async () => {
   fixture = await startCoverageFixture('oh', { extraSourceFiles: ['packages/store/src/device-authorization.ts',
     'packages/store/src/device-authorization-authority.ts', 'services/gateway/src/device-authorization.ts',
     'packages/store/src/repository/fleet-operation-recovery.ts', 'ops/cli/fleet_executor_probe_cache.py',
+    'ops/cli/fleet_executor_replacement.py',
     'ops/cli/fleet_provider_capability_probe.py', 'services/gateway/src/fleet/space-backup.failure.ts'] });
   alias = `ops${fixture.run}`; runtime = `ops-${fixture.run}`; container = `${fixture.prefix}-${runtime}`;
 }, 900_000);

@@ -51,7 +51,7 @@ async function probe(): Promise<{ running: boolean; processes: number; credentia
     + 'print(json.dumps({"processes":len(found),"credentialGeneration":json.loads(p.read_text())["generation"] if p.exists() else None}))', runtime]);
   return { running, ...JSON.parse(result) as { processes: number; credentialGeneration: string | null } };
 }
-beforeAll(async () => { fixture = await startCancelFixture(); }, 900_000);
+beforeAll(async () => { fixture = await startCancelFixture({ extraSourceFiles: ['ops/cli/fleet_executor_replacement.py'] }); }, 900_000);
 afterAll(async () => {
   if (paused) await docker(['unpause', container]);
   if (fixture) {
@@ -101,8 +101,27 @@ describe('cancelación física de una actualización fallida', () => {
       expect(failed.steps.find(step => step.name === 'stop')?.status).toBe('failed');
       evidence.failed = failed;
       await cancelCapture(page, 'failed-stop');
+      const reread = panel.getByRole('button', { name: 'Releer operación', exact: true });
+      await waitEnabled(reread); await reread.click();
       const card = page.getByRole('region', { name: 'Operación de flota', exact: true }).filter({ hasText: failed.id });
+      await card.getByText('Detalles técnicos', { exact: true }).click();
+      await expect.poll(() => card.innerText(), { timeout: 30_000 }).toMatch(new RegExp(`Versión: ${String(failed.version)}(?:\\s|$)`, 'u'));
+      const cancelPath = `/v3/console/fleet/operations/${failed.id}/cancel`;
+      const replies: { status: number; request: unknown; response: unknown }[] = [];
+      page.on('response', (raw: unknown) => {
+        const response = raw as { url(): string; status(): number; json(): Promise<unknown>; request(): { postDataJSON(): unknown } };
+        if (new URL(response.url()).pathname === cancelPath) {
+          const request = response.request().postDataJSON();
+          void response.json().then(
+            body => replies.push({ status: response.status(), request, response: body }),
+            () => replies.push({ status: response.status(), request, response: { error: 'non_json_response' } }),
+          );
+        }
+      });
       await card.getByRole('button', { name: 'Cancelar', exact: true }).click();
+      await expect.poll(() => replies.length, { timeout: 30_000 }).toBe(1);
+      evidence.cancel_http = replies[0];
+      expect(replies[0]).toMatchObject({ status: 200, request: { expected_version: failed.version } });
       const cancelled = await operation('update', ['cancelled']);
       expect(cancelled.id).toBe(failed.id);
       const after = await probe();
