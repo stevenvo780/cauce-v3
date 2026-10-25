@@ -151,6 +151,12 @@ export class HarnessAdapter {
         .some((value) => (value?.trim().length ?? 0) > 0);
   }
 
+  get routesHumansToSharedSession(): boolean {
+    return this.sharedSession !== undefined
+      && [this.environment.CAUCE_OWNER_HUMAN_ID, this.environment.CAUCE_SHARED_HUMAN_IDS]
+        .some((value) => (value?.trim().length ?? 0) > 0);
+  }
+
   async execute(request: HarnessExecuteRequest): Promise<StructuredOutput> {
     if (request.context?.message_type === "agent.fanin") {
       throw new AdapterError(

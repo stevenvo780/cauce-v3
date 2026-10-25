@@ -434,3 +434,23 @@ test("a listed human's console turn runs in the shared TUI of another tenant's a
   assert.equal(context.headless.requests.length, 1);
   assert.ok(context.headless.requests[0]?.stdin.includes(`"human_id":"${HUMAN_B}"`));
 });
+
+
+test("a shared-session harness without a human harness still routes its listed humans", async (t) => {
+  const context = await isolatedEngine(t);
+  const { HarnessAdapter } = await import("../src/harnesses/shared.js");
+  const { fakeDefinition } = await import("../src/harnesses/fake.js");
+  const shared = { alias: "argos", harness: "muse" as const, stateDirectory: "/tmp/argos-state" };
+  const withOwner = new HarnessAdapter({ definition: fakeDefinition, runner: context.manual,
+    store: context.store, sharedSession: shared, environment: { CAUCE_OWNER_HUMAN_ID: HUMAN_A } });
+  assert.equal(withOwner.routesHumansToSharedSession, true);
+  const withListed = new HarnessAdapter({ definition: fakeDefinition, runner: context.manual,
+    store: context.store, sharedSession: shared, environment: { CAUCE_SHARED_HUMAN_IDS: `Steven:${HUMAN_A}` } });
+  assert.equal(withListed.routesHumansToSharedSession, true);
+  const unlisted = new HarnessAdapter({ definition: fakeDefinition, runner: context.manual,
+    store: context.store, sharedSession: shared, environment: {} });
+  assert.equal(unlisted.routesHumansToSharedSession, false);
+  const headless = new HarnessAdapter({ definition: fakeDefinition, runner: context.manual,
+    store: context.store, environment: { CAUCE_OWNER_HUMAN_ID: HUMAN_A } });
+  assert.equal(headless.routesHumansToSharedSession, false);
+});
