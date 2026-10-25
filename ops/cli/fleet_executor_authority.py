@@ -223,7 +223,10 @@ def call(configuration: dict, scope: dict, action: str, **fields) -> dict:
     validate_authority(configuration, scope.get('host_id'))
     validate_scope(scope, configuration['host_id'])
     allowed = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
-        'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'}}
+        'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
+        'issue_terminal': {'csr_pem', 'csr_sha256', 'idempotency_key'},
+        'terminal_receipt': {'csr_pem', 'csr_sha256', 'idempotency_key'},
+        'revoke_terminal': {'grant_id', 'certificate_sha256'}}
     if action not in allowed or set(fields) != allowed[action]:
         raise SafeFailure('central authority action is invalid')
     packet = json.dumps({'action': action, 'scope': scope, **fields}, separators=(',', ':')).encode()
@@ -316,6 +319,81 @@ def revocation_scope(policy: dict, context: dict, agent: dict) -> tuple[dict, di
 
 def stable_scope(scope: dict) -> dict:
     return {name: scope[name] for name in sorted(SCOPE_FIELDS - {'worker_id', 'claim_token', 'claim_epoch'})}
+
+
+def issue_terminal(policy: dict, context: dict, agent: dict, csr_pem: str, idempotency_key: str) -> dict:
+    scope = scope_for(policy, context, agent)
+    configuration = policy['authority']
+    if not isinstance(csr_pem, str) or len(csr_pem.encode()) > 16384 or not isinstance(idempotency_key, str) \
+            or re.fullmatch(r'[A-Za-z0-9_-]{8,128}', idempotency_key) is None:
+        raise SafeFailure('terminal authority issuance request is invalid')
+    result = call(configuration, scope, 'issue_terminal', csr_pem=csr_pem,
+                  csr_sha256=sha256(csr_pem.encode()), idempotency_key=idempotency_key)
+    return validate_terminal_grant(policy, agent, csr_pem, result)
+
+
+def validate_terminal_grant(policy: dict, agent: dict, csr_pem: str, result: dict) -> dict:
+    configuration = policy['authority']
+    required = {'certificate_pem', 'ca_pem', 'certificate_sha256', 'expires_at', 'alias_key_hex',
+                'relay_host', 'relay_port', 'grant_id'}
+    if not isinstance(result, dict) or not required <= set(result) <= required | {'relay_server_name'} \
+            or any(not isinstance(result[key], str) or HEX.fullmatch(result[key]) is None
+                   for key in ('certificate_sha256', 'alias_key_hex', 'grant_id')) \
+            or not isinstance(result['relay_host'], str) \
+            or re.fullmatch(r'(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])', result['relay_host']) is None \
+            or type(result['relay_port']) is not int or not 1 <= result['relay_port'] <= 65535 \
+            or 'relay_server_name' in result and (not isinstance(result['relay_server_name'], str)
+                or re.fullmatch(r'[A-Za-z0-9.:-]+', result['relay_server_name']) is None):
+        raise SafeFailure('terminal authority issuance response is invalid')
+    ca = public_ca(configuration)
+    if sha256(pem_certificate(result['ca_pem'])) != sha256(pem_certificate(ca.decode())) \
+            or sha256(pem_certificate(result['certificate_pem'])) != result['certificate_sha256']:
+        raise SafeFailure('terminal authority certificate or CA differs')
+    with tempfile.TemporaryDirectory(prefix='.terminal-verify-', dir=policy['roots']['state']) as temporary:
+        root = pathlib.Path(temporary)
+        certificate, ca_path = root / 'client.crt', root / 'ca.crt'
+        certificate.write_text(result['certificate_pem'])
+        ca_path.write_bytes(ca)
+        openssl('verify', '-purpose', 'sslclient', '-CAfile', str(ca_path), str(certificate))
+        openssl('x509', '-in', str(certificate), '-noout', '-checkend', '30')
+        subject = openssl('x509', '-in', str(certificate), '-subject', '-nameopt', 'RFC2253', '-noout').strip()
+        san = openssl('x509', '-in', str(certificate), '-noout', '-ext', 'subjectAltName')
+        if subject != ('subject=CN=pty-' + agent['runtime_key']).encode() \
+                or san.splitlines()[-1].strip() != ('URI:urn:cauce:runtime:' + agent['runtime_key']).encode() \
+                or openssl('x509', '-in', str(certificate), '-pubkey', '-noout') != openssl('req', '-pubkey', '-noout', input_data=csr_pem.encode()) \
+                or min(expiry(certificate), expiry(ca_path)).strftime('%Y-%m-%dT%H:%M:%SZ') != result['expires_at']:
+            raise SafeFailure('terminal authority certificate identity differs')
+    return result
+
+
+def revoke_terminal(policy: dict, context: dict, agent: dict, grant_id: str, certificate_sha256: str) -> dict:
+    if any(not isinstance(value, str) or HEX.fullmatch(value) is None for value in (grant_id, certificate_sha256)):
+        raise SafeFailure('terminal revocation grant is invalid')
+    result = call(policy['authority'], scope_for(policy, context, agent), 'revoke_terminal',
+                  grant_id=grant_id, certificate_sha256=certificate_sha256)
+    expected = {'revoked': True, 'grant_id': grant_id, 'certificate_sha256': certificate_sha256}
+    if result != expected:
+        raise SafeFailure('terminal revocation response differs from its grant')
+    return result
+
+
+def terminal_receipt(policy: dict, context: dict, agent: dict, csr_pem: str, idempotency_key: str) -> dict:
+    if not isinstance(csr_pem, str) or len(csr_pem.encode()) > 16384 or not isinstance(idempotency_key, str) \
+            or re.fullmatch(r'[A-Za-z0-9_-]{8,128}', idempotency_key) is None:
+        raise SafeFailure('terminal receipt request is invalid')
+    result = call(policy['authority'], scope_for(policy, context, agent), 'terminal_receipt',
+                  csr_pem=csr_pem, csr_sha256=sha256(csr_pem.encode()), idempotency_key=idempotency_key)
+    required = {'grant', 'registered', 'revoked'}
+    if not isinstance(result, dict) or set(result) != required \
+            or any(type(result[key]) is not bool for key in ('registered', 'revoked')) \
+            or result['grant'] is None and (result['registered'] or result['revoked']) \
+            or result['grant'] is not None and (not isinstance(result['grant'], dict)
+                or any(not isinstance(result['grant'].get(key), str) or HEX.fullmatch(result['grant'][key]) is None
+                       for key in ('grant_id', 'certificate_sha256'))):
+        raise SafeFailure('terminal receipt response is invalid')
+    if result['grant'] is not None:
+        validate_terminal_grant(policy, agent, csr_pem, result['grant'])
+    return result
 
 
 def publish_once(filename: pathlib.Path, raw: bytes, *, private: bool) -> None:
