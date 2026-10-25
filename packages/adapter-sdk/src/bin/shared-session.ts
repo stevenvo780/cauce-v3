@@ -6,6 +6,7 @@ import { ensureSharedSession, sharedSessionStatus } from "../shared-session/sess
 import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
 import { prepareMuseProfile } from '../shared-session/muse-profile.js';
+import { prepareGrokWorkspace } from '../shared-session/grok-trust.js';
 import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
@@ -90,6 +91,7 @@ function spec(options: Options, home: string, environment: NodeJS.ProcessEnv = p
     home,
     environment,
     options.stateDirectory,
+    options.command !== 'ensure',
   );
 }
 
@@ -174,6 +176,7 @@ async function main(): Promise<void> {
 
   if (options.command === "ensure") {
     if (sessionSpec.harness === 'muse') await prepareMuseProfile(sessionSpec.environment ?? {});
+    if (sessionSpec.harness === 'grok') await prepareGrokWorkspace(sessionSpec);
     // Notice goes to stderr, not stdout JSON: invoked by `cauce <alias>` parsing stdout.
     const result = await ensureSharedSession(tmux, sessionSpec, {
       sleep,

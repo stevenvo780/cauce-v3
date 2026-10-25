@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { chmod, link, mkdir, realpath, rename, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import type { StructuredOutput } from "../src/sdk/types.js";
 import { grokTranscript, newGrokSessionId, type GrokUpdateLine } from "../src/shared-session/grok.js";
 import { CONTEXT_MARK } from "../src/shared-session/notice.js";
+import { SharedTuiPointerStore } from "../src/shared-session/native-pointer.js";
+import { resolveGrokLaunch } from "../src/shared-session/resume.js";
 import { pasteSafeText } from "../src/shared-session/tmux.js";
 import {
   adapterFor,
@@ -34,6 +38,8 @@ const hasControl = (text: string): boolean => {
 };
 const run = (runner: ReturnType<typeof grokRunner>, signal = new AbortController().signal, stdin = "pedido") =>
   runner.run({ command: "grok", args: [], harness: "grok", stdin, timeoutMs: 5_000, signal });
+const writeRecoverySummary = (log: { file: string; sessionId: string }, workspace: string): Promise<void> =>
+  writeFile(join(dirname(log.file), "summary.json"), JSON.stringify({ info: { id: log.sessionId, cwd: workspace } }));
 
 // --- 1. The delivery does not end at the first turn_completed while its work keeps running -----
 
@@ -205,4 +211,123 @@ test("grok: un miembro de correlación escrito por el remitente no hace pasar ot
 
   assert.equal(port.findInjected("/x/updates.jsonl", [other], promptText, real), undefined);
   assert.equal(port.findInjected("/x/updates.jsonl", [other], promptText), undefined, "sin nonce, cuenta el último miembro");
+});
+
+test("grok recuperación: siembra la UUIDv7 más reciente del workspace aprobado y conserva ese puntero", async () => {
+  const { state, grokHome, sessionLog } = await grokWorkspace("grok-recovery-approved", { history: false });
+  const workspace = join(state, "space", "projects");
+  await mkdir(workspace, { recursive: true, mode: 0o700 });
+  const group = encodeURIComponent(await realpath(workspace));
+  const previous = await sessionLog(newGrokSessionId(1_000), group);
+  const current = await sessionLog(newGrokSessionId(2_000), group);
+  const child = await sessionLog(newGrokSessionId(3_000), group);
+  const foreign = await sessionLog(newGrokSessionId(4_000));
+  for (const log of [previous, current, child, foreign]) {
+    await log.append(log.user("canary"));
+    await writeRecoverySummary(log, workspace);
+  }
+  await writeFile(join(dirname(child.file), "summary.json"), JSON.stringify({ session_kind: "subagent_fork" }));
+  const binding = { alias: "hades", harness: "grok" as const, configDirectory: await realpath(grokHome), workspace };
+  const expected = { state: "launch", args: ["--resume", current.sessionId], resumed: true };
+  const preview = await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state, readOnly: true });
+  assert.equal(preview.state, "blocked");
+  assert.match(preview.detail, /seed/u);
+  assert.deepEqual(await new SharedTuiPointerStore(state).read(binding), { state: "absent" });
+  assert.deepEqual(await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state }), expected);
+  assert.deepEqual(await new SharedTuiPointerStore(state).read(binding), { state: "valid", binding, nativeId: current.sessionId });
+  assert.equal((await stat(join(state, "shared-tui-session.json"))).mode & 0o777, 0o600);
+  const later = await sessionLog(newGrokSessionId(5_000), group);
+  await later.append(later.user("canary"));
+  assert.deepEqual(await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state }), expected);
+});
+
+test("grok recuperación: una conversación heredada única y segura no necesita orden temporal", async () => {
+  const { state, grokHome, sessionLog } = await grokWorkspace("grok-recovery-single-legacy", { history: false });
+  const workspace = join(state, "projects");
+  await mkdir(workspace, { mode: 0o700 });
+  const nativeId = "11111111-1111-4111-8111-111111111111";
+  const log = await sessionLog(nativeId, encodeURIComponent(workspace));
+  await log.append(log.user("canary"));
+  await writeRecoverySummary(log, workspace);
+  assert.deepEqual(await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state }),
+    { state: "launch", args: ["--resume", nativeId], resumed: true });
+});
+
+test("grok recuperación: la identidad, el transcript y el resumen nativo deben quedar acreditados", async (context) => {
+  for (const scenario of ["foreign", "timestamp_tie", "legacy", "duplicate", "permissions", "symlink",
+    "summary_missing", "summary_empty", "summary_malformed", "summary_array", "summary_info_missing",
+    "summary_bad_cwd", "summary_bad_id", "summary_kind_type", "summary_permissions", "summary_symlink",
+    "summary_hardlink", "summary_large"] as const) {
+    await context.test(scenario, async () => {
+      const { state, grokHome, sessionLog } = await grokWorkspace(`grok-recovery-block-${scenario}`, { history: false });
+      const workspace = join(state, "projects");
+      await mkdir(workspace, { mode: 0o700 });
+      const group = encodeURIComponent(workspace);
+      const nativeId = scenario === "legacy" ? "11111111-1111-4111-8111-111111111111" : newGrokSessionId(1_000);
+      const log = await sessionLog(nativeId, scenario === "foreign" ? undefined : group);
+      await log.append(log.user("canary"));
+      await writeRecoverySummary(log, workspace);
+      const summary = join(dirname(log.file), "summary.json");
+      if (scenario === "timestamp_tie" || scenario === "legacy") {
+        const other = await sessionLog(newGrokSessionId(1_000), group);
+        await other.append(other.user("canary"));
+        await writeRecoverySummary(other, workspace);
+      }
+      if (scenario === "duplicate") {
+        const duplicate = await sessionLog(nativeId);
+        await duplicate.append(duplicate.user("canary"));
+      }
+      if (scenario === "permissions") await chmod(log.file, 0o666);
+      if (scenario === "symlink") {
+        await symlink(dirname(log.file), join(dirname(dirname(log.file)), newGrokSessionId(2_000)));
+      }
+      if (scenario === "summary_missing") await unlink(summary);
+      if (scenario === "summary_empty") await writeFile(summary, "");
+      if (scenario === "summary_malformed") await writeFile(summary, "{");
+      if (scenario === "summary_array") await writeFile(summary, "[]");
+      if (scenario === "summary_info_missing") await writeFile(summary, "{}");
+      if (scenario === "summary_bad_cwd") {
+        const foreignWorkspace = join(state, "foreign");
+        await mkdir(foreignWorkspace, { mode: 0o700 });
+        await writeRecoverySummary(log, foreignWorkspace);
+      }
+      if (scenario === "summary_bad_id") {
+        await writeRecoverySummary({ file: log.file, sessionId: newGrokSessionId(2_000) }, workspace);
+      }
+      if (scenario === "summary_kind_type") {
+        await writeFile(summary, JSON.stringify({ info: { id: nativeId, cwd: workspace }, session_kind: {} }));
+      }
+      if (scenario === "summary_permissions") await chmod(summary, 0o666);
+      if (scenario === "summary_symlink") {
+        await rename(summary, `${summary}.target`);
+        await symlink(`${summary}.target`, summary);
+      }
+      if (scenario === "summary_hardlink") await link(summary, `${summary}.link`);
+      if (scenario === "summary_large") await writeFile(summary, Buffer.alloc(256 * 1024 + 1, " "));
+      const plan = await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state });
+      assert.equal(plan.state, "blocked");
+      assert.match(plan.detail, /seed/u);
+      assert.deepEqual(await new SharedTuiPointerStore(state).read({
+        alias: "hades", harness: "grok", configDirectory: grokHome, workspace,
+      }), { state: "absent" });
+    });
+  }
+});
+
+test("grok recuperación: el puntero con otro binding permanece inválido y nunca se reemplaza", async () => {
+  const { state, grokHome, sessionLog } = await grokWorkspace("grok-recovery-invalid-binding", { history: false });
+  const workspace = join(state, "projects");
+  const foreignWorkspace = join(state, "other-projects");
+  await mkdir(workspace, { mode: 0o700 });
+  await mkdir(foreignWorkspace, { mode: 0o700 });
+  const log = await sessionLog(newGrokSessionId(), encodeURIComponent(workspace));
+  await log.append(log.user("canary"));
+  const foreign = { alias: "hades", harness: "grok" as const, configDirectory: grokHome, workspace: foreignWorkspace };
+  const store = new SharedTuiPointerStore(state);
+  assert.equal(await store.seed(foreign, log.sessionId), "written");
+  assert.deepEqual(await resolveGrokLaunch(grokHome, workspace, { alias: "hades", stateDirectory: state }),
+    { state: "blocked", detail: "Grok shared TUI pointer is invalid" });
+  const persisted = await store.read(foreign);
+  assert.equal(persisted.state, "valid");
+  assert.equal(persisted.nativeId, log.sessionId);
 });

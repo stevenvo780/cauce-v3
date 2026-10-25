@@ -95,7 +95,7 @@ async function modifiedAt(file: string): Promise<number> {
  * Subagent sessions are left out. Session ids are UUIDv7, so sorting by id is sorting by creation
  * time, which is what `hasValidTerminalEnvelope` relies on to try the newest first.
  */
-async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS): Promise<Listing> {
+async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS, workspaceGroup?: string): Promise<Listing> {
   const root = grokSessionsRoot(grokHome);
   let groups: Dirent[];
   try {
@@ -106,6 +106,8 @@ async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS)
   let found: { id: string; file: string }[] = [];
   let unreadable = false;
   for (const group of groups) {
+    if (workspaceGroup !== undefined && group.name !== workspaceGroup) continue;
+    if (workspaceGroup !== undefined && group.isSymbolicLink()) unreadable = true;
     if (!group.isDirectory()) continue;
     let sessions: Dirent[];
     try {
@@ -115,9 +117,10 @@ async function listGrokSessionFiles(grokHome: string, limit = MAX_GROK_SESSIONS)
       continue;
     }
     for (const session of sessions) {
+      if (workspaceGroup !== undefined && session.isSymbolicLink()) unreadable = true;
       if (!session.isDirectory()) continue;
       const folder = join(root, group.name, session.name);
-      if (await isChildSession(folder)) continue;
+      if (workspaceGroup === undefined && await isChildSession(folder)) continue;
       found.push({ id: session.name, file: join(folder, GROK_TRANSCRIPT_FILE) });
     }
   }
@@ -140,6 +143,12 @@ export async function grokSessionFiles(grokHome: string): Promise<readonly strin
 export async function grokSessionFilesStrict(grokHome: string): Promise<readonly string[]> {
   const listing = await listGrokSessionFiles(grokHome);
   if (listing.unreadable) throw new Error("grok session tree could not be listed");
+  return listing.files;
+}
+
+export async function grokWorkspaceSessionFilesStrict(grokHome: string, workspace: string): Promise<readonly string[]> {
+  const listing = await listGrokSessionFiles(grokHome, Infinity, encodeURIComponent(workspace));
+  if (listing.unreadable) throw new Error("grok workspace session tree could not be listed");
   return listing.files;
 }
 
@@ -175,7 +184,7 @@ function ownedAndPrivate(metadata: { uid: bigint; mode: bigint }): boolean {
  * no symlink on the way, owned by this uid and not writable by anyone else, holding a non-empty
  * `updates.jsonl`. It is what makes `--resume <id>` safe to put on the TUI's argv.
  */
-export async function grokSessionIsSecure(grokHome: string, nativeId: string): Promise<boolean> {
+export async function grokSessionIsSecure(grokHome: string, nativeId: string, workspace?: string): Promise<boolean> {
   if (!isGrokSessionId(nativeId)) return false;
   const root = grokSessionsRoot(grokHome);
   try {
@@ -195,6 +204,7 @@ export async function grokSessionIsSecure(grokHome: string, nativeId: string): P
     }
     const directory = matches.length === 1 ? matches[0] : undefined;
     if (directory === undefined) return false;
+    if (workspace !== undefined && directory !== join(root, encodeURIComponent(workspace), nativeId)) return false;
     for (const folder of [dirname(directory), directory]) {
       const handle = await open(
         folder,

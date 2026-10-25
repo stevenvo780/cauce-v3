@@ -177,6 +177,7 @@ export function cliSharedSessionSpec(
   home: string,
   environment: NodeJS.ProcessEnv = process.env,
   stateDirectory?: string,
+  readOnly = false,
 ): SharedSessionSpec {
   const requireResume = sharedSessionRequiresResume(environment);
   if (requireResume && (stateDirectory === undefined || !isAbsolute(stateDirectory))) {
@@ -200,6 +201,7 @@ export function cliSharedSessionSpec(
       configDirectory,
       workspace,
       stateDirectory === undefined ? undefined : { alias, stateDirectory,
+        ...(readOnly ? { readOnly } : {}),
         ...(namespace === undefined ? {} : { namespace }), ...(requireResume ? { requireResume } : {}) },
     ),
   };

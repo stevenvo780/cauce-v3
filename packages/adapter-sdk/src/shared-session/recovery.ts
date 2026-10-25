@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { assertCommandPins } from '../sdk/command-pins.js';
 import { exactCodexLaunch } from './codex-resume.js';
 import { paneWorkspaceState } from './exact-launch.js';
+import { resolveGrokLaunch } from './resume.js';
 import { ensureSharedSession, type EnsureOptions, type SharedSessionSpec } from './session.js';
 import { paneCommandMatches, SESSION_ALIAS_OPTION, SESSION_HARNESS_OPTION } from './session/identity.js';
 import { exactSessionTarget, inspectSolePaneHarness, sessionOption, type PaneHarnessIdentity, type TmuxController } from './tmux.js';
@@ -67,6 +68,9 @@ async function removeDeadPane(tmux: TmuxController, pane: PaneHarnessIdentity, s
 }
 
 async function exactLaunch(input: SessionRecoveryInput): Promise<ResumeLaunchPlan> {
+  if (input.spec.harness === 'grok') return resolveGrokLaunch(input.configDirectory, input.spec.workspace, {
+    alias: input.spec.alias, stateDirectory: input.stateDirectory, readOnly: true,
+  });
   return input.spec.harness === 'codex' ? exactCodexLaunch({ ...input, workspace: input.spec.workspace })
     : input.spec.resume?.resolveLaunch?.() ?? { state: 'blocked', detail: 'No hay reanudación exacta disponible.' };
 }

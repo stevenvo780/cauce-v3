@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { realpath, stat } from "node:fs/promises";
+import { access, chmod, mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { loadSharedSessionConfig } from "../src/shared-session/config.js";
 import { isGrokSessionId, newGrokSessionId } from "../src/shared-session/grok.js";
+import { prepareGrokWorkspace } from "../src/shared-session/grok-trust.js";
 import { SharedTuiPointerStore } from "../src/shared-session/native-pointer.js";
 import { NativePointerAttestor } from "../src/shared-session/native-witness.js";
 import { turnInFlight } from "../src/shared-session/pane.js";
 import { resolveGrokLaunch, sharedSessionResume } from "../src/shared-session/resume.js";
 import { paneCommandMatches } from "../src/shared-session/session/identity.js";
-import { correlationIdFromPrompt, envelopeText } from "./shared-session-fixtures.js";
+import { correlationIdFromPrompt, envelopeText, freshState } from "./shared-session-fixtures.js";
 import {
   GrokTmux,
   THINKING,
@@ -20,6 +22,51 @@ import {
 
 const request = (stdin: string): Parameters<ReturnType<typeof grokRunner>["run"]>[0] => ({
   command: "grok", args: [], harness: "grok", stdin, timeoutMs: 2_000, signal: new AbortController().signal,
+});
+
+async function trustProbe(projectRoot: string | null = null, durable = true) {
+  const { state: root } = await freshState('grok-trust');
+  const workspace = join(root, 'space', 'projects');
+  const profile = join(root, 'profile');
+  await mkdir(workspace, { recursive: true });
+  await mkdir(profile, { mode: 0o700 });
+  const command = join(root, 'grok-probe.mjs');
+  await writeFile(command, `#!/usr/bin/env node
+import { existsSync, writeFileSync } from 'node:fs';
+const profile = process.env.GROK_HOME;
+const grant = process.argv.includes('--trust');
+if (grant) writeFileSync(profile + '/grant', 'yes');
+if (grant && ${String(durable)}) writeFileSync(profile + '/trusted_folders.toml', 'trusted', { mode: 0o600 });
+console.log(JSON.stringify({ cwd: process.cwd(), projectRoot: ${JSON.stringify(projectRoot)},
+  projectTrusted: grant || existsSync(profile + '/trusted_folders.toml') }));
+`, { mode: 0o700 });
+  return { profile, spec: { alias: 'zz-canary-grok', harness: 'grok' as const,
+    command, workspace, environment: { GROK_HOME: profile } } };
+}
+
+test('grok confianza: una raíz Git ajena al workspace aprobado bloquea antes de conceder confianza', async () => {
+  const { profile, spec } = await trustProbe('/tmp');
+  await assert.rejects(prepareGrokWorkspace(spec), /raíz nativa.*otro directorio/u);
+  await assert.rejects(access(join(profile, 'grant')), { code: 'ENOENT' });
+});
+
+test('grok confianza: exige persistencia, conserva el límite del perfil y respeta cancelación', async () => {
+  const valid = await trustProbe();
+  await prepareGrokWorkspace(valid.spec);
+  assert.equal((await stat(join(valid.profile, 'trusted_folders.toml'))).mode & 0o777, 0o600);
+  const provisional = await trustProbe(null, false);
+  await assert.rejects(prepareGrokWorkspace(provisional.spec), /no quedó persistida/u);
+  const unsafe = await trustProbe();
+  await chmod(unsafe.profile, 0o777);
+  await assert.rejects(prepareGrokWorkspace(unsafe.spec), /directorio seguro/u);
+  await assert.rejects(access(join(unsafe.profile, 'grant')), { code: 'ENOENT' });
+  const worktree = await trustProbe();
+  await writeFile(join(worktree.spec.workspace, '.git'), 'gitdir: /tmp/another-repository');
+  await assert.rejects(prepareGrokWorkspace(worktree.spec), /comparte metadatos Git/u);
+  await assert.rejects(access(join(worktree.profile, 'grant')), { code: 'ENOENT' });
+  const cancelled = await trustProbe();
+  await assert.rejects(prepareGrokWorkspace(cancelled.spec, AbortSignal.abort()), { name: 'AbortError' });
+  await assert.rejects(access(join(cancelled.profile, 'grant')), { code: 'ENOENT' });
 });
 
 test("grok pane: el pie Ctrl+c:cancel y el spinner [stop] son turno en curso; ocioso, tecleado y salida armada no", () => {

@@ -3,6 +3,7 @@ import { constants as fsConstants, createReadStream } from "node:fs";
 import { open, readdir, realpath, stat } from "node:fs/promises";
 import { join, normalize } from "node:path";
 import { grokConversationHistoryState, grokSessionIsSecure, newGrokSessionId } from "./grok.js";
+import { grokWorkspaceConversationIsSecure, recoverGrokWorkspaceConversation } from "./grok-recovery.js";
 import { museConversationHistoryState, museSessionIsSecure } from "./muse.js";
 import { rolloutDirectory } from "./rollout.js";
 import { SharedTuiPointerStore } from "./native-pointer.js";
@@ -30,6 +31,7 @@ export interface SharedSessionResumeBinding {
   readonly stateDirectory: string;
   readonly namespace?: string;
   readonly requireResume?: boolean;
+  readonly readOnly?: boolean;
 }
 
 export function sharedSessionResume(
@@ -100,7 +102,7 @@ export async function resolveMuseLaunch(
   }
 }
 
-/** grok resumes by EXACT id (bare `--resume` = latest of the cwd); unpointed history blocks. */
+/** Grok resumes by exact id; only the approved workspace can supply a missing pointer. */
 export async function resolveGrokLaunch(
   grokHome: string,
   workspace: string,
@@ -108,20 +110,37 @@ export async function resolveGrokLaunch(
 ): Promise<ResumeLaunchPlan> {
   if (binding === undefined) return { state: "blocked", detail: "Grok exact resume requires alias state" };
   try {
-    const pointer = await new SharedTuiPointerStore(binding.stateDirectory).read({
+    const store = new SharedTuiPointerStore(binding.stateDirectory);
+    const pointerBinding = {
       alias: binding.alias, harness: "grok", configDirectory: grokHome, workspace,
-    });
+    } as const;
+    const pointer = await store.read(pointerBinding);
     if (pointer.state === "invalid") return { state: "blocked", detail: "Grok shared TUI pointer is invalid" };
     if (pointer.state === "valid") {
       return await grokSessionIsSecure(pointer.binding.configDirectory, pointer.nativeId)
         ? { state: "launch", args: ["--resume", pointer.nativeId], resumed: true }
         : { state: "blocked", detail: "Grok exact session could not be accredited" };
     }
+    const recovered = await recoverGrokWorkspaceConversation(grokHome, workspace);
+    if (recovered.state === "candidate") {
+      if (binding.readOnly === true) {
+        return { state: "blocked", detail: "Grok shared TUI pointer is missing; start the shared session to recover it"
+          + " or use shared-session.js seed --native-id <id>" };
+      }
+      const seeded = await store.seed(pointerBinding, recovered.nativeId);
+      const persisted = await store.read(pointerBinding);
+      if (seeded !== "conflict" && persisted.state === "valid"
+        && persisted.nativeId === recovered.nativeId
+        && await grokWorkspaceConversationIsSecure(persisted.binding.configDirectory, persisted.nativeId, persisted.binding.workspace)) {
+        return { state: "launch", args: ["--resume", persisted.nativeId], resumed: true };
+      }
+      return { state: "blocked", detail: "Grok shared TUI pointer recovery could not be accredited" };
+    }
     const history = await grokConversationHistoryState(grokHome);
-    if (history === "present") {
+    if (history === "present" || recovered.state !== "absent") {
       return {
         state: "blocked",
-        detail: "Grok has conversations but no shared TUI pointer; name the canonical one with"
+        detail: `Grok has conversations but no shared TUI pointer; approved workspace recovery is ${recovered.state}; name the canonical one with`
           + " SHARED_SESSION_NATIVE_ID=<id> in the alias config (the adapter seeds it on start)"
           + " or shared-session.js seed --native-id <id>",
       };

@@ -32,6 +32,7 @@ import { codexTranscript } from "../shared-session/rollout.js";
 import { grokTranscript } from "../shared-session/grok.js";
 import { museTranscript } from "../shared-session/muse.js";
 import { prepareMuseProfile } from '../shared-session/muse-profile.js';
+import { prepareGrokWorkspace } from '../shared-session/grok-trust.js';
 import type { PasteSessionOptions } from "../shared-session/paste-runner/contracts.js";
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
@@ -168,6 +169,7 @@ function operationalLogger(alias: string): AdapterLogger {
 async function checkedSharedSessionConfig(
   configured: SharedSessionConfig,
   logger: AdapterLogger,
+  signal?: AbortSignal,
 ): Promise<SharedSessionConfig> {
   let shared = configured;
   if (configured.harness !== "codex") {
@@ -183,6 +185,11 @@ async function checkedSharedSessionConfig(
         "La terminal canónica no pudo acreditarse; el consumidor no aceptará pedidos hasta recuperar su binding",
         false);
     }
+  }
+  if (shared.harness === 'grok') {
+    await prepareGrokWorkspace(sharedSessionSpec(shared), signal);
+    logger({ event: 'shared_session_resume', alias: shared.alias, reason: 'workspace_trusted',
+      error_message: 'Confianza nativa preparada para el workspace aprobado de Grok.' });
   }
   return shared;
 }
@@ -208,7 +215,7 @@ export async function ensureSharedSessionStartup(
 ): Promise<void> {
   const signal = parentSignal ?? new AbortController().signal;
   signal.throwIfAborted();
-  const shared = await checkedSharedSessionConfig(configured, logger);
+  const shared = await checkedSharedSessionConfig(configured, logger, signal);
   signal.throwIfAborted();
   const boundedTmux: TmuxController = { run: (args, stdin, control) => tmux.run(args, stdin, {
     ...control, timeoutMs: Math.min(control?.timeoutMs ?? 1000, 1000),
@@ -229,7 +236,8 @@ export async function ensureSharedSessionStartup(
         ? 'session_identity_unverified' : result.failure ?? 'tui_absent',
       detail: `ensure: ${result.detail}; readiness: ${readiness ?? 'none'}`,
       error_message: 'La TUI canónica no quedó acreditada al adquirir el lease.' });
-    throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE', 'La terminal canónica no está disponible para iniciar el consumidor', false);
+    throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE',
+      `La terminal canónica no está disponible para iniciar el consumidor: ${result.detail}`, false);
   }
 }
 
