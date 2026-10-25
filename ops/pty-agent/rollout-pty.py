@@ -243,15 +243,41 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
     ops_root = script.parents[1]
     bundle = ReleaseBundle.from_ops_root(ops_root)
     fleet = Fleet.load(bundle.files["container-aliases.json"])
-    targets = parse_targets(args.manager, fleet.managers)
+    scope_manager = getattr(args, "scope_manager", None)
+    validation_fleet = fleet
+    scope_aliases: set[str] | None = None
+    if scope_manager is not None:
+        if scope_manager not in fleet.managers or getattr(args, "retire_historical", False):
+            fail("scope-manager invalido o incompatible con retiro historico")
+        if args.command == "rollback":
+            if not args.transaction:
+                fail("rollback acotado requiere --transaction explicito")
+            scope_aliases = {args.alias}
+        elif args.aliases is None:
+            fail("scope-manager requiere --aliases explicito")
+        else:
+            scope_aliases = set(selected_aliases(args.aliases, fleet, args.include_zeus))
+        if not scope_aliases or any(fleet.placements.get(alias) != scope_manager for alias in scope_aliases):
+            fail("los aliases seleccionados no pertenecen al manager acotado")
+        validation_fleet = dataclasses.replace(
+            fleet,
+            aliases={alias: fleet.aliases[alias] for alias in scope_aliases},
+            placements={alias: scope_manager for alias in scope_aliases},
+        )
+    targets = parse_targets(args.manager, validation_fleet.managers)
     transports = {
         manager: ProcessTransport(manager, targets[manager], script)
-        for manager in fleet.managers
+        for manager in validation_fleet.managers
     }
     inventories = {
         manager: parse_inventory(transports[manager].call("inventory", {}).get("inventory", {}))
-        for manager in fleet.managers
+        for manager in validation_fleet.managers
     }
+    if scope_aliases is not None:
+        inventories = {
+            manager: {alias: presence for alias, presence in inventory.items() if alias in scope_aliases}
+            for manager, inventory in inventories.items()
+        }
     retirement_results: list[dict[str, Any]] = []
     if getattr(args, "preflight_only", False) and getattr(args, "retire_historical", False):
         fail("--preflight-only no puede combinarse con --retire-historical")
@@ -271,7 +297,7 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
             for manager in fleet.managers
         }
     validate_inventories(
-        fleet,
+        validation_fleet,
         inventories,
     )
     if args.command == "retire-historical":
@@ -321,7 +347,7 @@ def controller(args: argparse.Namespace) -> dict[str, Any]:
             "preflight": preflight_results,
         }
 
-    for manager in fleet.managers:
+    for manager in validation_fleet.managers:
         transports[manager].call("publish", {"bundle": bundle.request_value()})
 
     results: list[dict[str, Any]] = []
@@ -418,6 +444,7 @@ def parser() -> argparse.ArgumentParser:
     for name in ("status", "preflight", "rollout"):
         command = subparsers.add_parser(name)
         command.add_argument("--manager", action="append", default=[])
+        command.add_argument("--scope-manager", help="Limita lectura y publicacion al manager y aliases explicitos; el emisor debe acreditar ausencia en el origen de un traslado")
         command.add_argument("--aliases")
         command.add_argument("--include-zeus", action="store_true")
         command.add_argument("--require-mode", action="append", default=[])
@@ -432,6 +459,7 @@ def parser() -> argparse.ArgumentParser:
     rollback.add_argument("alias")
     rollback.add_argument("--transaction")
     rollback.add_argument("--manager", action="append", default=[])
+    rollback.add_argument("--scope-manager", help="Limita rollback al manager declarado del alias")
     rollback.set_defaults(
         aliases=None,
         include_zeus=False,

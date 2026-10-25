@@ -337,6 +337,68 @@ class RolloutPtyTest(unittest.TestCase):
             with self.subTest(container=container), self.assertRaisesRegex(rollout.RolloutError, "Docker"):
                 rollout.Fleet.load(json.dumps(mapping).encode())
 
+    def test_scoped_rollout_only_contacts_and_publishes_its_manager(self) -> None:
+        transport = FakeTransport("fixture-never-fails")
+        calls = transport.call
+
+        def call(operation: str, request: Any) -> dict[str, Any]:
+            result = calls(operation, request)
+            if operation == "inventory":
+                result["inventory"] = {"midas": {"enabled": True, "active": True, "selector": True}}
+            return result
+
+        transport.call = call
+        arguments = rollout.parser().parse_args([
+            "rollout", "--scope-manager", "server", "--aliases", "zeus", "--include-zeus",
+            "--manager", "server=local",
+        ])
+        with (
+            mock.patch.object(rollout, "ProcessTransport", return_value=transport) as constructed,
+            mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+        ):
+            result = rollout.controller(arguments)
+        self.assertEqual(constructed.call_count, 1)
+        self.assertEqual(constructed.call_args.args[:2], ("server", "local"))
+        self.assertEqual(result["aliases"], ["zeus"])
+        self.assertEqual([name for name, _ in transport.calls], ["inventory", "preflight", "publish", "apply"])
+        self.assertIs(transport.calls[-1][1]["allowZeus"], True)
+
+    def test_scoped_commands_reject_foreign_empty_and_implicit_aliases(self) -> None:
+        for extra in (["--aliases", "salva"], [], ["--aliases", "zeus"]):
+            arguments = rollout.parser().parse_args([
+                "rollout", "--scope-manager", "server", "--manager", "server=local", *extra,
+            ])
+            with (
+                mock.patch.object(rollout, "ProcessTransport") as constructed,
+                mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+            ):
+                with self.assertRaises(rollout.RolloutError):
+                    rollout.controller(arguments)
+            constructed.assert_not_called()
+
+    def test_scoped_rollback_uses_the_exact_alias_transaction_and_manager(self) -> None:
+        transport = FakeTransport("fixture-never-fails")
+        arguments = rollout.parser().parse_args([
+            "rollback", "zeus", "--transaction", "approved-transaction", "--scope-manager", "server",
+            "--manager", "server=local",
+        ])
+        with (
+            mock.patch.object(rollout, "ProcessTransport", return_value=transport) as constructed,
+            mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+        ):
+            rollout.controller(arguments)
+        self.assertEqual(constructed.call_count, 1)
+        self.assertEqual(transport.calls[-1], ("rollback", {"alias": "zeus", "transaction": "approved-transaction"}))
+
+        arguments.transaction = None
+        with (
+            mock.patch.object(rollout, "ProcessTransport") as constructed,
+            mock.patch.object(rollout, "__file__", str(self.ops_root / "pty-agent/rollout-pty.py")),
+        ):
+            with self.assertRaisesRegex(rollout.RolloutError, "transaction"):
+                rollout.controller(arguments)
+        constructed.assert_not_called()
+
     def test_publish_is_immutable_idempotent_and_preserves_older_releases(self) -> None:
         temporary, worker, _ = self.worker()
         self.addCleanup(temporary.cleanup)
