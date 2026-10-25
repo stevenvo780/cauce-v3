@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { normalizeAgentProfile } from '@cauce/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { newTrustedPage, startConsoleFunctionalFixture } from './console-functional-browser.fixtures.js';
+import { browserDocker } from './browser-owned-lifecycle.js';
 import {
   apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, PATTERN_DEFECT_RULE, syntheticPerson, type V4Locator, type V4Page,
@@ -12,9 +14,12 @@ const owner = syntheticPerson('files', run);
 const agentAlias = `archivos-${run}`;
 const roleSummary = 'Agente de la ficha de archivos.';
 const mission = { path: 'context/mission.md', content: 'Misión que permanece en el contexto.' };
+const revisedMission = { ...mission, content: 'Misión modificada antes de restaurar.' };
 const notes = { path: 'context/notes.md', content: 'Nota que la ficha retira del contexto.' };
 const profilePath = 'context/profile.json';
+const artifactDirectory = '.delegados/v4/recibos/e2e-a10-contextos-1025b';
 const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+const originalDeadlineFactor = process.env.CAUCE_PLAZOS_FACTOR;
 let fixture: Awaited<ReturnType<typeof startConsoleFunctionalFixture>> | undefined;
 let tenant = '';
 let ownerId = '';
@@ -75,7 +80,7 @@ function sortedFiles(files: ContextFile[]): ContextFile[] {
 }
 
 async function freshPage(label: string): Promise<V4Page> {
-  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 1000 }));
+  const page = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
   errors.watch(page, label);
   return page;
 }
@@ -103,6 +108,7 @@ async function showVersions(page: V4Page): Promise<V4Locator> {
 }
 
 async function openFromSheet(page: V4Page): Promise<V4Locator> {
+  errors.expectHttpError(`/v3/console/spaces/${tenant}/${agentAlias}/backups`, 404);
   await page.goto(`${base()}/live`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Plano editable', exact: true }).click();
   await page.getByRole('region', { name: `Sala ${tenant}/office`, exact: true }).getByRole('button').first().click();
@@ -172,17 +178,29 @@ async function readHistory(page: V4Page): Promise<HistoryView[]> {
 }
 
 beforeAll(async () => {
+  process.env.CAUCE_PLAZOS_FACTOR ??= '3';
   if (process.env.CAUCE_TEST_DATABASE_URL) throw new Error('this E2E requires its own Testcontainers PostgreSQL');
   if (process.env.VITE_USE_MOCKS === 'true') throw new Error('mocks=false is required');
   const repositoryRoot = process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
   delete process.env.CAUCE_CONTEXT_REPOSITORY_ROOT;
-  try { fixture = await startConsoleFunctionalFixture(); }
+  try {
+    fixture = await startConsoleFunctionalFixture();
+    await mkdir(artifactDirectory, { recursive: true });
+    await writeFile(`${artifactDirectory}/ficheros-volumenes.json`,
+      (await browserDocker(['inspect', '--format', '{{json .Mounts}}', fixture.database.container.getId()])).stdout, { mode: 0o600 });
+  }
   finally {
     if (repositoryRoot !== undefined) process.env.CAUCE_CONTEXT_REPOSITORY_ROOT = repositoryRoot;
   }
 }, 600_000);
 
-afterAll(async () => { await fixture?.close(); }, 180_000);
+afterAll(async () => {
+  try { await fixture?.close(); }
+  finally {
+    if (originalDeadlineFactor === undefined) delete process.env.CAUCE_PLAZOS_FACTOR;
+    else process.env.CAUCE_PLAZOS_FACTOR = originalDeadlineFactor;
+  }
+}, 180_000);
 
 describe('archivos de contexto en navegador real contra gateway y PostgreSQL reales', () => {
   it('desde la ficha retira un archivo del contexto y lo recupera al restaurar', async () => {
@@ -195,7 +213,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
     expect(ownerId).not.toBe('');
     expect(tenant).not.toBe('');
     const withProfile = sortedFiles([mission, notes, profileFile()]);
-    const withoutNotes = sortedFiles([mission, profileFile()]);
+    const withoutNotes = sortedFiles([revisedMission, profileFile()]);
 
     await pool().query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory,company_id)
       VALUES($1,$2,'codex',$2,true,$3,'stev',$4,$5,$6)`,
@@ -204,6 +222,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
     await pool().query('INSERT INTO agent_profiles(tenant_id,alias,role_summary) VALUES($1,$2,$3)', [tenant, agentAlias, roleSummary]);
 
     const versions = await step(page, 'abrir versiones desde la ficha', () => openFromSheet(page));
+    await mkdir(artifactDirectory, { recursive: true });
     await step(page, 'guardar la versión con los dos archivos', async () => {
       await versions.getByLabel('Nuevo archivo', { exact: true }).waitFor({ timeout: 20_000 });
       await addFile(versions, mission);
@@ -211,6 +230,7 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
       await versions.getByText(/Versión 1 · Consola · owner/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => listedFiles(versions), { timeout: 15_000 }).toEqual(withProfile.map((file) => file.path));
+      await page.screenshot({ path: `${artifactDirectory}/archivos-versionados-desktop.png`, fullPage: true });
     });
     expect(await storedVersions()).toEqual([stored(1, 'ui', null, withProfile)]);
 
@@ -219,12 +239,14 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       await versions.getByRole('button', { name: 'Quitar este archivo del borrador', exact: true }).click();
       await versions.getByText('Borrador sin guardar, basado en la versión 1.', { exact: true }).waitFor({ timeout: 15_000 });
       await expect.poll(() => listedFiles(versions), { timeout: 15_000 }).toEqual(withoutNotes.map((file) => file.path));
+      await fileSelect(versions).selectOption(mission.path);
+      await editor(versions).fill(revisedMission.content);
       await versions.getByRole('button', { name: 'Guardar nueva versión', exact: true }).click();
       await versions.getByText('Versión guardada. La aplicación y sincronización se acreditan por separado.', { exact: true })
         .waitFor({ timeout: 20_000 });
       await versions.getByText(/Versión 2 · Consola · owner/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => fileSelect(versions).inputValue(), { timeout: 15_000 }).toBe(mission.path);
-      expect(await editor(versions).inputValue()).toBe(mission.content);
+      expect(await editor(versions).inputValue()).toBe(revisedMission.content);
     });
     expect(await storedVersions()).toEqual([
       stored(1, 'ui', null, withProfile),
@@ -234,18 +256,24 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
       await versions.getByRole('button', { name: 'Ver diferencias de versión 1', exact: true }).click();
       const diff = versions.getByRole('region', { name: 'Diferencias de contexto', exact: true });
       await diff.getByText(`${notes.path} · Eliminado`, { exact: true }).waitFor({ timeout: 15_000 });
-      expect(await diff.locator('summary').count()).toBe(1);
-      expect(await diff.locator('pre').nth(0).innerText()).toBe(notes.content);
-      expect(await diff.locator('pre').nth(1).innerText()).toBe('Eliminado');
+      expect(await diff.locator('summary').count()).toBe(2);
+      const removed = diff.locator('details').filter({ hasText: `${notes.path} · Eliminado` });
+      expect(await removed.locator('pre').nth(0).innerText()).toBe(notes.content);
+      expect(await removed.locator('pre').nth(1).innerText()).toBe('Eliminado');
+      const modified = diff.locator('details').filter({ hasText: `${mission.path} · Modificado` });
+      expect(await modified.locator('pre').nth(0).innerText()).toBe(mission.content);
+      expect(await modified.locator('pre').nth(1).innerText()).toBe(revisedMission.content);
+      await page.screenshot({ path: `${artifactDirectory}/diferencias-archivo-eliminado-desktop.png`, fullPage: true });
     });
 
     const reloaded = await step(page, 'la versión sin el archivo sigue tras recargar', async () => {
+      errors.expectHttpError(`/v3/console/spaces/${tenant}/${agentAlias}/backups`, 404);
       await page.reload({ waitUntil: 'domcontentloaded' });
       const again = await showVersions(page);
       await again.getByText(/Versión 2 · Consola · owner/u).waitFor({ timeout: 20_000 });
       await expect.poll(() => listedFiles(again), { timeout: 15_000 }).toEqual(withoutNotes.map((file) => file.path));
       await expect.poll(() => fileSelect(again).inputValue(), { timeout: 15_000 }).toBe(mission.path);
-      expect(await editor(again).inputValue()).toBe(mission.content);
+      expect(await editor(again).inputValue()).toBe(revisedMission.content);
       return again;
     });
     expect(await readSnapshot(page)).toEqual({ version: 2, files: withoutNotes });
@@ -271,6 +299,20 @@ describe('archivos de contexto en navegador real contra gateway y PostgreSQL rea
     expect(await readHistory(page)).toEqual([
       history(3, 'restore', 1), history(2, 'ui', null), history(1, 'ui', null),
     ]);
+    await reloaded.getByRole('button', { name: 'Ver diferencias de versión 2', exact: true }).click();
+    const restoredDiff = reloaded.getByRole('region', { name: 'Diferencias de contexto', exact: true });
+    await restoredDiff.getByText(`${notes.path} · Añadido`, { exact: true }).waitFor({ timeout: 15_000 });
+    const added = restoredDiff.locator('details').filter({ hasText: `${notes.path} · Añadido` });
+    expect(await added.locator('pre').nth(0).innerText()).toBe('No existía');
+    expect(await added.locator('pre').nth(1).innerText()).toBe(notes.content);
+    await page.screenshot({ path: `${artifactDirectory}/diferencias-archivo-anadido-desktop.png`, fullPage: true });
+    await reloaded.getByRole('button', { name: 'Ver diferencias de versión 3', exact: true }).click();
+    await reloaded.getByText('Sin diferencias.', { exact: true }).waitFor({ timeout: 15_000 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await fileSelect(reloaded).selectOption(mission.path);
+    expect(await editor(reloaded).inputValue()).toBe(mission.content);
+    expect(await readSnapshot(page)).toEqual({ version: 3, files: withProfile });
+    await page.screenshot({ path: `${artifactDirectory}/archivos-restaurados-mobile.png`, fullPage: true });
     errors.assertClean();
   }, 180_000);
 });

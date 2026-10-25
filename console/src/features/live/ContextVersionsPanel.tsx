@@ -111,9 +111,9 @@ export function ContextVersionsPanel({ tenantId, alias, canWrite }: { tenantId: 
       {snapshot.sync.git_commit ? <p className="m-0 text-xs break-all">Commit: <code>{snapshot.sync.git_commit}</code>{snapshot.sync.pushed_at ? <> · publicado <Time value={snapshot.sync.pushed_at} /></> : null}</p> : null}
       <div className="flex flex-wrap gap-2"><Button disabled={!writable || !!draft} onClick={() => { void operation(() => api.applyVersionedContext(tenantId, alias), 'Aplicación solicitada. El estado usado por el agente se muestra arriba.'); }}>Aplicar al agente</Button>
         <ActionButton label="Reintentar sincronización" pendingLabel="Reintentando…" disabled={!writable || !!draft} done={false} announceError={false} action={() => operation(() => api.retryContextSync(tenantId, alias), 'Sincronización solicitada.')} /></div>
-      <label>Archivo<select value={current?.path ?? ''} disabled={busy} onChange={event => { setSelected(event.target.value); }}>
+      <label>Archivo<select aria-label="Archivo" value={current?.path ?? ''} disabled={busy} onChange={event => { setSelected(event.target.value); }}>
         {!files.length ? <option value="">Sin archivos</option> : null}{files.map(file => <option key={file.path}>{file.path}</option>)}</select></label>
-      {current ? <><label>Contenido de {current.path}<textarea className="min-h-64 font-mono text-xs" value={current.content} disabled={!writable}
+      {current ? <><label>Contenido de {current.path}<textarea aria-label={`Contenido de ${current.path}`} className="min-h-64 font-mono text-xs" value={current.content} disabled={!writable}
         onChange={event => { updateFiles(files.map(file => file.path === current.path ? { ...file, content: event.target.value } : file)); }} /></label>
         <Button disabled={!writable} onClick={() => { updateFiles(files.filter(file => file.path !== current.path)); }}>Quitar este archivo del borrador</Button></> : <p>No hay contextos guardados. Añade un archivo para comenzar.</p>}
       <form className="flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); if (!writable) return;
