@@ -21,9 +21,6 @@ import type { PtyChannelState } from './pty-types';
 const BOTON = 'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 px-2.5 text-[13px] font-medium bg-brand text-on-brand hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50';
 const AVISO = 'm-0 rounded-md bg-warn-soft px-2 py-1 text-xs text-warn-ink';
 
-/** Close code the relay uses on the browser leg when the operator's hold is no longer theirs. */
-const CIERRE_CONTROL_DEVUELTO = 4410;
-
 /** How long the take waits for the relay to redeem the ticket before saying it did not attach. */
 const ESPERA_DE_ENGANCHE_MS = 12_000;
 const LATIDO_DE_ESPERA_MS = 50;
@@ -166,13 +163,14 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
     takeGenerationRef.current += 1;
   }, [grant?.session_id, grant?.request_id, grant?.owner_generation, grant?.owner_token]);
 
-  // The relay already took the hold away: posting a release would claim something that did not
-  // happen, so the state is dropped WITHOUT a request and the operator is told in Spanish.
+  // A closed channel has no keyboard; only confirmed release discards its cleanup capability.
   useEffect(() => {
-    if (codigoDeCierre !== CIERRE_CONTROL_DEVUELTO) return;
+    if (codigoDeCierre === undefined || codigoDeCierre === 1006) return;
     takeGenerationRef.current += 1;
-    revokedGenerationRef.current += 1;
-    porDevolverRef.current = undefined;
+    if (codigoDeCierre === 4410) {
+      revokedGenerationRef.current += 1;
+      porDevolverRef.current = undefined;
+    }
     setArriendo(undefined);
     setPerdido(true);
   }, [codigoDeCierre]);

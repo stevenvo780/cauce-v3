@@ -2,6 +2,7 @@ import { cancelPendingInput } from './pty-input';
 import { focusWritablePty } from './pty-focus';
 import { finishOutput, writeOutput } from './pty-output';
 import {
+  PTY_CLOSE_MESSAGES,
   PTY_HANDSHAKE_TIMEOUT_MS,
   PTY_RECONNECT_DELAYS_MS,
   PTY_VIEWER_HEARTBEAT_MS,
@@ -54,7 +55,8 @@ function finishChannel(
   const explained = ptyCloseMessage(code, reason);
   publish({
     state: entry.view.state === 'closed' ? 'closed' : code === 1000 ? 'closed' : 'error',
-    message: entry.view.state === 'closed' && entry.view.message ? entry.view.message : explained,
+    message: !Object.hasOwn(PTY_CLOSE_MESSAGES, code) && entry.view.state === 'closed' && entry.view.message
+      ? entry.view.message : explained,
     closeCode: code,
   });
   entry.onClosed?.(entry.view);

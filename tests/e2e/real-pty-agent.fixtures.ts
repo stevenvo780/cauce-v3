@@ -16,17 +16,18 @@ import { registerTerminalControlPlane } from '../../services/gateway/src/termina
 import { terminalCapabilityAnnouncement, type TerminalConfig } from '../../services/gateway/src/terminal/config.js';
 import { AgentRegistry } from '../../services/gateway/src/terminal/registry.js';
 import { deriveAliasKey } from '../../services/gateway/src/terminal/tickets.js';
+import type { TerminalMode } from '../../services/gateway/src/terminal/types.js';
 import { relayInstanceIdFromCertificate } from '../../services/terminal-relay/src/relay-identity.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
 import { startTrustedBrowser, type BrowserContext, type BrowserPage, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts, type NamedLoopbackPortReservations } from './port-reservation.js';
 import { cleanupLabelsForFailure, createCleanupAggregate, type CleanupStep } from './fixture-cleanup-error.js';
+import { initializeTerminalTmux, realPtyRuntimeOptions, stageTerminalRuntime } from './v4-terminal-runtime.fixtures.js';
 
 const execute = promisify(execFile);
 const APPROVED_NODE_IMAGE = 'node@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
 const TARGET_UID = 1000;
 const TARGET_GID = 1000;
-const OWNER_LABEL = 'cauce.e2e.owner=real-pty-agent';
 const NONCE = randomUUID();
 const TENANT = 'Steven';
 const OPERATOR_ALIAS = `ptyop${randomBytes(4).toString('hex')}`;
@@ -85,11 +86,22 @@ export interface RealPtyFixture {
   request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: unknown }): Promise<HttpResult>;
   connect(ticket: string, sessionId: string, authorityProof: string, cols: number, rows: number): Promise<PtySocket>;
   waitForTarget(cookie: string, timeoutMs?: number): Promise<void>;
+  captureTmux(): Promise<string>;
+  sendTmux(input: string): Promise<void>;
   close(): Promise<void>;
 }
 
 export interface RealPtyFixtureOptions {
   readonly governanceRelay?: boolean;
+  readonly tui?: boolean;
+  readonly modes?: readonly TerminalMode[];
+  readonly owner?: string;
+  readonly resourcePrefix?: string;
+  readonly sessionTtlSeconds?: number;
+  readonly sessionMaxTotalSeconds?: number;
+  readonly controlHoldSeconds?: number;
+  readonly idleTimeoutSeconds?: number;
+  readonly maxSessionsPerOperator?: number;
 }
 
 function boundedAppend(current: string, chunk: Buffer, limit = 24 * 1024): string {
@@ -121,10 +133,10 @@ async function inspectImage(tag: string): Promise<{ id: string; owner: string } 
   }
 }
 
-async function removeOwnedImage(tag: string, id: string): Promise<void> {
+async function removeOwnedImage(tag: string, id: string, owner: string): Promise<void> {
   const current = await inspectImage(tag);
   if (!current) return;
-  if (current.id !== id || current.owner !== 'real-pty-agent') throw new Error(`refusing to remove image without exact ownership: ${tag}`);
+  if (current.id !== id || current.owner !== owner) throw new Error(`refusing to remove image without exact ownership: ${tag}`);
   await execute('docker', ['image', 'rm', tag], { timeout: 15_000, maxBuffer: 64 * 1024 });
   if (await inspectImage(tag)) throw new Error(`owned Python agent image remains after cleanup: ${tag}`);
 }
@@ -288,9 +300,12 @@ async function stopProcess(child: ChildProcess, label: string): Promise<void> {
   }
 }
 
-async function seed(database: TestDatabase, containerId: string): Promise<void> {
+async function seed(database: TestDatabase, containerId: string, targetHarness = 'pty-e2e'): Promise<void> {
   await database.pool.query('INSERT INTO tenants(id) VALUES($1) ON CONFLICT DO NOTHING', [TENANT]);
   await database.pool.query("INSERT INTO harness_definitions(id,display_name,capabilities) VALUES('pty-e2e','Real PTY E2E','[]'::jsonb) ON CONFLICT DO NOTHING");
+  if (targetHarness !== 'pty-e2e') {
+    await database.pool.query("INSERT INTO harness_definitions(id,display_name,capabilities) VALUES($1,$1,'[]'::jsonb) ON CONFLICT DO NOTHING", [targetHarness]);
+  }
   const room = `pty-e2e-${randomBytes(4).toString('hex')}`;
   await database.pool.query('INSERT INTO rooms(id,tenant_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [room, TENANT]);
   for (const [alias, runtimeUser, home] of [
@@ -298,8 +313,8 @@ async function seed(database: TestDatabase, containerId: string): Promise<void> 
     [TARGET_ALIAS, 'node', '/home/node'],
   ] as const) {
     await database.pool.query(`INSERT INTO agents(tenant_id,alias,harness_id,display_name,enabled,container_name,runtime_user,home_directory,state_directory)
-      VALUES($1,$2,'pty-e2e',$2,true,$3,$4,$5,$6) ON CONFLICT (tenant_id,alias) DO NOTHING`,
-    [TENANT, alias, alias === TARGET_ALIAS ? containerId : `operator-${randomUUID()}`, runtimeUser, home, `${home}/.cauce-e2e`]);
+      VALUES($1,$2,$7,$2,true,$3,$4,$5,$6) ON CONFLICT (tenant_id,alias) DO NOTHING`,
+    [TENANT, alias, alias === TARGET_ALIAS ? containerId : `operator-${randomUUID()}`, runtimeUser, home, `${home}/.cauce-e2e`, alias === TARGET_ALIAS ? targetHarness : 'pty-e2e']);
     await database.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING",
       [TENANT, room, alias, alias === TARGET_ALIAS ? 'agent' : 'operator']);
   }
@@ -307,8 +322,13 @@ async function seed(database: TestDatabase, containerId: string): Promise<void> 
 
 export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): Promise<RealPtyFixture> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined) throw new Error('real PTY E2E requires its own Testcontainers database');
-  const imageTag = `cauce-real-pty-agent:${randomUUID()}`;
-  const containerName = `cauce-real-pty-${randomUUID()}`;
+  const { owner, resourcePrefix, modes, sessionTtlSeconds, sessionMaxTotalSeconds,
+    controlHoldSeconds, idleTimeoutSeconds, maxSessionsPerOperator } = realPtyRuntimeOptions(options);
+  const ownerLabel = `cauce.e2e.owner=${owner}`;
+  const imageTag = `${resourcePrefix}-agent:${randomUUID()}`;
+  const containerName = `${resourcePrefix}-${randomUUID()}`;
+  const tmuxSocket = `pty-${randomBytes(8).toString('hex')}`;
+  const tmuxTarget = `cauce-${TARGET_ALIAS}:agente`;
   const buildContext = await mkdtemp(join(tmpdir(), 'cauce-real-pty-build-'));
   let directory = '';
   let database: TestDatabase | undefined;
@@ -350,8 +370,8 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
     let ownedContainerFound = false;
     try {
       const inspection = await execute('docker', ['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}}', containerName], { timeout: 15_000, maxBuffer: 64 * 1024 });
-      const [id, owner] = inspection.stdout.trim().split(' ');
-      if (owner !== 'real-pty-agent' || (agentContainerId !== undefined && id !== agentContainerId)) throw new Error(`refusing to remove changed container ${containerName}`);
+      const [id, actualOwner] = inspection.stdout.trim().split(' ');
+      if (actualOwner !== owner || (agentContainerId !== undefined && id !== agentContainerId)) throw new Error(`refusing to remove changed container ${containerName}`);
       ownedContainerFound = true;
     } catch (error) { if (!isMissingDockerObject(error)) record('inspect agent container', error); }
     if (ownedContainerFound) {
@@ -374,7 +394,7 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
       try { await database.pool.end(); } catch (error) { record('database pool', error); }
       try { await database.container.stop(); } catch (error) { record('owned PostgreSQL container', error); }
     }
-    if (imageId) { try { await removeOwnedImage(imageTag, imageId); } catch (error) { record('owned Python image', error); } }
+    if (imageId) { try { await removeOwnedImage(imageTag, imageId, owner); } catch (error) { record('owned Python image', error); } }
     try { await rm(buildContext, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }); } catch (error) { record('build context', error); }
     if (directory) {
       try { await rm(directory, { recursive: true, force: true, maxRetries: 4, retryDelay: 100 }); } catch (error) { record('private TLS directory', error); }
@@ -389,25 +409,26 @@ export async function startRealPtyFixture(options: RealPtyFixtureOptions = {}): 
     await (await import('node:fs/promises')).cp(sourcePackage, stagedPackage, {
       recursive: true, filter: (path) => path === sourcePackage || path.endsWith('.py') || path.endsWith('/contexto-de-gobierno.json'),
     });
+    await stageTerminalRuntime(buildContext, options.tui === true);
     await writeFile(join(buildContext, 'Dockerfile'), `FROM ${APPROVED_NODE_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3${options.tui ? ' tmux' : ''} && rm -rf /var/lib/apt/lists/*
 COPY --chown=node:node cauce_pty_agent/ /opt/cauce-pty-agent/cauce_pty_agent/
-USER node
+${options.tui ? 'COPY --chmod=0755 codex /usr/local/bin/codex\n' : ''}USER node
 WORKDIR /home/node
 `, { mode: 0o600 });
     const imageCollision = await inspectImage(imageTag);
     if (imageCollision) throw new Error(`random agent image tag collision: ${imageTag}`);
     try {
-      await execute('docker', ['build', '--label', OWNER_LABEL, '--tag', imageTag, '--file', join(buildContext, 'Dockerfile'), buildContext], { timeout: 8 * 60_000, maxBuffer: 512 * 1024 });
+      await execute('docker', ['build', '--label', ownerLabel, '--tag', imageTag, '--file', join(buildContext, 'Dockerfile'), buildContext], { timeout: 8 * 60_000, maxBuffer: 512 * 1024 });
     } catch (error) {
       const partial = await inspectImage(imageTag);
-      if (partial?.owner === 'real-pty-agent') imageId = partial.id;
+      if (partial?.owner === owner) imageId = partial.id;
       throw error;
     }
     const image = await inspectImage(imageTag);
-    if (image?.owner !== 'real-pty-agent') throw new Error(`owned Python image build produced no verified image: ${imageTag}`);
+    if (image?.owner !== owner) throw new Error(`owned Python image build produced no verified image: ${imageTag}`);
     imageId = image.id;
-    const capability = await execute('docker', ['run', '--rm', '--network', 'none', '--env', 'PYTHONPATH=/opt/cauce-pty-agent', '--entrypoint', 'python3', imageTag, '-c', "import os,pwd,cauce_pty_agent; print(os.geteuid(),pwd.getpwuid(os.geteuid()).pw_dir,os.environ.get('HOME','<unset>'))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
+    const capability = await execute('docker', ['run', '--rm', '--label', ownerLabel, '--network', 'none', '--env', 'PYTHONPATH=/opt/cauce-pty-agent', '--entrypoint', 'python3', imageTag, '-c', "import os,pwd,cauce_pty_agent; print(os.geteuid(),pwd.getpwuid(os.geteuid()).pw_dir,os.environ.get('HOME','<unset>'))"], { timeout: 15_000, maxBuffer: 64 * 1024 });
     if (capability.stdout.trim() !== '1000 /home/node /home/node') throw new Error(`agent image USER/HOME validation failed: ${JSON.stringify(capability.stdout.trim())}`);
 
     database = await startTestDatabase();
@@ -424,7 +445,7 @@ WORKDIR /home/node
     const ticketKey = randomBytes(32);
     const tokenPath = await writePrivate(directory, 'relay-token', relayToken, 0o644);
     const grantsFile = await writePrivate(directory, 'grants.json', JSON.stringify({ version: 1, grants: [{
-      operator: OPERATOR_EMAIL, tenant_id: TENANT, alias: TARGET_ALIAS, modes: ['shell'],
+      operator: OPERATOR_EMAIL, tenant_id: TENANT, alias: TARGET_ALIAS, modes,
     }] }), 0o644);
     const config: TerminalConfig = {
       wsPath: '/v3/console/terminal/ws', ticketKey, relayToken, relayInstanceIds: new Set([relayInstanceId]),
@@ -434,10 +455,11 @@ WORKDIR /home/node
         relayClientKeyFile: pkiValue.consoleClientKey,
         relayCaFile: pkiValue.caCert,
       } : {}),
-      grantsFile, ticketTtlSeconds: 60, sessionTtlSeconds: 900, sessionMaxTotalSeconds: 1_800,
-      claimLeaseSeconds: 150, maxSessionsPerOperator: 2, operatorHeader: 'x-cauce-operator', operators: new Set([OPERATOR_EMAIL]),
+      grantsFile, ticketTtlSeconds: 60, sessionTtlSeconds, sessionMaxTotalSeconds,
+      ...(options.tui ? { writableTuiEnabled: true, controlHoldSeconds } : {}),
+      claimLeaseSeconds: 150, maxSessionsPerOperator, operatorHeader: 'x-cauce-operator', operators: new Set([OPERATOR_EMAIL]),
     };
-    await seed(startedDatabase, 'pending');
+    await seed(startedDatabase, 'pending', options.tui ? 'codex' : 'pty-e2e');
     const auth = new PasswordAuthProvider({
       users: new PostgresConsoleUserStore(startedDatabase.pool), signingKey: randomBytes(32),
       sessionTtlMs: 10 * 60_000, fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pkiValue.relayIdentityFile)),
@@ -524,7 +546,15 @@ WORKDIR /home/node
       CAUCE_TERMINAL_AUTHZ_INTERVAL_SECONDS: '1', CAUCE_TERMINAL_AUTHZ_GRACE_SECONDS: '1',
       CAUCE_TERMINAL_RECONNECT_GRACE_SECONDS: '30', CAUCE_TERMINAL_PRESENCE_MAX_STALE_SECONDS: '30',
       CAUCE_TERMINAL_CLAIM_LEASE_SECONDS: '150',
+      CAUCE_TERMINAL_IDLE_TIMEOUT_SECONDS: String(idleTimeoutSeconds),
     };
+    if (options.tui) {
+      const recordingDirectory = join(directory, 'recordings');
+      const uid = typeof process.getuid === 'function' && process.getuid() === 0 ? TARGET_UID : process.getuid?.();
+      const gid = typeof process.getgid === 'function' && process.getuid?.() === 0 ? TARGET_GID : process.getgid?.();
+      await execute('mkdir', ['-m', '700', recordingDirectory], { ...(uid === undefined ? {} : { uid }), ...(gid === undefined ? {} : { gid }) });
+      relayEnv.CAUCE_TERMINAL_RECORDING_DIR = recordingDirectory;
+    }
     await writePrivate(directory, 'close-spool.json', '', 0o644);
     await Promise.all([
       portReservations.release('browser'),
@@ -541,7 +571,8 @@ WORKDIR /home/node
       tenant_id: TENANT, alias: TARGET_ALIAS,
       container_id: 'pending', generation: `g${randomBytes(10).toString('hex')}`,
       image_id: imageId, runtime_user: 'node', runtime_uid: TARGET_UID, runtime_gid: TARGET_GID,
-      home: '/home/node', shell_candidates: ['/bin/sh'], harness: 'shell',
+      home: '/home/node', shell_candidates: ['/bin/sh'], harness: options.tui ? 'codex' : 'shell',
+      ...(options.tui ? { tmux_tui: { path: '/usr/bin/tmux', socket: tmuxSocket } } : {}),
       relay_host: '127.0.0.1', relay_port: ports.agent, relay_server_name: 'localhost',
       alias_key_hex: deriveAliasKey(ticketKey, TENANT, TARGET_ALIAS).toString('hex'),
       client_cert_pem: (await readFile(pkiValue.agentCert, 'utf8')),
@@ -549,16 +580,19 @@ WORKDIR /home/node
       ca_pem: await readFile(pkiValue.caCert, 'utf8'), agent_version: 'cauce-pty-e2e',
       runtime_facts: {},
     };
-    const run = await execute('docker', ['run', '--rm', '--detach', '--name', containerName, '--label', OWNER_LABEL,
+    const run = await execute('docker', ['run', '--rm', '--detach', '--name', containerName, '--label', ownerLabel,
       '--network', 'host', '--user', 'node', '--read-only', '--memory', '256m', '--cpus', '1', '--pids-limit', '64',
       '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=16m,mode=1777', '--entrypoint', 'sh', agentImage, '-lc', 'sleep 600'],
     { timeout: 30_000, maxBuffer: 64 * 1024 });
     const dockerId = run.stdout.trim();
     const inspect = await execute('docker', ['inspect', '--format', '{{.Id}} {{index .Config.Labels "cauce.e2e.owner"}} {{.Config.User}}', containerName], { timeout: 15_000, maxBuffer: 64 * 1024 });
-    const [containerId, owner, user] = inspect.stdout.trim().split(' ');
-    if (containerId !== dockerId || owner !== 'real-pty-agent' || user !== 'node') throw new Error('target container identity/owner/user validation failed');
+    const [containerId, actualOwner, user] = inspect.stdout.trim().split(' ');
+    if (containerId !== dockerId || actualOwner !== owner || user !== 'node') throw new Error('target container identity/owner/user validation failed');
     agentContainerId = containerId;
     const targetId = containerId;
+    if (options.tui) {
+      await initializeTerminalTmux(containerName, tmuxSocket, TARGET_ALIAS);
+    }
     await startedDatabase.pool.query('UPDATE agents SET container_name=$3 WHERE tenant_id=$1 AND alias=$2', [TENANT, TARGET_ALIAS, targetId]);
     agentEnvBundle.container_id = targetId;
     const bundlePath = join(directory, 'agent-bundle.json');
@@ -591,6 +625,17 @@ WORKDIR /home/node
       operatorEmail: OPERATOR_EMAIL, operatorPassword: OPERATOR_PASSWORD, operatorAlias: OPERATOR_ALIAS, targetAlias: TARGET_ALIAS, tenant: TENANT, nonce: NONCE,
       agentLog: () => agentLog,
       relayLog: () => relayLog,
+      captureTmux: async () => {
+        if (!options.tui) throw new Error('tmux requires the tui fixture option');
+        const captured = await execute('docker', ['exec', '--user', 'node', containerName, '/usr/bin/tmux', '-L', tmuxSocket, 'capture-pane', '-p', '-J', '-S', '-2000', '-t', tmuxTarget], { timeout: 15_000, maxBuffer: 256 * 1024 });
+        return captured.stdout;
+      },
+      sendTmux: async (input) => {
+        if (!options.tui) throw new Error('tmux requires the tui fixture option');
+        const tmux = ['exec', '--user', 'node', containerName, '/usr/bin/tmux', '-L', tmuxSocket];
+        await execute('docker', [...tmux, 'send-keys', '-t', tmuxTarget, '-l', '--', input], { timeout: 15_000 });
+        await execute('docker', [...tmux, 'send-keys', '-t', tmuxTarget, 'Enter'], { timeout: 15_000 });
+      },
       login: async () => {
         const response = await requestGateway(gatewayUrl, proxyAgent, '/v3/auth/login', {
           method: 'POST', headers: { origin: gatewayUrl }, body: { email: OPERATOR_EMAIL, password: OPERATOR_PASSWORD },
