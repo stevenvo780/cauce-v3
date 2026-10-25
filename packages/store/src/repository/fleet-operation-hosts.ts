@@ -202,11 +202,11 @@ export function hostStepEvidence(name: FleetHostStep, input: FleetEvidence): Fle
   const parsed = FleetEvidenceSchema.safeParse(input);
   if (!parsed.success) conflict('host receipt contains unsupported evidence');
   const proof = parsed.data;
-  const valid = name === 'compensate' ? (proof.stopped_verified === true || !!proof.runtime_digest) && proof.revocation_verified === true
+  const valid = name === 'compensate' ? proof.recovery_compensated === true || (proof.stopped_verified === true || !!proof.runtime_digest) && proof.revocation_verified === true
     : name === 'purge' ? proof.stopped_verified === true && proof.revocation_verified === true
     : name === 'artifacts' ? !!proof.artifact_sha256 : name === 'credentials' ? !!proof.certificate_fingerprint
       : name === 'runtime' ? !!proof.runtime_digest : name === 'authenticate' ? proof.provider_verified === true
-        : name === 'profile' ? proof.profile_verified === true : name === 'verify' ? proof.bootstrap_verified === true && proof.roundtrip_verified === true
+        : name === 'profile' ? proof.profile_verified === true : name === 'verify' ? !!proof.recovery && !!proof.runtime_digest || proof.bootstrap_verified === true && proof.roundtrip_verified === true
           : name === 'stop' ? proof.stopped_verified === true : name === 'revoke' ? proof.revocation_verified === true
             : name === 'admission' ? proof.authority_verified === true && !!proof.artifact_sha256 : false;
   if (!valid || (proof.removed?.length ?? 0) > 512) conflict('host receipt has not demonstrated its declared physical effect');
@@ -255,6 +255,7 @@ export function aggregateHostEvidence(name: FleetHostStep, receipts: Pick<FleetH
       ? { removed: [...receipts].sort((left, right) => left.host_id.localeCompare(right.host_id)).flatMap(receipt => receipt.evidence.removed ?? []) } : {}),
     ...(receipts.some(receipt => receipt.evidence.native_decommissioned === true) ? { native_decommissioned: true } : {}) };
   if (name === 'compensate') {
+    if (receipts.every(receipt => receipt.evidence.recovery_compensated === true)) return { recovery_compensated: true };
     if (receipts.some(receipt => !!receipt.evidence.runtime_digest)) {
       if (receipts.length !== 1) conflict('previous runtime restoration requires one exact host');
       return { runtime_digest: evidence, revocation_verified: true };

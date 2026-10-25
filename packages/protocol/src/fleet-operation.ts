@@ -54,6 +54,14 @@ const RequestBase = {
   expected_revision: z.number().int().nonnegative(),
   idempotency_key: z.string().min(8).max(128).regex(/^[a-zA-Z0-9_-]+$/),
 };
+export const FleetRecoveryIdentitySchema = z.object({
+  generation: Sha256HexSchema, container_id: Sha256HexSchema, writer_instance_id: z.uuid(),
+}).strict();
+const FleetRecoveryParametersSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('probe') }).strict(),
+  z.object({ action: z.literal('apply'), expected_fingerprint: Sha256HexSchema,
+    force: z.boolean(), identity: FleetRecoveryIdentitySchema }).strict(),
+]);
 export const FleetOperationRequestSchema = z.union([
   z.object({ ...RequestBase, kind: z.enum(['create', 'update']), target: AgentTargetSchema, parameters: AgentParametersSchema }).strict()
     .superRefine((request, context) => {
@@ -64,6 +72,7 @@ export const FleetOperationRequestSchema = z.union([
   z.object({ ...RequestBase, kind: z.enum(['start', 'stop']), target: AgentTargetSchema, parameters: z.object({}).strict() }).strict(),
   z.object({ ...RequestBase, kind: z.enum(['retire', 'restore', 'purge']), target: FleetTargetSchema,
     parameters: z.object({ confirm_alias: z.string().optional() }).strict() }).strict(),
+  z.object({ ...RequestBase, kind: z.literal('recover'), target: AgentTargetSchema, parameters: FleetRecoveryParametersSchema }).strict(),
 ]);
 // Persisted requests keep their original shape and hash; only new submissions require confirmation.
 export const FleetOperationSubmissionSchema = z.union([
@@ -77,6 +86,7 @@ export const FleetOperationSubmissionSchema = z.union([
   }),
   FleetOperationRequestSchema.options[2].extend({ kind: z.literal('purge'),
     target: z.union([FleetTargetSchema.options[1], FleetTargetSchema.options[2]]), parameters: z.object({}).strict() }),
+  FleetOperationRequestSchema.options[3],
 ]);
 export const FleetOperationControlSchema = z.object({ expected_version: z.number().int().nonnegative() }).strict();
 export const FleetOperationRecentQuerySchema = z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }).strict();
@@ -85,6 +95,14 @@ export const FleetOperationStatusSchema = z.enum(['queued', 'running', 'awaiting
 export const AgentLifecycleSchema = z.enum(['draft', 'provisioning', 'auth_pending', 'verifying', 'ready', 'failed', 'retiring', 'retired']);
 export const FleetStepNameSchema = z.enum(['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission', 'fence', 'stop', 'revoke', 'purge']);
 export const FleetEvidenceSchema = z.object({
+  recovery: z.object({ identity: FleetRecoveryIdentitySchema,
+    session: z.object({ type: z.literal('session'),
+      state: z.enum(['present', 'absent', 'resumed', 'recreated', 'unsupported', 'conflict', 'failed']),
+      resumable: z.boolean(), fingerprint: Sha256HexSchema.nullable(),
+      reason: z.string().min(1).max(500).regex(/^[^\p{Cc}]+$/u),
+    }).strict(), strategy: z.literal('shared_tui'), preserves_conversation: z.literal(true), recreates_container: z.literal(false),
+  }).strict().optional(),
+  recovery_compensated: z.boolean().optional(),
   extensions_receipt: ExtensionPreparationReceiptSchema.optional(),
   artifact_sha256: Sha256HexSchema.optional(), runtime_digest: Sha256HexSchema.optional(),
   certificate_fingerprint: Sha256HexSchema.optional(), authority_verified: z.boolean().optional(),
@@ -118,7 +136,7 @@ export const FleetPurgeResourceSchema = z.object({
 export const FleetOperationPreviewSchema = z.object({
   request_sha256: Sha256HexSchema,
   expected_revision: z.number().int().nonnegative(), target: FleetTargetSchema,
-  kind: z.enum(['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge']),
+  kind: z.enum(['create', 'update', 'start', 'stop', 'retire', 'restore', 'purge', 'recover']),
   steps: z.array(FleetStepNameSchema), dependencies: z.array(ConfigurationDependencySchema), can_apply: z.boolean(),
   resources: z.array(FleetPurgeResourceSchema).max(16).default([]),
 }).strict();

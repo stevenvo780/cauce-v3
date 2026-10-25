@@ -6,6 +6,8 @@ import { FleetOperationError, isRegistryDraft, type FleetOperationRow, type Fenc
 import { prepareFleetTransition, settleFleetTransition } from './fleet-operation-lifecycle.js';
 import { admitFleetAgent } from './fleet-operation-admission.js';
 import { runtimePrincipalScopeSql } from './system-principal-scope.js';
+import { isFleetRecoveryProbe, prepareFleetRecovery, restoreFleetRecovery } from './fleet-operation-recovery.js';
+import { preparedState } from './fleet-operation-state.js';
 export { admitFleetAgent } from './fleet-operation-admission.js';
 
 export async function fleetAgentTargets(client: DatabaseClient, row: FleetOperationRow): Promise<FencedFleetTarget[]> {
@@ -102,6 +104,7 @@ export async function prepareFleetDesired(
   const validated = await validateFleetTarget(client, row.request, controllerHost, false, coordinatorEnabled, coordinatorHosts);
   if (!validated.preview.can_apply) throw new FleetOperationError('conflict', 'target still has durable dependencies');
   const targets = await fleetAgentTargets(client, row);
+  if (row.kind === 'recover') { await prepareFleetRecovery(client, row); return targets; }
   await fenceFleetAgents(client, targets);
   if (row.kind === 'create' || row.kind === 'update') await prepareAgentDesired(client, row);
   else await prepareFleetTransition(client, row);
@@ -123,6 +126,7 @@ export async function previousFleetAgents(client: DatabaseClient, row: FleetOper
 }
 
 export async function settleFleetDesired(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
+  if (row.kind === 'recover') { if (!isFleetRecoveryProbe(row.request)) await restoreFleetRecovery(client, row, (await preparedState(client, row.id)).previous_agents); return; }
   if (row.kind === 'stop' || row.kind === 'retire' || row.kind === 'purge' || (row.kind === 'restore' && row.target.resource !== 'agent')) {
     await settleFleetTransition(client, row);
   } else await admitFleetAgent(client, row);

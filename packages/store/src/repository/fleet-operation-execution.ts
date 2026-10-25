@@ -8,13 +8,18 @@ import { lockPreparedFleetRevision, sealFleetTargetSlice } from './fleet-operati
 import { assertPrecedingSteps, fleetStep, lockFleetClaim, preparedState, recordFleetRevision, saveFleetState } from './fleet-operation-state.js';
 import { canRestoreFleetUpdate } from './fleet-operation-compensation.js';
 import { fleetMembershipIntent, purgeFleetTarget } from './fleet-operation-lifecycle.js';
+import { fleetRecoveryEvidence, isFleetRecoveryProbe, lockFleetRecoveryConnection, restoreFleetRecovery } from './fleet-operation-recovery.js';
 import { assertFleetHostBarrier, assertFleetSealedHostBarrier, assertFleetRelocationSourceBarrier, hostStepEvidence, loadFleetHostScope, loadFleetHostSlices, planFleetHostSlices, selectFleetHostSlices,
   readFleetGroupAgents, readFleetHostReceipts, usesFleetHostSlices, type FleetHostReceipt, type FleetHostSlice, type FleetHostStep } from './fleet-operation-hosts.js';
 
-function stepEvidence(name: FleetStepName, input: FleetEvidence): FleetEvidence {
+function stepEvidence(row: FleetOperationRow, name: FleetStepName, input: FleetEvidence): FleetEvidence {
   const parsed = FleetEvidenceSchema.safeParse(input);
   if (!parsed.success) throw new FleetOperationError('invalid_input', 'fleet step evidence contains unsupported fields');
   const proof = parsed.data;
+  if (row.kind === 'recover') return fleetRecoveryEvidence(row, name, proof);
+  if (proof.recovery !== undefined || proof.recovery_compensated !== undefined) {
+    throw new FleetOperationError('invalid_input', 'recovery evidence requires a recovery operation');
+  }
   const valid = name === 'artifacts' ? !!proof.artifact_sha256
     : name === 'credentials' ? !!proof.certificate_fingerprint
       : name === 'runtime' ? !!proof.runtime_digest
@@ -45,6 +50,9 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     const proof = hostStepEvidence(name, evidence);
     return this.transaction(async client => {
       const row = name === 'compensate' ? await lockFleetClaim(client, claim, true) : await this.current(client, claim);
+      if (row.kind !== 'recover' && (proof.recovery !== undefined || proof.recovery_compensated !== undefined)) {
+        throw new FleetOperationError('invalid_input', 'recovery evidence requires a recovery operation');
+      }
       if (name === 'compensate' && proof.runtime_digest !== undefined
           && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
             row.request, (await preparedState(client, row.id)).previous_agents)) {
@@ -89,10 +97,11 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         return { operation: publicFleetOperation(row), ...await preparedState(client, row.id) };
       }
       await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
+      await lockFleetRecoveryConnection(client, row);
       const previous = await previousFleetAgents(client, row);
       const intent = await fleetMembershipIntent(client, row);
       const targets = await prepareFleetDesired(client, row, this.controllerHost, this.coordinatorEnabled, this.coordinatorHosts);
-      row.desired_revision = await recordFleetRevision(client, row, 'prepare');
+      row.desired_revision = isFleetRecoveryProbe(row.request) ? row.expected_revision : await recordFleetRevision(client, row, 'prepare');
       const scopedAgents = row.request.kind === 'create' || row.request.kind === 'update'
         ? await readFleetGroupAgents(client, row.request) : previous;
       const slices = planFleetHostSlices(row, scopedAgents, previous);
@@ -122,9 +131,9 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
   }
 
   async completeStep(claim: FleetOperationClaim, name: FleetStepName, evidence: FleetEvidence): Promise<FleetOperation> {
-    const proof = stepEvidence(name, evidence);
     return this.transaction(async (client) => {
       const row = await this.current(client, claim);
+      const proof = stepEvidence(row, name, evidence);
       if (name === 'prepare' || name === 'fence') {
         throw new FleetOperationError('invalid_input', 'this step is controlled by the durable lifecycle transaction');
       }
@@ -176,7 +185,8 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
       const row = await lockFleetClaim(client, claim, true);
       row.status = row.cancel_requested ? 'cancelling' : 'failed'; row.error = parsed.data;
       if (parsed.data.step) fleetStep(row, parsed.data.step).status = 'failed';
-      if (row.target.resource === 'agent') await client.query(`UPDATE agents SET enabled=false,lifecycle_state=CASE
+      if (row.target.resource === 'agent' && !isFleetRecoveryProbe(row.request)
+          && (row.kind !== 'recover' || row.desired_revision !== null)) await client.query(`UPDATE agents SET enabled=false,lifecycle_state=CASE
         WHEN retired_at IS NULL THEN 'failed' ELSE 'retiring' END,updated_at=clock_timestamp() WHERE tenant_id=$1 AND alias=$2 AND purged_at IS NULL`,
       [row.target.tenant_id, row.target.alias]);
       const compensation = row.cancel_requested && (await client.query<{ cancelling: boolean }>(
@@ -194,11 +204,12 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
         throw new FleetOperationError('conflict', 'fleet operation still has unverified steps');
       }
       for (const step of row.steps.filter((step) => !['prepare', 'fence'].includes(step.name))) {
-        stepEvidence(step.name, step.evidence ?? {});
+        stepEvidence(row, step.name, step.evidence ?? {});
         await assertFleetSealedHostBarrier(client, row, step.name, step.evidence ?? {});
       }
       await settleFleetDesired(client, row);
-      row.desired_revision = await recordFleetRevision(client, row, 'settle'); row.applied_revision = row.desired_revision;
+      if (!isFleetRecoveryProbe(row.request)) row.desired_revision = await recordFleetRevision(client, row, 'settle');
+      row.applied_revision = row.desired_revision;
       row.status = 'succeeded'; row.error = null;
       return publicFleetOperation(await saveFleetState(client, row, claim, 'succeeded', {}, true));
     });
@@ -210,6 +221,20 @@ export abstract class FleetOperationExecution extends FleetOperationClaims {
     return this.transaction(async (client) => {
       const row = await lockFleetClaim(client, claim, true);
       if (!row.cancel_requested) throw new FleetOperationError('conflict', 'compensation requires an operator cancellation');
+      if (row.kind === 'recover') {
+        if (row.desired_revision !== null && !isFleetRecoveryProbe(row.request)) {
+          if (proof.data.recovery_compensated !== true) throw new FleetOperationError('conflict', 'recovery compensation has not been acknowledged');
+          await lockPreparedFleetRevision(client, row);
+          await restoreFleetRecovery(client, row, (await preparedState(client, row.id)).previous_agents);
+        }
+        for (const step of row.steps) if (step.status !== 'pending') step.status = 'compensated';
+        row.status = 'cancelled'; row.error = { code: 'CANCELLED', retryable: false };
+        if (row.desired_revision !== null && !isFleetRecoveryProbe(row.request)) row.desired_revision = await recordFleetRevision(client, row, 'compensate');
+        return publicFleetOperation(await saveFleetState(client, row, claim, 'cancelled', { recovery_compensated: true }, true));
+      }
+      if (proof.data.recovery !== undefined || proof.data.recovery_compensated !== undefined) {
+        throw new FleetOperationError('invalid_input', 'recovery evidence requires a recovery operation');
+      }
       if (proof.data.runtime_digest !== undefined
           && !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
             row.request, (await preparedState(client, row.id)).previous_agents)) {

@@ -11,6 +11,7 @@ import { fleetPurgeResources } from './fleet-purge-resources.js';
 import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
+import { assertFleetRecoveryIdle } from './fleet-operation-recovery.js';
 
 export type FleetAuthorityScope = string | CompanyAuthoritySource;
 
@@ -85,6 +86,7 @@ export function fleetSteps(request: FleetOperationRequest, relocation = false): 
     case 'update': return ['prepare', 'stop', ...(relocation ? ['revoke' as const] : []), 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
     case 'create': case 'restore': return ['prepare', 'artifacts', 'credentials', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
     case 'start': return ['prepare', 'runtime', 'authenticate', 'profile', 'verify', 'admission'];
+    case 'recover': return [request.parameters.action === 'probe' ? 'prepare' : 'fence', 'runtime', 'verify'];
     case 'stop': return ['fence', 'stop', 'artifacts'];
     case 'retire': return ['fence', 'stop', 'revoke', 'artifacts'];
     case 'purge': return ['fence', 'stop', 'revoke', 'purge', 'artifacts'];
@@ -99,7 +101,7 @@ export async function validateFleetTarget(
     'SELECT enabled,retired_at,purged_at,company_id FROM tenants WHERE id=$1 FOR SHARE', [target.tenant_id])).rows[0];
   if (!tenant) throw new FleetOperationError('not_found', 'target tenant was not found');
   if (tenant.purged_at) throw new FleetOperationError('conflict', 'purged tenant identity is permanent');
-  const activating = ['create', 'update', 'start', 'restore'].includes(request.kind);
+  const activating = ['create', 'update', 'start', 'restore', 'recover'].includes(request.kind);
   if (activating && !(request.kind === 'restore' && target.resource === 'tenant') && (!tenant.enabled || tenant.retired_at !== null)) {
     throw new FleetOperationError('conflict', 'target tenant is not active');
   }
@@ -113,6 +115,11 @@ export async function validateFleetTarget(
     if (agent?.purged_at) throw new FleetOperationError('conflict', 'purged agent identity is permanent');
     if (request.kind === 'create' && agent && !prepared && !isRegistryDraft(agent)) throw new FleetOperationError('conflict', 'agent identity already exists');
     if (request.kind !== 'create' && !agent) throw new FleetOperationError('not_found', 'target agent was not found');
+    if (request.kind === 'recover' && (!agent?.runtime_key || agent.retired_at !== null || !agent.runtime_mode
+        || !['codex', 'claude', 'grok', 'muse'].includes(agent.harness_id))) {
+      throw new FleetOperationError('conflict', 'recovery requires an active standard fleet runtime');
+    }
+    await assertFleetRecoveryIdle(client, request);
     if (request.kind === 'create' || request.kind === 'update') {
       const parameters = request.parameters;
       // A computer serves one company; while only one exists, the first placement registers it there.

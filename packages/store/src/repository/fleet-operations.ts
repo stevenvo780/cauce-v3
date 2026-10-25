@@ -148,12 +148,13 @@ export class FleetOperationsRepository extends FleetOperationExecution {
         if (row.desired_revision === null) await lockFleetRevision(client, Number(row.expected_revision), row.company_id);
         else await lockPreparedFleetRevision(client, row);
         status = 'queued';
-      } else status = row.status === 'queued' && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';
+      } else status = (row.status === 'queued' || row.kind === 'recover' && row.desired_revision === null)
+        && row.steps.every((step) => step.status === 'pending') ? 'cancelled' : 'cancelling';
       const next = (await client.query<FleetOperationRow>(
         `UPDATE fleet_operations SET status=$2,cancel_requested=$3,version=version+1,error=NULL,updated_at=now(),
-          worker_id=CASE WHEN $2='queued' THEN NULL ELSE worker_id END,
-          claim_token=CASE WHEN $2='queued' THEN NULL ELSE claim_token END,
-          lease_expires_at=CASE WHEN $2='queued' THEN NULL ELSE lease_expires_at END
+          worker_id=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE worker_id END,
+          claim_token=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE claim_token END,
+          lease_expires_at=CASE WHEN $2 IN ('queued','cancelled') THEN NULL ELSE lease_expires_at END
          WHERE id=$1 RETURNING *`, [id, status, action === 'cancel'])).rows[0];
       if (!next) throw new Error('fleet operation control returned no row');
       await recordFleetEvent(client, id, Number(next.version), action === 'resume' ? 'resumed' : status === 'cancelled' ? 'cancelled' : 'cancel_requested',

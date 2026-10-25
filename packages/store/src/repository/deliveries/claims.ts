@@ -17,6 +17,7 @@ import { StoreError } from '../errors.js';
 import { MessagesRepository } from '../messages.js';
 import { MESSAGE_AUTHOR_SQL, messageAuthor } from '../messages/author.js';
 import { projectHumanClientProvenance } from './client-provenance.js';
+import { fleetRecoveryBlocksClaims } from '../fleet-operation-recovery.js';
 import { validConnectionToken } from '../outbox.js';
 import { conversationWorkScopeKey, conversationWorkState } from './conversation-work.js';
 import type { DeliveryRow } from '../observability.js';
@@ -339,6 +340,7 @@ export abstract class DeliveryClaimsRepository extends MessagesRepository {
           WHERE tenant_id=$1 AND alias=$2 FOR SHARE`,
         [tenantId, alias],
       );
+      if (await fleetRecoveryBlocksClaims(client, tenantId, alias)) return [];
       const liveLease = await client.query(
         `SELECT 1 FROM connection_leases
          WHERE tenant_id=$1 AND alias=$2 AND instance_id=$3 AND epoch=$4
