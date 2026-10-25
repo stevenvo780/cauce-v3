@@ -21,6 +21,7 @@ import { prepareAgentProfileRuntime } from '../console/agent-profile-runtime.js'
 import { registerAgentProfileRoutes, type AgentProfileDeps } from '../console/agent-profile.routes.js';
 import { createNativeAdminService } from '../console/native-admin/service.js';
 import { registerNativeAdminRoutes } from '../console/native-admin/routes.js';
+import { registerAgentRecoveryRoutes } from '../console/agent-recovery.routes.js';
 import { createAgentProfileDraftBinding } from '../console/agent-profile-draft.js';
 import { SondaCompartida, sondaDiferida } from '../console/sonda-compartida.js';
 import { recordTerminalAudit } from '../terminal/audit.js';
@@ -296,6 +297,7 @@ function registerConsoleAgentRoutes(
   */
   const sondaDeDocumentos = new SondaCompartida();
   const profileProbe = sondaDiferida(sondaDeDocumentos);
+  registerAgentRecoveryRoutes(app, { pool: options.pool, authProvider: options.authProvider, probe: profileProbe });
   app.decorate('sondaDeDocumentos', sondaDeDocumentos);
   {
     const perfiles = agentProfiles;

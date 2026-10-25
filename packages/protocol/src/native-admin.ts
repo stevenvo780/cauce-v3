@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const NATIVE_ADMIN_FEATURE = 'native_admin_v1';
+export const AGENT_RECOVERY_FEATURE = 'agent_recovery_v1';
 export const NATIVE_ADMIN_MAX_BYTES = 16_384;
 export const NativePieceKindSchema = z.enum(['skill', 'prompt', 'subagent', 'mcp']);
 export type NativePieceKind = z.infer<typeof NativePieceKindSchema>;
@@ -41,6 +42,9 @@ const operation = z.object({
 }).strict();
 const wireBase = { request_id: NativeOperationIdSchema, identity: NativeRuntimeIdentitySchema };
 export const NativeAdminCommandSchema = z.discriminatedUnion('op', [
+  z.object({ ...wireBase, op: z.literal('session_probe') }).strict(),
+  z.object({ ...wireBase, op: z.literal('session_recover'), expected_fingerprint: sha, force: z.boolean(),
+    expires_at: z.number().int().positive() }).strict(),
   z.object({ ...wireBase, op: z.literal('list'), kind: NativePieceKindSchema }).strict(),
   z.object({ ...wireBase, op: z.literal('get'), kind: NativePieceKindSchema, id: NativePieceIdSchema }).strict(),
   z.object({ ...wireBase, op: z.literal('recognize'), kind: NativePieceKindSchema, id: NativePieceIdSchema, expected_sha: sha.nullable() }).strict(),
@@ -54,7 +58,14 @@ export const NativePieceSchema = z.object({
   value: NativePieceValueSchema.optional(),
 }).strict();
 export type NativePiece = z.infer<typeof NativePieceSchema>;
+export const AgentSessionOutcomeSchema = z.object({
+  type: z.literal('session'),
+  state: z.enum(['present', 'absent', 'resumed', 'recreated', 'unsupported', 'conflict', 'failed']),
+  resumable: z.boolean(), fingerprint: sha.nullable(), reason: z.string().max(500),
+}).strict();
+export type AgentSessionOutcome = z.infer<typeof AgentSessionOutcomeSchema>;
 export const NativeAdminOutcomeSchema = z.discriminatedUnion('type', [
+  AgentSessionOutcomeSchema,
   z.object({ type: z.literal('inventory'), kind: NativePieceKindSchema,
     items: z.array(z.object({ id: NativePieceIdSchema, editable: z.boolean() }).strict()).max(100), truncated: z.boolean() }).strict(),
   z.object({ type: z.literal('piece'), piece: NativePieceSchema }).strict(),

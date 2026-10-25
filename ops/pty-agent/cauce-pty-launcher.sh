@@ -651,8 +651,6 @@ publish_bundle() {
       fi
     fi
   fi
-  # Runtime facts enrich presence/governance but are not a precondition for terminal transport.
-  # Zero/ambiguous evidence -- or an unreadable adapter generation -- degrades to `{}`, never a stop.
   read_adapter_generation || adapter_generation=''
   runtime_facts=$(measure_adapter_runtime_facts)
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
@@ -677,6 +675,7 @@ publish_bundle() {
   CAUCE_PTY_BUNDLE_TMUX_TUI=$tmux_tui \
   CAUCE_PTY_BUNDLE_OPENCLAW_TUI=$openclaw_tui \
   CAUCE_PTY_BUNDLE_RUNTIME_FACTS=$runtime_facts \
+  CAUCE_PTY_BUNDLE_STATE=$state_directory CAUCE_PTY_BUNDLE_ADAPTER_GENERATION=$adapter_generation \
   CAUCE_PTY_BUNDLE_JOURNAL=$governance_journal_dir \
   CAUCE_PTY_BUNDLE_VERSION=$AGENT_VERSION \
   PYTHONDONTWRITEBYTECODE=1 python3 - > "$local_bundle" <<'PYTHON'
@@ -715,6 +714,7 @@ document = {
     "tmux_tui": commands(os.environ["CAUCE_PTY_BUNDLE_TMUX_TUI"], "TMUX_TUI"),
     "openclaw_tui": commands(os.environ["CAUCE_PTY_BUNDLE_OPENCLAW_TUI"], "OPENCLAW_TUI"),
     "runtime_facts": commands(os.environ["CAUCE_PTY_BUNDLE_RUNTIME_FACTS"], "RUNTIME_FACTS"),
+    "session_recovery": {"state_directory": os.environ["CAUCE_PTY_BUNDLE_STATE"], "adapter_generation": os.environ["CAUCE_PTY_BUNDLE_ADAPTER_GENERATION"]},
     "harness": os.environ["CAUCE_PTY_BUNDLE_HARNESS"],
     "relay_host": os.environ["CAUCE_PTY_BUNDLE_RELAY_HOST"],
     "relay_port": int(os.environ["CAUCE_PTY_BUNDLE_RELAY_PORT"]),

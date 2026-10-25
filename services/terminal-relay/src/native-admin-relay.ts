@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TLSSocket } from 'node:tls';
-import { AliasSchema, NativeAdminCommandSchema, NATIVE_ADMIN_FEATURE, TenantSchema } from '@cauce/protocol';
+import { AGENT_RECOVERY_FEATURE, AliasSchema, NativeAdminCommandSchema, NATIVE_ADMIN_FEATURE, TenantSchema } from '@cauce/protocol';
 import type { AgentLookup } from './agent-leg.js';
 
 interface NativeRelayOptions { agents: AgentLookup; token: () => Promise<string>; timeoutMs?: number }
@@ -31,14 +31,15 @@ export async function handleNativeAdmin(options: NativeRelayOptions, request: In
   }
   const agent = options.agents.lookup(String(raw.tenant_id), String(raw.alias));
   const identity = command.data.identity;
-  if (!agent?.hello.features.includes(NATIVE_ADMIN_FEATURE) || agent.hello.generation !== identity.generation
+  const recovery = command.data.op === 'session_probe' || command.data.op === 'session_recover';
+  if (!agent?.hello.features.includes(recovery ? AGENT_RECOVERY_FEATURE : NATIVE_ADMIN_FEATURE) || agent.hello.generation !== identity.generation
     || agent.hello.container_id !== identity.container_id || agent.hello.writer_instance_id !== identity.writer_instance_id) {
     send(409, { type: 'error', error: 'conflict' }); return true;
   }
   const controller = new AbortController(); const abort = () => { controller.abort(); };
   request.once('aborted', abort);
   response.once('close', abort);
-  try { send(200, await agent.nativeAdmin.request(command.data, options.timeoutMs ?? 5000, controller.signal)); }
+  try { send(200, await agent.nativeAdmin.request(command.data, options.timeoutMs ?? (recovery ? 8000 : 5000), controller.signal)); }
   catch { send(503, { type: 'error', error: 'unavailable' }); }
   finally { request.off('aborted', abort); response.off('close', abort); }
   return true;

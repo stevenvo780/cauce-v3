@@ -12,6 +12,7 @@ from .governance_paths import (
     PROJECT_DOC_MAX_BYTES_LIMIT,
     _valid_project_doc_fallback,
 )
+from .session_recovery import descriptor as recovery_descriptor
 from .tmux import _openclaw_tui_config, _tmux_tui_config
 
 BUNDLE_KEYS = (
@@ -19,7 +20,7 @@ BUNDLE_KEYS = (
     "runtime_gid", "home", "shell_candidates", "harness", "relay_host", "relay_port",
     "alias_key_hex", "client_cert_pem", "client_key_pem", "ca_pem", "agent_version",
 )
-OPTIONAL_BUNDLE_KEYS = frozenset(("governance_journal_dir",))
+OPTIONAL_BUNDLE_KEYS = frozenset(("governance_journal_dir", "session_recovery"))
 RUNTIME_FACT_KEYS = frozenset((
     "codex_home", "claude_config_dir", "openclaw_workspace", "muse_workspace", "grok_workspace", "cwd", "workspace_root",
     "project_root", "project_doc_max_bytes", "project_doc_fallback_filenames",
@@ -105,6 +106,7 @@ def validate_bundle(document: dict[str, Any]) -> dict[str, Any]:
     document["runtime_facts"] = _runtime_facts_config(
         document.get("runtime_facts", {}), document["harness"], document["home"]
     )
+    document["session_recovery"] = recovery_descriptor(document.get("session_recovery"), document["runtime_uid"])
     harness_resolvers = (
         document["harness_command"], document["openclaw_tui"], document["tmux_tui"],
     )

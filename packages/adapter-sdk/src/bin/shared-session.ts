@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { CliTmux } from "../shared-session/tmux.js";
+import { CliTmux, type TmuxController } from "../shared-session/tmux.js";
 import { ensureSharedSession, sharedSessionStatus } from "../shared-session/session.js";
 import { cliSharedSessionSpec, harnessConfigDirectory } from "../shared-session/config.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
@@ -9,6 +9,7 @@ import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
 import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
+import { applySessionRecovery, previewSessionRecovery } from '../shared-session/recovery.js';
 
 /**
  * CLI to inspect and ensure the state of the shared session.
@@ -21,12 +22,14 @@ interface Options {
   readonly workspace: string;
   readonly stateDirectory?: string;
   readonly nativeId?: string;
+  readonly expectedFingerprint?: string;
+  readonly force?: boolean;
 }
 
 function usage(): never {
   process.stderr.write(
-    "uso: shared-session.js <ensure|status|degradations|seed> --alias A --harness claude|codex|grok|muse"
-    + " [--workspace /workspace] [--state DIR] [--native-id ID]\n",
+    "uso: shared-session.js <ensure|status|degradations|seed|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
+    + " [--workspace /workspace] [--state DIR] [--native-id ID] [--expected-fingerprint SHA256] [--force 0|1]\n",
   );
   process.exit(2);
 }
@@ -47,6 +50,10 @@ function parse(argv: readonly string[]): Options {
   if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(alias)) usage();
   const stateDirectory = values.get("state");
   const nativeId = values.get("native-id");
+  const expectedFingerprint = values.get('expected-fingerprint');
+  const force = values.get('force');
+  if (expectedFingerprint !== undefined && !/^[a-f0-9]{64}$/u.test(expectedFingerprint)) usage();
+  if (force !== undefined && force !== '0' && force !== '1') usage();
   return {
     command,
     alias,
@@ -54,6 +61,8 @@ function parse(argv: readonly string[]): Options {
     workspace: values.get("workspace") ?? "/workspace",
     ...(stateDirectory === undefined ? {} : { stateDirectory }),
     ...(nativeId === undefined ? {} : { nativeId }),
+    ...(expectedFingerprint === undefined ? {} : { expectedFingerprint }),
+    ...(force === undefined ? {} : { force: force === '1' }),
   };
 }
 
@@ -79,7 +88,8 @@ function spec(options: Options, home: string): SharedSessionSpec {
 async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
-  const tmux = new CliTmux();
+  const recovery = options.command.startsWith('recovery-');
+  const tmux = new CliTmux(undefined, process.env, recovery ? 1000 : 10_000);
   // This timer MUST NOT be `unref()`-ed: there is no other pending work keeping the event
   // loop alive here, and with `unref()` Node exits with code 0 before the TUI starts.
   const sleep = (ms: number): Promise<void> =>
@@ -96,7 +106,28 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (recovery && !isSharedSessionHarness(options.harness)) {
+    process.stdout.write(`${JSON.stringify({ type: 'session', state: 'unsupported', resumable: false,
+      fingerprint: null, reason: 'Este harness no admite recuperar una sesión compartida por este mecanismo.' })}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const sessionSpec = spec(options, home);
+  if (options.command === 'recovery-preview' || options.command === 'recovery-apply') {
+    if (options.stateDirectory === undefined) usage();
+    const input = { spec: sessionSpec, namespace: options.alias, stateDirectory: options.stateDirectory,
+      configDirectory: harnessConfigDirectory(sessionSpec.harness, home, process.env, sessionSpec.alias) };
+    if (options.command === 'recovery-apply' && (options.expectedFingerprint === undefined || options.force === undefined)) usage();
+    const signal = AbortSignal.timeout(6500);
+    const boundedTmux: TmuxController = { run: (args, stdin, control) => tmux.run(args, stdin,
+      { ...control, signal: control?.signal === undefined ? signal : AbortSignal.any([signal, control.signal]) }) };
+    const result = options.command === 'recovery-preview' ? await previewSessionRecovery(boundedTmux, input)
+      : await applySessionRecovery(boundedTmux, input, options.expectedFingerprint ?? '', options.force ?? false,
+        { sleep, signal, readyTimeoutMs: 3500 });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.exitCode = ['present', 'absent', 'resumed', 'recreated'].includes(result.state) ? 0 : 1;
+    return;
+  }
   if (options.command === "status") {
     const status = await sharedSessionStatus(tmux, sessionSpec);
     process.stdout.write(`${JSON.stringify(status)}\n`);

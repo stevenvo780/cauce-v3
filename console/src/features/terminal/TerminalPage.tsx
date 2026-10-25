@@ -9,6 +9,7 @@ import { FleetProvider } from '../../shell/fleet';
 import { agentHref } from '../../shell/agent-href';
 import { rememberChat } from '../../shell/last-chat';
 import { FleetContext, useFleet } from '../../shell/fleet-context';
+import { AgentRecovery } from '../live/AgentRecovery';
 import { listTerminalTargets } from './api';
 import { fleetAgentId } from './fleet';
 import { harnessIdForTerminal, loginActionOf } from './login-recipe';
@@ -97,6 +98,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
           </Button>
         </Notice>
       ) : null}
+      {selectedAgent ? <AgentRecovery tenantId={selectedAgent.tenantId} alias={selectedAgent.alias} onRecovered={refreshAll} className="shrink-0 border-b border-line p-3" /> : null}
       {missing ? (
         <Notice className="m-4" role="status">
           El servidor no observa al agente {tenantId}:{alias}.{' '}

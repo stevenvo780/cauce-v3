@@ -16,13 +16,9 @@ import { deliveryPolicy } from '../deliveries/delivery-policy';
 import { FLAG_LABEL } from './activity';
 import { AgentQuotaDetail } from '../accounts/AgentQuotaDetail';
 import { AgentAuthenticate } from '../terminal/AgentAuthenticate';
+import { AgentRecovery } from './AgentRecovery';
 import { LIVE_STATE_META, aliasDe, humanSeconds, type LiveAgentView, type OrigenEncargo } from './agent-state';
 
-/**
- * Read-only by design: the office refreshes every few seconds, so a destructive button here could
- * hit a row that just moved. Each delivery links to Queues, where retry and cancel live with their
- * own confirmation.
- */
 export function AgentSheet({ view, status, onClose, onTalk }: {
   view: LiveAgentView | null;
   status: Resource<SystemStatus>;
@@ -110,6 +106,7 @@ function SheetBody({ view, status, onTalk }: { view: LiveAgentView; status: Reso
             </a>
           ))}
           <AgentAuthenticate tenantId={view.tenantId} alias={view.alias} harnessId={view.harnessId} layout="stack" />
+          <AgentRecovery tenantId={view.tenantId} alias={view.alias} />
         </div>
 
         <Tabs.Root defaultValue="ahora" className="mt-5">
