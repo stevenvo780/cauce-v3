@@ -54,6 +54,10 @@ const pool = () => active().database.pool;
 const ref = (agentAlias = alias) => `${tenant}/${agentAlias}`;
 const room = (index: number) => { const id = rooms[index]; if (!id) throw new Error('group unavailable'); return id; };
 const sheet = () => browser().getByRole('dialog').first();
+interface RouteAbort { abort(errorCode?: string): Promise<void> }
+interface RoutablePage { route(url: string, handler: (route: RouteAbort) => Promise<void>): Promise<void>; unroute(url: string): Promise<void> }
+const routable = (page: V4Page): RoutablePage => page as unknown as RoutablePage;
+
 const registry = () => sheet().getByRole('region', { name: `Registro de ${ref()}`, exact: true });
 const binding = () => sheet().getByRole('region', { name: `Cuentas de cuota de ${ref()}`, exact: true });
 
@@ -621,4 +625,61 @@ describe.sequential('Cobertura pendiente de ajustes de agentes con Chromium y Po
       readerErrors.assertClean();
     });
   }, 180_000);
+
+  it('E11: un fallo real de lectura de acceso deja el editor en solo lectura', async () => {
+    await step('editor-access-read-failure', async () => {
+      await routable(browser()).route('**/v3/console/access', async (route) => { await route.abort('failed'); });
+      const probe = await apiGet(browser(), '/v3/console/access').catch((error: unknown) => ({ status: -1, error: String(error) }));
+      record('E11-access-probe', probe);
+      try {
+        await openSheet(alias, 'Ajustes');
+        const editor = registry();
+        await editor.getByText('Solo lectura: tu cuenta no tiene permiso para cambiar los ajustes.', { exact: true })
+          .waitFor({ timeout: 20_000 });
+        expect(await editor.getByLabel('Nombre visible', { exact: true }).isDisabled()).toBe(true);
+        await capture('E11-acceso-fallido');
+        record('E11-access-read-failure', { readOnlyNotice: true, fieldsInert: true });
+      } finally {
+        await routable(browser()).unroute('**/v3/console/access');
+      }
+      await openAgents();
+    });
+  }, 180_000);
+
+  it('E15: una eliminación comprometida con la relectura fallida muestra el resultado parcial', async () => {
+    await step('committed-delete-failed-reload', async () => {
+      const doomed = `${prefix}-e15reload`;
+      await pool().query(`INSERT INTO agents(tenant_id,alias,display_name,company_id,enabled,harness_id,max_concurrent_deliveries,primary_room_id)
+        VALUES($1,$2,$2,$3,false,'codex',1,NULL)`, [tenant, doomed, person.company.slug]);
+      const adminPool = pool();
+      await adminPool.query(`CREATE OR REPLACE FUNCTION ${prefix.replaceAll('-', '_')}_fail_reload() RETURNS trigger AS $fn$
+        BEGIN
+          EXECUTE 'ALTER TABLE rooms RENAME TO rooms_e15_oculta';
+          RETURN NEW;
+        END
+        $fn$ LANGUAGE plpgsql`);
+      await adminPool.query(`CREATE TRIGGER ${prefix.replaceAll('-', '_')}_fail_reload AFTER INSERT ON config_revisions
+        FOR EACH ROW EXECUTE FUNCTION ${prefix.replaceAll('-', '_')}_fail_reload()`);
+      try {
+        await openSheet(doomed, 'Ajustes');
+        const editor = sheet().getByRole('region', { name: `Registro de ${ref(doomed)}`, exact: true });
+        await editor.getByRole('button', { name: 'Eliminar registro', exact: true }).click();
+        await editor.getByRole('button', { name: 'Previsualizar eliminación', exact: true }).click();
+        await enabled(editor.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }));
+        await editor.getByRole('button', { name: 'Confirmar eliminación del registro', exact: true }).click();
+        await browser().getByRole('status').filter({ hasText: 'La relectura no quedó acreditada' }).waitFor({ timeout: 20_000 });
+        const tombstone = await pool().query<{ purged_at: Date | null }>(
+          'SELECT purged_at FROM agents WHERE tenant_id=$1 AND alias=$2', [tenant, doomed]);
+        expect(tombstone.rows[0]?.purged_at).toBeInstanceOf(Date);
+        await capture('E15-parcial-relectura');
+        record('E15-reload-failed', { removed: doomed, partialNotice: true });
+      } finally {
+        await adminPool.query(`DROP TRIGGER IF EXISTS ${prefix.replaceAll('-', '_')}_fail_reload ON config_revisions`);
+        await adminPool.query(`DROP FUNCTION IF EXISTS ${prefix.replaceAll('-', '_')}_fail_reload()`);
+        await adminPool.query('ALTER TABLE IF EXISTS rooms_e15_oculta RENAME TO rooms').catch(() => undefined);
+      }
+      expect((await apiGet(browser(), '/v3/console/config')).status).toBe(200);
+    });
+  }, 180_000);
+
 });

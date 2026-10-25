@@ -37,6 +37,10 @@ function pool() { return active().database.pool; }
 function alias(state = 'idle') { return `${prefix}-${state}`; }
 function ref(agentAlias = alias()) { return `${tenant}/${agentAlias}`; }
 function sheet(target = browser()) { return target.getByRole('dialog').first(); }
+interface RouteAbort { abort(errorCode?: string): Promise<void> }
+interface RoutablePage { route(url: string, handler: (route: RouteAbort) => Promise<void>): Promise<void>; unroute(url: string): Promise<void> }
+const routable = (page: V4Page): RoutablePage => page as unknown as RoutablePage;
+
 function panel(target = browser()) { return sheet(target).getByRole('region', { name: `Estado de ${ref()}`, exact: true }); }
 function quota() { return sheet().getByRole('region', { name: `Cuota de ${alias()}`, exact: true }); }
 
@@ -439,4 +443,52 @@ describe.sequential('Estado del agente con Chromium, gateway y PostgreSQL reales
       unexpectedErrors: runtimeErrors.unexpected, ignoredErrors: Object.fromEntries(runtimeErrors.ignored) });
     await target.context().close();
   }, 120_000);
+
+  it('S01 settled y sin dato desde productores reales: turno completado y agente sin actividad', async () => {
+    const bare = `${prefix}-nodata`;
+    await pool().query(`INSERT INTO agents(tenant_id,alias,display_name,company_id,enabled,harness_id,max_concurrent_deliveries,lifecycle_state)
+      VALUES($1,$2,$2,$3,false,'codex',1,'ready') ON CONFLICT DO NOTHING`, [tenant, bare, person.company.slug]);
+    // The activity endpoint always reports every agent (a ready agent without a lease reads
+    // 'No responde'), so 'Sin dato' is the transport-failure state: it appears when the activity
+    // read itself fails. Cut it for real and the sheet must say it has no data.
+    await routable(browser()).route('**/v3/console/activity', async (route) => { await route.abort('failed'); });
+    try {
+      await openSheet(bare);
+      const bareSection = sheet().getByRole('region', { name: `Estado de ${ref(bare)}`, exact: true });
+      await bareSection.getByText('La actividad de la flota no informa de este agente ahora mismo.', { exact: true }).waitFor({ timeout: 20_000 });
+    } finally {
+      await routable(browser()).unroute('**/v3/console/activity');
+    }
+    record('S01-sin-dato', { state: 'activity transport failure renders Sin dato; endpoint otherwise always reports' });
+    await capture('S01-sin-dato');
+
+    await pool().query(`UPDATE agents SET lifecycle_state='ready' WHERE tenant_id=$1 AND alias=$2`, [isaTenant.tenant, isaTenant.target]);
+    await pool().query(`INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,'agent') ON CONFLICT DO NOTHING`, [isaTenant.tenant, isaTenant.room, isaTenant.target]);
+    const leaseCount = async () => (await pool().query('SELECT 1 FROM connection_leases WHERE tenant_id=$1 AND alias=$2 AND lease_until>now()', [isaTenant.tenant, isaTenant.target])).rowCount;
+    if ((await leaseCount()) === 0) await startBoundedAdapter(active(), isaTenant);
+    await expect.poll(leaseCount, { timeout: 30_000 }).toBe(1);
+
+    const target = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
+    const operator = { ...person, email: isaTenant.email, password: isaTenant.password };
+    await login(target, active().baseUrl, operator);
+    await target.goto(`${active().baseUrl}/live`, { waitUntil: 'domcontentloaded' });
+    await target.getByText(/1 libre/u).waitFor({ timeout: 30_000 }).catch(() => undefined);
+    const harness = join(active().directory, `${isaTenant.tenant}-codex-shim.mjs`);
+    const source = await readFile(harness, 'utf8');
+    const anchor = "const prompt=Buffer.concat(chunks).toString('utf8');";
+    expect(source).toContain(anchor);
+    await writeFile(harness, source.replace(anchor, `${anchor}\nawait new Promise(resolve => setTimeout(resolve, 20_000));`));
+    const marker = `UI-SETTLED-${run.toUpperCase()}`;
+    const sender = asV4Page(await newTrustedPage(active(), { width: 1440, height: 900 }));
+    await login(sender, active().baseUrl, operator);
+    await sender.goto(`${active().baseUrl}/messages/${isaTenant.tenant}/${isaTenant.target}`, { waitUntil: 'domcontentloaded' });
+    await sender.getByLabel(`Mensaje para ${isaTenant.target}`, { exact: true }).fill(marker);
+    await sender.getByRole('button', { name: 'Enviar', exact: true }).click();
+    await target.getByText(/Salió de vuelo/u).first().waitFor({ timeout: 45_000 });
+    await sender.context().close();
+    await capture('S01-settled-live', target);
+    record('S01-settled', { state: 'settled shown in /live after a real completed turn (sheet provider keeps no pulses)' });
+    await target.context().close();
+  }, 240_000);
+
 });
