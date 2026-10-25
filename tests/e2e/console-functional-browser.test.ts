@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { browserDeliveryFailure } from './browser-delivery-diagnostics.js';
+import { prepareChatRuntimeIdentity } from './chat-runtime-identity.fixtures.js';
 import {
   functionalTenants, isaSecondHuman, isaTenant, jhonTenant, newTrustedPage, startBoundedAdapter,
   startConsoleFunctionalFixture, type FunctionalTenant,
@@ -96,7 +97,10 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     expect(await isaPage.locator('body').innerText()).not.toContain(jhonTenant.email);
     expect(await jhonPage.locator('body').innerText()).not.toContain(isaTenant.email);
 
-    for (const tenant of functionalTenants) await startBoundedAdapter(activeFixture, tenant);
+    for (const tenant of functionalTenants) {
+      await prepareChatRuntimeIdentity(activeFixture, tenant);
+      await startBoundedAdapter(activeFixture, tenant);
+    }
     await Promise.all(functionalTenants.map((tenant) => waitForLease(tenant)));
     const pages = [isaPage, jhonPage];
     for (const [index, tenant] of functionalTenants.entries()) {
