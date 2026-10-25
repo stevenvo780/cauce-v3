@@ -514,4 +514,4 @@ if [ -n "$FAILED" ]; then
   die "ROJO en $FAILED; recibo rojo en $OUT/recibo.json"
 fi
 echo "VERDE: recibo de $COMMIT en $OUT/recibo.json"
-echo "Copialo junto al bundle (fuera del clon) y exporta CAUCE_DEPLOY_GATES_RECEIPT con su ruta absoluta."
+echo "Cópialo junto al bundle (fuera del clon) y exporta CAUCE_DEPLOY_GATES_RECEIPT con su ruta absoluta."
