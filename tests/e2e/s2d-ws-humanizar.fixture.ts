@@ -33,7 +33,7 @@ const SOURCES = ['tests/e2e/s2d-ws-humanizar.test.ts', 'tests/e2e/s2d-ws-humaniz
   'tests/e2e/s2-espacio-estandar.rehearsal.ts', 'services/gateway/src/fleet/host-computer.fixtures.ts', ...HARNESS_SOURCE_FILES,
   '.delegados/v4/espacio-estandar.sh', '.delegados/v4/espacio-estandar.py', '.delegados/v4/espacio-estandar.remoto.py',
   '.delegados/v4/live_adapter.py', '.delegados/v4/live_adapter_probe.py',
-  ...(CANDIDATE_COMMIT === undefined ? ['ops/container-runtime/cauce_container_restart.py', ...OPS_FILES.map(path => 'ops/' + path)] : [])];
+  ...(CANDIDATE_COMMIT === undefined ? ['ops/container-runtime/cauce_container_restart.py', 'ops/container-runtime/cauce_container_lease.py', ...OPS_FILES.map(path => 'ops/' + path)] : [])];
 
 export interface Identity { pid: number; ticks: string; ppid: number; uid: number; state: string }
 export interface Actor { alias: string; harness: 'claude' | 'codex'; state: string; unit: string; profile: string }
@@ -56,6 +56,9 @@ export interface SharedWindowFixture {
   directStop(actor: Actor): Promise<ToolResult>;
   gone(identity: Identity): Promise<boolean>;
   start(actor: Actor): Promise<void>;
+  stopUnit(actor: Actor): Promise<ToolResult>;
+  restartUnit(actor: Actor): Promise<ToolResult>;
+  waitReady(actor: Actor): Promise<void>;
   save(name: string, value: unknown): Promise<void>;
   diagnostics(): Promise<void>;
   close(): Promise<void>;
@@ -81,17 +84,19 @@ export async function until<T>(read: () => Promise<T | undefined>, timeout = 45_
   throw new Error('Owned shared-session condition did not settle before its deadline');
 }
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
-async function sourceHashes(): Promise<Record<string, string>> {
-  return Object.fromEntries(await Promise.all(SOURCES.map(async (file): Promise<[string, string]> => [file, hash(await readFile(join(ROOT, file)))])));
+async function sourceHashes(files: string[]): Promise<Record<string, string>> {
+  return Object.fromEntries(await Promise.all(files.map(async (file): Promise<[string, string]> => [file, hash(await readFile(join(ROOT, file)))])));
 }
 
-export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
+export async function sharedWindowFixture(options: { campaign?: string; providerSource?: string; extraSourceFiles?: string[] } = {}): Promise<SharedWindowFixture> {
   assert.match(process.env.HOME ?? '', /^\/tmp\/cauce-e2e-home-s2b-/u, 'use CAUCE_E2E_CONTEXT=lab scripts/e2e-lab.sh s2b-s2d ...');
   assert.equal(process.getuid?.(), 1000);
   assert.equal(process.env.CAUCE_TEST_DATABASE_URL, undefined);
   assert.ok(CANDIDATE_COMMIT === undefined || CANDIDATE_COMMIT === BASELINE);
+  const campaign = options.campaign ?? CAMPAIGN;
+  const sourceFiles = [...SOURCES, ...(options.extraSourceFiles ?? [])];
   const run = randomUUID().replaceAll('-', '').slice(0, 12), prefix = 'zz-canary-' + OWNER + '-' + run;
-  const evidence = join(ROOT, '.delegados/v4/recibos', CAMPAIGN, run);
+  const evidence = join(ROOT, '.delegados/v4/recibos', campaign, run);
   const directory = await mkdtemp('/datos/' + prefix + '-');
   const home = join(directory, 'home'), workspace = join(directory, 'workspace'), control = '/run/zz-canary-s2d';
   const wsName = prefix + '-ws', managerRoot = '/home/cauce/s2d';
@@ -102,9 +107,9 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
   });
   const save = async (name: string, value: unknown) => {
     await mkdir(evidence, { recursive: true, mode: 0o700 });
-    await writeFile(join(evidence, name + '.json'), JSON.stringify({ owner: CAMPAIGN, runtime_owner: OWNER, campaign: CAMPAIGN, run, value }, null, 2) + '\n', { mode: 0o600 });
+    await writeFile(join(evidence, name + '.json'), JSON.stringify({ owner: campaign, runtime_owner: OWNER, campaign, run, value }, null, 2) + '\n', { mode: 0o600 });
   };
-  console.info('S2D_EVIDENCE', JSON.stringify({ run, directory: evidence, owner: CAMPAIGN, runtime_owner: OWNER }));
+  console.info('S2D_EVIDENCE', JSON.stringify({ run, directory: evidence, owner: campaign, runtime_owner: OWNER }));
   let computer: ComputerHarness | undefined, ws: StartedTestContainer | undefined, database: StartedTestContainer | undefined;
   let pool: DatabasePool | undefined, app: Awaited<ReturnType<typeof buildGateway>> | undefined;
   const close = async () => {
@@ -130,7 +135,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
       for (const [name, content] of Object.entries(actor.harness === 'claude'
         ? { 'CLAUDE.md': 'Owned shared provider\n', '.credentials.json': '{}\n', '.claude.json': '{}\n' }
         : { 'AGENTS.md': 'Owned shared provider\n', 'config.toml': '', 'auth.json': '{}\n' })) await writeFile(join(profile, name), content, { mode: 0o600 });
-      await writeFile(join(home, '.local/bin', actor.harness), controlledSharedProvider, { mode: 0o700 });
+      await writeFile(join(home, '.local/bin', actor.harness), options.providerSource ?? controlledSharedProvider, { mode: 0o700 });
     }
     const archivedTree = join(directory, 'baseline-tree'); await mkdir(archivedTree, { mode: 0o700 });
     const archive = await execute('git', ['-C', ROOT, 'archive', BASELINE, ...OPS_FILES.map(path => 'ops/' + path)],
@@ -212,7 +217,9 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
       await mkdir(dirname(join(candidateOps, relative)), { recursive: true, mode: 0o700 });
       await copyFile(CANDIDATE_COMMIT === undefined ? join(ROOT, 'ops', relative) : join(baselineOps, relative), join(candidateOps, relative));
     }
-    if (CANDIDATE_COMMIT === undefined) await copyFile(join(ROOT, 'ops/container-runtime/cauce_container_restart.py'), join(candidateOps, 'container-runtime/cauce_container_restart.py'));
+    if (CANDIDATE_COMMIT === undefined) for (const module of ['cauce_container_restart.py', 'cauce_container_lease.py']) {
+      await copyFile(join(ROOT, 'ops/container-runtime', module), join(candidateOps, 'container-runtime', module));
+    }
     for (const ops of [baselineOps, candidateOps]) {
       await writeFile(join(ops, 'container-aliases.json'), JSON.stringify(mapping) + '\n', { mode: 0o600 });
       await command('chmod', ['-R', 'a=rX', ops]);
@@ -256,14 +263,19 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
     const session = join(directory, 'console-session.json');
     await command('python3', ['-B', join(ROOT, 'ops/cli/cauce-login'), '--gateway', gateway, '--origin', auth.origin, '--ca-file', material.cert_path,
       '--email', auth.email, '--password-stdin', '--session-file', session], auth.password + '\n');
-    const sources = await sourceHashes();
+    const sources = await sourceHashes(sourceFiles);
     await save('sources', { baseline_revision: BASELINE, baseline_ops_digest: baselineDigest, candidate_ops_digest: candidateDigest,
       candidate_head: (await command('git', ['-C', ROOT, '-c', 'core.fsmonitor=false', 'rev-parse', 'HEAD'])).stdout.trim(),
       candidate_source: CANDIDATE_COMMIT === undefined ? 'workingtree candidate' : 'gitarchive5dcb',
       canonical_digest_revision: BASELINE, sdk_digest: bundleDigest, source_sha256: sources, original_runtime_expected_authority: null });
-    const start = async (actor: Actor) => {
+    const leaseCheckpoints = new Map<string, string | undefined>();
+    const rememberLease = async (actor: Actor) => {
       const prior = (await activePool.query<{ fingerprint: string }>("SELECT encode(digest(connection_token::text,'sha256'),'hex') AS fingerprint FROM connection_leases WHERE tenant_id='Steven' AND alias=$1", [actor.alias])).rows[0]?.fingerprint;
-      const started = await manager.onComputer(['systemctl', '--user', 'start', actor.unit]); expect(started.code, started.stderr).toBe(0);
+      leaseCheckpoints.set(actor.alias, prior);
+    };
+    const waitReady = async (actor: Actor) => {
+      assert.ok(leaseCheckpoints.has(actor.alias));
+      const prior = leaseCheckpoints.get(actor.alias);
       await until(async () => {
         const lease = (await activePool.query<{ fingerprint: string }>("SELECT encode(digest(connection_token::text,'sha256'),'hex') AS fingerprint FROM connection_leases WHERE tenant_id='Steven' AND alias=$1 AND epoch>0 AND lease_until>clock_timestamp()", [actor.alias])).rows[0];
         if (!lease || lease.fingerprint === prior) return undefined;
@@ -271,6 +283,11 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
           'import json,pathlib,sys\ntry:\n d=json.loads(pathlib.Path(sys.argv[1]).read_bytes());s=(pathlib.Path("/proc")/str(d["pid"])/"stat").read_text().rsplit(") ",1)[1].split();print(d["phase"]=="running" and s[0]!="Z" and s[19]==str(d["starttime"]))\nexcept (OSError,KeyError,TypeError):print(False)', control + '/' + actor.alias + '/cauce-v3-adapter.json']);
         return valid === 'True' ? true : undefined;
       });
+    };
+    const start = async (actor: Actor) => {
+      await rememberLease(actor);
+      const started = await manager.onComputer(['systemctl', '--user', 'start', actor.unit]); expect(started.code, started.stderr).toBe(0);
+      await waitReady(actor);
     };
     const pane = (actor: Actor) => docker(['exec', '--user', '1000', wsName, 'tmux', '-L', 'cauce', 'capture-pane', '-p', '-e', '-t', 'cauce-' + actor.alias + ':agente']);
     const identity = async (pids: number[]): Promise<Record<string, Identity>> => JSON.parse(await docker(['exec', '--user', '0', wsName, 'python3', '-I', '-B', '-c',
@@ -315,7 +332,12 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
       release_root: managerRoot + '/releases', preserve_paths: ['/workspace', '/home/node', actor.state], container: wsName,
       bundle_root: managerRoot + '/bundles', config_root: managerRoot + '/config', ops_root: managerRoot + '/baseline-ops', owner: OWNER, namespace: run })) }) + '\n', { mode: 0o600 });
     const installedOps = new Map<string, string>();
-    return { actors, run, save, close, start, pane, snapshot,
+    return { actors, run, save, close, start, waitReady, pane, snapshot,
+      stopUnit: actor => manager.onComputer(['systemctl', '--user', 'stop', actor.unit]),
+      restartUnit: async actor => {
+        await rememberLease(actor);
+        return manager.onComputer(['systemctl', '--user', 'restart', actor.unit]);
+      },
       diagnostics: async () => {
         const safe = (text: string) => text.slice(-16_384).split('\n').map(line =>
           /CAUCE_[A-Z_]+=|authorization|bearer|cookie|csrf|password|credential|secret|private.key|"body"|"prompt"|"reply"/iu.test(line)
@@ -353,7 +375,7 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
           'CAUCE_CONTAINER_CONTROL_ROOT=' + control, ops + '/scripts/container-adapter-supervisor.sh', 'stop', actor.alias]);
       },
       apply: async (actor, phase) => {
-        expect(await sourceHashes(), 'runtime or window source changed during the run').toEqual(sources);
+        expect(await sourceHashes(sourceFiles), 'runtime or window source changed during the run').toEqual(sources);
         const receiptPath = join(directory, 'window-' + actor.harness + '-' + phase + '.json');
         const observed = await result('bash', [join(ROOT, '.delegados/v4/espacio-estandar.sh'), '--aplicar', actor.alias,
           '--inventario', inventory, '--ops-release', candidateOps, '--ops-sha256', candidateDigest,
@@ -367,7 +389,8 @@ export async function sharedWindowFixture(): Promise<SharedWindowFixture> {
           assert.ok(packet?.ops_target); expect(packet.ops_target.startsWith(managerRoot + '/releases/ops-')).toBe(true);
           installedOps.set(actor.alias, packet.ops_target);
         }
-        await save('window-' + actor.harness + '-' + phase, { exit_code: observed.code, receipt });
+        const errorCodes = [...(observed.stderr + observed.stdout).matchAll(/\b(?:RESTART|SPACE)_[A-Z_]+\b/gu)].map(match => match[0]);
+        await save('window-' + actor.harness + '-' + phase, { exit_code: observed.code, error_codes: [...new Set(errorCodes)], receipt });
         return { result: observed, receipt };
       } };
   } catch (error) {
