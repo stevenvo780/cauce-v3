@@ -14,7 +14,7 @@ describe('a clean computer prepares its executor without the platform administra
     const before = await dockerInventory(RESOURCE_PREFIX);
     expect(before).toEqual({ containers: '', volumes: '', images: '' });
     console.info('HOST_SETUP_DOCKER_BEFORE', RESOURCE_PREFIX, JSON.stringify(before));
-    harness = await startComputerHarness({ prefix: RESOURCE_PREFIX, consoleOrigins: ['http://localhost'] });
+    harness = await startComputerHarness({ prefix: RESOURCE_PREFIX, consoleOrigins: ['http://localhost'], workRoot: '/datos' });
     ownerA = await registerSetupOwner(harness.app, 'setupe2e');
   }, 600_000);
   afterAll(async () => {

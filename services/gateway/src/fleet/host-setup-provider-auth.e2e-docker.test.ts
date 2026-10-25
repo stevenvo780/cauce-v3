@@ -35,7 +35,7 @@ describe('a computer prepared with setup logs its agents into the provider from 
     const before = await dockerInventory(RESOURCE_PREFIX);
     expect(before).toEqual({ containers: '', volumes: '', images: '' });
     console.info('HOST_AUTH_DOCKER_BEFORE', RESOURCE_PREFIX, JSON.stringify(before));
-    harness = await startComputerHarness({ prefix: RESOURCE_PREFIX, consoleOrigins: ['http://localhost'], providerLogin: true });
+    harness = await startComputerHarness({ prefix: RESOURCE_PREFIX, consoleOrigins: ['http://localhost'], providerLogin: true, workRoot: '/datos' });
     owner = await registerSetupOwner(harness.app, COMPANY);
   }, 600_000);
   afterAll(async () => {
