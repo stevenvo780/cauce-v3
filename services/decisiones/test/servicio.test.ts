@@ -183,7 +183,7 @@ describe('habilitación explícita', () => {
     const base = { CAUCE_DECISIONES_DATABASE_URL: 'postgresql://fixture', CAUCE_DECISIONES_TLS_CERT_FILE: 'c', CAUCE_DECISIONES_TLS_KEY_FILE: 'k', CAUCE_DECISIONES_CLIENT_CA_FILE: 'a', CAUCE_DECISIONES_IDENTITY_FILE: 'i' };
     expect(loadConfig(base)).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
     expect(loadConfig({ ...base, CAUCE_DECISIONES_ALIASES: ' ', CAUCE_DECISIONES_TENANTS: '' })).toMatchObject({ allowedAliases: new Set(), allowedTenants: new Set() });
-    expect(() => loadConfig({ ...base, CAUCE_DECISIONES_TENANTS: 'Steven,*' })).toThrow(/nombrá cada tenant/u);
+    expect(() => loadConfig({ ...base, CAUCE_DECISIONES_TENANTS: 'Steven,*' })).toThrow(/nombra cada tenant/u);
     const cerrado = await startHarness({ config: { allowedAliases: new Set(), allowedTenants: new Set(['Steven']) } });
     try {
       const body = { state: 'x', questions: { a: { type: 'noul', instructions: 'x' } } };

@@ -107,7 +107,7 @@ export function mtlsIdentity(options: MtlsIdentityOptions): IdentifyCaller {
     const alias = AliasSchema.safeParse(match.principal.alias);
     if (!tenant.success || !alias.success) throw unauthenticated('la identidad mTLS no es válida');
     if (!stringList(match.principal.roles).some((role) => ACCEPTED_ROLES.has(role))) {
-      throw new DecisionError('no_autorizado', 'sólo agentes y adaptadores consultan decisiones');
+      throw new DecisionError('no_autorizado', 'solo agentes y adaptadores consultan decisiones');
     }
     if (!stringList(match.principal.permissions).includes('route')) throw new DecisionError('no_autorizado', 'hace falta el permiso route');
     if (!options.allowedTenants.has(tenant.data)) {

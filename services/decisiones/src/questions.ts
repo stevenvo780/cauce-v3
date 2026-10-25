@@ -75,7 +75,7 @@ function validateCriteria(id: string, type: QuestionType, criteria: unknown): vo
     if (criteria === undefined) return;
     if (!isPlainObject(criteria)) throw invalid(`${context} de un noul debe ser un objeto {true,false}`);
     for (const [key, rubric] of Object.entries(criteria)) {
-      if (key !== 'true' && key !== 'false') throw invalid(`${context} sólo admite 'true' y 'false'`);
+      if (key !== 'true' && key !== 'false') throw invalid(`${context} solo admite 'true' y 'false'`);
       assertRubric(rubric, `${context}.${key}`);
     }
     return;

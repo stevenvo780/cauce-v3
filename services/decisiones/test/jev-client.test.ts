@@ -33,7 +33,7 @@ async function failure(promise: Promise<unknown>): Promise<DecisionError> {
 }
 
 describe('cliente de Jev', () => {
-  it('manda el modelo, la clave sólo en Authorization y devuelve el request id', async () => {
+  it('manda el modelo, la clave solo en Authorization y devuelve el request id', async () => {
     const result = await client().evaluate({ texto: 'hola' }, QUESTIONS);
     expect(jev.seen).toHaveLength(1);
     expect(jev.seen[0]?.authorization).toBe(`Bearer ${KEY}`);
@@ -100,7 +100,7 @@ describe('cliente de Jev', () => {
     expect(await client({ keyFile: '/dev/null' }).credentialPresent()).toBe(false);
   });
 
-  it('sólo acepta el origen oficial de Jev en producción', () => {
+  it('solo acepta el origen oficial de Jev en producción', () => {
     expect(() => { assertOfficialJevUrl('https://api.typesafe.ai/v1/systemone'); }).not.toThrow();
     for (const impostor of ['https://jevapi.org/v1/systemone', 'https://api.typesafe.ai.jev-ai.pro/v1', 'http://api.typesafe.ai/v1/systemone']) {
       expect(() => { assertOfficialJevUrl(impostor); }).toThrow(/api\.typesafe\.ai/u);

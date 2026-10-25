@@ -44,7 +44,7 @@ const REQUEST_ID = /^[A-Za-z0-9_-]{1,128}$/u;
 
 const FREE_FALLBACK: FallbackOutcome = {
   decision: 'llm', valor: null, caer_a_llm: true,
-  motivo: 'Jev no pudo decidir: resolvelo con tu propio razonamiento',
+  motivo: 'Jev no pudo decidir: resuélvelo con tu propio razonamiento',
 };
 
 const round = (value: number): number => Math.round(value * 1000) / 1000;
@@ -56,13 +56,13 @@ function parseRequest(body: unknown): DecideRequest {
     if (!REQUEST_KEYS.has(key)) throw invalid(`campo desconocido '${key.slice(0, 40)}'`);
   }
   const hasTemplate = body.plantilla !== undefined;
-  if (hasTemplate === (body.questions !== undefined)) throw invalid('mandá plantilla o questions, exactamente uno');
+  if (hasTemplate === (body.questions !== undefined)) throw invalid('manda plantilla o questions, exactamente uno');
   if (hasTemplate && typeof body.plantilla !== 'string') throw invalid('plantilla es el id de una plantilla del catálogo');
   const options = body.opciones;
   if (options !== undefined && (!isPlainObject(options) || Object.keys(options).some((key) => key !== 'restringir'))) {
-    throw invalid('opciones sólo admite restringir');
+    throw invalid('opciones solo admite restringir');
   }
-  if (!hasTemplate && options !== undefined) throw invalid('opciones sólo aplica a plantillas');
+  if (!hasTemplate && options !== undefined) throw invalid('opciones solo aplica a plantillas');
   return {
     state: validateState(body.state),
     thresholds: validateThresholds(body.umbrales),
@@ -172,7 +172,7 @@ export class DecisionService {
     }
     const plantilla = request.plantilla === undefined ? undefined : companyCatalog(this.options.catalog, caller.company).plantillas.get(request.plantilla);
     if (request.plantilla !== undefined && plantilla === undefined) {
-      throw new DecisionError('plantilla_desconocida', `no existe la plantilla '${request.plantilla.slice(0, 64)}': usá listar_plantillas`);
+      throw new DecisionError('plantilla_desconocida', `no existe la plantilla '${request.plantilla.slice(0, 64)}': usa listar_plantillas`);
     }
     const fallback = plantilla === undefined ? FREE_FALLBACK : staticOutcome(plantilla.siFalla);
     if (plantilla !== undefined && !this.enabled(plantilla, caller)) {
@@ -315,7 +315,7 @@ export class DecisionService {
       inciertas: uncertain,
       confianza: min,
       motivo: fallsBack
-        ? `respuestas bajo el umbral (${uncertain.join(', ')}): usalas como pista y decidí con tu propio razonamiento`
+        ? `respuestas bajo el umbral (${uncertain.join(', ')}): úsalas como pista y decide con tu propio razonamiento`
         : 'todas las respuestas superan el umbral',
       ...this.jevFields(result),
     };

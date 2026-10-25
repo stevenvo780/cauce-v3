@@ -72,7 +72,7 @@ export class Limits {
     this.buckets.set(alias, bucket);
     if (bucket.tokens < 1) {
       const retryAfterMs = Math.ceil(((1 - bucket.tokens) / this.options.perMinute) * 60_000);
-      throw new DecisionError('limite_excedido', `demasiadas decisiones de ${alias}: esperá ${String(Math.ceil(retryAfterMs / 1000))} s`, { retryAfterMs });
+      throw new DecisionError('limite_excedido', `demasiadas decisiones de ${alias}: espera ${String(Math.ceil(retryAfterMs / 1000))} s`, { retryAfterMs });
     }
     bucket.tokens -= 1;
   }
@@ -85,10 +85,10 @@ export class Limits {
     const own = this.usage(alias);
     const fleet = this.fleet();
     if (own.used + own.reserved + tokens > this.options.dailyInputTokens) {
-      throw new DecisionError('cupo_diario_agotado', `${alias} agotó su cupo diario de Jev; decidí con tu propio razonamiento hasta mañana (UTC)`);
+      throw new DecisionError('cupo_diario_agotado', `${alias} agotó su cupo diario de Jev; decide con tu propio razonamiento hasta mañana (UTC)`);
     }
     if (fleet.used + fleet.reserved + tokens > this.options.dailyInputTokensTotal) {
-      throw new DecisionError('cupo_diario_agotado', 'la flota agotó el cupo diario de Jev; decidí con tu propio razonamiento hasta mañana (UTC)');
+      throw new DecisionError('cupo_diario_agotado', 'la flota agotó el cupo diario de Jev; decide con tu propio razonamiento hasta mañana (UTC)');
     }
     own.reserved += tokens;
     fleet.reserved += tokens;
@@ -115,10 +115,10 @@ export class Limits {
   async withSlot<T>(alias: string, work: () => Promise<T>): Promise<T> {
     const own = this.inFlightByAlias.get(alias) ?? 0;
     if (this.inFlight >= this.options.concurrency) {
-      throw new DecisionError('servicio_ocupado', 'el servicio de decisiones está al tope de concurrencia; reintentá en un segundo', { retryAfterMs: 1000 });
+      throw new DecisionError('servicio_ocupado', 'el servicio de decisiones está al tope de concurrencia; reintenta en un segundo', { retryAfterMs: 1000 });
     }
     if (own >= this.options.concurrencyPerAlias) {
-      throw new DecisionError('servicio_ocupado', `${alias} ya tiene ${String(own)} decisiones esperando a Jev; reintentá en un segundo`, { retryAfterMs: 1000 });
+      throw new DecisionError('servicio_ocupado', `${alias} ya tiene ${String(own)} decisiones esperando a Jev; reintenta en un segundo`, { retryAfterMs: 1000 });
     }
     this.inFlight += 1;
     this.inFlightByAlias.set(alias, own + 1);

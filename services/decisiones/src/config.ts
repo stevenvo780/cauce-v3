@@ -83,7 +83,7 @@ function list(env: Env, name: string): Set<string> | undefined {
 
 function tenants(env: Env): Set<string> {
   const allowed = list(env, 'TENANTS') ?? new Set<string>();
-  if (allowed.has('*')) throw new Error(`${PREFIX}TENANTS no admite '*': nombrá cada tenant`);
+  if (allowed.has('*')) throw new Error(`${PREFIX}TENANTS no admite '*': nombra cada tenant`);
   return allowed;
 }
 

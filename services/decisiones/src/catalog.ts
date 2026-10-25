@@ -177,7 +177,7 @@ export function parsePlantilla(raw: unknown, source: string): Plantilla {
 
   const restrictions = new Map<string, Restriction>();
   for (const [qid, entry] of Object.entries(isPlainObject(raw.restricciones) ? raw.restricciones : {})) {
-    if (questions[qid]?.type !== 'choice' || !isPlainObject(entry)) fail(`${source}.restricciones.${qid}`, 'sólo se restringen choices');
+    if (questions[qid]?.type !== 'choice' || !isPlainObject(entry)) fail(`${source}.restricciones.${qid}`, 'solo se restringen choices');
     const fixed = entry.fijas === undefined ? [] : strings(entry.fijas, `${source}.restricciones.${qid}.fijas`);
     const options = criteriaOptions(questions[qid]);
     if (fixed.some((option) => !options.includes(option))) fail(`${source}.restricciones.${qid}.fijas`, 'opción inexistente');
@@ -217,7 +217,7 @@ export function parsePlantilla(raw: unknown, source: string): Plantilla {
     const path = `${source}.prefiltros[${String(index)}]`;
     if (!isPlainObject(entry)) return fail(path, 'un prefiltro es {campos, patron, entonces}');
     const flags = entry.flags === undefined ? 'u' : `${text(entry.flags, `${path}.flags`)}u`;
-    if (!/^[ims]*u$/u.test(flags)) fail(`${path}.flags`, 'sólo i, m, s');
+    if (!/^[ims]*u$/u.test(flags)) fail(`${path}.flags`, 'solo i, m, s');
     let patron: RegExp;
     try {
       patron = new RegExp(text(entry.patron, `${path}.patron`), flags);

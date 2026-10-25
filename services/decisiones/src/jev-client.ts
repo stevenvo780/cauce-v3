@@ -167,7 +167,7 @@ export class JevClient implements JevCaller {
     try {
       raw = await readFile(this.options.keyFile, 'utf8');
     } catch {
-      throw this.missing('el servicio no tiene la credencial de Jev: aplicá el respaldo');
+      throw this.missing('el servicio no tiene la credencial de Jev: aplica el respaldo');
     }
     const key = raw.trim();
     if (!KEY_SHAPE.test(key)) throw this.missing('la credencial de Jev está vacía o mal formada');

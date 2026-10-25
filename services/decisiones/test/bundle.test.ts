@@ -42,7 +42,7 @@ describe('bundle de despliegue', () => {
     if (database) { await database.pool.end(); await database.container.stop(); }
   });
 
-  it('arranca sólo con variables de entorno, decide por mTLS y se apaga con SIGTERM', async () => {
+  it('arranca solo con variables de entorno, decide por mTLS y se apaga con SIGTERM', async () => {
     if (!database) throw new Error('test database absent');
     current = await startTestCaseDatabase(database);
     await seedDevelopmentDatabase(current.adminUrl, () => undefined);

@@ -107,7 +107,7 @@ describe('catálogo versionado', () => {
     for (const plantilla of catalog.plantillas.values()) expect(plantilla.version).toMatch(/^\d+\.\d+\.\d+$/u);
   });
 
-  it('argos sólo pide aprobación por dinero, legal o terceros: producción sola no lo frena (criterio de Steven)', async () => {
+  it('argos solo pide aprobación por dinero, legal o terceros: producción sola no lo frena (criterio de Steven)', async () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '08-aprobacion_humana-prod');
     expect(recorded).toBeDefined();
     if (recorded === undefined) return;
@@ -172,14 +172,14 @@ describe('catálogo versionado', () => {
     }
   });
 
-  it('una respuesta grabada sólo vale para las preguntas que la produjeron', async () => {
+  it('una respuesta grabada solo vale para las preguntas que la produjeron', async () => {
     const recorded = grabado.casos.find((entry) => entry.caso === '30-requiere_respuesta-cortesia');
     const original = catalog.plantillas.get('requiere_respuesta');
     if (recorded === undefined || original === undefined) throw new Error('falta el caso');
     const definicion = structuredClone(original.definition) as { questions: Record<string, { instructions: unknown }> };
     const pregunta = definicion.questions.solo_cortesia;
     if (pregunta === undefined) throw new Error('falta solo_cortesia');
-    pregunta.instructions = '¿`mensaje` es sólo un saludo?';
+    pregunta.instructions = '¿`mensaje` es solo un saludo?';
     const alterado: Catalog = { ...catalog, plantillas: new Map([...catalog.plantillas, ['requiere_respuesta', parsePlantilla(definicion, 'requiere_respuesta.json')]]) };
     const jev = new RecordedJev(recorded);
     await service(alterado, jev).decide({ company: 'humanizar', tenant: 'Steven', alias: 'hades' }, { plantilla: 'requiere_respuesta', state: recorded.state });
@@ -250,7 +250,7 @@ describe('catálogo versionado', () => {
     expect(performance.now() - inicio).toBeLessThan(500);
   });
 
-  it('ruteo_alias restringe candidatos, conserva ninguno y sólo pregunta encaja:: por los ofrecidos', () => {
+  it('ruteo_alias restringe candidatos, conserva ninguno y solo pregunta encaja:: por los ofrecidos', () => {
     const ruteo = catalog.plantillas.get('ruteo_alias');
     if (ruteo === undefined) throw new Error('falta ruteo_alias');
     const state = { pedido: { texto: 'x' } };
@@ -275,7 +275,7 @@ describe('catálogo versionado', () => {
     expect(() => expandQuestions(plantilla, { pedido: 'p', respuesta: 'r' }, undefined)).toThrow(DecisionError);
   });
 
-  it('una plantilla nueva sólo necesita su fichero, y el cargador rechaza referencias rotas', () => {
+  it('una plantilla nueva solo necesita su fichero, y el cargador rechaza referencias rotas', () => {
     const minima = {
       id: 'nueva', version: '1.0.0', nombre: 'n', cuando_usar: 'c', state: {},
       questions: { ok: { type: 'noul', instructions: '¿`x` está bien?' } },
