@@ -212,7 +212,11 @@ it('ruta /config sin config.write: abre en solo lectura, no 404 ni redirección'
   expect(await screen.findByRole('list', { name: 'Agentes configurados' })).toBeInTheDocument();
   for (const control of screen.queryAllByRole('switch')) expect(control).toBeDisabled();
   await userEvent.click(screen.getByRole('tab', { name: 'Espacios y salas' }));
-  for (const crear of await screen.findAllByRole('button', { name: /^Crear$/ })) expect(crear).toBeDisabled();
+  const alta = await screen.findByRole('group', { name: 'Alta rápida' }, { timeout: 10_000 });
+  expect(within(alta).getByRole('button', { name: /^Crear$/ })).toBeDisabled();
+  const creaciones = screen.getAllByRole('button', { name: /^Crear\b/ });
+  expect(creaciones.length).toBeGreaterThan(0);
+  for (const crear of creaciones) expect(crear).toBeDisabled();
   await userEvent.click(screen.getByRole('tab', { name: 'Avanzado' }));
   expect(await screen.findByRole('button', { name: /Aplicar atómico/ }, { timeout: 10_000 })).toBeDisabled();
   expect(window.location.pathname).toBe('/config');
