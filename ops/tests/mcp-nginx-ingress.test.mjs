@@ -96,7 +96,7 @@ for (const route of routes) {
 test('every gateway proxy overwrites client IP headers and strips forwarded host and protocol', () => {
   const bodies = [...config.matchAll(/^ {2}location .+ \{([\s\S]*?)^ {2}\}/gmu)]
     .map(match => match[1]).filter(body => body.includes('proxy_pass https://gateway:8443;'));
-  assert.equal(bodies.length, 13);
+  assert.equal(bodies.length, 14);
   for (const body of bodies) {
     expectDirective(body, 'proxy_set_header X-Forwarded-For', '$remote_addr');
     expectDirective(body, 'proxy_set_header X-Real-IP', '$remote_addr');

@@ -1,5 +1,5 @@
 import { createNetworkWithFallback } from './docker-network-subnet.js';
-import { createHash, randomUUID, X509Certificate } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, chown, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { HashedMtlsIdentityFileProvider, MtlsAuthProvider } from '../../services/gateway/src/auth.js';
+import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
+import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { configuredHumanMcp } from '../../services/gateway/src/mcp-configuration.js';
 import {
   startHumanOperationsFixture, trustFixtureCa,
@@ -399,7 +401,7 @@ async function removeOwnedNetwork(id: string, owner: string): Promise<void> {
   await docker(['network', 'rm', id]);
 }
 
-export async function startNginxMcpFixture(): Promise<NginxMcpFixture> {
+export async function startNginxMcpFixture(options: { passwordAuth?: boolean } = {}): Promise<NginxMcpFixture> {
   if (process.env.CAUCE_TEST_DATABASE_URL !== undefined || process.env.CAUCE_TEST_DOCKER_NETWORK !== undefined
       || process.env.CAUCE_TEST_DOCKER_NETWORK_OWNER !== undefined) {
     throw new Error('MCP Nginx fixture refuses inherited database or Docker network overrides');
@@ -457,7 +459,11 @@ export async function startNginxMcpFixture(): Promise<NginxMcpFixture> {
       principal: { tenant_id: 'Steven', alias: 'mcp_ingress_proxy', session_id: randomUUID(),
         channel: 'adapter', roles: ['adapter'], permissions: ['route', 'read'] },
     }] }), { mode: 0o600 });
-    const authProvider = new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identitiesPath));
+    const fallback = new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(identitiesPath));
+    const authProvider = options.passwordAuth === true ? new PasswordAuthProvider({
+      users: new PostgresConsoleUserStore(database.pool), signingKey: randomBytes(32), fallback,
+    }) : fallback;
+    if (authProvider instanceof PasswordAuthProvider) await authProvider.ready();
     const gatewayApp = await buildGateway({
       pool: database.pool,
       authProvider,
@@ -465,6 +471,7 @@ export async function startNginxMcpFixture(): Promise<NginxMcpFixture> {
         requestCert: true, rejectUnauthorized: true },
       humanMcp,
       logger: false,
+      ...(options.passwordAuth === true ? { consoleOrigins: [publicOrigin] } : {}),
     });
     app = gatewayApp;
     await gatewayApp.listen({ port: 0, host: '127.0.0.1' });
