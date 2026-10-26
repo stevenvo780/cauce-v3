@@ -30,7 +30,7 @@ from .framing import (
     verify_ticket,
 )
 from .openclaw_input import OpenClawInput
-from .tmux import dynamic_tmux_capability, resolve_openclaw_tui_command, resolve_tmux_tui_command
+from .tmux import dynamic_tmux_capability, resolve_openclaw_tui_command, resolve_tmux_tui_command, tmux_tui_available
 from .tui_environment import PATH_KEYS, measured_environment, openclaw_environment
 
 MAX_SESSIONS = 2
@@ -50,6 +50,12 @@ SESSION_INPUT_HIGH_WATER = 262144
 OUTBOUND_HIGH_WATER = 1 << 20
 PING_TIMEOUT = 45.0
 DYNAMIC_CAPABILITY_CHECK_INTERVAL = 5.0
+# Editing a space replaces the TUI pane of a connected agent. Its published TUI stays up this long
+# so `cauce <alias>` neither sees it offline nor lands on a shell, and the TUI OPENs that arrive in
+# the gap wait for the new pane, below the relay's 10 s OPEN timeout.
+TUI_RESTART_WAIT = 30.0
+OPEN_TUI_WAIT = 8.0
+TUI_POLL_INTERVAL = 0.5
 TOMBSTONE_SECONDS = 30.0
 KILL_GRACE = 2.0
 HELLO_TIMEOUT = 15.0
@@ -170,11 +176,11 @@ def _cloexec(fd: int) -> None:
 class SessionMixin:
     # -- request handlers ----------------------------------------------------------------------
 
-    def _on_open(self, request: dict[str, Any]) -> None:
+    def _on_open(self, request: dict[str, Any], deferred: bool = False) -> None:
         session_id = request.get("session_id")
         if not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
             raise ProtocolError("OPEN carries an invalid session id")
-        if session_id in self.sessions or session_id in self.tombstones:
+        if session_id in self.sessions or session_id in self.tombstones or session_id in self.pending_opens:
             self._open_error(session_id, "duplicate_session")
             return
         try:
@@ -187,6 +193,14 @@ class SessionMixin:
         # The browser names no container, user or command: mode comes from the signed ticket, argv from the bundle.
         if request.get("mode") not in (None, mode):
             self._open_error(session_id, "mode_mismatch")
+            return
+        if (mode in TUI_MODES and not deferred and self._tui_restart_tracked()
+                and not tmux_tui_available(self.bundle) and self._tui_restart_pending(time.monotonic())):
+            if len(self.sessions) + len(self.pending_opens) >= MAX_SESSIONS:
+                self._open_error(session_id, "too_many_sessions")
+                return
+            self.pending_opens[session_id] = (request, time.monotonic() + OPEN_TUI_WAIT)
+            log(f"OPEN deferred session={session_id} mode={mode} until the TUI pane is back")
             return
         try:
             argv = self._resolve_command(mode)
@@ -241,6 +255,31 @@ class SessionMixin:
         if mode in TUI_MODES:
             self._send_geometry(session)
         log(f"OPEN accepted session={session_id} mode={mode} pid={session.pid} argv0={argv[0]}")
+
+    def _tui_restart_tracked(self) -> bool:
+        return (dynamic_tmux_capability(self.bundle) and isinstance(self.bundle.get("tmux_tui"), dict)
+                and "harness" in self.modes)
+
+    def _tui_restart_pending(self, now: float) -> bool:
+        if self.tui_restart_until is None:
+            self.tui_restart_until = now + TUI_RESTART_WAIT
+            log(f"TUI pane gone alias={self.bundle['alias']}; presence kept up to {TUI_RESTART_WAIT:.0f}s")
+        return now < self.tui_restart_until
+
+    def _pump_pending_opens(self, now: float) -> None:
+        if not self.pending_opens or now < self.next_pending_open_poll:
+            return
+        self.next_pending_open_poll = now + TUI_POLL_INTERVAL
+        available = tmux_tui_available(self.bundle)
+        for session_id, (request, deadline) in list(self.pending_opens.items()):
+            if not available and now < deadline:
+                continue
+            del self.pending_opens[session_id]
+            if available:
+                self._on_open(request, deferred=True)
+            else:
+                log(f"OPEN refused session={session_id} reason=mode_unavailable tui_restarting")
+                self._open_error(session_id, "mode_unavailable", "tui_restarting")
 
     def _send_geometry(self, session: PtySession) -> None:
         """The measured size of the shared window, so the console fits its font to the real TUI.
@@ -385,6 +424,9 @@ class SessionMixin:
         session_id = request.get("session_id")
         if not isinstance(session_id, str):
             raise ProtocolError("CLOSE carries an invalid session id")
+        if self.pending_opens.pop(session_id, None) is not None:
+            self.tombstones[session_id] = time.monotonic() + TOMBSTONE_SECONDS
+            return
         session = self.sessions.get(session_id)
         if session is None:
             return
@@ -499,12 +541,20 @@ class SessionMixin:
         for session_id, expiry in list(self.tombstones.items()):
             if now >= expiry:
                 del self.tombstones[session_id]
+        self._pump_pending_opens(now)
         dynamic_tui = self.bundle.get("openclaw_tui") is not None \
             or dynamic_tmux_capability(self.bundle)
         if dynamic_tui and now >= self.next_dynamic_capability_check:
             self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
             observed = self._advertised_modes()
-            if observed != self.modes and self.sessions and set(observed) > set(self.modes):
+            if observed == self.modes:
+                if self.tui_restart_until is not None:
+                    log(f"TUI pane back alias={self.bundle['alias']}; presence unchanged")
+                    self.tui_restart_until = None
+            elif set(observed) < set(self.modes) and self._tui_restart_tracked() \
+                    and self._tui_restart_pending(now):
+                self.next_dynamic_capability_check = now + TUI_POLL_INTERVAL
+            elif self.sessions and set(observed) > set(self.modes):
                 # A gained mode leaves every open session valid and the gateway still refuses the
                 # unpublished one, so the reconnect waits for the last session instead of cutting it.
                 if observed != self.deferred_modes:

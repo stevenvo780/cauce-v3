@@ -56,7 +56,17 @@ que el panel `cauce-<alias>:agente` esté vivo. Así, un `cauce <alias>` justo t
 recibe una presencia de solo `shell`, que lo haría caer a un shell. Si la TUI aparece más
 tarde, la reconexión que publica `harness` y `harness_rw` espera a que se cierre la última
 sesión abierta: ganar un modo no invalida ninguna sesión, y el gateway sigue rechazando el modo
-que aún no se ha publicado. Si se pierde un modo, la reconexión es inmediata.
+que aún no se ha publicado.
+
+**Presencia mientras se reinicia la TUI.** Editar el espacio cierra el panel de un agente ya
+conectado y crea otro. Si un agente con tmux configurado pierde el panel, conserva la presencia
+publicada hasta 30 s y no corta ninguna sesión abierta. Si el panel vuelve en ese plazo, no hay
+reconexión. Si no vuelve, se reconecta solo con `shell`. Un OPEN de `harness` o `harness_rw`
+que llega mientras falta el panel queda en espera como mucho 8 s, por debajo de los 10 s que el
+relay da al OPEN. Cuando el panel vuelve, el ticket se verifica otra vez y el attach sigue
+pasando por el mismo `if-shell` que falla cerrado. Si se agota la espera, la respuesta es
+`mode_unavailable` con `tui_restarting`. Un CLOSE del relay descarta el OPEN en espera. Los
+OPEN de `shell` nunca esperan. Fuera de estos casos, un cambio de modo reconecta en el acto.
 
 **Control sobre la conversación actual.** `harness_rw` abre la misma TUI de tmux o la
 conversación nativa de OpenClaw. El gateway exige una sesión atribuida, concesión nominal,

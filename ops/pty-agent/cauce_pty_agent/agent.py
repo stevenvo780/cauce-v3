@@ -107,6 +107,9 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         self.last_ping = 0.0
         self.next_dynamic_capability_check = 0.0
         self.deferred_modes: list[str] | None = None
+        self.tui_restart_until: float | None = None
+        self.pending_opens: dict[str, tuple[dict[str, Any], float]] = {}
+        self.next_pending_open_poll = 0.0
         self.stopping = False
 
     def _advertised_modes(self) -> list[str]:
@@ -221,6 +224,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         self.acknowledged = False
         self.pending_writes.clear()
         self.pending_write_batches.clear()
+        self.pending_opens.clear()
         # The relay is the only path to the operator: if it disappears (container stopped, network
         # cut) the shells it fronted are unreachable, so they are terminated instead of orphaned.
         self._terminate_sessions()
@@ -235,6 +239,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         # Presence is born from the current observation, not from an OpenClaw binary existing.
         self.modes = self._advertised_modes()
         self.deferred_modes = None
+        self.tui_restart_until = None
         self.next_dynamic_capability_check = self.connected_at + DYNAMIC_CAPABILITY_CHECK_INTERVAL
         self._queue(encode_json(TAG_AGENT_HELLO, {
             "v": AGENT_PROTOCOL_VERSION,

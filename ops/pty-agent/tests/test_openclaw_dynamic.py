@@ -100,6 +100,8 @@ class DynamicOpenClawSessionTests(unittest.TestCase):
         instance.modes = ["shell", "harness", "harness_rw"]
         instance.sessions = {}
         instance.tombstones = {}
+        instance.pending_opens = {}
+        instance.tui_restart_until = None
         instance.acknowledged = True
         instance.last_ping = 100.0
         instance.connected_at = 100.0

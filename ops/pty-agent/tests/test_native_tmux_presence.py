@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import importlib
+import json
 import os
 import pathlib
 import subprocess
@@ -13,6 +17,25 @@ from unittest import mock
 from .test_tmux_dynamic import TMUX, _loadable_bundle, agent, tmux_runtime
 
 agent_module = importlib.import_module("cauce_pty_agent.agent")
+session_module = importlib.import_module("cauce_pty_agent.session")
+SESSION_ID = "11111111-2222-3333-4444-555555555555"
+FULL_MODES = ["shell", "harness", "harness_rw"]
+
+
+def _ticket(mode: str) -> str:
+    payload = {
+        "v": 1, "sid": SESSION_ID, "op": "unattributed:console-basic-auth", "sub": "Steven:kant",
+        "tgt": {"tenant": "Steven", "alias": "zeus", "container": "claw", "generation": "gen-1",
+                "image": "sha256:deadbeef", "uid": 1000, "user": "claw"},
+        "mode": mode, "iat": int(time.time()), "exp": int(time.time()) + 60,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+    signature = hmac.new(bytes.fromhex("ab" * 32), ("v1." + encoded).encode(), hashlib.sha256).digest()
+    return f"v1.{encoded}.{base64.urlsafe_b64encode(signature).decode().rstrip('=')}"
+
+
+def _frames(instance: agent.PtyAgent) -> list[tuple[int, dict]]:
+    return [(tag, json.loads(payload)) for tag, payload in agent.FrameDecoder().feed(bytes(instance.outbound))]
 
 
 @unittest.skipUnless(TMUX, "tmux is required for native presence")
@@ -87,7 +110,8 @@ class NativeTmuxPresenceTest(unittest.TestCase):
         instance.next_dynamic_capability_check = 0.0
         subprocess.run([TMUX, "-L", self.socket, "set-option", "-t", "cauce-zeus", "@cauce_harness", "claude"],
                        check=True, env=self.env)
-        with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
+        with mock.patch.object(session_module, "TUI_RESTART_WAIT", 0.0), \
+                self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
             instance._maintain()
 
     def _connected(self) -> agent.PtyAgent:
@@ -113,15 +137,111 @@ class NativeTmuxPresenceTest(unittest.TestCase):
         with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
             instance._maintain()
 
-    def test_lost_native_pane_still_reconnects_with_open_sessions(self) -> None:
+    def _kill_session(self) -> None:
+        subprocess.run([TMUX, "-L", self.socket, "kill-session", "-t", "=cauce-zeus"], check=True, env=self.env)
+
+    def _restarting(self) -> agent.PtyAgent:
         self._session()
         instance = self._connected()
-        self.assertEqual(instance.modes, ["shell", "harness", "harness_rw"])
+        self.assertEqual(instance.modes, FULL_MODES)
+        self._kill_session()
+        return instance
+
+    def test_a_restarting_pane_keeps_presence_and_open_sessions(self) -> None:
+        instance = self._restarting()
         self._open_shell(instance)
-        subprocess.run([TMUX, "-L", self.socket, "set-option", "-t", "cauce-zeus", "@cauce_harness", "claude"],
-                       check=True, env=self.env)
+        instance._maintain()
+        self.assertEqual(instance.modes, FULL_MODES)
+        self.assertIn("s1", instance.sessions)
+        self.assertIsNotNone(instance.tui_restart_until)
+        self._session()
+        instance.next_dynamic_capability_check = 0.0
+        instance._maintain()
+        self.assertIsNone(instance.tui_restart_until)
+        self.assertEqual(instance.modes, FULL_MODES)
+        self.assertIn("s1", instance.sessions)
+
+    def test_lost_native_pane_reconnects_with_open_sessions_once_the_restart_wait_expires(self) -> None:
+        instance = self._restarting()
+        self._open_shell(instance)
+        instance._maintain()
+        instance.tui_restart_until = time.monotonic() - 1.0
+        instance.next_dynamic_capability_check = 0.0
         with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
             instance._maintain()
+
+    def _spawned(self, instance: agent.PtyAgent) -> mock.MagicMock:
+        return mock.patch.object(instance, "_spawn", side_effect=lambda session_id, mode, argv, rows, cols:
+                                 agent.PtySession(session_id, 2**31 - 1, -1, mode, argv))
+
+    def test_a_tui_open_in_the_restart_gap_waits_and_attaches_to_the_new_pane(self) -> None:
+        instance = self._restarting()
+        with self._spawned(instance) as spawn:
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness_rw")})
+            self.assertEqual(_frames(instance), [])
+            instance._maintain()
+            self.assertEqual(_frames(instance), [])
+            self.assertIn(SESSION_ID, instance.pending_opens)
+            self._session()
+            instance.next_pending_open_poll = 0.0
+            instance._maintain()
+        tag, document = _frames(instance)[0]
+        self.assertEqual((tag, document["mode"]), (agent.TAG_OPEN_OK, "harness_rw"))
+        argv = spawn.call_args.args[2]
+        self.assertEqual(argv[3:5], ["if-shell", "-F"])
+        self.assertEqual(argv[-2], "attach-session -t cauce-zeus:agente")
+        self.assertEqual(instance.modes, FULL_MODES)
+        self.assertEqual(instance.pending_opens, {})
+
+    def test_a_deferred_open_is_refused_before_the_relay_open_timeout(self) -> None:
+        self.assertLess(session_module.OPEN_TUI_WAIT, 10.0)
+        instance = self._restarting()
+        with mock.patch.object(session_module, "OPEN_TUI_WAIT", 0.0), self._spawned(instance) as spawn:
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness")})
+            instance._maintain()
+        spawn.assert_not_called()
+        self.assertEqual(_frames(instance), [(agent.TAG_OPEN_ERR, {
+            "session_id": SESSION_ID, "reason": "mode_unavailable", "detail": "tui_restarting"})])
+
+    def test_a_deferred_open_checks_its_ticket_again_when_the_pane_is_back(self) -> None:
+        instance = self._restarting()
+        with self._spawned(instance) as spawn:
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness_rw")})
+            self._session()
+            with mock.patch.object(session_module.time, "time", return_value=time.time() + 3600):
+                instance._maintain()
+        spawn.assert_not_called()
+        self.assertEqual(_frames(instance), [(agent.TAG_OPEN_ERR, {
+            "session_id": SESSION_ID, "reason": "ticket_expired"})])
+
+    def test_a_relay_close_drops_a_deferred_open_for_good(self) -> None:
+        instance = self._restarting()
+        with self._spawned(instance) as spawn:
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness_rw")})
+            instance._on_close({"session_id": SESSION_ID, "reason": "open_timeout"})
+            self._session()
+            instance.next_pending_open_poll = 0.0
+            instance._maintain()
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness_rw")})
+        spawn.assert_not_called()
+        self.assertEqual(_frames(instance), [(agent.TAG_OPEN_ERR, {
+            "session_id": SESSION_ID, "reason": "duplicate_session"})])
+
+    def test_a_shell_open_in_the_restart_gap_is_served_at_once(self) -> None:
+        instance = self._restarting()
+        with self._spawned(instance) as spawn:
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("shell")})
+        spawn.assert_called_once()
+        self.assertEqual(_frames(instance)[0][0], agent.TAG_OPEN_OK)
+        self.assertEqual(instance.pending_opens, {})
+
+    def test_a_shell_only_presence_never_defers_a_tui_open(self) -> None:
+        instance = self._connected()
+        self.assertEqual(instance.modes, ["shell"])
+        with self._spawned(instance):
+            instance._on_open({"session_id": SESSION_ID, "ticket": _ticket("harness_rw")})
+        self.assertEqual(instance.pending_opens, {})
+        self.assertIsNone(instance.tui_restart_until)
 
     def test_first_hello_waits_for_the_configured_tui(self) -> None:
         instance = agent.PtyAgent(self._bundle())
@@ -174,7 +294,8 @@ class NativeTmuxPresenceTest(unittest.TestCase):
                         current.last_ping = time.monotonic()
                         subprocess.run([TMUX, '-S', socket, 'set-option', '-t', 'cauce-physical-one',
                                         '@cauce_alias', 'foreign'], check=True)
-                        with self.assertRaisesRegex(agent.ProtocolError, 'dynamic harness capability changed'):
+                        with mock.patch.object(session_module, 'TUI_RESTART_WAIT', 0.0), \
+                                self.assertRaisesRegex(agent.ProtocolError, 'dynamic harness capability changed'):
                             current._maintain()
                         self.assertEqual(agent.PtyAgent(bundle).modes, ['shell'])
                 finally:
