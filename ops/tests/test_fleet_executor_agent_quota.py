@@ -100,6 +100,12 @@ class AgentQuotaProjectionTest(unittest.TestCase):
             self.assertNotIn(IDENTITY, json.dumps(result, ensure_ascii=False))
             self.assertNotIn(PRIVATE_MARKER, json.dumps(result))
 
+    def test_a_grok_reading_is_hashed_by_the_email_its_account_is_registered_with(self):
+        raw = {'ok': True, 'provider': 'grok', 'windows': [], 'email': IDENTITY, 'account_id': PRIVATE_MARKER}
+        result = self.project('grok', raw)
+        self.assertEqual(result['identity_hash'], '6aef42440dceae734b4c18d8d274de16b3664948f3dafe984bb4f65cf749e948')
+        self.assertNotIn(PRIVATE_MARKER, json.dumps(result))
+
 def release_readable(tree: pathlib.Path) -> None:
     """Give a checkout tree the read modes of a packaged release (build-adapter-release.sh applies go=rX)."""
     for item in [tree, *tree.rglob('*')]:

@@ -62,8 +62,10 @@ def bounded_reader(command: list[str]) -> dict:
 def safe_observation(provider: str, raw: dict, error_codes: list[str]) -> dict:
     extra = raw.get('extra') if isinstance(raw.get('extra'), dict) else {}
     identity = extra.get('account_id') if provider == 'codex' else raw.get('account_id')
-    if provider == 'grok' and identity is None:
-        identity = raw.get('email')
+    if provider == 'grok' and isinstance(raw.get('email'), str):
+        # A Grok account is registered and verified by its email; the reader's account_id is another identifier of the
+        # same session, so preferring it never matched the agent's account (hades, 26-oct).
+        identity = raw['email']
     if not isinstance(identity, str) or not 1 <= len(identity.encode('utf-16-le')) <= 512 \
             or any(ord(character) < 32 or 127 <= ord(character) <= 159 for character in identity):
         raise ValueError('quota_identity_unavailable')
