@@ -266,6 +266,34 @@ class RuntimeFactsTest(unittest.TestCase):
         assignment = publish.index("runtime_facts=$(measure_adapter_runtime_facts)")
         self.assertNotIn("|| die", publish[assignment:assignment + 120])
 
+    def test_publish_waits_a_bounded_time_for_an_adapter_that_starts_after_the_terminal(self) -> None:
+        text = LAUNCHER.read_text(encoding="utf-8")
+        publish = text[text.index("publish_bundle() {"):text.index("start_agent() {")]
+        start = publish.index("  runtime_facts=$(measure_adapter_runtime_facts)")
+        loop = publish[start:publish.index("  local_bundle=", start)]
+        script = (
+            "set -uo pipefail\n"
+            "die() { echo \"die: $*\"; exit 9; }\n"
+            "sleep() { :; }\n"
+            "calls=0\n"
+            "measure_adapter_runtime_facts() { calls=$((calls + 1)); "
+            "if (( calls >= $READY_AT )); then printf '{\"harness\":\"codex\"}'; else printf '{}'; fi; }\n"
+            "check() {\n" + loop + "  printf '%s %s\\n' \"$runtime_facts\" \"$facts_waited\"\n}\n"
+            "check\n"
+        )
+        # Measurement runs in a subshell, so count calls through a file instead of the variable.
+        script = script.replace(
+            "calls=$((calls + 1)); if (( calls >= $READY_AT ))",
+            "n=$(( $(cat \"$COUNT\") + 1 )); echo $n > \"$COUNT\"; if (( n >= READY_AT ))")
+        with tempfile.TemporaryDirectory() as directory:
+            count = pathlib.Path(directory, "count")
+            for ready_at, expected in ((3, '{"harness":"codex"} 10'), (99, "{} 60")):
+                count.write_text("0")
+                result = subprocess.run(
+                    ["bash", "-c", script], capture_output=True, text=True, check=True,
+                    env={"PATH": "/usr/bin:/bin", "READY_AT": str(ready_at), "COUNT": str(count)})
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_hermes_has_no_invented_profile_fact(self) -> None:
         self._spawn_adapter({})
         self.assertEqual(self._measured("hermes"), {

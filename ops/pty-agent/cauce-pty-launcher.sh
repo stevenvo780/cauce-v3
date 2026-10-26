@@ -754,6 +754,15 @@ publish_bundle() {
     fi
   fi
   runtime_facts=$(measure_adapter_runtime_facts)
+  # The facts are measured once per start. At boot this unit can win the race to its adapter
+  # (24-oct: socrates and jarvis published `{}` for two days), so give the adapter a bounded wait.
+  local facts_wait=${CAUCE_PTY_FACTS_WAIT_SECONDS:-60} facts_waited=0
+  [[ $facts_wait =~ ^[0-9]{1,3}$ ]] || die 'CAUCE_PTY_FACTS_WAIT_SECONDS is invalid'
+  while [[ $runtime_facts == '{}' ]] && (( facts_waited < facts_wait )); do
+    sleep 5
+    facts_waited=$((facts_waited + 5))
+    runtime_facts=$(measure_adapter_runtime_facts)
+  done
   local_bundle=$(mktemp "${TMPDIR:-/tmp}/.cauce-pty-bundle-$alias_name.XXXXXX")
   chmod 0600 "$local_bundle"
   CAUCE_PTY_BUNDLE_TENANT=$tenant \
