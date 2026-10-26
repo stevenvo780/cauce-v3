@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -649,6 +650,8 @@ def approved_executable_digest(policy: dict, agent: dict, bundle: dict) -> str:
     with tempfile.TemporaryDirectory(prefix='executable-pin-', dir=policy['roots']['state']) as directory:
         cidfile = pathlib.Path(directory) / 'container.id'
         labels = {**expected_labels(policy, agent), 'cauce.fleet.probe': 'executable-pin'}
+        # The docker CLI writes the cidfile with the caller's umask (0002 on server2), which checked_file refuses.
+        previous_umask = os.umask(0o077)
         try:
             return executable_digest(docker('run', '--rm', '--pull=never', '--cidfile', str(cidfile), '-w', '/',
                 '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
@@ -656,6 +659,7 @@ def approved_executable_digest(policy: dict, agent: dict, bundle: dict) -> str:
                 *[value for key, item in labels.items() for value in ('--label', key + '=' + item)],
                 '--entrypoint', agent['_placement']['python'], image, '-I', '-B', '-c', EXECUTABLE_DIGEST, bundle['executable']))
         finally:
+            os.umask(previous_umask)
             if cidfile.exists():
                 identity = checked_file(cidfile).decode('ascii').strip()
                 if re.fullmatch(r'[0-9a-f]{64}', identity) is None:
