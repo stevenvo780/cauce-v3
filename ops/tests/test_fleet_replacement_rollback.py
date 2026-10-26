@@ -571,6 +571,29 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
         self.assertEqual(revoke.call_args_list[0].args[3]['original_container_id'], 'a' * 64)
         self.assertEqual(self.containers, [self.rebuilt])
 
+    def test_a_failed_adapter_restoration_journals_why_it_failed(self):
+        """Production, 26-oct (argos): a stray cache inside the original's release made every restoration fail as
+        'original unverified'; the journal named only the function, so the reason had to be rebuilt by hand."""
+        import contextlib
+        def observation(policy, previous):
+            return self.approved, self.inspect(previous['container_name'])
+        result = {'checkpoint_sha256': 'b' * 64, 'authority_sha256': 'e' * 64,
+                  'shared_authority_preserved': True, 'created_authority_revoked': True, 'revoked_credentials': []}
+        failure = SafeFailure('release tree entry is not a trusted regular file or directory')
+        with contextlib.ExitStack() as stack:
+            self.patches(stack)
+            stack.enter_context(mock.patch.object(self.replacement, 'approved_observation', side_effect=observation))
+            stack.enter_context(mock.patch.object(rollback, 'normal_pins', return_value={key: self.entry[key]
+                for key in ('normal_certificate_sha256', 'normal_token_sha256')}))
+            stack.enter_context(mock.patch.object(rollback, 'restore_source', return_value={'generation': 'f' * 64}))
+            stack.enter_context(mock.patch.object(container, 'adapter_restart_state', return_value={'adapter_running': False}))
+            stack.enter_context(mock.patch.object(container, 'restore_existing_adapter', side_effect=failure))
+            stack.enter_context(mock.patch.object(authority, 'rollback_credentials', return_value=result))
+            with self.assertRaisesRegex(SafeFailure, 'authority unverified'):
+                rollback.compensate(self.executor)
+        self.assertEqual(self.entry['diagnostic']['phase'], 'restoring_adapter')
+        self.assertEqual(self.entry['diagnostic']['reason'], str(failure))
+
     def test_an_interrupted_rebuild_is_adopted_only_with_this_operations_provenance(self):
         import contextlib
         self.containers[:] = [self.rebuilt]

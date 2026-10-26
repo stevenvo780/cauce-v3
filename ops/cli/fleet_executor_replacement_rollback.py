@@ -57,6 +57,12 @@ def snapshot(context: dict) -> dict:
         raise SafeFailure('replacement snapshot missing') from None
 
 
+def safe_reason(error: BaseException) -> dict:
+    """The operator-safe message of a SafeFailure (it may carry the failed in-container command's stderr tail): the
+    outer failure is collapsed to 'original unverified', so the journal is the only place left that says why."""
+    return {'reason': str(error)[-400:]} if isinstance(error, SafeFailure) else {}
+
+
 def normal_pins(executor, agent: dict) -> dict:
     from fleet_executor_authority import proof_for, sha256
     from fleet_executor_pki import checked_file
@@ -181,7 +187,7 @@ def recreate_original(executor, entry: dict) -> None:
         frames = traceback.extract_tb(error.__traceback__)
         entry['diagnostic'] = {'phase': entry.get('phase'), 'exception_type': type(error).__name__,
                                'last_function': frames[-1].name if frames else None,
-                               'last_lineno': frames[-1].lineno if frames else None}
+                               'last_lineno': frames[-1].lineno if frames else None, **safe_reason(error)}
         try:
             executor.save()
         except OSError:
@@ -468,7 +474,7 @@ def compensate(executor) -> dict | None:
     except (OSError, KeyError, TypeError, ValueError, SafeFailure) as error:
         frames = traceback.extract_tb(error.__traceback__)
         entry['diagnostic'] = {'phase': entry['phase'], 'exception_type': type(error).__name__,
-                               'last_function': frames[-1].name, 'last_lineno': frames[-1].lineno}
+                               'last_function': frames[-1].name, 'last_lineno': frames[-1].lineno, **safe_reason(error)}
         try:
             executor.save()
         except OSError:
