@@ -109,20 +109,20 @@ def perform(policy: dict, agent: dict, parameters: dict, journal: dict, save, st
         if current_runtime(policy, relaunched_agent(agent), journal['relaunch'])[1] != journal['relaunched']:
             raise SafeFailure('relaunched runtime changed before its receipt was verified')
         return {'evidence': journal['receipt']}
-    if step != 'runtime':
+    # An attempt without a receipt may have stopped or half-relaunched the runtime: never replay it blind.
+    if step != 'runtime' or journal.get('attempted'):
         raise SafeFailure('recovery has no verified receipt; a new explicit preview is required')
-    if journal.get('relaunch') is None:
-        observed = observe(policy, agent)
-        if observed is None:
-            raise SafeFailure('recovery strategy changed after confirmation')
-        preview, plan = observed
-        session = preview['session']
-        if preview['identity'] != parameters['identity'] or session['state'] not in {'present', 'absent'} \
-                or session['resumable'] is not True or session['fingerprint'] != parameters['expected_fingerprint'] \
-                or parameters['force'] is not (session['state'] == 'present'):
-            raise SafeFailure('recovery conversation or terminal changed after confirmation')
-        journal.update(attempted=True, relaunch=plan, preview=preview)
-        save()
+    observed = observe(policy, agent)
+    if observed is None:
+        raise SafeFailure('recovery strategy changed after confirmation')
+    preview, plan = observed
+    session = preview['session']
+    if preview['identity'] != parameters['identity'] or session['state'] not in {'present', 'absent'} \
+            or session['resumable'] is not True or session['fingerprint'] != parameters['expected_fingerprint'] \
+            or parameters['force'] is not (session['state'] == 'present'):
+        raise SafeFailure('recovery conversation or terminal changed after confirmation')
+    journal.update(attempted=True, relaunch=plan, preview=preview)
+    save()
     stop_container(policy, agent)
     identity = relaunch(policy, agent, journal['relaunch'])
     preview = journal['preview']

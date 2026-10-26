@@ -196,6 +196,12 @@ class RelaunchApplyTests(RelaunchFixture):
         with self.assertRaisesRegex(SafeFailure, 'no verified receipt'):
             self.perform('verify')
 
+    def test_an_attempt_without_receipt_is_never_replayed(self):
+        self.journal.update(attempted=True, relaunch={'bootstrap': False, 'operation_id': OPERATION, 'resume': RESUME}, preview={})
+        with self.assertRaisesRegex(SafeFailure, 'no verified receipt'):
+            self.perform()
+        self.assertNotIn('receipt', self.journal)
+
     def test_verify_rejects_a_runtime_replaced_after_the_receipt(self):
         self.perform()
         self.docker.containers[self.name]['State']['StartedAt'] = 'replaced'
