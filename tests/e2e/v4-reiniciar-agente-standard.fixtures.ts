@@ -73,20 +73,23 @@ while True:
  sys.stdout.write('\\r\\n'+answer+'\\r\\n');sys.stdout.flush();render_idle()
 `;
 
+/** The real SDK entry of `harness` and its shared-session helper, bundled into the release adapter directory. */
+export async function stageSharedAdapter(directory: string, harness: 'codex' | 'claude'): Promise<readonly string[]> {
+  await cp(join(ROOT, 'packages/adapter-sdk/descriptors'), join(directory, 'descriptors'), { recursive: true });
+  const bin = join(directory, 'src/bin');
+  await mkdir(bin, { recursive: true });
+  for (const name of [harness, 'shared-session']) {
+    await execute(join(ROOT, 'node_modules/.bin/esbuild'), [join(ROOT, 'packages/adapter-sdk/src/bin', `${name}.ts`),
+      '--bundle', '--platform=node', '--format=esm', '--target=node22', '--log-level=error', `--outfile=${join(bin, `${name}.js`)}`,
+      `--alias:@cauce/protocol=${join(ROOT, 'packages/protocol/src/index.ts')}`,
+      '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
+    { maxBuffer: 1024 * 1024 });
+  }
+  return [`@release@/adapter/src/bin/${harness}.js`];
+}
+
 export const standardRecoveryBundle: ComputerRuntimeBundle = {
   providerCli: PROVIDER,
   sharedTui: true,
-  async stage(directory) {
-    await cp(join(ROOT, 'packages/adapter-sdk/descriptors'), join(directory, 'descriptors'), { recursive: true });
-    const bin = join(directory, 'src/bin');
-    await mkdir(bin, { recursive: true });
-    for (const name of ['codex', 'shared-session']) {
-      await execute(join(ROOT, 'node_modules/.bin/esbuild'), [join(ROOT, 'packages/adapter-sdk/src/bin', `${name}.ts`),
-        '--bundle', '--platform=node', '--format=esm', '--target=node22', '--log-level=error', `--outfile=${join(bin, `${name}.js`)}`,
-        `--alias:@cauce/protocol=${join(ROOT, 'packages/protocol/src/index.ts')}`,
-        '--banner:js=import{createRequire as __cauceRequire}from"node:module";const require=__cauceRequire(import.meta.url);'],
-      { maxBuffer: 1024 * 1024 });
-    }
-    return ['@release@/adapter/src/bin/codex.js'];
-  },
+  stage: directory => stageSharedAdapter(directory, 'codex'),
 };

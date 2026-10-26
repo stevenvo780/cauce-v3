@@ -150,6 +150,8 @@ export interface DockerInventory { containers: string; volumes: string; images: 
 export interface ComputerRuntimeBundle {
   readonly providerCli: string;
   readonly sharedTui: boolean;
+  /** Harness of the bundle, its single container template and its provider profiles; Codex when absent. */
+  readonly harness?: 'codex' | 'claude';
   /** Extra files baked into the agent image (path inside the image, UTF-8 content), executable. */
   readonly agentImageFiles?: Readonly<Record<string, string>>;
   stage(directory: string): Promise<readonly string[]>;
@@ -447,18 +449,20 @@ export async function startComputerHarness(options: {
       archive_sha256: release.manifest.release.sha256, image_id: release.manifest.image.id, image_archive_bytes: release.manifest.image.size,
       pins: release.manifest.pins }));
     const hook = { executable: '@release@/ops/cli/fleet-provider-hook.py', sha256: '@pin:hook_sha256@', argv: [], user: '@user@' };
+    const harness = options.runtimeBundle?.harness ?? 'codex';
+    if (harness !== 'codex' && loginCli !== undefined) throw new Error('the device login fixture only signs in Codex');
     const packager = new HostSetupPackager(await resolveHostSetup({ version: 1, signing_key_file: '/etc/cauce/unused.pem',
       release_directory: release.directory, files: [{ name: 'fleet-ca', path: authority.caFile }],
       policy: {
-        bundles: { codex: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
+        bundles: { [harness]: { directory: '@release@/adapter', digest: '@pin:adapter_digest@', executable: '/usr/local/bin/node',
           executable_sha256: null, argv: release.argv,
           ...(options.runtimeBundle?.sharedTui === true ? {} : { shared_tui: false }) } },
         // The runtime user shares the executor's uid: the provider pin check inside the agent container only trusts
         // ancestors owned by root or by the checking user, and the release lives under the executor's install root.
-        container_templates: [{ harness_id: 'codex', prefix: `${prefix}-`, image: '@pin:image@', runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
+        container_templates: [{ harness_id: harness, prefix: `${prefix}-`, image: '@pin:image@', runtime_user: COMPUTER_RUNTIME.user, systemd_user: '@user@',
           home_directory: COMPUTER_RUNTIME.home, state_root: COMPUTER_RUNTIME.stateRoot, profile_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           python: '/usr/local/bin/python3.12' }],
-        profile_templates: [{ provider: 'codex', runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
+        profile_templates: [{ provider: harness, runtime_user: COMPUTER_RUNTIME.user, path_root: `${COMPUTER_RUNTIME.home}/.cauce-profiles`,
           ...provider, runtime_mode: 'container', container_prefix: `${prefix}-` }],
         hooks: { authenticate: hook, profile: hook, verify: hook, revoke: hook },
         transport: { bootstrap_url: agentOrigin, gateway_url: agentOrigin, ca_certificate: '@install@/files/fleet-ca',

@@ -7,16 +7,26 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PublishMessageSchema } from '@cauce/protocol';
 import { CauceRepository } from '@cauce/store';
 import { TMUX_SOCKET } from '../../packages/adapter-sdk/src/shared-session/types.js';
-import { docker, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
-  type ComputerHarness } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
+import { COMPUTER_RUNTIME, docker, enrollComputer, FIXTURE_PROVIDER_IDENTITY, startComputerHarness,
+  type ComputerHarness, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { createSelfSignedCert } from '../terminal-pty/certs.mjs';
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
-import { policyRecoveryBundle, setCanarySharedTui } from './h6d-reinicio-politica.fixtures.js';
+import { setCanarySharedTui } from './h6d-reinicio-politica.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { apiGet, asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES,
   openRegistration, syntheticPerson, type V4Locator, type V4Page } from './v4-console-real-browser.helpers.js';
 
-const OWNER = 'h6d-reinicio-v4-1025';
+/**
+ * «Actualizar ejecución» of an agent created without the shared TUI, once the policy enables it, driven from Chromium.
+ * The update is accredited before it stops anything: a history the shared TUI could not continue (or a model change
+ * whose terminal could not start) is refused with an actionable cause and the original adapter keeps running.
+ * Codex then resumes its only own headless conversation; Claude resumes the one named with `shared-session.js seed`.
+ */
+export function definePolicyRestart(options: { harness: 'codex' | 'claude'; runtimeBundle: ComputerRuntimeBundle; owner?: string }): void {
+const HARNESS = options.harness;
+const CONFIG = HARNESS === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';
+const POINTER = HARNESS === 'codex' ? 'sessions.json' : 'shared-tui-session.json';
+const OWNER = options.owner ?? 'h6d-reinicio-v4-1025';
 const RUN = randomUUID().slice(0, 8);
 const PREFIX = `zz-canary-${OWNER}-${RUN}`;
 const ALIAS = `policy${RUN}`;
@@ -37,7 +47,7 @@ let room = '';
 let account = '';
 let container = '';
 let policy = '';
-const evidence: Record<string, unknown> = { run: RUN, owner: OWNER, provider: 'durable headless and interactive double',
+const evidence: Record<string, unknown> = { run: RUN, owner: OWNER, harness: HARNESS, provider: 'durable headless and interactive double',
   sdk: 'real bundled SDK', terminal_relay: 'not mounted; physical tmux and durable SDK delivery verified' };
 const browserErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES,
   { id: 'terminal-targets-unavailable', reason: 'hermetic gateway without the optional terminal relay',
@@ -48,7 +58,8 @@ const browserErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES,
 
 interface Operation { id: string; kind: string; status: string; version?: number; error: unknown; steps: { name: string; status: string; evidence?: Record<string, unknown> }[] }
 interface Launch { pid: number; native_id: string; resumed: boolean; mode: 'exec' | 'tui'; cwd: string }
-interface ProcessProbe { launches: Launch[]; adapter: Record<string, unknown>; pointer: Record<string, unknown>; home: string; state: string; shared: string | null }
+interface ProcessProbe { launches: Launch[]; adapter: Record<string, unknown>; pointer: Record<string, unknown>; home: string; state: string;
+  shared: string | null; entry: string }
 function active() { if (!harness) throw new Error('computer fixture absent'); return harness; }
 function view() { if (!page) throw new Error('browser absent'); return page; }
 function recovery() { return view().getByRole('region', { name: `Recuperación de ${ALIAS}`, exact: true }); }
@@ -111,10 +122,11 @@ async function processProbe(): Promise<ProcessProbe> {
   const script = `import json,pathlib,sys
 pid=int(sys.argv[1]);raw=pathlib.Path('/proc/'+str(pid)+'/environ').read_bytes().split(bytes([0]))
 env=dict(row.decode().split('=',1) for row in raw if b'=' in row)
-home=pathlib.Path(env['CODEX_HOME']);state=pathlib.Path(env['CAUCE_STATE_DIR']);history=home/'h6d-invocations.jsonl';pointer=state/'sessions.json'
-print(json.dumps({'launches':[json.loads(row) for row in history.read_text().splitlines()] if history.exists() else [],'adapter':{'pid':pid,**{key:env[key] for key in ('CAUCE_CONTAINER_GENERATION','CAUCE_CONTAINER_ID','CAUCE_INSTANCE_ID')}},'pointer':json.loads(pointer.read_text()) if pointer.exists() else {},'home':str(home),'state':str(state),'shared':env.get('CAUCE_SHARED_SESSION')}))
+home=pathlib.Path(env[sys.argv[2]]);state=pathlib.Path(env['CAUCE_STATE_DIR']);history=home/'h6d-invocations.jsonl';pointer=state/sys.argv[3]
+entry=[row.decode() for row in pathlib.Path('/proc/'+str(pid)+'/cmdline').read_bytes().split(bytes([0])) if row.endswith(b'.js')]
+print(json.dumps({'launches':[json.loads(row) for row in history.read_text().splitlines()] if history.exists() else [],'adapter':{'pid':pid,**{key:env[key] for key in ('CAUCE_CONTAINER_GENERATION','CAUCE_CONTAINER_ID','CAUCE_INSTANCE_ID')}},'pointer':json.loads(pointer.read_text()) if pointer.exists() else {},'home':str(home),'state':str(state),'shared':env.get('CAUCE_SHARED_SESSION'),'entry':entry[0] if entry else ''}))
 `;
-  return JSON.parse(await docker(['exec', '--user', 'cauce', container, 'python3', '-c', script, pid])) as ProcessProbe;
+  return JSON.parse(await docker(['exec', '--user', 'cauce', container, 'python3', '-c', script, pid, CONFIG, POINTER])) as ProcessProbe;
 }
 
 async function tmux(args: string[]) {
@@ -173,6 +185,40 @@ async function cancelFailed(operation: Operation) {
   return final.body;
 }
 
+async function refusedUpdate(panel: V4Locator, legacy: ProcessProbe, screenshot: string) {
+  let refused = await enqueue(panel, 'update', 'failed');
+  await expect.poll(async () => {
+    refused = (await operations()).find(row => row.id === refused.id) ?? refused;
+    return refused.steps.find(step => step.name === 'stop')?.status;
+  }, { timeout: 120_000, interval: 1_000 }).toBe('compensated');
+  expect(refused.status).toBe('failed');
+  expect(refused.error).toMatchObject({ code: 'STEP_FAILED', step: 'stop', retryable: false, reason: 'shared_conversation_unaccredited' });
+  const refusal = panel.getByRole('alert').filter({ hasText: 'La TUI compartida no podría continuar la conversación de este agente' }).first();
+  await refusal.waitFor({ timeout: 30_000 });
+  const notice = await refusal.innerText();
+  for (const remedy of ['No se detuvo nada', '«Abrir terminal»', HARNESS === 'codex' ? '$CODEX_HOME/sessions' : '$CLAUDE_CONFIG_DIR/projects',
+    'seed --native-id', 'prepara una actualización nueva']) expect(notice).toContain(remedy);
+  const untouched = await processProbe();
+  expect(untouched.adapter).toEqual(legacy.adapter);
+  expect(untouched.launches).toEqual(legacy.launches);
+  expect(untouched.shared).toBeNull();
+  await capture(screenshot);
+  const closed = await cancelFailed(refused);
+  expect((await processProbe()).adapter).toEqual(legacy.adapter);
+  return { operation: refused, notice, adapter: untouched.adapter, closed };
+}
+
+/** The remedy the console names for Claude: the operator marks which conversation the shared TUI continues. */
+async function seedClaudeConversation(legacy: ProcessProbe, native: string, workspace: string) {
+  expect(legacy.entry).toMatch(/\/src\/bin\/claude\.js$/u);
+  const helper = legacy.entry.replace(/claude\.js$/u, 'shared-session.js');
+  const output = await docker(['exec', '--user', 'cauce', '--env', `HOME=${COMPUTER_RUNTIME.home}`, '--env', `CLAUDE_CONFIG_DIR=${legacy.home}`,
+    container, '/usr/local/bin/node', helper, 'seed', '--alias', KEY, '--harness', 'claude', '--state', legacy.state,
+    '--workspace', workspace, '--native-id', native]);
+  expect(JSON.parse(output)).toMatchObject({ result: 'written', harness: 'claude', native_id: native });
+  return JSON.parse(output) as unknown;
+}
+
 beforeAll(async () => {
   await mkdir(EVIDENCE, { recursive: true, mode: 0o700 });
   console.info('H6D_CANARY', JSON.stringify({ run: RUN, prefix: PREFIX, alias: ALIAS, runtime_key: KEY }));
@@ -181,7 +227,7 @@ beforeAll(async () => {
   const ports = await reserveNamedLoopbackPorts(['frontend', 'spare'] as const);
   await ports.releaseAll(); baseUrl = `https://localhost:${String(ports.ports.frontend)}`;
   harness = await startComputerHarness({ prefix: PREFIX, consoleOrigins: [baseUrl], workRoot: '/datos', resourceOwner: OWNER,
-    runtimeBundle: policyRecoveryBundle, extraSourceFiles: ['packages/protocol/src/fleet-recovery.ts',
+    runtimeBundle: options.runtimeBundle, extraSourceFiles: ['packages/protocol/src/fleet-recovery.ts',
       'services/gateway/src/fleet/agent-recovery-preflight.ts', 'services/gateway/src/fleet/recovery-host-command.ts',
       'packages/store/src/context-version-reevaluation.ts'] });
   vite = await (consoleRequire('vite') as { createServer(config: Record<string, unknown>): Promise<NonNullable<typeof vite>> }).createServer({
@@ -207,7 +253,7 @@ beforeAll(async () => {
   host = `${person.company.slug}-pc`;
   await enrollComputer(harness, { cookie, origin: baseUrl, 'x-csrf-token': login.json<{ csrf_token: string }>().csrf_token }, person.company.slug, host);
   policy = join(harness.installRoot, person.company.slug, host, 'executor-policy.json');
-  evidence.legacy_policy = await setCanarySharedTui(harness, policy, false);
+  evidence.legacy_policy = await setCanarySharedTui(harness, policy, false, HARNESS);
   expect((evidence.legacy_policy as { after: unknown }).after).toEqual({ present: false, value: null });
   tenant = (await harness.pool.query<{ tenant_id: string }>('SELECT tenant_id FROM console_users WHERE email=$1', [person.email])).rows[0]?.tenant_id ?? '';
   room = (await harness.pool.query<{ id: string }>('SELECT id FROM rooms WHERE tenant_id=$1 AND enabled ORDER BY id', [tenant])).rows[0]?.id ?? '';
@@ -215,7 +261,7 @@ beforeAll(async () => {
   await harness.pool.query("INSERT INTO memberships(tenant_id,room_id,alias,role) VALUES($1,$2,$3,'agent')", [tenant, room, `sender${RUN}`]);
   account = `zz-h6d-${RUN}`;
   await harness.pool.query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
-    VALUES($1,'codex',$2,$3,'env_path','CAUCE_E2E_RECOVERY_PROFILE_PATH',true)`, [account, FIXTURE_PROVIDER_IDENTITY, tenant]);
+    VALUES($1,$4,$2,$3,'env_path','CAUCE_E2E_RECOVERY_PROFILE_PATH',true)`, [account, FIXTURE_PROVIDER_IDENTITY, tenant, HARNESS]);
 }, 900_000);
 
 afterAll(async () => {
@@ -230,7 +276,7 @@ afterAll(async () => {
   if (errors.length) throw new AggregateError(errors, 'h6d recovery cleanup failed');
 }, 300_000);
 
-describe('reinicio V4 después de actualizar una política sin TUI compartida', () => {
+describe(`reinicio V4 de ${HARNESS} después de actualizar una política sin TUI compartida`, () => {
   it('ofrece actualizar antes de recuperar y conserva el UUID nativo, la huella y el recuerdo', async () => {
     const current = view();
     try {
@@ -280,7 +326,7 @@ describe('reinicio V4 después de actualizar una política sin TUI compartida', 
       expect(legacy.launches).toHaveLength(1);
       expect(legacy.launches.at(-1)?.mode).toBe('exec');
       expect(legacy.shared).toBeNull(); evidence.legacy = legacy;
-      evidence.current_policy = await setCanarySharedTui(active(), policy, true);
+      evidence.current_policy = await setCanarySharedTui(active(), policy, true, HARNESS);
       await openRecovery();
       await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).waitFor({ timeout: 90_000 });
       await recovery().getByRole('alert').filter({ hasText: 'Actualiza la ejecución' }).waitFor();
@@ -290,25 +336,19 @@ describe('reinicio V4 después de actualizar una política sin TUI compartida', 
       await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).click();
       expect(await panel.getByLabel('¿Qué quieres hacer?').inputValue()).toBe('update');
       const workspace = legacy.launches.at(-1)?.cwd ?? '';
-      await secondRollout(legacy.home, workspace, true);
-      let refused = await enqueue(panel, 'update', 'failed');
-      await expect.poll(async () => {
-        refused = (await operations()).find(row => row.id === refused.id) ?? refused;
-        return refused.steps.find(step => step.name === 'stop')?.status;
-      }, { timeout: 120_000, interval: 1_000 }).toBe('compensated');
-      expect(refused.status).toBe('failed');
-      expect(refused.error).toMatchObject({ code: 'STEP_FAILED', step: 'stop', retryable: false, reason: 'shared_conversation_unaccredited' });
-      const refusal = panel.getByText(/La TUI compartida no podría reanudar la conversación de Codex/u).first();
-      await refusal.waitFor({ timeout: 30_000 });
-      const untouched = await processProbe();
-      expect(untouched.adapter).toEqual(legacy.adapter);
-      expect(untouched.launches).toEqual(legacy.launches);
-      expect(untouched.shared).toBeNull();
-      evidence.refused_update = { operation: refused, notice: await refusal.innerText(), adapter: untouched.adapter };
-      await capture('02b-update-refused-ambiguous-conversation');
-      evidence.refused_closed = await cancelFailed(refused);
-      expect((await processProbe()).adapter).toEqual(legacy.adapter);
-      await secondRollout(legacy.home, workspace, false);
+      if (HARNESS === 'codex') {
+        await secondRollout(legacy.home, workspace, true);
+        evidence.refused_update = await refusedUpdate(panel, legacy, '02b-update-refused-ambiguous-conversation');
+        await secondRollout(legacy.home, workspace, false);
+      } else {
+        evidence.refused_update = await refusedUpdate(panel, legacy, '02b-update-refused-unpointed-history');
+        await openRecovery();
+        await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).click();
+        expect(await panel.getByLabel('¿Qué quieres hacer?').inputValue()).toBe('update');
+        await panel.getByLabel('Modelo operativo').fill(`claude-canary-${RUN}`);
+        evidence.refused_model_change = await refusedUpdate(panel, legacy, '02c-model-change-refused-unpointed-history');
+        evidence.seeded = await seedClaudeConversation(legacy, native ?? '', workspace);
+      }
       await openRecovery();
       await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).click();
       expect(await panel.getByLabel('¿Qué quieres hacer?').inputValue()).toBe('update');
@@ -321,7 +361,9 @@ describe('reinicio V4 después de actualizar una política sin TUI compartida', 
       evidence.updated_recall = await ask('RECALL', `RECALLED:${DATUM}`, true);
       const initialized = await processProbe();
       evidence.initialized = initialized;
-      expect(initialized.pointer).toMatchObject({ sessions: { [`codex:${ALIAS}:shared:${ALIAS}`]: { native_id: native, initialized: true } } });
+      if (HARNESS === 'codex') {
+        expect(initialized.pointer).toMatchObject({ sessions: { [`codex:${ALIAS}:shared:${ALIAS}`]: { native_id: native, initialized: true } } });
+      } else expect(JSON.stringify(initialized.pointer)).toContain(native);
 
       await openRecovery();
       const confirm = recovery().getByRole('button', { name: 'Confirmar reinicio y reanudar', exact: true });
@@ -443,3 +485,4 @@ describe('reinicio V4 después de actualizar una política sin TUI compartida', 
     }
   }, 900_000);
 });
+}

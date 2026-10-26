@@ -274,7 +274,8 @@ export class SharedCycleObserver {
       const absent = `Error response from daemon: No such container: ${containerId}`;
       const stopped = `Error response from daemon: container ${containerId} is not running`;
       const failure = new Error(`docker exec failed (${String(executed.code)}): ${executed.stderr.trim()}`);
-      if (this.diagnosticTrace !== 'purge' || executed.stdout || ![absent, stopped].includes(executed.stderr.trimEnd())) throw failure;
+      const killed = executed.code === 137 && !executed.stderr;
+      if (this.diagnosticTrace !== 'purge' || executed.stdout || (!killed && ![absent, stopped].includes(executed.stderr.trimEnd()))) throw failure;
       const checks: { operation: string; code: number; stdout: string; stderr: string }[] = [];
       const recheck = async () => {
         const result = await command('docker', ['ps', '-a', '--no-trunc', '--format', '{{.ID}}', '--filter', `id=${containerId}`]);
