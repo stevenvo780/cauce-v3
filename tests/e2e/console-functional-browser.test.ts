@@ -312,7 +312,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     const firstReply = firstHumanPage.locator(`article[data-direction="output"][data-reply-to="${firstMessage.id}"] section[data-delivery-id="${firstMessage.deliveryId}"]`);
     await firstReply.getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await firstReply.count()).toBe(1);
-    await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(secondNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(secondNonce, { exact: true }).count()).toBe(0);
     expect(await firstHumanPage.locator(`article[data-direction="output"][data-reply-to="${secondMessage.id}"]`).count()).toBe(0);
     expect(await firstHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).count()).toBe(0);
 
@@ -321,7 +321,7 @@ describe('E2E funcional de consola real, dos tenants y entrega durable', () => {
     const secondReply = secondHumanPage.locator(`article[data-direction="output"][data-reply-to="${secondMessage.id}"] section[data-delivery-id="${secondMessage.deliveryId}"]`);
     await secondReply.getByText(`respuesta sintética Isa ${secondNonce}`, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
     expect(await secondReply.count()).toBe(1);
-    await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(ownerNonce, { exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+    expect(await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(ownerNonce, { exact: true }).count()).toBe(0);
     expect(await secondHumanPage.locator(`article[data-direction="output"][data-reply-to="${firstMessage.id}"]`).count()).toBe(0);
     expect(await secondHumanPage.getByLabel('Historial de la conversación', { exact: true }).getByText(`respuesta sintética Isa ${ownerNonce}`, { exact: true }).count()).toBe(0);
 
