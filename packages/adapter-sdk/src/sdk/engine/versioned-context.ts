@@ -211,7 +211,7 @@ export function contextHeldByTurn(
   delivery: HarnessRequestContext['versioned_context_delivery'],
 ): boolean {
   if (space.root !== undefined) return space.materializedVersion === context.version && space.materializedDigest === context.digest;
-  return delivery !== undefined && delivery.materialized === false
+  return delivery?.materialized === false
     && Buffer.byteLength(JSON.stringify(context.files)) <= delivery.max_bytes;
 }
 

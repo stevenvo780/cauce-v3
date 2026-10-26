@@ -161,7 +161,7 @@ test("OpenClaw atestigua el turno de un perfil V4 que guarda su estado en OPENCL
       + message("assistant", [{ type: "text", text: ANSWER }]));
     const witness = await verifyOpenClawConsumption(snapshot, context.request, context.result());
     assert.equal(witness?.native_turn_id, turn);
-    assert.equal(witness?.input_sha256, inputDigest(context.request.stdin));
+    assert.equal(witness.input_sha256, inputDigest(context.request.stdin));
     // Before: only `$HOME/.openclaw` was read, which a V4 container does not have, so no turn was ever witnessed.
     assert.equal(await verifyOpenClawConsumption(await prepareOpenClawConsumption(context.request, { HOME: context.environment.HOME }),
       context.request, context.result()), undefined);
