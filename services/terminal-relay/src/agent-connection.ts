@@ -416,7 +416,7 @@ export class AgentConnection {
       const body = decodeJsonFrame(frame.payload);
       const sessionId = stringField(body, 'session_id');
       if (sessionId === undefined) throw new FramingError('OPEN_ERR without a session id');
-      this.dispatch(sessionId, (handlers) => { handlers.onOpenErr(stringField(body, 'reason') ?? 'open_failed'); });
+      this.dispatch(sessionId, (handlers) => { handlers.onOpenErr(stringField(body, 'reason') ?? 'open_failed', stringField(body, 'detail')); });
       return;
     }
     if (frame.tag === FRAME_TAGS.CLOSED) {

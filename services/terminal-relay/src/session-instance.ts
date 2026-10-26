@@ -408,13 +408,16 @@ export class TerminalSession {
       this.agent.attachSession(this.sessionId, {
         onOpenOk: () => { settle(true); },
         onAgentNotice: (kind, body) => { this.onAgentNotice(kind, body); },
-        onOpenErr: (reason) => {
+        onOpenErr: (reason, detail) => {
           // The agent is the second gate on the ticket: it may refuse what the relay accepted.
           const code = reason === 'ticket_invalid'
             ? CLOSE_CODES.ticket_invalid
             : reason === 'revoked' ? CLOSE_CODES.revoked : CLOSE_CODES.internal_error;
+          // The agent's TUI pane is being recreated: a transient refusal the client may retry. It travels
+          // as the close reason (the only closed-set detail forwarded), so the code stays 1011.
+          const closeReason = reason === 'mode_unavailable' && detail === 'tui_restarting' ? 'tui_restarting' : reason;
           this.metrics.openAttempt('denied');
-          this.terminate(code, reason);
+          this.terminate(code, closeReason);
           settle(false);
         },
         onStdout: (data) => { this.onStdout(data); },

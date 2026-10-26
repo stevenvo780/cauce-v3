@@ -124,6 +124,27 @@ describe('terminal sessions', () => {
     expect(agent.stdin[0]?.toString()).toBe('whoami\r');
   });
 
+  it.each([
+    ['mode_unavailable', 'tui_restarting', 'tui_restarting'],
+    ['mode_unavailable', 'recovered_conversation_changed', 'mode_unavailable'],
+    ['mode_unavailable', undefined, 'mode_unavailable'],
+    ['too_many_sessions', 'tui_restarting', 'too_many_sessions']
+  ])('OPEN_ERR %s/%s reaches the client as close reason %s without changing the close code', async (reason, detail, expected) => {
+    const gateway = new FakeGateway();
+    const manager = new SessionManager({ gateway, limits: limits() });
+    const socket = new FakeBrowserSocket();
+    const agent = new FakeAgentConnection();
+    const opening = manager.open({
+      socket: socket.asWebSocket(), sessionId: SESSION_ID, ticket: 'ticket-under-test', grant: grant(),
+      agent: agent.asAgent(), cols: 120, rows: 40
+    });
+    await waitFor(() => agent.opens.length === 1);
+    agent.handlers?.onOpenErr(reason, detail);
+    await opening;
+    expect(socket.closes[0]).toEqual({ code: CLOSE_CODES.internal_error, reason: expected });
+    expect(gateway.closeReports[0]?.report.reason).toBe(expected);
+  });
+
   it('forwards resize and ignores ping without touching the agent', async () => {
     const { socket, agent } = await openSession();
     socket.raw('{"type":"resize","cols":100,"rows":30}');

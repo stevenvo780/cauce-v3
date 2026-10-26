@@ -115,7 +115,7 @@ export type AgentNoticeKind = 'input_refused' | 'geometry';
 
 export interface AgentSessionHandlers {
   onOpenOk(pid: number): void;
-  onOpenErr(reason: string): void;
+  onOpenErr(reason: string, detail?: string): void;
   onStdout(data: Buffer): void;
   /** Informational agent-to-browser JSON the relay only forwards; it never interprets it. */
   onAgentNotice(kind: AgentNoticeKind, body: Record<string, unknown>): void;

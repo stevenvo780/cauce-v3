@@ -379,6 +379,12 @@ it.each([
   expect(PTY_CLOSE_MESSAGES[code]).toBeDefined();
 });
 
+it('explains a TUI restart refusal as transient and keeps other 1011 reasons generic', () => {
+  expect(ptyCloseMessage(1011, 'tui_restarting')).toContain('reiniciando su terminal');
+  expect(ptyCloseMessage(1011, 'mode_unavailable')).toContain('Error interno del relay');
+  expect(ptyCloseMessage(1011)).toContain('Error interno del relay');
+});
+
 it('surfaces a revoked permission mid-session and notifies the owner once', () => {
   const socket = open();
   socket.emitControl(ready());

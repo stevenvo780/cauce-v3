@@ -135,6 +135,10 @@ export function avisoDeEntradaRechazada(reason: unknown): string {
 }
 
 export function ptyCloseMessage(code?: number, reason?: string | null): string {
+  // The agent is recreating its TUI pane (relay close reason on a 1011): transient, so say what to do.
+  if (reason === 'tui_restarting') {
+    return 'El agente está reiniciando su terminal. Espera unos segundos y vuelve a abrir la sesión.';
+  }
   const mapped = code === undefined ? undefined : PTY_CLOSE_MESSAGES[code];
   if (mapped) return mapped;
   if (code === 1000) return 'Canal PTY cerrado.';

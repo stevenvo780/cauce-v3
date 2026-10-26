@@ -14,6 +14,7 @@ import ssl
 import stat
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -382,7 +383,7 @@ const socket = new WebSocket(config.url, {
   ...(config.ca_file ? { ca: readFileSync(config.ca_file) } : {}),
   rejectUnauthorized: true, handshakeTimeout: 15000, closeTimeout: 2000, followRedirects: false, maxPayload: 1048576,
 });
-let ready = false, detached = false, exitCode = 0, heartbeat;
+let ready = false, detached = false, restarting = false, exitCode = 0, heartbeat;
 const wasRaw = process.stdin.isRaw ?? false;
 const send = (value) => {
   const encoded = JSON.stringify(value);
@@ -448,6 +449,8 @@ socket.on('message', (data, binary) => {
     return;
   }
   if (frame.type === 'input_refused') fail('El servidor rechazó la entrada; revisa el control y los permisos del agente.');
+  // The agent PTY is recreating its TUI pane: the only refusal the CLI treats as transient (exit 75).
+  if (frame.type === 'closed' && !ready && frame.reason === 'tui_restarting') restarting = true;
   if (frame.type === 'closed' && Number.isInteger(frame.exit_code)) exitCode = frame.exit_code === 0 ? 0 : 1;
 });
 process.stdout.on('drain', () => socket.resume());
@@ -462,7 +465,9 @@ socket.on('close', (code) => {
   clearTimeout(timer);
   clearInterval(heartbeat);
   restore();
-  if (!detached && code !== 1000) {
+  if (restarting && !ready) {
+    exitCode = 75;
+  } else if (!detached && code !== 1000) {
     process.stderr.write('Terminal cerrado por el servidor (código ' + code + ').\n');
     exitCode = 1;
   }
@@ -474,6 +479,15 @@ process.on('exit', restore);
 
 class TerminalTargetMissing(ContextFailure):
     pass
+
+
+class TerminalRestarting(ContextFailure):
+    """The agent PTY refused the OPEN with mode_unavailable/tui_restarting: its TUI pane is being recreated."""
+
+
+TUI_RESTARTING_EXIT = 75
+TUI_RESTART_RETRY_SECONDS = 30.0
+TUI_RESTART_RETRY_PAUSE = 2.0
 
 
 def terminal_selection(snapshot: object, alias: str, tenant: str | None) -> dict:
@@ -590,6 +604,12 @@ def terminal_transport(client: ConsoleSessionClient, grant: dict, mode: str, col
             descriptors.remove(writer)
             json.dump(config, stream)
         if not select.select([ready_reader], [], [], 25)[0] or os.read(ready_reader, 16) != b'ready':
+            try:
+                restarting = process.wait(timeout=5) == TUI_RESTARTING_EXIT
+            except subprocess.TimeoutExpired:
+                restarting = False
+            if restarting:
+                raise TerminalRestarting('El agente está reiniciando su terminal.')
             raise ContextFailure('El relay no acreditó la conexión del terminal.')
         if mode == 'harness_rw':
             owner = {key: grant[key] for key in ('request_id', 'owner_generation', 'owner_token', 'authority_proof')}
@@ -634,6 +654,49 @@ def agent_summary(client: ConsoleSessionClient, target: dict) -> str:
     return terminal_status(target) + '\n' + agent_status(target, configuration, activity, operations)
 
 
+def open_terminal_once(client: ConsoleSessionClient, target: dict, mode: str, cols: int, rows: int) -> int:
+    request = {key: target[key] for key in ('tenant_id', 'alias')}
+    request.update(mode=mode, cols=cols, rows=rows, request_id=str(uuid.uuid4()), owner_token=str(uuid.uuid4()))
+    grant = client.request('POST', '/v3/console/terminal/sessions', request)
+    if not isinstance(grant, dict) or not isinstance(grant.get('session_id'), str) \
+            or not re.fullmatch(r'[0-9a-f-]{36}', grant['session_id']) \
+            or grant.get('request_id') != request['request_id'] \
+            or not isinstance(grant.get('owner_generation'), str) or not grant['owner_generation'].isdigit():
+        raise ContextFailure('El gateway no acreditó la sesión solicitada.')
+    grant['owner_token'] = request['owner_token']
+    owner = {key: grant[key] for key in ('request_id', 'owner_generation', 'owner_token')}
+    try:
+        if not isinstance(grant.get('ticket'), str) or not grant['ticket'] \
+                or not isinstance(grant.get('authority_proof'), str) or not grant['authority_proof'].startswith('ac2.') \
+                or not isinstance(grant.get('target'), dict) \
+                or any(grant['target'].get(key) != request[key] for key in ('tenant_id', 'alias', 'mode')):
+            raise ContextFailure('El gateway devolvió otro destino o una autorización inválida.')
+        terminal_websocket(client.gateway, grant.get('websocket_path'))
+        return terminal_transport(client, grant, mode, cols, rows)
+    finally:
+        client.request('DELETE', '/v3/console/terminal/sessions/' + grant['session_id'], owner)
+
+
+def open_terminal_with_retries(client: ConsoleSessionClient, target: dict, mode: str, cols: int, rows: int,
+                               alias: str) -> int:
+    """Open the terminal; only tui_restarting is retried, with a fresh grant each time and a bounded total wait."""
+    deadline = time.monotonic() + TUI_RESTART_RETRY_SECONDS
+    announced = False
+    while True:
+        try:
+            return open_terminal_once(client, target, mode, cols, rows)
+        except TerminalRestarting:
+            if time.monotonic() + TUI_RESTART_RETRY_PAUSE >= deadline:
+                raise ContextFailure(
+                    f'El agente sigue reiniciando su terminal tras {TUI_RESTART_RETRY_SECONDS:.0f} s. '
+                    f'Espera a que vuelva y reintenta `cauce {alias}`; si no vuelve, revisa su estado '
+                    f'con `cauce {alias} estado` o en la consola.') from None
+            if not announced:
+                print('El agente está reiniciando su terminal, reintento…', file=sys.stderr)
+                announced = True
+            time.sleep(TUI_RESTART_RETRY_PAUSE)
+
+
 def terminal_main() -> int:
     parser = ContextArgumentParser(prog='cauce <alias>', allow_abbrev=False,
                                     description='Terminal remoto con la sesión nominal de cauce login')
@@ -674,26 +737,7 @@ def terminal_main() -> int:
             raise ContextFailure('Instala Node.js y el runtime Cauce para abrir el terminal.')
         size = shutil.get_terminal_size((100, 30))
         cols, rows = max(20, min(500, size.columns)), max(5, min(200, size.lines))
-        request = {key: target[key] for key in ('tenant_id', 'alias')}
-        request.update(mode=mode, cols=cols, rows=rows, request_id=str(uuid.uuid4()), owner_token=str(uuid.uuid4()))
-        grant = client.request('POST', '/v3/console/terminal/sessions', request)
-        if not isinstance(grant, dict) or not isinstance(grant.get('session_id'), str) \
-                or not re.fullmatch(r'[0-9a-f-]{36}', grant['session_id']) \
-                or grant.get('request_id') != request['request_id'] \
-                or not isinstance(grant.get('owner_generation'), str) or not grant['owner_generation'].isdigit():
-            raise ContextFailure('El gateway no acreditó la sesión solicitada.')
-        grant['owner_token'] = request['owner_token']
-        owner = {key: grant[key] for key in ('request_id', 'owner_generation', 'owner_token')}
-        try:
-            if not isinstance(grant.get('ticket'), str) or not grant['ticket'] \
-                    or not isinstance(grant.get('authority_proof'), str) or not grant['authority_proof'].startswith('ac2.') \
-                    or not isinstance(grant.get('target'), dict) \
-                    or any(grant['target'].get(key) != request[key] for key in ('tenant_id', 'alias', 'mode')):
-                raise ContextFailure('El gateway devolvió otro destino o una autorización inválida.')
-            terminal_websocket(client.gateway, grant.get('websocket_path'))
-            return terminal_transport(client, grant, mode, cols, rows)
-        finally:
-            client.request('DELETE', '/v3/console/terminal/sessions/' + grant['session_id'], owner)
+        return open_terminal_with_retries(client, target, mode, cols, rows, args.alias)
     except ContextFailure as error:
         print(console_failure_message(error), file=sys.stderr)
     except (OSError, ValueError, TypeError, KeyError):

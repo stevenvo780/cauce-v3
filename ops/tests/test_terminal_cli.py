@@ -435,6 +435,7 @@ import { join } from 'node:path';
 const { WebSocketServer } = createRequire(join(process.argv[1], 'package.json'))('ws');
 const events = process.argv[2];
 const mode = process.argv[3];
+const refusal = process.argv[4];
 const event = (value) => appendFileSync(events, JSON.stringify(value) + '\n');
 const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/v3/ws/terminal' });
 server.on('listening', () => process.stdout.write(JSON.stringify({ port: server.address().port }) + '\n'));
@@ -446,6 +447,12 @@ server.on('connection', (socket, request) => {
     if (frame.type === 'attach') {
       event({ event: 'attach', ticket_ok: frame.ticket === 'synthetic-terminal-ticket',
         proof_ok: frame.authority_proof === 'ac2.synthetic-terminal-proof' });
+      if (refusal) {
+        event({ event: 'refused', reason: refusal });
+        socket.send(JSON.stringify({ type: 'closed', reason: refusal, exit_code: null }));
+        socket.close(1011, refusal);
+        return;
+      }
       event({ event: 'ready' });
       socket.send(JSON.stringify({ type: 'ready', session_id: frame.session_id, mode }));
     } else if (frame.type === 'input') {
@@ -459,7 +466,9 @@ server.on('connection', (socket, request) => {
 '''
 
 
-class TerminalTransportTests(unittest.TestCase):
+class TerminalTransportBase(unittest.TestCase):
+    refusal = ''
+
     def setUp(self):
         self.assertIsNotNone(shutil.which('node'), 'Node.js is required by the terminal runtime')
         self.assertTrue((ROOT / 'services/terminal-relay/src/session-limits.ts').is_file()
@@ -473,7 +482,8 @@ class TerminalTransportTests(unittest.TestCase):
         self.watchdogs = []
         self.addCleanup(self.stop_children)
         self.server = subprocess.Popen(
-            ['node', '--input-type=module', '--eval', SERVER_WIRE, str(ROOT), str(self.events_file), 'harness_rw'],
+            ['node', '--input-type=module', '--eval', SERVER_WIRE, str(ROOT), str(self.events_file), 'harness_rw',
+             self.refusal],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         self.children.append(self.server)
@@ -519,6 +529,8 @@ class TerminalTransportTests(unittest.TestCase):
             stream.write(json.dumps({'event': 'control'}) + '\n')
         return {'session_id': SESSION_ID, 'hold_id': 'synthetic-hold'}
 
+
+class TerminalTransportTests(TerminalTransportBase):
     def test_real_websocket_waits_for_control_before_stdin_and_receives_output(self):
         self.client.request = Mock(side_effect=self.control)
         self.real_popen = subprocess.Popen
@@ -563,6 +575,101 @@ class TerminalTransportTests(unittest.TestCase):
         self.assertEqual(requests[-1], ('DELETE', '/v3/console/terminal/sessions/' + SESSION_ID, {
             key: self.grant[key] for key in ('request_id', 'owner_generation', 'owner_token')}))
         self.assertIsNotNone(self.children[-1].poll())
+
+
+class TerminalRefusalTransportTests(TerminalTransportBase):
+    refusal = 'tui_restarting'
+
+    def test_tui_restarting_refusal_is_reported_as_transient(self):
+        self.client.request = Mock(side_effect=AssertionError('control must not be requested'))
+        self.real_popen = subprocess.Popen
+        with patch.object(context_client.subprocess, 'Popen', side_effect=self.spawn_transport), \
+                self.assertRaises(context_client.TerminalRestarting):
+            context_client.terminal_transport(self.client, self.grant, 'harness_rw', 100, 30)
+        self.assertEqual([event['event'] for event in self.events()], ['connected', 'attach', 'refused'])
+        self.assertNotIn(b'cerrado por el servidor', self.children[-1].stderr.read())
+
+    def test_other_refusals_are_not_transient(self):
+        for reason in ('mode_unavailable', 'too_many_sessions', 'ticket_invalid'):
+            with self.subTest(reason=reason):
+                self.refusal = reason
+                self.setUp()
+                self.client.request = Mock(side_effect=AssertionError('control must not be requested'))
+                self.real_popen = subprocess.Popen
+                with patch.object(context_client.subprocess, 'Popen', side_effect=self.spawn_transport), \
+                        self.assertRaises(context_client.ContextFailure) as rejected:
+                    context_client.terminal_transport(self.client, self.grant, 'harness_rw', 100, 30)
+                self.assertNotIsInstance(rejected.exception, context_client.TerminalRestarting)
+
+
+class TerminalRestartRetryTests(unittest.TestCase):
+    def run_main(self, outcomes, clock=None):
+        """Run terminal_main with terminal_transport scripted; returns (code, stderr, client, transport, pauses)."""
+        def request(method, path, body=None):
+            if method == 'GET':
+                return {'items': [target()]}
+            if method == 'POST':
+                return grant(request_id=body['request_id'])
+            return {'released': True}
+
+        client = SimpleNamespace(gateway='https://console.example', request=Mock(side_effect=request))
+        transport = Mock(side_effect=outcomes)
+        pauses = []
+        patches = [
+            patch.object(sys, 'argv', ['context_client', '--terminal', 'zz-canary-terminal']),
+            patch.object(context_client, 'ConsoleSessionClient', return_value=client),
+            patch.object(context_client, 'terminal_transport', transport),
+            patch.object(context_client.shutil, 'which', return_value='/usr/bin/node'),
+            patch.object(context_client.time, 'sleep', side_effect=pauses.append),
+        ]
+        if clock is not None:
+            patches.append(patch.object(context_client.time, 'monotonic', side_effect=clock))
+        with patch.object(sys, 'stderr', io.StringIO()) as stderr:
+            for item in patches:
+                item.start()
+            try:
+                code = context_client.terminal_main()
+            finally:
+                for item in reversed(patches):
+                    item.stop()
+        return code, stderr.getvalue(), client, transport, pauses
+
+    @staticmethod
+    def methods(client):
+        return [call.args[0] for call in client.request.call_args_list]
+
+    def test_transient_restart_is_retried_with_a_fresh_grant_and_one_notice(self):
+        restarting = context_client.TerminalRestarting('x')
+        code, stderr, client, transport, pauses = self.run_main([restarting, restarting, 0])
+        self.assertEqual(code, 0)
+        self.assertEqual(transport.call_count, 3)
+        self.assertEqual(stderr.count('El agente está reiniciando su terminal, reintento…'), 1)
+        self.assertEqual(len(pauses), 2)
+        self.assertEqual(self.methods(client).count('POST'), 3)
+        self.assertEqual(self.methods(client).count('DELETE'), 3)
+        for secret in (COOKIE, TICKET, PROOF):
+            self.assertNotIn(secret, stderr)
+
+    def test_retries_are_bounded_and_the_final_message_is_actionable(self):
+        ticks = iter(range(0, 1000, 2))
+        code, stderr, client, transport, pauses = self.run_main(
+            Mock(side_effect=context_client.TerminalRestarting('x')), clock=lambda: float(next(ticks)))
+        self.assertEqual(code, 1)
+        self.assertGreaterEqual(transport.call_count, 2)
+        self.assertLessEqual(transport.call_count, 16)
+        self.assertEqual(self.methods(client).count('DELETE'), self.methods(client).count('POST'))
+        self.assertIn('sigue reiniciando su terminal', stderr)
+        self.assertIn('cauce zz-canary-terminal estado', stderr)
+        self.assertEqual(stderr.count('reintento…'), 1)
+
+    def test_no_other_failure_is_retried(self):
+        for failure in (context_client.ContextFailure('relay rechazó'), OSError('boom'), 3):
+            with self.subTest(failure=failure):
+                code, stderr, client, transport, pauses = self.run_main([failure])
+                self.assertEqual(transport.call_count, 1)
+                self.assertEqual(pauses, [])
+                self.assertNotIn('reintento', stderr)
+                self.assertEqual(code, 3 if failure == 3 else 1)
 
 
 class TerminalWrapperTests(unittest.TestCase):
