@@ -191,7 +191,7 @@ def perform(policy: dict, document: dict) -> dict:
         if len(command) != 2 or command[1] != '/home/node/.codex':
             raise SafeFailure('quota_profile_unsupported')
         command[1] = profile
-    agent, before = container_binding(policy, agent)
+    agent, before = container_binding(policy, agent, previous_release_ok=True)
     uid, gid = user_identity(agent, before)
     profile_environment = {'claude': ['CLAUDE_CONFIG_DIR=' + profile], 'grok': ['GROK_HOME=' + profile]}.get(provider, [])
     arguments = [DOCKER, 'exec', '-i', '-w', '/', '--user', uid + ':' + gid, before['container_id'], '/usr/bin/env', '-i',
@@ -215,7 +215,7 @@ def perform(policy: dict, document: dict) -> dict:
         raise
     except (OSError, ValueError, subprocess.TimeoutExpired):
         raise SafeFailure('quota_reader_unavailable') from None
-    _agent, after = container_binding(policy, agent)
+    _agent, after = container_binding(policy, agent, previous_release_ok=True)
     if before != after:
         raise SafeFailure('quota_container_changed')
     approved_bundle(policy, agent)

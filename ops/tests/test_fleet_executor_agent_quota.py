@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -35,8 +36,8 @@ class AgentQuotaPacketTest(unittest.TestCase):
         agent['primary_account_id'] = self.agent.get('primary_account_id')
         return {'operation_id': str(uuid.uuid4()), 'action': 'query_agent', 'agent': agent}
 
-    def query(self, packet=None):
-        return subprocess.run([sys.executable, '-B', str(fixtures.CLI), '--policy', str(self.policy_file), '--quota'],
+    def query(self, packet=None, executable=None):
+        return subprocess.run([sys.executable, '-B', str(executable or fixtures.CLI), '--policy', str(self.policy_file), '--quota'],
             input=json.dumps(self.quota_packet() if packet is None else packet), text=True,
             capture_output=True, timeout=plazo(75))
 
@@ -181,7 +182,7 @@ print(json.dumps(document,ensure_ascii=False))
         finally:
             super().tearDown()
 
-    def configure_canary(self, raw=None, harness='codex', dynamic_account=None):
+    def configure_canary(self, raw=None, harness='codex', dynamic_account=None, binds=None):
         sys.path.insert(0, str(fixtures.OPS / 'cli'))
         from fleet_executor_container import create_container
         from fleet_executor_policy import approve_agent
@@ -206,7 +207,7 @@ print(json.dumps(document,ensure_ascii=False))
         self.policy['bundles']['codex'].update(executable='/usr/local/bin/python3.12', executable_sha256=None)
         self.policy['bundles'][harness] = copy.deepcopy(self.policy['bundles']['codex'])
         self.save_policy()
-        create_container(self.policy, approve_agent(self.policy, self.agent))
+        create_container(self.policy, approve_agent(self.policy, self.agent), binds)
         subprocess.run(['docker', 'start', name], capture_output=True, timeout=plazo(15), check=True)
         observation = {'error': None, 'fuente': 'wham-http', 'extra': {'account_id': IDENTITY},
             'provider': 'codex', 'email': 'private@fixture.invalid', 'tokens': PRIVATE_MARKER,
@@ -274,6 +275,40 @@ print(json.dumps(document,ensure_ascii=False))
         receipt = self.measured(self.configure_canary({'error': PRIVATE_MARKER, 'error_code': 'token_expired', 'ventanas': []}))
         self.assertEqual(receipt['observation_status'], 'error')
         self.assertEqual(receipt['provider_report']['note'], 'token_expired')
+
+    def staged_releases(self, previous_name='a' * 64, current_name='b' * 64):
+        """Two sibling release trees named by revision, as a host keeps them after a deploy, and the executor of the current one."""
+        base = pathlib.Path(self.temporary.name) / 'releases'
+        trees = {}
+        for name in (previous_name, current_name):
+            for tree in ('cli', 'container-runtime', 'scripts'):
+                shutil.copytree(fixtures.OPS / tree, base / name / 'ops' / tree, ignore=shutil.ignore_patterns('__pycache__'))
+            release_readable(base / name)
+            trees[name] = base / name
+        base.chmod(0o755)
+        return trees[previous_name], trees[current_name], trees[current_name] / 'ops/cli/fleet-executor.py'
+
+    def test_container_bound_to_the_previous_release_is_still_measured_after_a_deploy(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        from fleet_executor_container import runtime_mounts
+        previous, current, executable = self.staged_releases()
+        binds = runtime_mounts(self.policy, {'harness_id': 'codex'}, previous, current)
+        packet = self.configure_canary(binds=binds)
+        response = self.query(packet, executable)
+        self.assertEqual(response.returncode, 0, response.stderr)
+        receipt = json.loads(response.stdout)
+        self.assertEqual((receipt['status'], receipt['identity_hash']), ('measured', IDENTITY_HASH))
+        self.assertNotIn(IDENTITY, response.stdout + response.stderr)
+
+    def test_container_bound_to_a_release_that_is_not_an_installed_sibling_is_refused(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        from fleet_executor_container import runtime_mounts
+        previous, current, executable = self.staged_releases(previous_name='not-a-release')
+        binds = runtime_mounts(self.policy, {'harness_id': 'codex'}, previous, current)
+        packet = self.configure_canary(binds=binds)
+        response = self.query(packet, executable)
+        self.assertNotEqual(response.returncode, 0)
+        self.assertNotIn(IDENTITY, response.stdout + response.stderr)
 
 class AgentQuotaContrastAuditTest(unittest.TestCase):
     RESET = '2026-10-13T12:00:00Z'

@@ -61,13 +61,34 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
     return account, binding
 
 
-def container_binding(policy: dict, agent: dict) -> tuple[dict, dict]:
-    from fleet_executor_container import identity_for, inspect_container, user_identity, validate_container
+def container_binding(policy: dict, agent: dict, *, previous_release_ok: bool = False) -> tuple[dict, dict]:
+    """`previous_release_ok` lets a read-only caller use a container still bound to an installed sibling release.
+
+    Every deploy installs a new release tree; a running agent keeps the one it was started with until its next
+    restart. Reading its quota never touches the container, so it validates the mounts of the release it really binds.
+    """
+    from fleet_executor_container import (
+        RELEASE_ROOT,
+        identity_for,
+        inspect_container,
+        runtime_mounts,
+        user_identity,
+        validate_container,
+    )
     agent = approve_agent(policy, agent)
     observed = inspect_container(agent['container_name'])
     if observed is None or observed['State']['Running'] is not True:
         raise SafeFailure('approved profile container is not observed running')
-    validate_container(policy, agent, observed)
+    try:
+        validate_container(policy, agent, observed)
+    except SafeFailure as error:
+        if not previous_release_ok or str(error) != 'container runtime mounts differ':
+            raise
+        from fleet_executor_rebind import bound_release
+        previous = bound_release(observed, RELEASE_ROOT)
+        if previous is None:
+            raise
+        validate_container(policy, agent, observed, runtime_mounts(policy, agent, previous, RELEASE_ROOT))
     identity = identity_for(agent, observed)
     user_identity(agent, identity)
     return agent, identity
