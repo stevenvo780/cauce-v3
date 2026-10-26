@@ -344,8 +344,10 @@ def command_output(command: list[str], packet: dict, timeout: int = 30) -> bytes
             raise ProviderProofError("provider identity inspection is unavailable")
     if variable is not None:
         environment[variable] = binding["path"]
+    # Muse 1.4.10 refuses a TMPDIR inside its workspace, which defaults to the working directory: a container turn keeps
+    # the space tmp under the state directory, so the probe runs from the same projects workspace the adapter uses.
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
-        cwd=packet["agent"]["state_directory"], start_new_session=True)
+        cwd=environment.get("CAUCE_MUSE_WORKSPACE", packet["agent"]["state_directory"]), start_new_session=True)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, True)
     selector.register(process.stderr, selectors.EVENT_READ, False)
