@@ -874,10 +874,11 @@ class ImageRefreshTests(ReleaseFixture):
     def test_restoration_without_refresh_starts_the_adapter_from_the_sibling_release_the_container_binds(self):
         (self.old / 'adapter/worker.py').write_text('import time\ntime.sleep(30)\n')
         (self.old / '.verified').write_text(self.old.name + '\n')
+        self.policy['bundles']['codex']['argv'] = [str(self.new / 'adapter/worker.py'), '--flag']
         before, started, result = self.restore_on_sibling_release()
         self.assertEqual(result, {'runtime_digest': 'proof'})
         sibling = {**self.policy['bundles']['codex'], 'directory': str(self.old / 'adapter'),
-                   'digest': bundle_digest(str(self.old / 'adapter'))}
+                   'digest': bundle_digest(str(self.old / 'adapter')), 'argv': [str(self.old / 'adapter/worker.py'), '--flag']}
         self.assertEqual(started, [(before['Id'], sibling)])
         self.assertNotEqual(sibling['digest'], self.policy['bundles']['codex']['digest'])
         self.assertEqual(self.docker.containers[self.name]['Mounts'], before['Mounts'])
@@ -885,14 +886,18 @@ class ImageRefreshTests(ReleaseFixture):
 
     def test_restoration_without_refresh_refuses_an_unverified_sibling_release_bundle(self):
         worker = self.old / 'adapter/worker.py'
+        argv = self.policy['bundles']['codex']['argv']
         for drift, message in (('marker', 'preserved without another refresh'), ('writable', 'entry is not trusted'),
-                               ('link', 'links outside itself')):
+                               ('link', 'links outside itself'), ('command', 'preserved without another refresh')):
             with self.subTest(drift=drift):
                 self.docker.containers.clear()
                 self.docker.calls.clear()
                 (self.old / '.verified').write_text(self.old.name + '\n')
                 outside = self.old / 'adapter/outside'
-                if drift == 'marker':
+                self.policy['bundles']['codex']['argv'] = argv
+                if drift == 'command':
+                    self.policy['bundles']['codex']['argv'] = [str(self.new / 'ops/cli/fleet_executor_image.py')]
+                elif drift == 'marker':
                     (self.old / '.verified').write_text(self.new.name + '\n')
                 elif drift == 'writable':
                     worker.chmod(0o664)

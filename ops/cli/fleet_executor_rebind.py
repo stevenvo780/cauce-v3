@@ -115,7 +115,22 @@ def sibling_bundle(policy: dict, agent: dict, observed: dict, bundle: dict, rele
     directory = pathlib.Path(rebased(bundle['directory'], release, root))
     if not directory.is_relative_to(root):
         return None
+    # The launch command names files of the current release; inside this container only the sibling bundle exists, so
+    # each such path moves to it, and a path into the current release outside its bundle is never launched.
+    current = pathlib.PurePosixPath(bundle['directory'])
+    command = [bundle['executable'], *bundle['argv']]
+    if any(pathlib.PurePosixPath(value).is_relative_to(release) and not pathlib.PurePosixPath(value).is_relative_to(current)
+           for value in command):
+        return None
+    executable, *argv = (rebased(value, release, root) for value in command)
     validate_container(policy, agent, observed, runtime_mounts(policy, agent, root, release))
+    for parent in reversed(directory.relative_to(root).parents[:-1]):
+        try:
+            details = os.lstat(root / parent)
+        except OSError:
+            return None
+        if not stat.S_ISDIR(details.st_mode) or not trusted(details):
+            raise SafeFailure('sibling release bundle path is not trusted')
     trusted_bundle(directory)
     if 'descriptor_sha256' in bundle:
         from harness_operations import HarnessOperationFailure, read_descriptor
@@ -124,7 +139,7 @@ def sibling_bundle(policy: dict, agent: dict, observed: dict, bundle: dict, rele
         except HarnessOperationFailure as error:
             raise SafeFailure('sibling release harness descriptor is invalid') from error
     from cauce_container_base import bundle_digest
-    return {**bundle, 'directory': str(directory), 'digest': bundle_digest(str(directory))}
+    return {**bundle, 'directory': str(directory), 'digest': bundle_digest(str(directory)), 'executable': executable, 'argv': argv}
 
 
 def rebind(policy: dict, agent: dict, observed: dict, previous: pathlib.Path, release: pathlib.Path) -> dict:
