@@ -19,6 +19,7 @@ from fleet_executor_policy import SafeFailure, open_absolute_directory, open_reg
 
 STEPS = frozenset({'runtime', 'authenticate', 'profile', 'verify', 'admission'})
 PHASES = ('bootstrap', 'normal')
+REQUEST = '.authority-request.json'
 
 
 def _assert_start_journal(executor) -> None:
@@ -66,7 +67,7 @@ def local_issuance(executor, row: dict, phase: str) -> dict | None:
     """The local files of this operation's own issuance attempt for a phase, or None when that phase holds none (absent,
     or another operation's credential, which stays). The CSR request names the operation that issued it."""
     pair, certificate, token = _paths(executor.policy, row['runtime_key'], phase)
-    request = _read_private(pair, '.authority-request.json')
+    request = _read_private(pair, REQUEST)
     if request is None:
         return None
     try:
@@ -130,6 +131,20 @@ def remove_local(executor, row: dict, local: dict) -> None:
         finally:
             os.close(parent)
     # The request file goes last with its directory: a replay still recognizes a partly removed issuance as its own.
+    # A recursive removal visits entries in no fixed order, so every other file is unlinked first.
+    try:
+        pair = open_absolute_directory(local['pair'])
+    except FileNotFoundError:
+        pair = None
+    if pair is not None:
+        try:
+            for name in sorted(entry for entry in os.listdir(pair) if entry != REQUEST):
+                details = os.stat(name, dir_fd=pair, follow_symlinks=False)
+                if stat.S_ISREG(details.st_mode) and details.st_uid == os.geteuid():
+                    os.unlink(name, dir_fd=pair)
+            os.fsync(pair)
+        finally:
+            os.close(pair)
     remove_tree(local['pair'].parent, local['pair'].name)
 
 

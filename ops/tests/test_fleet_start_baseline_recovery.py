@@ -189,6 +189,17 @@ class BaselineStartCompensationTest(unittest.TestCase):
         with self.assertRaises(SafeFailure):
             self.fixture.prepare()
 
+    def test_an_interrupted_local_removal_keeps_the_request_so_a_replay_still_owns_it(self):
+        bootstrap = pathlib.Path(self.fixture.policy['roots']['pki']) / 'bootstrap' / 'physical-a'
+        with mock.patch('fleet_executor_retirement.remove_tree', side_effect=OSError('killed')):
+            with self.assertRaises(OSError):
+                self.compensate()
+        # Only the request remains: the certificate and key are gone, but the directory is still recognized as ours.
+        self.assertEqual([entry.name for entry in bootstrap.iterdir()], ['.authority-request.json'])
+        self.assertEqual(self.compensate()[0], {'stopped_verified': True, 'revocation_verified': True})
+        self.assertFalse(bootstrap.exists())
+        self.assertEqual(self.records(), self.before)
+
     def test_unobserved_rejection_fails_and_keeps_the_local_files_for_a_retry(self):
         bootstrap = pathlib.Path(self.fixture.policy['roots']['pki']) / 'bootstrap' / 'physical-a'
         with self.assertRaisesRegex(SafeFailure, 'was not rejected'):
