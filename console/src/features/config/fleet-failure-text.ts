@@ -29,6 +29,6 @@ export const FLEET_FAILURE_TEXT: Record<NonNullable<FleetError['reason']>, { mes
     next: 'Revisa su cuenta y su autenticación; después vuelve a comprobar la operación.' },
   terminal_provision_failed: { message: 'No se pudo preparar y comprobar la terminal del agente.',
     next: 'Revisa el canal de terminal del equipo y reintenta la operación antes de utilizar el agente.' },
-  shared_conversation_unaccredited: { message: 'La TUI compartida no podría reanudar la conversación de Codex de este agente: su historial no tiene una única conversación propia que se pueda acreditar.',
-    next: 'No se detuvo nada y el agente sigue con su ejecución anterior. Para activar la TUI compartida, deja una sola conversación propia en su historial de Codex y prepara una actualización nueva.' },
+  shared_conversation_unaccredited: { message: 'La TUI compartida no podría continuar la conversación de este agente: su historial tiene conversaciones, pero ninguna está acreditada como la compartida, o hay varias y no se puede elegir una sola.',
+    next: 'No se detuvo nada y el agente sigue con su ejecución anterior. Con «Abrir terminal» revisa su historial: Codex guarda cada conversación en $CODEX_HOME/sessions; Claude, en $CLAUDE_CONFIG_DIR/projects; Grok, en $GROK_HOME/sessions, y Muse, en la carpeta sessions de sus datos. En Codex deja solo la conversación propia que debe continuar y saca las demás de esa carpeta; en Claude, Grok o Muse indica cuál continuar con «shared-session.js seed --native-id <id>». Después prepara una actualización nueva. La consola todavía no ofrece empezar una conversación nueva.' },
 };

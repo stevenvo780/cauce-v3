@@ -28,6 +28,12 @@ describe('fleet operation step labels', () => {
     expect(human.message).not.toBe('El ejecutor no pudo completar este paso.');
     expect(human.message.length).toBeGreaterThan(20); expect(human.next.length).toBeGreaterThan(20);
   });
+  it('tells where the conversations of each shared harness live and how to leave one to continue', () => {
+    const human = operationErrorHuman({ code: 'STEP_FAILED', step: 'stop', retryable: false, reason: 'shared_conversation_unaccredited' });
+    expect(human.message).not.toContain('Codex');
+    for (const place of ['«Abrir terminal»', '$CODEX_HOME/sessions', '$CLAUDE_CONFIG_DIR/projects', '$GROK_HOME/sessions', 'Muse',
+      'seed --native-id', 'No se detuvo nada', 'prepara una actualización nueva']) expect(human.next).toContain(place);
+  });
   it('names every step by what happens to the agent, never by the executor internals', () => {
     expect(Object.values(STEPS)).not.toContain('Artefactos');
     expect(Object.values(STEPS)).not.toContain('Credenciales');
