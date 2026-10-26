@@ -86,12 +86,12 @@ test("shared Claude emits receipt only after its native final descendant", async
   assert.deepEqual(output.consumptionWitness, consumptionWitness("claude", sid, turn, "input A"));
 });
 
-test("shared Codex requires a CLI rollout and emits a same-input turn receipt", async () => {
-  const { home } = await freshState("receipt-native-codex");
+for (const source of ["cli", "vscode", "exec"]) test(`shared Codex in a ${source} rollout ${source === "exec" ? "withholds" : "emits"} the same-input turn receipt`, async () => {
+  const { home } = await freshState(`receipt-native-codex-${source}`);
   const codexHome = join(home, ".codex"), directory = join(codexHome, "sessions");
   await mkdir(directory, { recursive: true });
   const sid = randomUUID(), turn = randomUUID(), file = join(directory, `rollout-now-${sid}.jsonl`);
-  await appendFile(file, line("session_meta", { id: sid, source: "cli" }) + "\n");
+  await appendFile(file, line("session_meta", { id: sid, source }) + "\n");
   const tmux = new FakeTmux(); tmux.sessionName = "cauce-socrates"; tmux.paneStartCommand = "exec codex"; tmux.paneContent = "› ";
   tmux.onSubmit = async (text) => {
     await appendFile(file, [line("event_msg", { type: "task_started", turn_id: turn }),
@@ -102,7 +102,8 @@ test("shared Codex requires a CLI rollout and emits a same-input turn receipt", 
   const runner = new PasteSessionRunner({ alias: "socrates", harness: "codex", workspace: "/workspace",
     transcript: codexTranscript(codexHome), tmux, sleep: () => Promise.resolve(), acquireTimeoutMs: 30,
     turnTimeoutMs: 2_000, injectTimeoutMs: 20, settleMs: 0, pollMs: 1, readyTimeoutMs: 30 });
-  assert.deepEqual((await runner.run(request("codex"))).consumptionWitness, consumptionWitness("codex", sid, turn, "input A"));
+  assert.deepEqual((await runner.run(request("codex"))).consumptionWitness,
+    source === "exec" ? undefined : consumptionWitness("codex", sid, turn, "input A"));
 });
 
 test("shared Muse emits receipt from committed final text and same intent run terminal", async () => {

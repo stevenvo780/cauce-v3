@@ -261,7 +261,10 @@ function rolloutCompactions(appended: readonly RolloutLine[]): readonly Compacti
   return events;
 }
 
-async function rolloutSource(file: string): Promise<unknown> { // session_meta.source: "cli" = TUI conversation, sub-agents an object
+/** Top-level conversations a TUI can hold: its own, or a Desktop/IDE one it resumed; `exec` runs and sub-agents (an object) never. */
+const CONVERSATION_SOURCES: ReadonlySet<unknown> = new Set(["cli", "vscode"]);
+
+async function rolloutSource(file: string): Promise<unknown> { // session_meta.source of the first line
   let handle: Awaited<ReturnType<typeof openFile>> | undefined;
   try {
     handle = await openFile(file, "r");
@@ -299,7 +302,7 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     },
     findEnvelope: (entries, correlationId) => findRolloutEnvelope(entries, correlationId),
     lastUserPrompt: lastCodexPrompt,
-    isConversation: async (file) => await rolloutSource(file) === "cli",
+    isConversation: async (file) => CONVERSATION_SOURCES.has(await rolloutSource(file)),
     compactions: rolloutCompactions,
     // `task_started` is the first line of any turn, whether it comes from the bus or the owner.
     // None new proves the injection never reached the box and NOTHING ran.
