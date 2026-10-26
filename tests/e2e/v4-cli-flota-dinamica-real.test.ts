@@ -269,7 +269,9 @@ print(json.dumps({'pane':pane,'pid':int(pid),'starttime':fields[19]}))`;
 async function waitTerminalPresence(): Promise<boolean> {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
-    if (active().registry.state(active().tenantId, alias) === 'online') return true;
+    // A launcher that starts before its TUI publishes shell only, then reconnects once the harness appears.
+    if (active().registry.state(active().tenantId, alias) === 'online'
+      && active().registry.get(active().tenantId, alias)?.presence.modes.includes('harness_rw') === true) return true;
     await new Promise<void>(resolve => { setTimeout(resolve, 300); });
   }
   return false;
