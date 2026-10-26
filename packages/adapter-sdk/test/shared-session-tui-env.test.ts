@@ -3,10 +3,11 @@ import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ensureSharedSessionStartup, sharedSessionRunner } from "../src/bin/shared.js";
 import { ProcessExecutionError } from "../src/sdk/errors.js";
+import { DurableStore } from "../src/sdk/durable-store.js";
 import type { AdapterLog } from "../src/sdk/types.js";
 import {
   cliSharedSessionSpec,
@@ -62,6 +63,73 @@ test('startup creates the canonical TUI without a delivery and reacquiring the l
   assert.equal(tmux.calls.filter(call => call[0] === 'new-session').length, 1);
   assert.equal(tmux.sessionId, firstSession); assert.equal(tmux.paneId, firstPane);
   for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
+});
+
+async function codexFleetStartup(name: string, rollouts: (codexHome: string) => Promise<void>, before?: (codexHome: string) => Promise<void>) {
+  const { state, home, workspace } = await freshState(name);
+  const codexHome = join(state, 'codex'); await mkdir(codexHome, { mode: 0o700 });
+  await before?.(codexHome);
+  const command = join(state, 'codex-pinned'); const body = '#!/bin/sh\n';
+  await writeFile(command, body, { mode: 0o700 });
+  const environment = { HOME: home, CODEX_HOME: codexHome, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
+    CAUCE_FLEET_OPERATION_ID: 'zz-canary-operation', CAUCE_HARNESS_COMMAND: command,
+    CAUCE_HARNESS_COMMAND_SHA256: createHash('sha256').update(body).digest('hex') };
+  const configured = loadSharedSessionConfig('codex', 'socrates', state, environment);
+  assert.ok(configured);
+  const fake = new FakeTmux(); fake.sessionExists = false; fake.windows = []; fake.panePid = String(process.pid);
+  const tmux: TmuxController = { run: async (args, stdin, control) => {
+    const result = await fake.run(args, stdin, control);
+    if (args[0] === 'new-session') await rollouts(codexHome);
+    return result;
+  } };
+  const store = await DurableStore.open(state); const logs: AdapterLog[] = [];
+  const startup = ensureSharedSessionStartup(configured, entry => { logs.push(entry); }, tmux, undefined, async (nativeId) => {
+    if (store.getSession('codex:socrates:shared:socrates') !== undefined) return false;
+    await store.setSession('codex:socrates:shared:socrates', { native_id: nativeId, initialized: true });
+    return true;
+  });
+  const update = async () => cliSharedSessionSpec('codex', 'socrates', workspace, home,
+    { ...environment, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '1' }, state).resume?.resolveLaunch?.();
+  return { startup, store, logs, update, fake };
+}
+
+const codexRollout = (codexHome: string, id: string, meta: Record<string, unknown> = {}) => async (): Promise<void> => {
+  await mkdir(join(codexHome, 'sessions', '2026', '10', '25'), { recursive: true, mode: 0o700 });
+  await writeFile(join(codexHome, 'sessions', '2026', '10', '25', `rollout-2026-10-25T00-00-00-${id}.jsonl`),
+    `${JSON.stringify({ type: 'session_meta', payload: { id, source: 'cli', cwd: '/workspace', ...meta } })}\n`, { mode: 0o600 });
+};
+
+test('a fresh Codex TUI publishes its own conversation at creation so an update before its first turn resumes it', async () => {
+  const id = randomUUID();
+  const run = await codexFleetStartup('codex-pointer-at-creation', home => codexRollout(home, id)());
+  await run.startup;
+  assert.deepEqual(run.store.getSession('codex:socrates:shared:socrates'), { native_id: id, initialized: true });
+  assert.deepEqual(await run.update(), { state: 'launch', args: ['resume', id], resumed: true });
+  assert.ok(run.logs.some(entry => entry.event === 'shared_session_resume' && entry.error_message?.includes(id)));
+  for (const command of ['send-keys', 'paste-buffer', 'kill-session']) assert.equal(run.fake.used(command), false);
+});
+
+test('creation adopts nothing it cannot accredit as the one rollout of that same launch', async () => {
+  const cases: [string, (home: string) => Promise<void>][] = [
+    ['codex-pointer-foreign-cwd', home => codexRollout(home, randomUUID(), { cwd: '/elsewhere' })()],
+    ['codex-pointer-subagent', home => codexRollout(home, randomUUID(), { source: { subagent: 'review' } })()],
+    ['codex-pointer-mismatched-id', home => codexRollout(home, randomUUID(), { id: randomUUID() })()],
+    ['codex-pointer-two-rollouts', async home => { await codexRollout(home, randomUUID())(); await codexRollout(home, randomUUID())(); }],
+  ];
+  for (const [name, rollouts] of cases) {
+    const run = await codexFleetStartup(name, rollouts);
+    await run.startup;
+    assert.equal(run.store.getSession('codex:socrates:shared:socrates'), undefined, name);
+    assert.equal((await run.update())?.state, 'blocked', name);
+    assert.ok(run.logs.some(entry => entry.event === 'shared_session_resume' && entry.error_message?.includes('primer turno')), name);
+  }
+});
+
+test('a rollout that predates the launch is never adopted and still blocks the fresh start', async () => {
+  const run = await codexFleetStartup('codex-pointer-preexisting', () => Promise.resolve(), home => codexRollout(home, randomUUID())());
+  await assert.rejects(run.startup, (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
+  assert.equal(run.store.getSession('codex:socrates:shared:socrates'), undefined);
+  assert.equal(run.fake.used('new-session'), false);
 });
 
 test('startup refuses a foreign canonical session without replacing it or injecting a turn', async () => {

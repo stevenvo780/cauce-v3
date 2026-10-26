@@ -37,6 +37,7 @@ import type { PasteSessionOptions } from "../shared-session/paste-runner/contrac
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
+import { adoptCreatedCodexConversation, codexConversationTreeIsEmpty, codexSharedPointerKey } from '../shared-session/codex-resume.js';
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
 import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
@@ -212,6 +213,7 @@ function sharedSessionSpec(shared: SharedSessionConfig): SharedSessionSpec {
 
 export async function ensureSharedSessionStartup(
   configured: SharedSessionConfig, logger: AdapterLogger, tmux: TmuxController = new CliTmux(), parentSignal?: AbortSignal,
+  publishCodexConversation?: (nativeId: string) => Promise<boolean>,
 ): Promise<void> {
   const signal = parentSignal ?? new AbortController().signal;
   signal.throwIfAborted();
@@ -225,6 +227,10 @@ export async function ensureSharedSessionStartup(
   const options = { signal, sleep: (ms: number) => systemClock.sleep(ms, signal).catch((error: unknown) => {
     if (!signal.aborted) throw error;
   }) };
+  const codex = shared.harness === 'codex' && shared.namespace !== undefined && publishCodexConversation !== undefined
+    ? { stateDirectory: shared.stateDirectory, configDirectory: shared.configDirectory, namespace: shared.namespace, workspace: shared.workspace }
+    : undefined;
+  const emptyCodexTree = codex !== undefined && await codexConversationTreeIsEmpty(codex);
   const result = await ensureSharedSession(boundedTmux, spec, { ...options, readyTimeoutMs: 0 });
   const readiness = result.pane !== undefined && (result.ready || result.failure === 'tui_absent' || result.failure === 'provider_login_required')
     ? await waitForAccreditedTui(boundedTmux, spec, result.pane, { ...options,
@@ -238,6 +244,12 @@ export async function ensureSharedSessionStartup(
       error_message: 'La TUI canónica no quedó acreditada al adquirir el lease.' });
     throw new ProcessExecutionError('SHARED_TUI_UNAVAILABLE',
       `La terminal canónica no está disponible para iniciar el consumidor: ${result.detail}`, false);
+  }
+  if (readiness === 'ready' && codex !== undefined && emptyCodexTree && result.created && result.resumed !== true && publishCodexConversation !== undefined) {
+    const adopted = await adoptCreatedCodexConversation(codex, publishCodexConversation, options.sleep, signal);
+    logger({ event: 'shared_session_resume', alias: shared.alias, error_message: adopted === undefined
+      ? 'la conversación nueva de Codex no quedó acreditada al crearse; la publicará su primer turno'
+      : `la conversación nueva ${adopted} de Codex quedó como puntero canónico al crearse` });
   }
 }
 
@@ -417,6 +429,7 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
     // The shared TUI replaces the runner: MSP would be configured and silently never used.
     throw new Error("Muse MSP (CAUCE_MUSE_EXECUTABLE) and SHARED_SESSION=1 are mutually exclusive");
   }
+  const codexNamespace = shared?.harness === 'codex' ? shared.namespace : undefined;
   const runner = shared === undefined
     ? baseRunner
     : await sharedSessionRunner(shared, logger);
@@ -487,7 +500,15 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
             error_message: "la recuperación del pointer TUI es ambigua; se conserva el estado" });
         }
       }
-      if (shared !== undefined) await ensureSharedSessionStartup(shared, logger, undefined, shutdown.signal);
+      if (shared !== undefined) {
+        await ensureSharedSessionStartup(shared, logger, undefined, shutdown.signal, codexNamespace === undefined ? undefined
+          : async (nativeId) => {
+            const key = codexSharedPointerKey(codexNamespace);
+            if (store.getSession(key) !== undefined) return false;
+            await store.setSession(key, { native_id: nativeId, initialized: true });
+            return true;
+          });
+      }
     },
     onError: (code) => process.stderr.write(`${code}: adapter retry\n`),
     logger,
