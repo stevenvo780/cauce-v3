@@ -13,6 +13,7 @@ import { TUI_WINDOW, isSharedSessionHarness, sessionName, type ResumeLaunchPlan 
 import type { SharedSessionSpec } from "../shared-session/session.js";
 import { applySessionRecovery, previewSessionRecovery } from '../shared-session/recovery.js';
 import { unpointedCodexConversation } from '../shared-session/codex-resume.js';
+import { grokWorkspaceConversationIsSecure, recoverGrokWorkspaceConversation } from '../shared-session/grok-recovery.js';
 import { assertCommandPins } from '../sdk/command-pins.js';
 
 /**
@@ -33,7 +34,7 @@ interface Options {
 
 function usage(): never {
   process.stderr.write(
-    "uso: shared-session.js <ensure|status|degradations|seed|resume-proof|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
+    "uso: shared-session.js <ensure|status|degradations|seed|resume-proof|launch-proof|recovery-preview|recovery-apply> --alias A --harness claude|codex|grok|muse"
     + " [--workspace /workspace] [--state DIR] [--native-id ID] [--expected-fingerprint SHA256] [--force 0|1] [--expires-at UNIX_MS]\n",
   );
   process.exit(2);
@@ -99,6 +100,16 @@ function spec(options: Options, home: string, environment: NodeJS.ProcessEnv = p
 async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
+  if (options.command === 'launch-proof') {
+    const environment = { ...process.env, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '0' };
+    const sessionSpec = spec(options, home, environment);
+    await assertCommandPins(sessionSpec.command ?? sessionSpec.harness, sessionSpec.commandPins);
+    const plan = await resumeProofPlan(options, sessionSpec, home, environment);
+    const launchable = plan?.state === 'launch';
+    process.stdout.write(`${JSON.stringify({ launchable, resumed: launchable && plan.resumed })}\n`);
+    process.exitCode = launchable ? 0 : 1;
+    return;
+  }
   if (options.command === 'resume-proof') {
     const environment = { ...process.env, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '1' };
     const sessionSpec = spec(options, home, environment);
@@ -198,14 +209,31 @@ async function main(): Promise<void> {
   usage();
 }
 
+/** The launch the adapter would make, counting the pointer it seeds on start from the agent's only own conversation. */
 async function resumeProofPlan(options: Options, sessionSpec: SharedSessionSpec, home: string,
   environment: NodeJS.ProcessEnv): Promise<ResumeLaunchPlan | undefined> {
   const plan = await sessionSpec.resume?.resolveLaunch?.();
-  if (sessionSpec.harness !== 'codex' || plan?.state !== 'blocked' || options.stateDirectory === undefined) return plan;
+  if (plan?.state !== 'blocked' || options.stateDirectory === undefined) return plan;
+  const configDirectory = harnessConfigDirectory(sessionSpec.harness, home, environment, sessionSpec.alias);
+  if (sessionSpec.harness === 'grok') {
+    const seeded = await recoverableGrokConversation(options.stateDirectory, sessionSpec.alias, configDirectory, sessionSpec.workspace)
+      .catch(() => undefined);
+    return seeded === undefined ? plan : { state: 'launch', args: ['--resume', seeded], resumed: true };
+  }
+  if (sessionSpec.harness !== 'codex') return plan;
   const seeded = await unpointedCodexConversation({ stateDirectory: options.stateDirectory, namespace: options.alias,
-    configDirectory: harnessConfigDirectory('codex', home, environment, sessionSpec.alias), workspace: sessionSpec.workspace })
-    .catch(() => undefined);
+    configDirectory, workspace: sessionSpec.workspace }).catch(() => undefined);
   return seeded === undefined ? plan : { state: 'launch', args: ['resume', seeded], resumed: true };
+}
+
+/** The approved-workspace conversation a Grok start seeds while no pointer exists; read only, as the probe must be. */
+async function recoverableGrokConversation(stateDirectory: string, alias: string, grokHome: string,
+  workspace: string): Promise<string | undefined> {
+  const pointer = await new SharedTuiPointerStore(stateDirectory).read({ alias, harness: 'grok', configDirectory: grokHome, workspace });
+  if (pointer.state !== 'absent') return undefined;
+  const recovered = await recoverGrokWorkspaceConversation(grokHome, workspace);
+  return recovered.state === 'candidate' && await grokWorkspaceConversationIsSecure(grokHome, recovered.nativeId, workspace)
+    ? recovered.nativeId : undefined;
 }
 
 async function seed(options: Options, sessionSpec: SharedSessionSpec, home: string): Promise<void> {
