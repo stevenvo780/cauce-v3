@@ -355,7 +355,7 @@ pnpm --filter @cauce/console test
   `ops/scripts/validate-console-browser-storage.mjs` prohíbe `localStorage`, `sessionStorage`,
   IndexedDB, `caches` y `document.cookie` en `console/src` y en `public/tema.js`, con la única
   excepción de la clave `cauce.tema` del control de tema. Lo demás vive solo en memoria mientras la
-  consola está abierta: los borradores de conversación (`messages/conversation-drafts.ts`, pueden
+  consola está abierta: los borradores de conversación (`features/messages/conversation-drafts.ts`, pueden
   contener texto clínico) y el diagnóstico de conexión (`api/connection-diagnostics.ts`). Recargar la
   pestaña los descarta.
 - CSP estricta: `script-src 'self'`, `style-src 'self'`; únicamente `style-src-attr 'unsafe-inline'` para la geometría de xterm.

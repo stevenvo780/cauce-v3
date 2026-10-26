@@ -101,27 +101,13 @@ entero con `database "cauce_test_plantilla" does not exist`.
 ### Suites con opt-out (`plantilla: false`)
 
 Las que **miden la migración misma** siguen migrando desde cero, porque una base clonada las dejaría
-sin lo que quieren observar:
+sin lo que quieren observar. `migration-integrity-postgres.test.ts` (en `packages/store/test`) es una
+de ellas, y su `startEmptyTestDatabase` **nunca** usa plantilla.
 
-- `migration-integrity-postgres.test.ts` (y su `startEmptyTestDatabase`, que **nunca** usa plantilla)
-- `secret-handoff-migration-postgres.test.ts`
-- `agent-profile-migration-postgres.test.ts`
-- `connection-session-fencing-migration-postgres.test.ts`
-- `dlq-causal-reconciliation-migration-postgres.test.ts`
-- `console-publish-intent-migration-postgres.test.ts`
-- `agent-profile-runtime-adoption-migration-postgres.test.ts`
-- `terminal-session-claim-fencing-migration-postgres.test.ts`
-- `terminal-browser-owner-fencing-migration-postgres.test.ts`
-- `terminal-relay-instance-fencing-migration-postgres.test.ts`
-- `agent-context-revisions-migration-postgres.test.ts`
-- `fleet-lifecycle-migration-postgres.test.ts`
-- `companies-migration-postgres.test.ts`
-- `companies-isolation-migration-postgres.test.ts`
-
-La lista vive en `SUITES_SIN_PLANTILLA`, en `tests/helpers/postgres.ts`. Ninguna prueba la compara
-con el disco: una suite `*-migration-postgres.test.ts` nueva que observe la migración tiene que
-añadirse a mano. Se añadió
-por eso: `secret-handoff-migration-postgres.test.ts` ya existía y ya se había quedado fuera.
+La lista vive en `SUITES_SIN_PLANTILLA`, en `tests/helpers/postgres.ts`, y tiene 19 nombres. Casi
+ninguno corresponde hoy a un fichero del repo: la lista conserva entradas viejas. Ninguna prueba la
+compara con el disco. Una suite `*-migration-postgres.test.ts` nueva que observe la migración tiene
+que añadirse a mano.
 
 En la rama de testcontainers la base **del fichero** nace vacía con su contenedor y esta plantilla no
 ahorraría nada. Lo que sí se clona allí es la base **por caso** (`startTestCaseDatabase`): cada
