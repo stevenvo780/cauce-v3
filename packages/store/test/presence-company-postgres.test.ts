@@ -41,6 +41,12 @@ describe('listPresence under a company authority', () => {
     expect(Object.fromEntries(rows.map(row => [row.alias, row.online]))).toEqual({ company_admin: true, team_agent: false });
   });
 
+  it('leaves a retired tenant of the acting company out', async () => {
+    await admin.query("UPDATE tenants SET enabled=false,retired_enabled=true,retired_at=now() WHERE id='PraxisTeam'");
+    const rows = await repository.listPresence('Steven', 'kant', undefined, as('Steven', 'kant', people.steven, 'praxis'));
+    expect(keys(rows)).toEqual(['PraxisHub/company_admin']);
+  });
+
   it('keeps the home reach without a switch and without a resolver', async () => {
     const expected = ['Miguel/janus', 'Steven/kant'];
     expect(keys(await repository.listPresence('Steven', 'kant', undefined, as('Steven', 'kant', people.steven)))).toEqual(expected);

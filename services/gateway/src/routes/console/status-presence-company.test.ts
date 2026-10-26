@@ -88,7 +88,7 @@ describe('GET /v3/status presence under the session company', () => {
     expect(leases(await request({ cookie, csrf: steven.csrf }, 'GET', '/v3/status'))).toEqual(HUMANIZAR);
   });
 
-  it('keeps retired agents and tenants of the acting company out', async () => {
+  it('keeps retired agents of the acting company out', async () => {
     await admin.query("UPDATE agents SET enabled=false,retired_at=now(),lifecycle_state='retired' WHERE tenant_id='PraxisTeam' AND alias='team_agent'");
     const acting = await request(await actingIn(await login('steven@example.test'), 'praxis'), 'GET', '/v3/status');
     expect(leases(acting)).toEqual(['PraxisHub/company_admin']);
