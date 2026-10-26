@@ -1,4 +1,6 @@
+import os
 import pathlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -40,6 +42,7 @@ class RestartGuardTests(unittest.TestCase):
                 patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
                 patch("cauce_container_restart.process_environment", return_value=environment), \
                 patch("cauce_container_restart.tmux_absent", return_value=False), \
+                patch("cauce_container_restart.RestartPane.session_absent", return_value=False), \
                 patch("cauce_container_restart.subprocess.run", return_value=Mock(returncode=0, stdout=b"")) as run:
             pane = shared_pane(document)
             self.assertEqual(pane.target, "=cauce-zz-canary-restart-physical:agente")
@@ -186,6 +189,104 @@ class RestartGuardTests(unittest.TestCase):
                 with patch("cauce_container_restart.PROC", temporary), \
                         patch("cauce_container_restart.proc_stat", return_value={"state": "S"}):
                     self.assertFalse(tmux_absent())
+
+    def tmux_answers(self, has_session, *, hooks=b"after-capture-pane\nsession-created\n", aliases=b""):
+        calls = []
+
+        def run(command, **_options):
+            calls.append(tuple(command[4:]))
+            if command[4] == "show-hooks":
+                return Mock(returncode=0, stdout=hooks, stderr=b"")
+            if command[4] == "show-options":
+                return Mock(returncode=0, stdout=aliases, stderr=b"")
+            return Mock(returncode=has_session[0], stdout=b"", stderr=has_session[1])
+        return run, calls
+
+    def test_tmux_without_the_exact_agent_session_has_no_composer_to_protect(self):
+        document, environment = self.shared_identity()
+        signal = Mock()
+        absent = (1, b"can't find session: cauce-zz-canary-restart-physical\n")
+        run, calls = self.tmux_answers(absent)
+        with patch("cauce_container_restart.tmux_absent", return_value=False), \
+                patch("cauce_container_restart.os.geteuid", return_value=0), \
+                patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                patch("cauce_container_restart.process_environment", return_value=environment), \
+                patch("cauce_container_restart.subprocess.run", side_effect=run):
+            self.assertIsNone(shared_pane(document))
+            with restart_fence(document):
+                signal()
+        signal.assert_called_once_with()
+        self.assertEqual(calls, [("show-hooks", "-g", "-t", "=cauce-zz-canary-restart-physical:agente"),
+                                 ("show-options", "-s", "command-alias"),
+                                 ("has-session", "-t", "=cauce-zz-canary-restart-physical")] * 2)
+        run, _calls = self.tmux_answers((0, b""))
+        with patch("cauce_container_restart.tmux_absent", return_value=False), \
+                patch("cauce_container_restart.os.geteuid", return_value=0), \
+                patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                patch("cauce_container_restart.process_environment", return_value=environment), \
+                patch("cauce_container_restart.subprocess.run", side_effect=run):
+            self.assertIsInstance(shared_pane(document), RestartPane)
+
+    def test_unreadable_tmux_or_another_missing_session_keeps_failing_closed(self):
+        document, environment = self.shared_identity()
+        answers = {
+            "no_server": (1, b"no server running on /tmp/cauce-state/physical-one/tmux-1000/cauce\n"),
+            "refused_socket": (1, b"error connecting to /tmp/cauce-state/physical-one/tmux-1000/cauce (Permission denied)\n"),
+            "other_session": (1, b"can't find session: cauce-zz-canary-restart-physical-two\n"),
+            "prefix_without_newline": (1, b"can't find session: cauce-zz-canary-restart-physical"),
+            "other_status": (2, b"can't find session: cauce-zz-canary-restart-physical\n"),
+            "present_with_noise": (0, b"warning\n"),
+        }
+        for name, answer in answers.items():
+            run, _calls = self.tmux_answers(answer)
+            with self.subTest(answer=name), patch("cauce_container_restart.tmux_absent", return_value=False), \
+                    patch("cauce_container_restart.os.geteuid", return_value=0), \
+                    patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                    patch("cauce_container_restart.process_environment", return_value=environment), \
+                    patch("cauce_container_restart.subprocess.run", side_effect=run), \
+                    self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_UNREADABLE$"):
+                shared_pane(document)
+
+    def test_session_probe_inspects_global_hooks_and_aliases_before_running(self):
+        document, environment = self.shared_identity()
+        absent = (1, b"can't find session: cauce-zz-canary-restart-physical\n")
+        cases = {"TMUX_HOOKS": {"hooks": b"command-error[0] run-shell foreign-command\n"},
+                 "TMUX_COMMAND_ALIAS": {"aliases": b'command-alias[0] "has-session=kill-server"\n'}}
+        for reason, answer in cases.items():
+            run, calls = self.tmux_answers(absent, **answer)
+            with self.subTest(reason=reason), patch("cauce_container_restart.tmux_absent", return_value=False), \
+                    patch("cauce_container_restart.os.geteuid", return_value=0), \
+                    patch("cauce_container_restart.process_identity", return_value=(7, 1000)), \
+                    patch("cauce_container_restart.process_environment", return_value=environment), \
+                    patch("cauce_container_restart.subprocess.run", side_effect=run), \
+                    self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_" + reason + "$"):
+                shared_pane(document)
+            self.assertFalse(any(call[0] == "has-session" for call in calls))
+
+    @unittest.skipUnless(pathlib.Path("/usr/bin/tmux").is_file(), "tmux is not installed")
+    def test_real_tmux_neighbor_session_does_not_hide_the_missing_agent_session(self):
+        document, environment = self.shared_identity()
+        with tempfile.TemporaryDirectory(prefix="zz-canary-restart-") as temporary:
+            document.update(stateDirectory=temporary, runtimeUid=os.getuid(), runtimeGid=os.getgid())
+            environment.update(TMUX_TMPDIR=temporary, CAUCE_STATE_DIR=temporary)
+            with patch("cauce_container_restart.os.geteuid", return_value=os.getuid() or 1):
+                pane = RestartPane(document, environment)
+            if os.getuid() == 0:
+                pane.credentials = {}
+            server = ["/usr/bin/tmux", "-L", "cauce"]
+            options = {"env": pane.environment, "cwd": "/", "check": True, "capture_output": True, "timeout": 10}
+            try:
+                with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_TMUX_UNREADABLE$"):
+                    pane.session_absent()
+                subprocess.run([*server, "new-session", "-d", "-s", "zz-canary-neighbor", "sleep 60"], **options)
+                self.assertTrue(pane.session_absent())
+                subprocess.run([*server, "new-session", "-d", "-s", "cauce-" + document["alias"] + "-two", "sleep 60"], **options)
+                self.assertTrue(pane.session_absent())
+                subprocess.run([*server, "new-session", "-d", "-s", "cauce-" + document["alias"], "-n", "agente", "sleep 60"],
+                               **options)
+                self.assertFalse(pane.session_absent())
+            finally:
+                subprocess.run([*server, "kill-server"], env=pane.environment, cwd="/", check=False, capture_output=True)
 
     def test_zombie_tmux_has_no_composer_and_allows_the_pinned_stop(self):
         document, environment = self.shared_identity()

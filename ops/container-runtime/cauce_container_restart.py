@@ -28,7 +28,8 @@ ATTACHMENT = re.compile(r"^ {2}\[Image #[1-9][0-9]*\]\s*$")
 FOOTER = re.compile(r"context left|context \d+% left|\d+% context left|\? for shortcuts|bypass permissions|shift\+tab"
                     r"|permissions on|accept edits", re.I)
 HOOK_NAME = re.compile(r"[a-z][a-z0-9-]*")
-GUARD_COMMANDS = {"show-hooks", "show-options", "list-panes", "capture-pane", "if-shell", "set-option", "select-pane"}
+GUARD_COMMANDS = {"show-hooks", "show-options", "has-session", "list-panes", "capture-pane", "if-shell", "set-option",
+                  "select-pane"}
 PROC = "/proc"
 
 
@@ -269,7 +270,8 @@ class RestartPane:
         temporary = environment.get("TMUX_TMPDIR")
         if temporary is not None and temporary != document["stateDirectory"]:
             hold("TMUX_DIRECTORY_UNKNOWN")
-        self.target = "=cauce-" + document["alias"] + ":agente"
+        self.session = "=cauce-" + document["alias"]
+        self.target = self.session + ":agente"
         self.document = document
         self.uid, self.gid = document["runtimeUid"], document["runtimeGid"]
         self.environment = {"HOME": home, "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
@@ -279,13 +281,17 @@ class RestartPane:
         if os.geteuid() != 0 and (os.getuid() != self.uid or os.getgid() != self.gid):
             hold("RUNTIME_IDENTITY_UNKNOWN")
 
-    def run(self, *arguments: str) -> str:
+    def invoke(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
         try:
-            result = subprocess.run(["/usr/bin/tmux", "-N", "-L", "cauce", *arguments],
-                                    capture_output=True, timeout=4, check=False, env=self.environment,
-                                    cwd="/", **self.credentials)
+            return subprocess.run(["/usr/bin/tmux", "-N", "-L", "cauce", *arguments],
+                                  capture_output=True, timeout=4, check=False, env=self.environment,
+                                  cwd="/", **self.credentials)
         except (OSError, subprocess.TimeoutExpired):
             hold("TMUX_UNAVAILABLE")
+        raise AssertionError
+
+    def run(self, *arguments: str) -> str:
+        result = self.invoke(*arguments)
         if result.returncode or len(result.stdout) > 262144:
             hold("TMUX_UNREADABLE")
         try:
@@ -294,10 +300,10 @@ class RestartPane:
             hold("TMUX_UNREADABLE")
         raise AssertionError
 
-    def hooks(self) -> None:
+    def hooks(self, scopes: tuple[tuple[str, ...], ...] = (("-g",), (), ("-w",), ("-p",))) -> None:
         # The tmux control plane must resolve inspection commands to builtins.
         # Inspect the complete hook catalog before commands which may trigger it.
-        for scope in (("-g",), (), ("-w",), ("-p",)):
+        for scope in scopes:
             lines = self.run("show-hooks", *scope, "-t", self.target).splitlines()
             if scope == ("-g",) and not lines or any(not HOOK_NAME.fullmatch(line) for line in lines if line):
                 hold("TMUX_HOOKS")
@@ -306,6 +312,17 @@ class RestartPane:
             match = re.fullmatch(r'command-alias\[\d+\]\s+"?([a-z-]+)=.*', line)
             if match is None or match.group(1) in GUARD_COMMANDS:
                 hold("TMUX_COMMAND_ALIAS")
+
+    def session_absent(self) -> bool:
+        # Only the server itself answering that this exact session is gone proves there is no composer left;
+        # a missing server, a refused socket or any other answer stays unreadable.
+        self.hooks((("-g",),))
+        result = self.invoke("has-session", "-t", self.session)
+        if result.returncode == 0 and not result.stdout and not result.stderr:
+            return False
+        if result.returncode != 1 or result.stdout or result.stderr != b"can't find session: " + self.session[1:].encode() + b"\n":
+            hold("TMUX_UNREADABLE")
+        return True
 
     def fields(self, token: str = "") -> tuple[str, ...]:
         self.hooks()
@@ -360,7 +377,7 @@ def shared_pane(document: dict[str, Any]) -> RestartPane | None:
     if environment.get("CAUCE_SHARED_SESSION") != "1":
         hold("SHARED_SESSION_UNKNOWN")
     pane = RestartPane(document, environment)
-    return None if tmux_absent() else pane
+    return None if tmux_absent() or pane.session_absent() else pane
 
 
 def tmux_absent() -> bool:
