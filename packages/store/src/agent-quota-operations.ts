@@ -201,7 +201,13 @@ export class AgentQuotaOperationsRepository {
     const result = await this.transaction(async client => {
       const operation = await this.lockClaim(client, claim);
       if (await this.retainAuthority(client, operation) === null) return null;
-      return AgentQuotaExecutionSchema.parse({ operation_id: operation.id, action: 'query', agent: operation.agent_snapshot });
+      // A dynamic provider profile is resolved from the account's durable binding, as in a fleet operation: without it
+      // the executor cannot name the profile and every reading failed with STEP_FAILED (hades, 26-oct).
+      const account = operation.agent_snapshot.primary_account_id;
+      const trusted = account === null ? [] : (await client.query(`SELECT id,provider,external_account_id,payer_tenant_id,shared_with_pool,enabled
+        FROM provider_accounts WHERE id=$1 FOR SHARE`, [account])).rows;
+      return AgentQuotaExecutionSchema.parse({ operation_id: operation.id, action: 'query', agent: operation.agent_snapshot,
+        trusted_accounts: trusted });
     });
     if (result === null) throw new AgentQuotaInvalidatedError();
     return result;

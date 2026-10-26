@@ -293,6 +293,19 @@ describe('durable agent quota operations with real PostgreSQL', () => {
       [requireValue(identities[0], 'owner').human_id]);
     await expect(repository.finish(worker, receipt)).rejects.toMatchObject({ code: 'forbidden' }); expect(await collections()).toBe(1);
   });
+  it('hands the executor the durable binding of the agent account, as a fleet operation does', async () => {
+    // Production, 26-oct (hades): without it the executor could not resolve a dynamic profile and every reading failed.
+    expect((await repository.execution(await (async () => { await enqueue(); return claim(); })())).trusted_accounts).toEqual([]);
+    await admin().query(`UPDATE agent_quota_operations SET status='failed',error_code='STEP_FAILED',lease_until=NULL`);
+    await admin().query(`INSERT INTO provider_accounts(id,provider,external_account_id,payer_tenant_id,credential_ref_kind,credential_ref,enabled)
+      VALUES('zz-canary-quota-account','codex','zz-canary-quota-identity',$1,'env_path','CAUCE_ZZ_CANARY_QUOTA_PROFILE_PATH',true)`, [target.tenant_id]);
+    await admin().query('UPDATE agents SET primary_account_id=$3 WHERE tenant_id=$1 AND alias=$2',
+      [target.tenant_id, target.alias, 'zz-canary-quota-account']);
+    await enqueue(); const execution = await repository.execution(await claim());
+    expect(execution.agent.primary_account_id).toBe('zz-canary-quota-account');
+    expect(execution.trusted_accounts).toEqual([{ id: 'zz-canary-quota-account', provider: 'codex',
+      external_account_id: 'zz-canary-quota-identity', payer_tenant_id: target.tenant_id, shared_with_pool: false, enabled: true }]);
+  });
   it('persists unsupported runtime observations without a binding or fake percentage', async () => {
     await enqueue(); const worker = await claim(); const agent = (await repository.execution(worker)).agent;
     await repository.finish(worker, { operation_id: agent.operation_id, tenant: agent.tenant_id, alias: agent.alias,
