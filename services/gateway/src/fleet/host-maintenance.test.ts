@@ -173,7 +173,7 @@ describe('automatic host maintenance', () => {
       expect(lines).toContain(`Host maintenance deferred operation_id=${OPERATION} agent=Steven/one reason=preflight_unavailable`
         + ' stage=preflight detail=bundle_without_shared_tui\n');
       expect(lines).toContain(`Host maintenance deferred operation_id=${OPERATION} agent=Steven/one reason=preflight_unavailable`
-        + ' stage=resume_proof detail=shared_resume_unaccredited\n');
+        + ' stage=resume_proof detail=resume_proof_failed\n');
       expect(lines.join('')).not.toContain('missing native pointer');
     } finally { write.mockRestore(); }
   });

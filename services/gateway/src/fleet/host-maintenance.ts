@@ -88,7 +88,7 @@ export class HostMaintenance {
       try { resumeSha256 = await proveMaintenanceResume(this.config.command, execution, claim, first, signal); }
       catch (error) {
         if (execution.operation.desired_revision !== null || signal.aborted) throw error;
-        journalDeferral(execution, 'preflight_unavailable', 'resume_proof', 'shared_resume_unaccredited');
+        journalDeferral(execution, 'preflight_unavailable', 'resume_proof', 'resume_proof_failed');
         await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal);
         return false;
       }
