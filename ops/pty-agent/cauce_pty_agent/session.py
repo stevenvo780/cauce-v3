@@ -503,7 +503,15 @@ class SessionMixin:
             or dynamic_tmux_capability(self.bundle)
         if dynamic_tui and now >= self.next_dynamic_capability_check:
             self.next_dynamic_capability_check = now + DYNAMIC_CAPABILITY_CHECK_INTERVAL
-            if self._advertised_modes() != self.modes:
+            observed = self._advertised_modes()
+            if observed != self.modes and self.sessions and set(observed) > set(self.modes):
+                # A gained mode leaves every open session valid and the gateway still refuses the
+                # unpublished one, so the reconnect waits for the last session instead of cutting it.
+                if observed != self.deferred_modes:
+                    self.deferred_modes = observed
+                    log(f"capability gained modes={','.join(observed)}; reconnect deferred "
+                        f"while {len(self.sessions)} session(s) are open")
+            elif observed != self.modes:
                 # Reconnecting withdraws/publishes the capability through a fresh HELLO. Keeping
                 # the socket would advertise a TUI that the next OPEN can no longer resolve.
                 raise ProtocolError("dynamic harness capability changed")

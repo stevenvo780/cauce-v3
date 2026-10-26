@@ -266,6 +266,16 @@ print(json.dumps({'pane':pane,'pid':int(pid),'starttime':fields[19]}))`;
     `${runtime.stateDirectory}/tmux-${String(runtime.uid)}/cauce`, `zz-canary-neighbor-${active().run}`, create ? '1' : '0'])) as
     { pane: string; pid: number; starttime: string };
 }
+async function firstOnlineModes(timeoutMs: number): Promise<string[] | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (active().registry.state(active().tenantId, alias) === 'online') {
+      return [...(active().registry.get(active().tenantId, alias)?.presence.modes ?? [])];
+    }
+    await new Promise<void>(resolve => { setTimeout(resolve, 100); });
+  }
+  return null;
+}
 async function waitTerminalPresence(): Promise<boolean> {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
@@ -455,17 +465,27 @@ describe.sequential('release instalada, dispositivo y terminal CLI de un ordenad
     await expect.poll(() => active().registry.state(active().tenantId, alias), { timeout: 15_000 }).not.toBe('online');
     const stoppedCli = await cli().run(terminal());
     expect(stoppedCli.code).toBe(1); expect(stoppedCli.stderr).toMatch(/terminal.*no está conectada/iu);
+    const firstOnline = firstOnlineModes(180_000);
     await startOwnedAgent();
+    const startedModes = await firstOnline;
+    expect(startedModes, 'the started agent must publish its TUI in its first presence').toContain('harness_rw');
+    const immediate = await cli().run(terminal(), { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
+    successful(immediate, 'terminal opened as soon as the started agent is online');
+    await assertTerminalReleased();
     runtime = await active().runtimeFor(alias);
     await active().resumeTerminal(alias, marker);
     const restarted = await active().probeTmux(alias);
     expect(restarted.nativeId).toBe(original.nativeId);
-    expect(await waitTerminalPresence(), 'the canonical terminal must reconnect after its agent starts').toBe(true);
+    expect(active().registry.state(active().tenantId, alias)).toBe('online');
     const resumed = await cli().run(terminal(), { input: 'RECALL\r', detachWhen: `RECALLED:${marker}`, timeout: 60_000 });
     successful(resumed, 'terminal after owned agent start');
     await assertTerminalReleased();
-    await receipt('07-stopped-and-started', { operations, stopped_message: true,
-      server_resume_method: 'explicit_real_sdk_delivery_before_cli_attach', same_conversation_recovered: true });
+    const modes = (await active().computer.pool.query<{ mode: string }>(
+      'SELECT mode FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 ORDER BY issued_at DESC LIMIT 2', [active().tenantId, alias])).rows;
+    expect(modes.map(row => row.mode)).toEqual(['harness_rw', 'harness_rw']);
+    await receipt('07-stopped-and-started', { operations, stopped_message: true, first_presence_modes: startedModes,
+      immediate_attach_without_waiting_for_harness: true,
+      server_resume_method: 'explicit_real_sdk_delivery_between_cli_attaches', same_conversation_recovered: true });
   }, 300_000);
 
   it('edita el espacio con configuración aplicada al proceso y persistida en la BD', async () => {

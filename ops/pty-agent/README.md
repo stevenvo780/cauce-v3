@@ -51,6 +51,13 @@ exactamente `{harness}` — el vector `modes` de `tests/terminal-pty/vectors.jso
 respuesta DA/DSR del emulador: escrito como «lo que no es de solo lectura», una TUI escribible se
 quedaba sin el canal técnico que necesita para pintarse.
 
+**Presencia mientras nace la TUI.** Con tmux configurado, el primer HELLO espera hasta 30 s a
+que el panel `cauce-<alias>:agente` esté vivo. Así, un `cauce <alias>` justo tras arrancar no
+recibe una presencia de solo `shell`, que lo haría caer a un shell. Si la TUI aparece más
+tarde, la reconexión que publica `harness` y `harness_rw` espera a que se cierre la última
+sesión abierta: ganar un modo no invalida ninguna sesión, y el gateway sigue rechazando el modo
+que aún no se ha publicado. Si se pierde un modo, la reconexión es inmediata.
+
 **Control sobre la conversación actual.** `harness_rw` abre la misma TUI de tmux o la
 conversación nativa de OpenClaw. El gateway exige una sesión atribuida, concesión nominal,
 grabación y toma de control. Si hay entregas en curso, la toma normal devuelve `agent_busy`;

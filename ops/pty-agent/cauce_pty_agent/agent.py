@@ -70,6 +70,11 @@ BACKOFF_MAX = 30.0
 
 
 SELECT_CEILING = 1.0
+# A container start brings the launcher up before its TUI. Presence published in that window is
+# shell only, so `cauce <alias>` falls back to a shell and the TUI arriving later changes the
+# capability. The first HELLO waits this long for a configured TUI before going out shell only.
+INITIAL_TUI_WAIT = 30.0
+INITIAL_TUI_POLL = 1.0
 
 
 class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, GovernancePathsMixin):
@@ -101,6 +106,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         self.connected_at = 0.0
         self.last_ping = 0.0
         self.next_dynamic_capability_check = 0.0
+        self.deferred_modes: list[str] | None = None
         self.stopping = False
 
     def _advertised_modes(self) -> list[str]:
@@ -122,8 +128,19 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
 
     # -- connection lifecycle ------------------------------------------------------------------
 
+    def _await_initial_tui(self) -> None:
+        if not (dynamic_tmux_capability(self.bundle) and isinstance(self.bundle.get("tmux_tui"), dict)):
+            return
+        deadline = time.monotonic() + INITIAL_TUI_WAIT
+        while not self.stopping and not tmux_tui_available(self.bundle):
+            if time.monotonic() >= deadline:
+                log(f"no live TUI after {INITIAL_TUI_WAIT:.0f}s alias={self.bundle['alias']}; publishing shell only")
+                return
+            time.sleep(INITIAL_TUI_POLL)
+
     def run(self) -> int:
         context = self._tls_context()
+        self._await_initial_tui()
         backoff = BACKOFF_MIN
         while not self.stopping:
             try:
@@ -217,6 +234,7 @@ class PtyAgent(SessionMixin, GovernanceReadMixin, GovernanceWriteMixin, Governan
         # The pointer may have changed between the launcher's bundle and the relay connection.
         # Presence is born from the current observation, not from an OpenClaw binary existing.
         self.modes = self._advertised_modes()
+        self.deferred_modes = None
         self.next_dynamic_capability_check = self.connected_at + DYNAMIC_CAPABILITY_CHECK_INTERVAL
         self._queue(encode_json(TAG_AGENT_HELLO, {
             "v": AGENT_PROTOCOL_VERSION,

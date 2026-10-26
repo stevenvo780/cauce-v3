@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import pathlib
 import subprocess
@@ -10,6 +11,8 @@ import uuid
 from unittest import mock
 
 from .test_tmux_dynamic import TMUX, _loadable_bundle, agent, tmux_runtime
+
+agent_module = importlib.import_module("cauce_pty_agent.agent")
 
 
 @unittest.skipUnless(TMUX, "tmux is required for native presence")
@@ -86,6 +89,60 @@ class NativeTmuxPresenceTest(unittest.TestCase):
                        check=True, env=self.env)
         with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
             instance._maintain()
+
+    def _connected(self) -> agent.PtyAgent:
+        instance = agent.PtyAgent(self._bundle())
+        instance.acknowledged = True
+        instance.last_ping = time.monotonic()
+        instance.next_dynamic_capability_check = 0.0
+        return instance
+
+    def _open_shell(self, instance: agent.PtyAgent) -> None:
+        instance.sessions["s1"] = agent.PtySession("s1", 0, -1, "shell", ["/bin/sh"])
+
+    def test_gained_native_pane_keeps_open_sessions_and_reconnects_after_the_last_one(self) -> None:
+        instance = self._connected()
+        self.assertEqual(instance.modes, ["shell"])
+        self._open_shell(instance)
+        self._session()
+        instance._maintain()
+        self.assertEqual(instance.modes, ["shell"])
+        self.assertIn("s1", instance.sessions)
+        del instance.sessions["s1"]
+        instance.next_dynamic_capability_check = 0.0
+        with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
+            instance._maintain()
+
+    def test_lost_native_pane_still_reconnects_with_open_sessions(self) -> None:
+        self._session()
+        instance = self._connected()
+        self.assertEqual(instance.modes, ["shell", "harness", "harness_rw"])
+        self._open_shell(instance)
+        subprocess.run([TMUX, "-L", self.socket, "set-option", "-t", "cauce-zeus", "@cauce_harness", "claude"],
+                       check=True, env=self.env)
+        with self.assertRaisesRegex(agent.ProtocolError, "dynamic harness capability changed"):
+            instance._maintain()
+
+    def test_first_hello_waits_for_the_configured_tui(self) -> None:
+        instance = agent.PtyAgent(self._bundle())
+        self.assertEqual(instance.modes, ["shell"])
+        polls = []
+        with mock.patch.object(agent_module.time, "sleep", side_effect=lambda _: polls.append(self._session())):
+            instance._await_initial_tui()
+        self.assertEqual(len(polls), 1)
+        self.assertEqual(instance._advertised_modes(), ["shell", "harness", "harness_rw"])
+
+    def test_first_hello_goes_out_shell_only_once_the_wait_expires(self) -> None:
+        instance = agent.PtyAgent(self._bundle())
+        with mock.patch.object(agent_module, "INITIAL_TUI_WAIT", 0.0), mock.patch.object(agent_module.time, "sleep") as sleep:
+            instance._await_initial_tui()
+        sleep.assert_not_called()
+
+    def test_first_hello_never_waits_without_a_configured_tui(self) -> None:
+        instance = agent.PtyAgent(agent.validate_bundle(_loadable_bundle(harness="muse", tmux_tui=None)))
+        with mock.patch.object(agent_module, "tmux_tui_available") as available:
+            instance._await_initial_tui()
+        available.assert_not_called()
 
     def test_a_pinned_fleet_channel_waits_for_its_canonical_panel_then_reconnects_with_current_modes(self):
         for harness in ('claude', 'codex', 'grok', 'muse'):
