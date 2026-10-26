@@ -464,7 +464,9 @@ export function registerAgentProfileRoutes(app: FastifyInstance, deps: AgentProf
               ? 'pending'
               : prepared?.verification.state === 'drifted'
                 ? 'drifted'
-                : lectura.applied_revision !== null
+                // Without measured facts only a durable adoption accredits 'applied': the console
+                // reads 'applied' without adoption as incoherent and blocks saving (socrates 26-oct).
+                : lectura.applied_revision !== null && adopted
                   ? 'applied'
                   : 'runtime_unverified';
 

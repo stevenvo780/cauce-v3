@@ -176,6 +176,15 @@ describe('GET perfil: convergencia medida del runtime', () => {
     });
   });
 
+  it('sin hechos medidos ni adopción durable una revisión aplicada se declara runtime_unverified', async () => {
+    abierto = await servidor(contexto({ purpose: 'x' }, 'codex'));
+
+    const body = (await abierto.inject({ method: 'GET', url: RUTA })).json<RespuestaDelPerfil>();
+
+    expect(body).toMatchObject({ revision: 1, applied_revision: 1, runtime_state: 'runtime_unverified' });
+    expect(body.runtime_adoption).toBeNull();
+  });
+
   it('misma revisión con bytes distintos se declara drifted, nunca applied', async () => {
     const app = await appDeEscritura({
       prepareRuntime: async () => runtimePreflight((revision) => preparedRuntime(revision, {
