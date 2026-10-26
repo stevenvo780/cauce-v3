@@ -45,10 +45,12 @@ export async function loadFleetOrigin(client: DatabaseClient, row: FleetOperatio
   return row;
 }
 
-/** Every step re-resolves the authority of the origin: a revoked owner or administrator stops its queued work. */
-export async function assertFleetOperationAuthority(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
+/** Every step re-resolves the authority of the origin: a revoked owner or administrator stops its queued work.
+ * `restoringCompensation` is only for the settled operation of an original runtime whose pending compensation restores it. */
+export async function assertFleetOperationAuthority(client: DatabaseClient, row: FleetOperationRow,
+  options: { restoringCompensation?: boolean } = {}): Promise<void> {
   await loadFleetOrigin(client, row);
-  if (isMaintenanceOperation(row)) return assertHostMaintenanceAuthority(client, row);
+  if (isMaintenanceOperation(row)) return assertHostMaintenanceAuthority(client, row, false, false, options.restoringCompensation === true);
   await assertFleetHumanAuthority(client, row.actor_tenant, row.actor_alias, row.actor_subject);
   const authority = await assertFleetAuthority(client, row.actor_tenant, row.actor_alias, row.target, true, row.actor_subject, row.acting_company);
   if (authority.actingCompany !== row.company_id) throw new FleetOperationError('forbidden', 'fleet operation company authority changed');

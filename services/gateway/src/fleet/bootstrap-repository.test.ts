@@ -1,7 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { FleetEvidence, FleetStepName } from '@cauce/protocol';
-import { createPool, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { FleetOperationRequestSchema, sha256Hex, type FleetEvidence, type FleetStepName } from '@cauce/protocol';
+import { createPool, FleetOperationsRepository, HostEnrollmentRepository, hostEnrollmentMessage, lockCompanyAuthority, withTransaction,
+  type DatabasePool } from '@cauce/store';
+import { fleetSteps } from '../../../../packages/store/src/repository/fleet-operation-authority.js';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { startTestDatabase, startTestCaseDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
 import { BootstrapRepository } from './bootstrap-repository.js';
@@ -331,7 +333,7 @@ describe('state of an original runtime while its update compensation is pending'
     ['authenticate', { provider_verified: true }], ['profile', { profile_verified: true }],
     ['verify', { bootstrap_verified: true, roundtrip_verified: true }], ['admission', { authority_verified: true, artifact_sha256: 'd'.repeat(64) }],
   ];
-  async function pending(): Promise<{ created: string; update: string }> {
+  async function pending(settled?: () => Promise<void>): Promise<{ created: string; update: string }> {
     await pool.query(`INSERT INTO fleet_hosts(host_id,display_name,company_id,extensions_allowed)
       SELECT 'comp-host','Comp host',company_id,'{"types":[],"mount_roots":[],"networks":[]}'::jsonb FROM tenants WHERE id='Steven'`);
     await pool.query("INSERT INTO agent_profiles(tenant_id,alias,purpose) VALUES('Steven','comp-agent','Compensation purpose')").catch(() => undefined);
@@ -358,6 +360,7 @@ describe('state of an original runtime while its update compensation is pending'
     };
     const first = await fleet.enqueue('Steven', 'boot-owner', { kind: 'create', target, expected_revision: 0, idempotency_key: 'comp-create', parameters }, origin.subject);
     await fleet.settle(await run('create-worker', 'admission'));
+    await settled?.();
     const update = await fleet.enqueue('Steven', 'boot-owner', { kind: 'update', target, expected_revision: 2, idempotency_key: 'comp-update',
       parameters: { ...parameters, reasoning_effort: 'high' } }, origin.subject);
     const claim = await run('update-worker', 'credentials');
@@ -374,5 +377,61 @@ describe('state of an original runtime while its update compensation is pending'
     // Without the explicit cancellation or a sealed rollback intent the stale operation no longer describes the pending restoration.
     await pool.query('UPDATE fleet_operations SET cancel_requested=false WHERE id=$1', [update]);
     await expect(repository.state(compensated, created, 'normal')).rejects.toMatchObject({ code: 'conflict' });
+  });
+  /** A settled host maintenance update, exactly as the enrolled host would have enqueued it over the agent's current rows. */
+  async function maintenance(): Promise<string> {
+    const origin = (await pool.query<{ subject: string }>(`SELECT metadata->>'actor_subject' AS subject
+      FROM fleet_operation_events WHERE operation_id=$1 AND event='queued'`, [operationId])).rows[0];
+    if (!origin) throw new Error('origin absent');
+    const enrollment = new HostEnrollmentRepository(pool);
+    const invitation = await enrollment.invite(client => lockCompanyAuthority(client,
+      { tenant: 'Steven', alias: 'boot-owner', humanId: origin.subject.slice('console:'.length) }),
+    { host_id: 'comp-host', display_name: 'Comp host' });
+    const keys = generateKeyPairSync('ed25519');
+    const host = await enrollment.claim(invitation.enrollment_id, { invitation_token: invitation.invitation_token,
+      public_key: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+      proof: sign(null, Buffer.from(hostEnrollmentMessage(invitation)), keys.privateKey).toString('base64') });
+    const agent = (await pool.query<Record<string, unknown>>("SELECT * FROM agents WHERE tenant_id='Steven' AND alias='comp-agent'")).rows[0];
+    const created = (await pool.query<{ applied_revision: string }>(`SELECT applied_revision FROM fleet_operations
+      WHERE target->>'alias'='comp-agent' AND status='succeeded'`)).rows[0];
+    if (!agent || !created) throw new Error('settled agent absent');
+    const target = { resource: 'agent' as const, ...compensated };
+    const memberships = (await pool.query<{ room_id: string; role: string; enabled: boolean }>(`SELECT room_id,role,enabled FROM memberships
+      WHERE tenant_id='Steven' AND alias='comp-agent' AND retired_at IS NULL ORDER BY room_id`)).rows;
+    const revision = Number(created.applied_revision);
+    const request = FleetOperationRequestSchema.parse({ kind: 'update', target, expected_revision: revision, idempotency_key: 'comp-maintenance',
+      parameters: { runtime_key: agent.runtime_key, harness_id: agent.harness_id, display_name: agent.display_name,
+        primary_room_id: agent.primary_room_id, memberships, primary_account_id: agent.primary_account_id, model_id: agent.model_id,
+        reasoning_effort: agent.reasoning_effort, extensions: agent.extensions, placement: { host_id: agent.host_id, mode: agent.runtime_mode,
+          container_name: agent.container_name, runtime_user: agent.runtime_user, home_directory: agent.home_directory,
+          state_directory: agent.state_directory, systemd_user: agent.systemd_user ?? 'stev' } } });
+    return withTransaction(pool, async client => {
+      const row = (await client.query<{ id: string }>(`INSERT INTO fleet_operations(actor_tenant,actor_alias,target,target_key,cohort_key,
+        executor_host,kind,request,request_hash,idempotency_key,expected_revision,desired_revision,applied_revision,status,steps,company_id)
+        VALUES('Steven','comp-agent',$1::jsonb,$2,$3,$4,'update',$5::jsonb,$6,$7,$8,$8,$8,'succeeded',$9::jsonb,$10) RETURNING id`,
+      [JSON.stringify(target), sha256Hex(target), `fleet:${host.company_id}:${host.host_id}`, host.host_id, JSON.stringify(request),
+        sha256Hex(request), request.idempotency_key, revision, JSON.stringify(fleetSteps(request).map(name => ({ name, status: 'succeeded' }))),
+        host.company_id])).rows[0];
+      if (!row) throw new Error('maintenance fixture absent');
+      await client.query("INSERT INTO fleet_operation_events(operation_id,version,event,metadata) VALUES($1,0,'queued',$2::jsonb)",
+        [row.id, JSON.stringify({ acting_company: host.company_id, actor_subject: `host:${host.host_id}:${host.key_fingerprint}`,
+          maintenance: { host_id: host.host_id, enrollment_id: host.enrollment_id, key_fingerprint: host.key_fingerprint,
+            release_sha256: 'e'.repeat(64), parameters_sha256: sha256Hex(request.parameters) } })]);
+      return row.id;
+    });
+  }
+  it('lets the original runtime of a host maintenance update read it while the failed update is restored', async () => {
+    let settled = '';
+    const { update } = await pending(async () => {
+      settled = await maintenance();
+      // Over the rows it was admitted with, the maintenance origin is current.
+      expect(await repository.state(compensated, settled, 'normal')).toMatchObject({ status: 'succeeded' });
+    });
+    expect((await pool.query("SELECT reasoning_effort FROM agents WHERE alias='comp-agent'")).rows).toEqual([{ reasoning_effort: 'high' }]);
+    // The rows hold the failed update until its compensation settles; the restarted original must still read its admission.
+    expect(await repository.state(compensated, settled, 'normal')).toMatchObject({ status: 'succeeded', normal_admitted: false });
+    // Without a sealed restoration the changed rows still revoke the maintenance authority.
+    await pool.query('UPDATE fleet_operations SET cancel_requested=false WHERE id=$1', [update]);
+    await expect(repository.state(compensated, settled, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
   });
 });

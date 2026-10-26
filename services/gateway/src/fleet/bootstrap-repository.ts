@@ -33,7 +33,10 @@ export class BootstrapRepository {
         || operation.target.alias !== identity.alias || !['create', 'update', 'start', 'restore'].includes(operation.kind)) throw forbidden();
     if (!state && (operation.status !== 'running' || operation.cancel_requested || !operation.worker_live
         || !operation.worker_id || !operation.claim_token)) throw conflict();
-    try { await assertFleetOperationAuthority(client, operation); }
+    // The original runtime restarted by a pending compensation reads its own settled operation before the durable rows
+    // return to it: neither its desired parameters nor a host maintenance origin can match the failed update's rows yet.
+    const restoring = state && await describesFleetCompensationTarget(client, operation);
+    try { await assertFleetOperationAuthority(client, operation, { restoringCompensation: restoring }); }
     catch (error) { if (error instanceof FleetOperationError) throw forbidden(); throw error; }
     if (!operation.actor_subject?.startsWith('console:') && !isMaintenanceOperation(operation)) throw forbidden();
     const agent = (await client.query<Agent>(`SELECT agent.* FROM agents agent JOIN tenants tenant ON tenant.id=agent.tenant_id
@@ -57,7 +60,7 @@ export class BootstrapRepository {
           || desired.primary_account_id !== agent.primary_account_id || (desired.model_id ?? null) !== agent.model_id
           || (desired.reasoning_effort ?? null) !== (agent.reasoning_effort ?? null)) {
         // The original runtime restarted by a pending compensation keeps waiting for its rows: its operation matches the sealed snapshot.
-        if (!(state && await describesFleetCompensationTarget(client, operation))) throw conflict();
+        if (!restoring) throw conflict();
       }
     }
     await client.query('SELECT 1 FROM agent_profiles WHERE tenant_id=$1 AND alias=$2 FOR SHARE', [identity.tenant_id, identity.alias]);

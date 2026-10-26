@@ -79,7 +79,14 @@ async function canonicalRequest(client: DatabaseClient, target: AgentRequest['ta
   if (!parsed.success || parsed.data.kind !== 'update') throw new FleetOperationError('forbidden', 'maintenance configuration is incomplete');
   return parsed.data;
 }
-export async function assertHostMaintenanceAuthority(client: DatabaseClient, row: FleetOperationRow, preparing = false, cancellingStale = false): Promise<void> {
+/**
+ * `restoring` is set only for a settled maintenance update whose agent a pending, sealed compensation is restoring: the durable
+ * rows still hold the failed update's configuration until that compensation settles, so the original runtime it restarted
+ * could never match the maintenance parameters it was admitted with. Its exact origin, live host identity and request
+ * stay required; only the comparison with the current rows waits for the restoration.
+ */
+export async function assertHostMaintenanceAuthority(client: DatabaseClient, row: FleetOperationRow, preparing = false, cancellingStale = false,
+  restoring = false): Promise<void> {
   const origin = origins.get(row);
   if (!origin || row.kind !== 'update' || row.request.kind !== 'update' || row.target.resource !== 'agent'
       || row.actor_subject !== `host:${origin.host_id}:${origin.key_fingerprint}` || row.acting_company !== row.company_id
@@ -94,6 +101,10 @@ export async function assertHostMaintenanceAuthority(client: DatabaseClient, row
     key_fingerprint: origin.key_fingerprint, company_id: row.company_id });
   const tenant = (await client.query<{ company_id: string }>('SELECT company_id FROM tenants WHERE id=$1 FOR SHARE', [row.target.tenant_id])).rows[0];
   if (tenant?.company_id !== row.company_id) throw new FleetOperationError('forbidden', 'maintenance target company changed');
+  if (restoring && row.status === 'succeeded' && row.desired_revision !== null) {
+    await validateFleetTarget(client, row.request, origin.host_id, true);
+    return;
+  }
   if (cancellingStale && row.desired_revision === null
       && Number(row.expected_revision) !== await lockFleetRevision(client, undefined, row.company_id)) return;
   const current = await canonicalRequest(client, row.request.target, Number(row.expected_revision), row.request.idempotency_key,
