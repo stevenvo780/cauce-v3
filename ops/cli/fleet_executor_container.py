@@ -552,11 +552,16 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
     try:
         validate_container(restored, agent, observed)
     except SafeFailure:
-        if not allow_refresh:
+        if allow_refresh:
+            replacement = refresh_image(policy, agent, observed,
+                                        restore_adapter={'bootstrap': bootstrap, 'operation_id': operation_id})
+            return replacement['_adapter_restored']
+        # Not recreated again: a later deploy only installed a sibling release, so the adapter starts from its bundle.
+        from fleet_executor_rebind import sibling_bundle
+        sibling = sibling_bundle(restored, agent, observed, bundle, RELEASE_ROOT)
+        if sibling is None:
             raise SafeFailure('original container needs the current approved release; preserved without another refresh') from None
-        replacement = refresh_image(policy, agent, observed,
-                                    restore_adapter={'bootstrap': bootstrap, 'operation_id': operation_id})
-        return replacement['_adapter_restored']
+        bundle = sibling
     if not allow_refresh and previous['_placement']['image'] != approved['_placement']['image'] and bundle['executable_sha256'] is None:
         bundle = {**bundle, 'executable_sha256': approved_executable_digest(policy, approved, bundle)}
     restart = adapter_restart_state(restored, agent, observed, check_sdk_policy=True)

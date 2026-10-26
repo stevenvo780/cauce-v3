@@ -23,6 +23,7 @@ import fleet_executor_image as image_refresh
 import fleet_executor_rebind as rebind
 import fleet_executor_runtime as runtime
 import provider_login_container as login
+from cauce_container_base import bundle_digest
 from fleet_executor_policy import SafeFailure, extension_resources
 from test_fleet_executor_rebind import IMAGE, FakeDocker, ReleaseFixture
 
@@ -857,6 +858,54 @@ class ImageRefreshTests(ReleaseFixture):
                 else:
                     absent.assert_called_once()
                 self.assertEqual(self.mutating_calls(), [])
+
+    def restore_on_sibling_release(self):
+        """A preserved original bound to the release before the last deploy, restored without another refresh."""
+        before = self.old_container(root=self.old)
+        before['Image'] = IMAGE
+        started = []
+        with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=False), \
+                mock.patch.object(container, 'start_existing_adapter',
+                                  side_effect=lambda _policy, _agent, observed, bundle, **_kwargs:
+                                  started.append((observed['Id'], bundle)) or {'runtime_digest': 'proof'}):
+            result = container.restore_existing_adapter(self.policy, self.agent, bootstrap=False, allow_refresh=False)
+        return before, started, result
+
+    def test_restoration_without_refresh_starts_the_adapter_from_the_sibling_release_the_container_binds(self):
+        (self.old / 'adapter/worker.py').write_text('import time\ntime.sleep(30)\n')
+        (self.old / '.verified').write_text(self.old.name + '\n')
+        before, started, result = self.restore_on_sibling_release()
+        self.assertEqual(result, {'runtime_digest': 'proof'})
+        sibling = {**self.policy['bundles']['codex'], 'directory': str(self.old / 'adapter'),
+                   'digest': bundle_digest(str(self.old / 'adapter'))}
+        self.assertEqual(started, [(before['Id'], sibling)])
+        self.assertNotEqual(sibling['digest'], self.policy['bundles']['codex']['digest'])
+        self.assertEqual(self.docker.containers[self.name]['Mounts'], before['Mounts'])
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+
+    def test_restoration_without_refresh_refuses_an_unverified_sibling_release_bundle(self):
+        worker = self.old / 'adapter/worker.py'
+        for drift, message in (('marker', 'preserved without another refresh'), ('writable', 'entry is not trusted'),
+                               ('link', 'links outside itself')):
+            with self.subTest(drift=drift):
+                self.docker.containers.clear()
+                self.docker.calls.clear()
+                (self.old / '.verified').write_text(self.old.name + '\n')
+                outside = self.old / 'adapter/outside'
+                if drift == 'marker':
+                    (self.old / '.verified').write_text(self.new.name + '\n')
+                elif drift == 'writable':
+                    worker.chmod(0o664)
+                else:
+                    outside.symlink_to(self.new / 'adapter/worker.py')
+                try:
+                    with self.assertRaisesRegex(SafeFailure, message):
+                        self.restore_on_sibling_release()
+                    self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+                finally:
+                    worker.chmod(0o644)
+                    if outside.is_symlink():
+                        outside.unlink()
 
     def test_refresh_without_a_materialized_normal_sdk_identity_preserves_the_original(self):
         for operation in (None, str(uuid.uuid4())):
