@@ -291,6 +291,104 @@ class ReplacementPhysicalRollbackTest(unittest.TestCase):
         self.assertEqual(first['runtime_digest'], hashlib.sha256('\n'.join(binding).encode()).hexdigest())
 
 
+class RestoreSourceRebaseTest(unittest.TestCase):
+    """Production, 26-oct: while Hades waited to be compensated, the retire of zz-canary-144 on the same host published
+    its own applied generation. The restoration was rendered from the current fleet (it already lacked the canary), yet
+    restore_source refused every attempt with replacement_original_unverified because the applied generation was not
+    one Hades' journal knew. It rebases only when nothing but Hades differs."""
+
+    def setUp(self):
+        import tempfile
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts'))
+        from fleet_runtime_materialization import load_applied_fleet, materialize
+        from test_export_fleet_snapshot import agent, membership, source
+        self.materialize, self.load_applied = materialize, load_applied_fleet
+        self.agent, self.membership, self.source = agent, membership, source
+        directory = tempfile.TemporaryDirectory(dir='/var/tmp')
+        self.addCleanup(directory.cleanup)
+        self.state = pathlib.Path(directory.name)
+
+    def row(self, alias, **changes):
+        return {**self.agent(alias), 'runtime_key': alias, 'primary_room_id': 'grp.steven', 'lifecycle_state': 'ready',
+                **changes}
+
+    def fleet(self, *rows):
+        return self.source(agents=list(rows), memberships=[self.membership(row['alias']) for row in rows])
+
+    def publish(self, snapshot):
+        from fleet_runtime_apply import publish_applied
+        receipt = self.materialize(snapshot, {}, self.state)
+        current = self.load_applied(self.state)['generation'] if (self.state / 'applied-fleet.json').exists() else None
+        publish_applied(self.state, receipt['generation'], current)
+        return receipt['generation']
+
+    def executor(self, snapshot, expected):
+        executor = types.SimpleNamespace(state=self.state, saves=0,
+            journal={'expected_applied': expected, 'replacement_compensation': {}},
+            context={'snapshot': snapshot, 'request': {'parameters': {'runtime_key': 'hades'}}},
+            materialize_snapshot=lambda value: self.materialize(
+                {key: child for key, child in value.items() if key != 'compensation_snapshot'}, {}, self.state))
+        executor.save = lambda: setattr(executor, 'saves', executor.saves + 1)
+        return executor
+
+    def restore(self, current_fleet, expected):
+        before = self.row('hades')
+        value = {'previous_agents': [before], 'previous_memberships': [self.membership('hades')]}
+        executor = self.executor(current_fleet, expected)
+        return executor, lambda: rollback.restore_source(executor, value)
+
+    def test_a_later_operation_on_another_agent_is_kept_and_hades_is_restored(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades'), self.row('canary')))
+        # The canary was retired by another operation after Hades' update started; the database fleet already says so.
+        later = self.publish(self.fleet(self.row('kant'), failed, self.row('canary', enabled=False, lifecycle_state='failed')))
+        self.assertNotEqual(expected, later)
+        current = self.fleet(self.row('kant'), failed, self.row('canary', enabled=False, lifecycle_state='failed'))
+        executor, restore = self.restore(current, expected)
+        receipt = restore()
+        applied = self.load_applied(self.state)
+        self.assertEqual(applied['generation'], receipt['generation'])
+        snapshot = json.loads((self.state / 'generations' / receipt['generation'] / 'flota.json').read_bytes())
+        self.assertIn('hades', snapshot['fleet'])
+        self.assertIn('canary', snapshot['retired'])
+        self.assertEqual(executor.journal['replacement_compensation']['rebased_applied'],
+                         [{'from': later, 'to': receipt['generation']}])
+        # A replay finds its own generation applied and neither rebases again nor republishes anything else.
+        self.assertEqual(restore(), receipt)
+        self.assertEqual(len(executor.journal['replacement_compensation']['rebased_applied']), 1)
+
+    def test_an_applied_change_to_another_agent_that_the_restoration_lacks_is_refused(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades')))
+        # The host applied a fleet where kant is disabled; the restoration would silently re-enable it.
+        foreign = self.publish(self.fleet(self.row('kant', enabled=False, lifecycle_state='failed'), failed))
+        executor, restore = self.restore(self.fleet(self.row('kant'), failed), expected)
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+            restore()
+        self.assertEqual(self.load_applied(self.state)['generation'], foreign)
+        self.assertNotIn('rebased_applied', executor.journal['replacement_compensation'])
+
+    def test_an_extra_agent_only_on_the_host_is_refused(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades')))
+        foreign = self.publish(self.fleet(self.row('kant'), failed, self.row('argos')))
+        _, restore = self.restore(self.fleet(self.row('kant'), failed), expected)
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+            restore()
+        self.assertEqual(self.load_applied(self.state)['generation'], foreign)
+
+    def test_a_tampered_applied_artifact_is_refused(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades'), self.row('canary')))
+        later = self.publish(self.fleet(self.row('kant'), failed))
+        current = self.fleet(self.row('kant'), failed)
+        executor, restore = self.restore(current, expected)
+        with mock.patch.object(rollback, '_artifact', side_effect=ValueError):
+            with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+                restore()
+        self.assertEqual(self.load_applied(self.state)['generation'], later)
+
+
 class InPlaceRecreationRollbackTest(unittest.TestCase):
     """Production, 25-oct: adding pids 512 to Hades recreated its container under the same name; admission failed and the
     compensation looped on replacement_original_unverified because the captured original no longer existed."""

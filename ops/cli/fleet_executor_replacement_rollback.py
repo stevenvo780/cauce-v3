@@ -208,6 +208,59 @@ def capture(executor) -> None:
         raise SafeFailure('replacement authority unverified') from None
 
 
+# Artifacts whose top-level maps are keyed by runtime key; every other key of these documents is compared verbatim.
+RUNTIME_KEYED = {'flota.json': ('fleet', 'placement', 'retired', 'bootstrap'),
+                 'container-aliases.json': ('aliases', 'historicalAliases'),
+                 'bootstrap/container-aliases.json': ('aliases', 'historicalAliases'),
+                 'generated/fleet.json': ('aliases',)}
+
+
+def _artifact(state: Path, generation: str, name: str, digest: str):
+    body = (Path(state) / 'generations' / generation / name).read_bytes()
+    if hashlib.sha256(body).hexdigest() != digest:
+        raise ValueError
+    return json.loads(body)
+
+
+def _without_runtime(document, maps: tuple[str, ...], runtime_key: str):
+    if not isinstance(document, dict):
+        raise ValueError
+    trimmed = dict(document)
+    for name in maps:
+        if name not in trimmed:
+            continue
+        if not isinstance(trimmed[name], dict):
+            raise ValueError
+        rows = {key: row for key, row in trimmed[name].items() if key != runtime_key}
+        # An empty runtime-keyed map and an absent one describe the same fleet (the exporter omits an empty bootstrap).
+        if rows:
+            trimmed[name] = rows
+        else:
+            trimmed.pop(name)
+    return trimmed
+
+
+def differs_only_in_runtime(state: Path, applied: dict, receipt: dict, runtime_key: str) -> bool:
+    """Whether publishing `receipt` over the applied generation changes nothing on this host but `runtime_key`.
+
+    Another operation of the same host (a retire, a start) may publish its own applied generation while this one waits
+    to be compensated. The restoration is rendered from the current, revision-locked fleet snapshot, so it already carries
+    that operation's effect: when both generations agree artifact by artifact on every other runtime, the restoration
+    rebases onto the applied generation without undoing anyone else's work. Any other difference keeps it refused."""
+    own = {f'manifests/{runtime_key}.yaml', f'bootstrap/manifests/{runtime_key}.yaml'}
+    left, right = applied['files'], receipt['files']
+    for name in sorted((set(left) | set(right)) - own):
+        if left.get(name) == right.get(name):
+            continue
+        maps = RUNTIME_KEYED.get(name)
+        if maps is None or name not in left or name not in right:
+            return False
+        if _without_runtime(_artifact(state, applied['generation'], name, left[name]), maps, runtime_key) \
+                != _without_runtime(_artifact(state, receipt['generation'], name, right[name]), maps, runtime_key):
+            return False
+    return True
+
+
 def restore_source(executor, value: dict) -> dict:
     from fleet_runtime_apply import publish_applied
     from fleet_runtime_materialization import load_applied_fleet
@@ -225,11 +278,23 @@ def restore_source(executor, value: dict) -> dict:
     fields = ('tenant_id', 'alias', 'room_id', 'role', 'enabled')
     source['memberships'].extend({key: member[key] for key in fields} for member in value['previous_memberships'])
     receipt = executor.materialize_snapshot(source)
-    current = load_applied_fleet(executor.state)['generation']
+    applied = load_applied_fleet(executor.state)
+    current = applied['generation']
     permitted = {executor.journal['expected_applied'], executor.journal.get('admission_pending_generation'),
                  executor.journal.get('admission', {}).get('generation'), receipt['generation']}
     if current not in permitted:
-        raise SafeFailure('replacement original unverified')
+        runtime_key = executor.context['request']['parameters']['runtime_key']
+        try:
+            rebased = differs_only_in_runtime(executor.state, applied, receipt, runtime_key)
+        except (OSError, KeyError, TypeError, ValueError):
+            rebased = False
+        if not rebased:
+            raise SafeFailure('replacement original unverified')
+        rebase = {'from': current, 'to': receipt['generation']}
+        history = executor.journal['replacement_compensation'].setdefault('rebased_applied', [])
+        if rebase not in history:
+            history.append(rebase)
+            executor.save()
     publish_applied(executor.state, receipt['generation'], current)
     return receipt
 
