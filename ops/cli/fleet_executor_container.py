@@ -239,7 +239,8 @@ def sidecar_shape(result: dict | None) -> tuple[set[str], dict]:
     return set(networks), environment
 
 
-def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *, teardown: bool = False) -> None:
+def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *, teardown: bool = False,
+                       created: bool = False) -> None:
     host = observed['HostConfig']
     def normalize(values):
         return {value.removeprefix('CAP_') for value in values or []}
@@ -252,7 +253,7 @@ def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *
         raise SafeFailure('container isolation differs from the approved shape')
     if any(host.get(key) != value for key, value in {'Memory': shape['memory'], 'MemorySwap': shape['memory'] * 2,
             'NanoCpus': shape['cpus']}.items()) \
-            or host.get('PidsLimit') not in {shape['pids'], shape['replaceable_pids']} - {None} \
+            or host.get('PidsLimit') not in {shape['pids'], None if created else shape['replaceable_pids']} - {None} \
             or any(host.get(key, 0) != 0 for key in ('CpuShares', 'CpuPeriod', 'CpuQuota', 'CpuRealtimePeriod', 'CpuRealtimeRuntime', 'MemoryReservation', 'BlkioWeight')) \
             or any(host.get(key, '') != '' for key in ('CpusetCpus', 'CpusetMems')):
         raise SafeFailure('container resource limits differ from the approved shape')
@@ -267,7 +268,9 @@ def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *
         raise SafeFailure('container sidecar environment differs from the approved shape')
 
 
-def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | None = None, *, teardown: bool = False) -> None:
+def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | None = None, *, teardown: bool = False,
+                       created: bool = False) -> None:
+    """`created` validates a container this executor just made, which never inherits a replaceable limit."""
     placement = agent['_placement']
     if placement.get('ownership') == 'shared':
         approve_extensions(policy, agent)
@@ -285,7 +288,7 @@ def validate_container(policy: dict, agent: dict, observed: dict, binds: dict | 
         binds = runtime_mounts(policy, agent, previous, RELEASE_ROOT) if previous is not None else None
     binds = runtime_mounts(policy, agent) if binds is None else binds
     shape = extension_shape(policy, agent, binds, teardown=teardown)
-    validate_isolation(policy, agent, observed, shape, teardown=teardown)
+    validate_isolation(policy, agent, observed, shape, teardown=teardown, created=created)
     mounts = {row['Destination']: row for row in observed['Mounts']}
     fallback = shape['fallback']
     socket = mounts.get(fallback['destination']) if fallback else None
@@ -398,13 +401,14 @@ def ensure_container(policy: dict, agent: dict, operation_id: str | None = None)
             raise SafeFailure('shared container must already be observed running')
         return observed
     observed = observe_container(policy, agent)
-    if observed is None:
+    created = observed is None
+    if created:
         observed = create_container(policy, agent, operation_id=operation_id)
-    validate_container(policy, agent, observed)
+    validate_container(policy, agent, observed, created=created)
     if not observed['State']['Running']:
         docker('start', observed['Id'])
         observed = inspect_container(agent['container_name'])
-        validate_container(policy, agent, observed)
+        validate_container(policy, agent, observed, created=created)
     if not observed['State']['Running'] or observed['State']['Pid'] <= 0:
         raise SafeFailure('container is not observed running')
     return observed

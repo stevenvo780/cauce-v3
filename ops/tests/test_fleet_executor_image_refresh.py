@@ -41,6 +41,7 @@ class RefreshDocker(FakeDocker):
     def __init__(self):
         super().__init__()
         self.unavailable = self.fail_create = self.fail_start = self.invalid_candidate = self.login_open = False
+        self.created_pids = None
 
     def add(self, name, labels, mounts, *, running):
         row = super().add(name, labels, mounts, running=running)
@@ -99,6 +100,8 @@ class RefreshDocker(FakeDocker):
                 mount.update(Mode='rw,z', Propagation='rprivate')
         if self.invalid_candidate:
             row['HostConfig']['Privileged'] = True
+        if self.created_pids is not None:
+            row['HostConfig']['PidsLimit'] = self.created_pids
         return result
 
 
@@ -490,6 +493,20 @@ class ImageRefreshTests(ReleaseFixture):
                 self.docker.calls.clear()
                 self.assertEqual(container.observe_container(self.policy, self.agent)['Id'], after['Id'])
                 self.assertEqual(self.mutating_calls(), [])
+
+    def test_a_created_grok_container_must_carry_its_harness_default_not_the_base_limit(self):
+        before = self.grok_container(pids=128)
+        self.docker.created_pids = 128
+        with self.assertRaisesRegex(SafeFailure, 'image refresh failed; original container restored.*resource limits differ'):
+            container.observe_container(self.policy, self.agent)
+        after = self.docker.containers[self.name]
+        self.assertEqual((set(self.docker.containers), after['Id'], after['HostConfig']['PidsLimit']),
+                         ({self.name}, before['Id'], 128))
+        self.docker.containers.clear()
+        self.docker.calls.clear()
+        with self.assertRaisesRegex(SafeFailure, 'resource limits differ'):
+            container.ensure_container(self.policy, self.agent)
+        self.assertFalse(any(call[0] == 'start' for call in self.docker.calls))
 
     def test_only_the_base_limit_of_an_implicit_harness_default_is_replaceable_drift(self):
         cases = {

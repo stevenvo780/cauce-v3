@@ -307,7 +307,7 @@ def refresh_image(policy: dict, agent: dict, observed: dict, release: pathlib.Pa
                 replacement = inspect_container(agent['container_name'])
                 if replacement is None or not replacement['State']['Running'] or replacement['State']['Pid'] <= 0:
                     raise SafeFailure('refreshed container is not observed running')
-            validate_container(policy, agent, replacement, binds)
+            validate_container(policy, agent, replacement, binds, created=True)
             if restore_adapter is not None:
                 replacement['_adapter_restored'] = start_existing_adapter(policy, agent, replacement, bundle,
                     bootstrap=restore_adapter['bootstrap'], operation_id=restore_adapter['operation_id'])
