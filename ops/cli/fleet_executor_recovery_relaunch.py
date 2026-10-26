@@ -119,7 +119,7 @@ def perform(policy: dict, agent: dict, parameters: dict, journal: dict, save, st
         session = preview['session']
         if preview['identity'] != parameters['identity'] or session['state'] not in {'present', 'absent'} \
                 or session['resumable'] is not True or session['fingerprint'] != parameters['expected_fingerprint'] \
-                or session['state'] == 'present' and not parameters['force']:
+                or parameters['force'] is not (session['state'] == 'present'):
             raise SafeFailure('recovery conversation or terminal changed after confirmation')
         journal.update(attempted=True, relaunch=plan, preview=preview)
         save()

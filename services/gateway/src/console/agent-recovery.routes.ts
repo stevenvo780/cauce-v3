@@ -19,6 +19,7 @@ const bodySchema = z.object({ identity: NativeRuntimeIdentitySchema,
   expected_fingerprint: z.string().regex(/^[a-f0-9]{64}$/u), force: z.boolean() }).strict();
 type Target = z.infer<typeof paramsSchema>;
 type RecoveryInput = z.infer<typeof bodySchema>;
+const STOPPED = 'El agente está detenido. Arráncalo con «Arrancar»: «Reiniciar agente» solo recupera un agente en marcha.';
 class RecoveryError extends Error {
   constructor(readonly code: 'conflict' | 'unsupported' | 'unavailable' | 'delivery_in_flight', message: string) { super(message); }
 }
@@ -30,14 +31,17 @@ async function authorize(client: DatabaseClient, actor: Actor, target: Target) {
   const authority = await actor.access.companyAuthority(client);
   if (`console:${human.humanId}` !== actor.subject || human.tenantId !== actor.tenant || human.actorAlias !== actor.alias
     || authority.humanId !== human.humanId || !['company_owner', 'company_admin', 'platform_admin'].includes(authority.role)) throw new AuthorizationError();
-  const row = (await client.query<{ company_id: string; host_id: string | null; runtime_key: string | null; harness_id: string | null }>(
-    `SELECT tenant.company_id,agent.host_id,agent.runtime_key,agent.harness_id FROM tenants tenant
+  const found = (await client.query<{ company_id: string; host_id: string | null; runtime_key: string | null; harness_id: string | null;
+    enabled: boolean }>(
+    `SELECT tenant.company_id,agent.host_id,agent.runtime_key,agent.harness_id,agent.enabled FROM tenants tenant
        JOIN agents agent ON agent.tenant_id=tenant.id
-      WHERE tenant.id=$1 AND agent.alias=$2 AND tenant.enabled AND agent.enabled
+      WHERE tenant.id=$1 AND agent.alias=$2 AND tenant.enabled
         AND tenant.retired_at IS NULL AND agent.retired_at IS NULL FOR SHARE OF tenant,agent`,
     [target.tenantId, target.alias],
   )).rows[0];
-  if (row?.company_id !== authority.actingCompany) throw new AuthorizationError();
+  if (found?.company_id !== authority.actingCompany) throw new AuthorizationError();
+  const { enabled, ...row } = found;
+  if (!enabled) throw new RecoveryError('conflict', STOPPED);
   actor.access.options.signal.throwIfAborted();
   return row;
 }

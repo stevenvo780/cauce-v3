@@ -20,6 +20,9 @@ export function recoveryProblem(reason: FleetRecoveryReason | 'executor_unavaila
 export function recoveryError(failure: unknown, fallback: string): string {
   const message = failure instanceof Error ? failure.message : fallback;
   if (message === 'target already has an unresolved fleet operation') return 'Hay una operación de flota sin resolver. Abre la ficha de Ejecución para revisarla o cancelarla antes de reiniciar.';
+  if (message === 'recovery requires an admitted running agent; a stopped agent is started with start') {
+    return 'El agente está detenido. Arráncalo con «Arrancar»: «Reiniciar agente» solo recupera un agente en marcha.';
+  }
   if (message === 'fleet action is unavailable') return 'El equipo no admite esta acción con su política actual. Comprueba su ejecución y las acciones disponibles.';
   if (message === 'fleet effect failed: container runtime mounts differ') return recoveryProblem('runtime_mounts_differ').reason;
   return message;

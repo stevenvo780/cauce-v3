@@ -11,7 +11,7 @@ import { fleetPurgeResources } from './fleet-purge-resources.js';
 import { FleetOperationError, isRegistryDraft } from './fleet-operation-contracts.js';
 import { assertFleetHostAccess } from './fleet-operation-hosts.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
-import { assertFleetRecoveryIdle } from './fleet-operation-recovery.js';
+import { assertFleetRecoveryAdmission, assertFleetRecoveryIdle } from './fleet-operation-recovery.js';
 
 export type FleetAuthorityScope = string | CompanyAuthoritySource;
 
@@ -119,6 +119,7 @@ export async function validateFleetTarget(
         || !['codex', 'claude', 'grok', 'muse'].includes(agent.harness_id))) {
       throw new FleetOperationError('conflict', 'recovery requires an active standard fleet runtime');
     }
+    if (agent) assertFleetRecoveryAdmission(request, agent, prepared);
     await assertFleetRecoveryIdle(client, request);
     if (request.kind === 'create' || request.kind === 'update') {
       const parameters = request.parameters;

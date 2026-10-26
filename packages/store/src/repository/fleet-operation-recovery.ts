@@ -13,13 +13,27 @@ export async function assertFleetRecoveryIdle(client: DatabaseClient, request: F
   if (work.rowCount) throw new FleetOperationError('conflict', 'recovery requires no deliveries in flight');
 }
 
+export const FLEET_RECOVERY_STOPPED = 'recovery requires an admitted running agent; a stopped agent is started with start';
+
+/** Stop leaves the dedicated container running with its adapter down, which a relaunch cannot tell from an interrupted adapter. */
+export function assertFleetRecoveryAdmission(request: FleetOperationRequest,
+  agent: { enabled: boolean; lifecycle_state: string; runtime_mode: string | null }, prepared: boolean): void {
+  if (request.kind !== 'recover') return;
+  if (!prepared && (!agent.enabled || agent.lifecycle_state !== 'ready')) throw new FleetOperationError('conflict', FLEET_RECOVERY_STOPPED);
+  if (request.parameters.action === 'apply' && request.parameters.strategy === 'relaunch' && agent.runtime_mode !== 'container') {
+    throw new FleetOperationError('conflict', 'relaunch recovery requires a dedicated container runtime');
+  }
+}
+
 export async function lockFleetRecoveryConnection(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   if (row.request.kind !== 'recover' || row.request.parameters.action !== 'apply') return;
   const target = row.request.target;
+  const { identity, force, strategy } = row.request.parameters;
   const lease = (await client.query<{ instance_id: string; live: boolean }>(`SELECT instance_id,lease_until>clock_timestamp() AS live
     FROM connection_leases WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [target.tenant_id, target.alias])).rows[0];
-  // A relaunch replaces the adapter process, so its preparation fences the lease instead of keeping the confirmed writer.
-  if (row.request.parameters.strategy !== 'relaunch' && (!lease?.live || lease.instance_id !== row.request.parameters.identity.writer_instance_id)) {
+  const confirmed = lease?.instance_id === identity.writer_instance_id;
+  // An interrupted adapter (relaunch without force) leaves its lease live under the instance of the operation that started it.
+  if (strategy === 'relaunch' ? force && lease?.live === true && !confirmed : !lease?.live || !confirmed) {
     throw new FleetOperationError('conflict', 'recovery adapter connection differs from its confirmed identity');
   }
 }

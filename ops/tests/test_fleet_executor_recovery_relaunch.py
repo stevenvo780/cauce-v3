@@ -171,6 +171,17 @@ class RelaunchApplyTests(RelaunchFixture):
         self.assertEqual(self.saved, [])
         self.start_container.assert_not_called()
 
+    def test_force_must_match_the_observed_adapter_state(self):
+        self.docker.live.discard(self.name)
+        preview, _ = relaunch.observe(self.policy, self.agent)
+        self.assertEqual(preview['session']['state'], 'absent')
+        absent = {**self.parameters, 'identity': preview['identity'], 'expected_fingerprint': preview['session']['fingerprint']}
+        self.docker.calls.clear()
+        with self.assertRaisesRegex(SafeFailure, 'changed after confirmation'):
+            self.perform(parameters=absent)
+        self.assertEqual(self.effects(), [])
+        self.assertEqual(self.perform(parameters={**absent, 'force': False})['evidence']['recovery']['session']['state'], 'recreated')
+
     def test_a_current_adapter_no_longer_matches_a_relaunch_confirmation(self):
         self.docker.adapters[self.row['Id']]['metadata']['bundleDigest'] = self.policy['bundles']['codex']['digest']
         with self.assertRaisesRegex(SafeFailure, 'strategy changed'):

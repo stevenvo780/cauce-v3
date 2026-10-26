@@ -4,8 +4,8 @@ import { promisify } from 'node:util';
 import { expect } from 'vitest';
 import { docker, type ComputerRuntimeBundle } from '../../services/gateway/src/fleet/host-computer.fixtures.js';
 import { cancelOperations, type CancelOperation } from './v4-fleet-cancel.helpers.js';
-import { createCancelDeployActor, observeCancelDeployActor, waitCancelDeployEnabled, waitCancelDeployOperation,
-  type CancelDeployActor, type CancelDeployObservation } from './v4-fleet-cancel-deploy.flow.js';
+import { createCancelDeployActor, enqueueCancelDeploy, observeCancelDeployActor, openCancelDeployPanel, waitCancelDeployEnabled,
+  waitCancelDeployOperation, type CancelDeployActor, type CancelDeployObservation } from './v4-fleet-cancel-deploy.flow.js';
 import { cancelDeployCapture, type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 import type { IgnoredConsoleRule } from './v4-console-real-browser.helpers.js';
 import { deployCancelRelease } from './v4-fleet-cancel-deploy.release.js';
@@ -84,6 +84,31 @@ async function interruptAdapter(actor: CancelDeployActor, observed: CancelDeploy
   return interrupted;
 }
 
+const STOPPED = 'El agente está detenido. Arráncalo con «Arrancar»: «Reiniciar agente» solo recupera un agente en marcha.';
+
+/** Detener leaves the container running with its adapter down; Reiniciar must not undo it without Arrancar. */
+async function refuseStoppedRestart(actor: CancelDeployActor, running: CancelDeployObservation): Promise<Record<string, unknown>> {
+  const { page, baseUrl, tenantId, errors } = actor.fixture;
+  const panel = await openCancelDeployPanel(actor);
+  await panel.getByLabel('¿Qué quieres hacer?').selectOption('stop');
+  const stopped = await enqueueCancelDeploy(actor, panel, 'stop');
+  const afterStop = await observeCancelDeployActor(actor);
+  expect(afterStop).toMatchObject({ id: running.id, running: true, adapterAlive: false, volumes: running.volumes });
+  const known = (await cancelOperations(actor.fixture, actor.alias)).map(row => row.id);
+  const path = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(actor.alias)}/recovery`;
+  errors.expectHttpError(path, 409);
+  await page.goto(`${baseUrl}/terminal/${tenantId}/${actor.alias}?modo=tui`, { waitUntil: 'domcontentloaded' });
+  const region = page.getByRole('region', { name: `Recuperación de ${actor.alias}`, exact: true });
+  await region.getByRole('button', { name: 'Reiniciar agente', exact: true }).click();
+  await region.getByRole('alert').filter({ hasText: STOPPED }).waitFor({ timeout: 60_000 });
+  expect(await region.getByRole('button', { name: 'Confirmar reinicio y reanudar', exact: true }).count()).toBe(0);
+  await cancelDeployCapture(page, 'recover-stopped-refused');
+  const after = await observeCancelDeployActor(actor);
+  expect(after).toMatchObject({ id: running.id, running: true, adapterAlive: false });
+  expect((await cancelOperations(actor.fixture, actor.alias)).map(row => row.id)).toEqual(known);
+  return { stopped, afterStop, after };
+}
+
 export async function runRecoverDeployScenario(fixture: CancelDeployFixture, evidence: Record<string, unknown>,
   assertLive: LiveTurn): Promise<void> {
   const { actor, operation, observed: before } = await createCancelDeployActor(fixture, 'r');
@@ -132,4 +157,5 @@ export async function runRecoverDeployScenario(fixture: CancelDeployFixture, evi
   (evidence.interrupted as Record<string, unknown>).turn = await sameConversation(actor, 'recover-interrupted-relaunched', native, assertLive);
   expect((await cancelOperations(fixture, actor.alias)).filter(row => row.kind === 'recover').map(row => row.status))
     .toEqual(['succeeded', 'succeeded', 'succeeded']);
+  evidence.stopped = await refuseStoppedRestart(actor, afterInterrupt);
 }

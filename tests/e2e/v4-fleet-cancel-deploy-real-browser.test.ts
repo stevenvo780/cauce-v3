@@ -106,7 +106,7 @@ describe('cancelación con despliegue aprobado durante una actualización', () =
     }, { runtimeBundle: cancelDeployTuiRuntime, initialSharedTui: false });
   }, 900_000);
 
-  it('reinicia con el bundle vigente un agente lanzado con la release anterior, también tras Ctrl+C de su adaptador', async () => {
+  it('reinicia con el bundle vigente un agente lanzado con la release anterior, también tras Ctrl+C de su adaptador, sin deshacer Detener', async () => {
     await runCase('recover-deployment', async (fixture, observed) => {
       await runRecoverDeployScenario(fixture, observed, async (actor, phase) => {
         const live: Record<string, unknown> = {};

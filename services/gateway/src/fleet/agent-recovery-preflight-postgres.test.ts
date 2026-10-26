@@ -99,6 +99,27 @@ describe('authorized fleet recovery query over signed host transport', () => {
     expect((await app.inject({ method: 'GET', url: f.path })).statusCode).toBe(403); expect(request).not.toHaveBeenCalled();
     expect((await pool.query('SELECT count(*)::int AS count FROM fleet_operations')).rows).toEqual([{ count: 0 }]);
   });
+  it('rejects Reiniciar for an agent stopped with Detener in the console query and in the durable store', async () => {
+    const f = await fixture(); const request = vi.spyOn(broker.recoveryPreflight, 'request');
+    await pool.query("UPDATE agents SET enabled=false,lifecycle_state='draft' WHERE tenant_id=$1 AND alias=$2", [f.target.tenant_id, f.target.alias]);
+    const response = await app.inject({ method: 'GET', url: f.path, headers: f.headers });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({ error: 'conflict',
+      message: 'El agente está detenido. Arráncalo con «Arrancar»: «Reiniciar agente» solo recupera un agente en marcha.' });
+    expect(request).not.toHaveBeenCalled();
+    const revision = await withTransaction(pool, client => companyRevision(client, f.company.company.id));
+    const identity = { generation: 'a'.repeat(64), container_id: 'b'.repeat(64), writer_instance_id: '00000000-0000-4000-8000-0000000000a1' };
+    for (const force of [false, true]) {
+      await expect(new FleetOperationsRepository(pool).enqueue(f.company.hub.id, 'owner', FleetOperationRequestSchema.parse({ kind: 'recover',
+        target: { resource: 'agent', tenant_id: f.target.tenant_id, alias: f.target.alias }, expected_revision: revision,
+        idempotency_key: `recovery-stopped-${String(force)}`,
+        parameters: { action: 'apply', identity, expected_fingerprint: 'c'.repeat(64), force, strategy: 'relaunch' } }), `console:${f.company.user.id}`))
+        .rejects.toMatchObject({ code: 'conflict', message: 'recovery requires an admitted running agent; a stopped agent is started with start' });
+    }
+    expect((await pool.query('SELECT enabled,lifecycle_state FROM agents WHERE tenant_id=$1 AND alias=$2', [f.target.tenant_id, f.target.alias])).rows)
+      .toEqual([{ enabled: false, lifecycle_state: 'draft' }]);
+    expect((await pool.query('SELECT count(*)::int AS count FROM fleet_operations')).rows).toEqual([{ count: 0 }]);
+  });
   it.each(['recover', 'update', 'stop'] as const)('retains the typed cause for %s through the signed host source, gateway and durable store', async kind => {
     const f = await fixture(); registerHostChannelRoutes(app, pool);
     const revision = await withTransaction(pool, client => companyRevision(client, f.company.company.id));

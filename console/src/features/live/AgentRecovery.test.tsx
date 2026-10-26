@@ -208,3 +208,11 @@ it('relanza con la versión vigente un adaptador de otra release y confirma la e
   await waitFor(() => { expect(recovered).toHaveBeenCalled(); });
   expect(enqueue.mock.calls[0]?.[0].parameters).toEqual({ action: 'apply', identity, expected_fingerprint: fingerprint, force: true, strategy: 'relaunch' });
 });
+
+it('explica que un agente detenido entre la consulta y la confirmación se arranca con Arrancar', async () => {
+  const { user, plan, enqueue } = await open(ready);
+  plan.mockRejectedValue(new Error('recovery requires an admitted running agent; a stopped agent is started with start'));
+  await user.click(await screen.findByRole('button', { name: 'Confirmar reinicio y reanudar' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('El agente está detenido. Arráncalo con «Arrancar»');
+  expect(enqueue).not.toHaveBeenCalled();
+});
