@@ -884,6 +884,26 @@ class ImageRefreshTests(ReleaseFixture):
         self.assertEqual(self.docker.containers[self.name]['Mounts'], before['Mounts'])
         self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
 
+    def test_a_compensation_pins_the_executable_from_the_captured_original_image(self):
+        """Production, 26-oct (Praxis teseo): the update changed the Grok image; restoring the captured original measured
+        the executable in the approved image, which differs by design, so the rollback could never start its adapter."""
+        measured = []
+        for original_image, expected in ((PREVIOUS_IMAGE, PREVIOUS_IMAGE), (None, IMAGE), ('sha256:' + 'f' * 64, IMAGE)):
+            with self.subTest(original_image=original_image):
+                self.docker.containers.clear()
+                measured.clear()
+                self.old_container(root=self.new)
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=False), \
+                        mock.patch.object(container, 'approved_executable_digest',
+                                          side_effect=lambda _policy, agent, _bundle: measured.append(agent['_placement']['image']) or 'a' * 64), \
+                        mock.patch.object(container, 'start_existing_adapter',
+                                          side_effect=lambda _policy, _agent, _observed, bundle, **_kwargs:
+                                          {'runtime_digest': bundle['executable_sha256']}):
+                    result = container.restore_existing_adapter(self.policy, self.agent, bootstrap=False, allow_refresh=False,
+                                                                original_image=original_image)
+                self.assertEqual(result, {'runtime_digest': 'a' * 64})
+                self.assertEqual(measured, [expected])
+
     def test_restoration_without_refresh_refuses_an_unverified_sibling_release_bundle(self):
         worker = self.old / 'adapter/worker.py'
         argv = self.policy['bundles']['codex']['argv']

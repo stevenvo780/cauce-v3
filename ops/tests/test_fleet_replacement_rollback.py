@@ -544,7 +544,8 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
             self.assertEqual(previous, self.agent)
             return self.approved, self.inspect(previous['container_name'])
         def restore(policy, agent, **options):
-            self.assertEqual(options, {'was_running': True, 'bootstrap': False, 'operation_id': None, 'allow_refresh': False})
+            self.assertEqual(options, {'was_running': True, 'bootstrap': False, 'operation_id': None, 'allow_refresh': False,
+                                       'original_image': self.IMAGE})
             self.pins['9' * 64]['started_at'] = 'C'
             return {'runtime_digest': '1' * 64}
         with contextlib.ExitStack() as stack:

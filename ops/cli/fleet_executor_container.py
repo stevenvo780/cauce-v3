@@ -528,7 +528,7 @@ def assert_idle_command(observed: dict) -> None:
 
 def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool = True,
                              bootstrap: bool = False, operation_id: str | None = None,
-                             allow_refresh: bool = True) -> dict:
+                             allow_refresh: bool = True, original_image: str | None = None) -> dict:
     from fleet_executor_image import recover_image, refresh_image, validate_previous
     agent = approve_agent(policy, raw_agent)
     bundle = approved_bundle(policy, agent)
@@ -564,7 +564,10 @@ def restore_existing_adapter(policy: dict, raw_agent: dict, *, was_running: bool
             raise SafeFailure('original container needs the current approved release; preserved without another refresh') from None
         bundle = sibling
     if not allow_refresh and previous['_placement']['image'] != approved['_placement']['image'] and bundle['executable_sha256'] is None:
-        bundle = {**bundle, 'executable_sha256': approved_executable_digest(policy, approved, bundle)}
+        # A compensation restores the exact original it captured before the update: that image, pinned in its journal,
+        # pins the executable. Any other older image must still carry the approved image's executable.
+        pinned = previous if original_image is not None and previous['_placement']['image'] == original_image else approved
+        bundle = {**bundle, 'executable_sha256': approved_executable_digest(policy, pinned, bundle)}
     restart = adapter_restart_state(restored, agent, observed, check_sdk_policy=True)
     if restart['adapter_running']:
         operation_id = restart['adapter_operation_id']
