@@ -368,9 +368,14 @@ def compensation_credentials(policy, packet, rows, journal, journal_path, journa
             revoked.append({'phase': phase, **{name: receipt[name] for name in ('certificate_sha256', 'token_sha256')}})
     if set(prior) != {row[0] for row in rows}:
         raise AuthorityError('credential authority set changed')
+    # Issuing a bootstrap retires the expired record of the same bootstrap principal (see issue); that record was this
+    # operation's own effect, cannot be restored usefully and is not a change by another operation.
+    retired = {name: [record for record in prior[name] if expired(record)
+                      and any(record.get('principal') == mine['principal'] for mine in owned.get(name, []))]
+               for name in prior}
     for name, _, _, observed in rows:
         current = observed['matching_records']
-        if any(record not in current for record in prior[name]) \
+        if any(record not in current and record not in retired[name] for record in prior[name]) \
                 or any(record not in prior[name] and record not in owned[name] for record in current):
             raise AuthorityError('shared authority was removed, replaced or changed by another operation')
     if 'credential_rollback_started' not in journal:
@@ -384,7 +389,9 @@ def compensation_credentials(policy, packet, rows, journal, journal_path, journa
     restored = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False),
                          packet.get('preserve_terminal', False))
     authorities = [{'id': row[0], 'matching_records': row[3]['matching_records']} for row in restored]
-    if authorities != checkpoint['authorities']:
+    if authorities != [{'id': row['id'], 'matching_records': [record for record in row['matching_records']
+                                                              if record not in retired[row['id']]]}
+                       for row in checkpoint['authorities']]:
         raise AuthorityError('shared authority restoration was not observed')
     compensation_normal(policy, packet, restored, checkpoint)
     proof = {'version': 1, **{name: packet[name] for name in names},

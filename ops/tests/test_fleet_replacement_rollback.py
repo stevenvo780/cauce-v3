@@ -69,6 +69,43 @@ class ReplacementCredentialRollbackTest(unittest.TestCase):
         with self.assertRaises(issuer.AuthorityError):
             self.fixture.issue()
 
+    def test_an_expired_bootstrap_retired_by_this_operations_issue_does_not_block_rollback(self):
+        """Production, 26-oct (Praxis teseo): the checkpoint held the bootstrap of an earlier start, expired since; the
+        update's own bootstrap issue retired it, and the rollback refused it as a change by another operation."""
+        self.fixture.scope = {**self.fixture.scope, 'operation_id': '72000000-0000-4000-8000-000000000001'}
+        self.fixture.issue()
+        for name in ('fleet_mtls', 'fleet_token'):
+            location = pathlib.Path(self.fixture.registries[name])
+            document = json.loads(location.read_text())
+            document['identities'] = [{**row, 'expires_at': '2026-01-01T00:00:00Z'}
+                                      if row['principal']['channel'] == 'bootstrap' else row for row in document['identities']]
+            location.write_text(json.dumps(document))
+        self.fixture.scope = {**self.fixture.scope, 'operation_id': '72000000-0000-4000-8000-000000000003'}
+        self.checkpoint = issuer.perform(self.fixture.policy, self.packet('checkpoint_credentials',
+            normal_certificate_sha256=self.normal['certificate_sha256'], normal_token_sha256=self.normal['token_sha256']))
+        expired = self.records()
+        self.fixture.issue()
+        result = self.restore()
+        self.assertEqual(result, self.restore())
+        after = self.records()
+        for name in ('fleet_mtls', 'fleet_token'):
+            self.assertEqual(after[name]['identities'],
+                             [row for row in expired[name]['identities'] if row['principal']['channel'] != 'bootstrap'])
+
+    def test_an_unexpired_bootstrap_of_another_operation_still_blocks_rollback(self):
+        self.fixture.scope = {**self.fixture.scope, 'operation_id': '72000000-0000-4000-8000-000000000001'}
+        self.fixture.issue()
+        self.fixture.scope = {**self.fixture.scope, 'operation_id': '72000000-0000-4000-8000-000000000003'}
+        self.checkpoint = issuer.perform(self.fixture.policy, self.packet('checkpoint_credentials',
+            normal_certificate_sha256=self.normal['certificate_sha256'], normal_token_sha256=self.normal['token_sha256']))
+        for name in ('fleet_mtls', 'fleet_token'):
+            location = pathlib.Path(self.fixture.registries[name])
+            document = json.loads(location.read_text())
+            document['identities'] = [row for row in document['identities'] if row['principal']['channel'] != 'bootstrap']
+            location.write_text(json.dumps(document))
+        with self.assertRaisesRegex(issuer.AuthorityError, 'another operation'):
+            self.restore()
+
     def test_partial_registration_after_issuance_journal_is_reconciled(self):
         before = self.records()
         publish = issuer.publish
