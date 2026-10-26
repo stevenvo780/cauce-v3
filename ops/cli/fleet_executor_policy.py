@@ -105,10 +105,19 @@ def validate_extensions_allowed(value) -> dict:
     return value
 
 
-def extension_resources(row: dict) -> tuple[int, int, int]:
+DEFAULT_PIDS = 128
+# The grok-native TUI alone runs about 80 threads; its headless auth probe fails at the base limit.
+HARNESS_PIDS = {'grok': 512}
+
+
+def default_pids(agent: dict) -> int:
+    return HARNESS_PIDS.get(agent.get('harness_id'), DEFAULT_PIDS)
+
+
+def extension_resources(row: dict, default: int = DEFAULT_PIDS) -> tuple[int, int, int]:
     if set(row) - {'type', 'memory', 'cpus', 'pids'} or not set(row) & {'memory', 'cpus', 'pids'}:
         raise SafeFailure('invalid resources extension fields')
-    memory, cpus, pids = 0, 0, row.get('pids', 128)
+    memory, cpus, pids = 0, 0, row.get('pids', default)
     if 'memory' in row:
         match = re.fullmatch(r'([1-9][0-9]*)([bkmgBKMG]?)', row['memory']) if isinstance(row['memory'], str) and len(row['memory']) <= 32 else None
         if match is None:

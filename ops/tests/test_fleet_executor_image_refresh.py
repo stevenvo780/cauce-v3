@@ -444,6 +444,77 @@ class ImageRefreshTests(ReleaseFixture):
         mount = next(row for row in after['Mounts'] if row['Destination'] == '/fixture-data')
         self.assertEqual((mount['Source'], mount['Mode'], mount['Propagation']), (str(source), 'rw,z', 'rprivate'))
 
+    def grok_container(self, extensions=(), pids=None):
+        self.policy['bundles']['grok'] = self.policy['bundles']['codex']
+        self.policy['extensions_allowed'] = {'types': ['resources'], 'mount_roots': [], 'networks': []}
+        self.agent.update(harness_id='grok', extensions=list(extensions))
+        before = container.create_container(self.policy, self.agent)
+        self.docker('start', before['Id'])
+        before = self.docker.containers[self.name]
+        self.docker.register_adapter(self.agent, before, self.policy['bundles']['grok']['digest'])
+        if pids is not None:
+            before['HostConfig']['PidsLimit'] = pids
+        self.docker.calls.clear()
+        return copy.deepcopy(before)
+
+    def test_grok_defaults_to_more_processes_even_when_resources_set_only_memory_or_cpu(self):
+        self.assertEqual(self.grok_container()['HostConfig']['PidsLimit'], 512)
+        for row in ({'type': 'resources', 'memory': '256m'}, {'type': 'resources', 'cpus': 0.5}):
+            with self.subTest(resources=row):
+                self.docker.containers.clear()
+                self.assertEqual(extension_resources(row, 512)[2], 512)
+                self.assertEqual(self.grok_container([row])['HostConfig']['PidsLimit'], 512)
+        self.docker.containers.clear()
+        self.assertEqual(self.grok_container([{'type': 'resources', 'pids': 256}])['HostConfig']['PidsLimit'], 256)
+        self.assertEqual(extension_resources({'type': 'resources', 'memory': '256m'})[2], 128)
+
+    def test_grok_container_left_at_the_base_pids_limit_stays_usable_and_is_replaced_in_place(self):
+        for extensions in ([], [{'type': 'resources', 'memory': '256m'}]):
+            with self.subTest(extensions=extensions):
+                self.docker.containers.clear()
+                before = self.grok_container(extensions, pids=128)
+                container.validate_container(self.policy, self.agent, self.docker.containers[self.name])
+                self.docker.live.add(self.name)
+                self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+                self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                self.assertFalse(any(call[0] in {'create', 'rename', 'rm'} for call in self.docker.calls))
+                after = container.observe_container(self.policy, self.agent)
+                self.assertNotEqual(after['Id'], before['Id'])
+                self.assertEqual((after['HostConfig']['PidsLimit'], after['HostConfig']['Memory']),
+                                 (512, before['HostConfig']['Memory']))
+                self.assertEqual((after['Image'], after['Config']['Labels'], after['State']['Running']),
+                                 (before['Image'], before['Config']['Labels'], True))
+                self.assertEqual(after['Mounts'], before['Mounts'])
+                self.assertEqual(set(self.docker.containers), {self.name})
+                self.assertEqual(json.loads(self.receipt().read_text())['status'], 'succeeded')
+                self.docker.calls.clear()
+                self.assertEqual(container.observe_container(self.policy, self.agent)['Id'], after['Id'])
+                self.assertEqual(self.mutating_calls(), [])
+
+    def test_only_the_base_limit_of_an_implicit_harness_default_is_replaceable_drift(self):
+        cases = {
+            'grok_other_limit': ('grok', [], 256),
+            'grok_unlimited': ('grok', [], None),
+            'grok_explicit_pids': ('grok', [{'type': 'resources', 'pids': 256}], 128),
+            'codex_above_base': ('codex', [], 512),
+        }
+        for name, (harness, extensions, limit) in cases.items():
+            with self.subTest(drift=name):
+                self.docker.containers.clear()
+                before = self.grok_container(extensions)
+                self.agent['harness_id'] = harness
+                if harness == 'codex':
+                    self.docker.containers.clear()
+                    before = copy.deepcopy(container.create_container(self.policy, self.agent))
+                self.docker.containers[self.name]['HostConfig']['PidsLimit'] = limit
+                self.docker.calls.clear()
+                with self.assertRaisesRegex(SafeFailure, 'resource limits differ'):
+                    container.validate_container(self.policy, self.agent, self.docker.containers[self.name])
+                with self.assertRaisesRegex(SafeFailure, 'resource limits differ'):
+                    container.ensure_container(self.policy, self.agent)
+                self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+                self.assertEqual(self.mutating_calls(), [])
+
     def test_receipt_and_event_are_attached_to_the_operation(self):
         operation = str(uuid.uuid4())
         self.old_container()

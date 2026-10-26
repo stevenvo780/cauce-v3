@@ -6,7 +6,7 @@ Un contenedor de agente V4 nace con el perfil más seguro:
 - `no-new-privileges`;
 - una sola red;
 - cinco montajes;
-- 128 procesos.
+- 128 procesos; 512 para el arnés `grok`, cuya TUI y sonda de autenticación necesitan más hilos.
 
 Así sigue siendo por defecto. Una **ampliación** es un permiso con nombre que el dueño añade a un agente concreto cuando ese agente lo necesita para su trabajo. Cada ampliación se ve en su ficha con lo que permite y su riesgo. Se puede quitar y queda registrada en el historial de configuración.
 
@@ -30,7 +30,7 @@ Cambiar las ampliaciones de un agente obliga a recrear su contenedor. La consola
 
 La operación debe enviar directamente `fleet update` con `parameters.extensions`; guardar antes una mutación de configuración perdería la declaración anterior necesaria para decidir la recreación. La mutación `host_extensions_allowed` rechaza retirar tipos, raíces, redes o niveles Docker que un agente aún declara. Primero se quita la ampliación y se completa su recreación; después se reduce el permiso del ordenador y se descarga su paquete de setup firmado actualizado.
 
-Los límites de recursos de un agente solo existen como ampliación `resources` (`memory`, `cpus`, `pids`). No hay un segundo camino de límites fuera de esa declaración: una herramienta que traslada un agente rechaza un campo de límites suelto en su plan y exige declararlos en `extensions` antes de crear el destino, para que la forma aprobada, la validación del contenedor y el traslado hablen de lo mismo. Un contenedor cuyos límites observados no coinciden con esa forma se detecta como deriva de límites (`CONTAINER_RESOURCE_LIMITS_DRIFT`, ver [Autenticación de proveedores](v4-autenticacion-runtime.md)).
+Los límites de recursos de un agente solo existen como ampliación `resources` (`memory`, `cpus`, `pids`). No hay un segundo camino de límites fuera de esa declaración: una herramienta que traslada un agente rechaza un campo de límites suelto en su plan y exige declararlos en `extensions` antes de crear el destino, para que la forma aprobada, la validación del contenedor y el traslado hablen de lo mismo. Un contenedor cuyos límites observados no coinciden con esa forma se detecta como deriva de límites (`CONTAINER_RESOURCE_LIMITS_DRIFT`, ver [Autenticación de proveedores](v4-autenticacion-runtime.md)). La única excepción es el límite de procesos base de 128 en un agente cuyo arnés tiene ahora un valor por defecto mayor y que no fija `pids`: ese contenedor sigue siendo válido para arrancar, parar y consultar, y la siguiente observación que lo prepara lo recrea in situ con el nuevo límite, igual que con una imagen o un release nuevos.
 
 ## Tipos
 

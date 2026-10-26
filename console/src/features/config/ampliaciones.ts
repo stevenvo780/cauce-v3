@@ -80,6 +80,15 @@ export function readAgentExtensions(snapshot: ConfigurationSnapshot, tenantId: s
   return parseExtensions(row.extensions);
 }
 
+const BASE_PIDS = 128;
+const HARNESS_PIDS: Readonly<Partial<Record<string, number>>> = { grok: 512 };
+
+/** Process limit the executor applies when no resources extension sets `pids`. */
+export function defaultPids(snapshot: ConfigurationSnapshot, tenantId: string, alias: string): number {
+  const harness = snapshot.agents?.find((item) => item.tenant_id === tenantId && item.alias === alias)?.harness_id;
+  return (typeof harness === 'string' ? HARNESS_PIDS[harness] : undefined) ?? BASE_PIDS;
+}
+
 function text(value: string | undefined, fallback = ''): string {
   return value ?? fallback;
 }

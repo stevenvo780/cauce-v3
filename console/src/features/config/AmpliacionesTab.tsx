@@ -4,7 +4,7 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { Button, Notice, Pill, PREVIEW } from '../../components/kit';
 import { HINT } from './config-ui';
 import {
-  catalogEntry, EXTENSION_CATALOG, extensionRisk, extensionSummary,
+  catalogEntry, defaultPids, EXTENSION_CATALOG, extensionRisk, extensionSummary,
   readAgentExtensions, readHostAllowed, RISK_LABEL, RISK_TONE, validateDraft,
   type AgentExtension, type ExtensionType,
 } from './ampliaciones';
@@ -15,8 +15,8 @@ import './agent-lifecycle.css';
 
 const EMPTY_FIELDS: Record<string, string> = {};
 
-function DraftFields({ type, fields, disabled, onChange }: {
-  type: ExtensionType; fields: Partial<Record<string, string>>; disabled: boolean;
+function DraftFields({ type, fields, disabled, basePids, onChange }: {
+  type: ExtensionType; fields: Partial<Record<string, string>>; disabled: boolean; basePids: number;
   onChange: (patch: Partial<Record<string, string>>) => void;
 }) {
   const set = (key: string) => (event: { target: { value: string } }) => { onChange({ [key]: event.target.value }); };
@@ -30,7 +30,7 @@ function DraftFields({ type, fields, disabled, onChange }: {
   if (type === 'resources') return <div className="grid gap-3 sm:grid-cols-3">
     <label>Memoria<input value={fields.memory ?? ''} placeholder="2g" disabled={disabled} onChange={set('memory')} /></label>
     <label>CPU<input value={fields.cpus ?? ''} placeholder="1.5" disabled={disabled} onChange={set('cpus')} /></label>
-    <label>Procesos (máx. 4096)<input type="number" min={1} max={4096} value={fields.pids ?? ''} disabled={disabled} onChange={set('pids')} /></label>
+    <label>Procesos (máx. 4096)<input type="number" min={1} max={4096} value={fields.pids ?? ''} placeholder={String(basePids)} disabled={disabled} onChange={set('pids')} /></label>
   </div>;
   if (type === 'ssh') return <label className="grid gap-1">Destinos (uno por línea, usuario@host[:puerto])
     <textarea rows={3} value={fields.hosts ?? ''} placeholder={'usuario@servidor.example.invalid:22'} disabled={disabled} onChange={set('hosts')} /></label>;
@@ -68,6 +68,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
 }) {
   const { known, published } = readAgentExtensions(snapshot, tenantId, alias);
   const allowed = readHostAllowed(snapshot, hostId, hostRaw);
+  const basePids = defaultPids(snapshot, tenantId, alias);
   if (!published || (hostId && !allowed.published)) throw new Error('Invalid extensions configuration snapshot');
   const target = useMemo(() => ({ resource: 'agent' as const, tenant_id: tenantId, alias }), [tenantId, alias]);
   const [draft, setDraft] = useState<AgentExtension[] | undefined>();
@@ -117,7 +118,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
   return <div className="agent-lifecycle-panel grid gap-4">
     <p className="m-0 text-[13px] leading-relaxed text-fg-2">
       Sin ampliaciones, el contenedor nace con el perfil más seguro: raíz de solo lectura, capacidades mínimas,
-      una sola red y 128 procesos. Cada ampliación añade un permiso con nombre a este agente.
+      una sola red y {basePids} procesos. Cada ampliación añade un permiso con nombre a este agente.
     </p>
     <Notice tone="warn" role="note">
       Cambiar las ampliaciones obliga a <strong>recrear el contenedor</strong> del agente (se detiene, se recrea
@@ -175,7 +176,7 @@ export function AmpliacionesTab({ tenantId, alias, snapshot, hostId, hostRaw, on
       </ul>
       {adding ? <div className="grid gap-3 rounded-lg border border-line bg-surface p-3" aria-label={`Formulario de ${catalogEntry(adding).label}`}>
         <h4 className="m-0 text-[13px] font-semibold">{catalogEntry(adding).label} · {catalogEntry(adding).riskLabel}</h4>
-        <DraftFields type={adding} fields={fields} disabled={disabled}
+        <DraftFields type={adding} fields={fields} disabled={disabled} basePids={basePids}
           onChange={(patch) => { setFields((previous) => ({ ...previous, ...patch })); operational.clear(); }} />
         {adding === 'full_control' ? <Notice tone="danger" role="alert">
           Control total: raíz escribible y sin cap-drop. Solo para agentes de infraestructura.

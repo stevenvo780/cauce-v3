@@ -9,10 +9,12 @@ import tempfile
 import uuid
 
 from fleet_executor_policy import (
+    DEFAULT_PIDS,
     SafeFailure,
     agent_extensions,
     approve_agent,
     approve_extensions,
+    default_pids,
     extension_resources,
     path,
 )
@@ -155,7 +157,17 @@ def observe_container(policy: dict, agent: dict) -> dict | None:
         return refresh_image(policy, agent, observed)
     from fleet_executor_rebind import bound_release, rebind
     previous = bound_release(observed, RELEASE_ROOT)
-    return observed if previous is None else rebind(policy, agent, observed, previous, RELEASE_ROOT)
+    if previous is not None:
+        return rebind(policy, agent, observed, previous, RELEASE_ROOT)
+    legacy = replaceable_pids(agent, agent_extensions(agent))
+    return refresh_image(policy, agent, observed) if legacy is not None and observed['HostConfig'].get('PidsLimit') == legacy else observed
+
+
+def replaceable_pids(agent: dict, rows: list[dict]) -> int | None:
+    """A container created before its harness default rose keeps the base limit until it is replaced in place."""
+    if default_pids(agent) == DEFAULT_PIDS or any(row['type'] == 'resources' and 'pids' in row for row in rows):
+        return None
+    return DEFAULT_PIDS
 
 
 def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = False) -> dict:
@@ -164,7 +176,7 @@ def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = 
     protected = [path(value) for value in [*binds, placement['state_root'], '/run', '/proc', '/sys', '/dev']]
     if placement.get('profile_root'):
         protected.append(path(placement['profile_root']))
-    mounts, networks, memory, cpus, pids = {}, set(), 0, 0, 128
+    mounts, networks, memory, cpus, pids = {}, set(), 0, 0, default_pids(agent)
     for row in rows:
         if row['type'] == 'mount':
             target = path(row['target'])
@@ -176,7 +188,7 @@ def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = 
         elif row['type'] == 'network':
             networks.add(row['name'])
         elif row['type'] == 'resources':
-            memory, cpus, pids = extension_resources(row)
+            memory, cpus, pids = extension_resources(row, pids)
     base_network = policy.get('transport', {}).get('network', 'none')
     if networks and base_network in {'none', 'host'}:
         raise SafeFailure('network extensions require an isolated base Docker network')
@@ -185,6 +197,7 @@ def extension_shape(policy: dict, agent: dict, binds: dict, *, teardown: bool = 
                                     for target in mounts):
         raise SafeFailure('mount extension overlaps the model fallback socket')
     return {'mounts': mounts, 'networks': {base_network, *networks}, 'memory': memory, 'cpus': cpus, 'pids': pids,
+            'replaceable_pids': replaceable_pids(agent, rows),
             'full_control': any(row['type'] == 'full_control' for row in rows), 'gpu': any(row['type'] == 'gpu' for row in rows),
             'fallback': fallback}
 
@@ -238,7 +251,8 @@ def validate_isolation(policy: dict, agent: dict, observed: dict, shape: dict, *
             or host.get('Tmpfs') != {'/run': 'rw,nosuid,noexec,size=16m'}:
         raise SafeFailure('container isolation differs from the approved shape')
     if any(host.get(key) != value for key, value in {'Memory': shape['memory'], 'MemorySwap': shape['memory'] * 2,
-            'NanoCpus': shape['cpus'], 'PidsLimit': shape['pids']}.items()) \
+            'NanoCpus': shape['cpus']}.items()) \
+            or host.get('PidsLimit') not in {shape['pids'], shape['replaceable_pids']} - {None} \
             or any(host.get(key, 0) != 0 for key in ('CpuShares', 'CpuPeriod', 'CpuQuota', 'CpuRealtimePeriod', 'CpuRealtimeRuntime', 'MemoryReservation', 'BlkioWeight')) \
             or any(host.get(key, '') != '' for key in ('CpusetCpus', 'CpusetMems')):
         raise SafeFailure('container resource limits differ from the approved shape')

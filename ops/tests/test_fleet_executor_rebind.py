@@ -140,7 +140,9 @@ class FakeDocker:
             mounts.append({'Type': 'bind', 'Source': parts[0], 'Destination': parts[1],
                            'RW': 'rw' in parts[-1].split(',')})
         labels = dict(value.split('=', 1) for value in options['--label'])
-        self.add(options['--name'][0], labels, mounts, running=False)
+        row = self.add(options['--name'][0], labels, mounts, running=False)
+        if '--pids-limit' in options:
+            row['HostConfig']['PidsLimit'] = int(options['--pids-limit'][0])
         return b''
 
 

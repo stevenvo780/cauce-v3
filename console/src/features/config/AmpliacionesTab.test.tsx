@@ -45,6 +45,19 @@ it('renders the published empty state and host policy while preserving local dra
   expect(screen.getByRole('heading', { name: 'Ampliaciones activas (0)' })).toBeVisible();
 });
 
+it('shows the process limit the harness gets without a resources extension', async () => {
+  const { unmount } = renderExtensions();
+  expect(screen.getByText(/una sola red y 128 procesos/)).toBeVisible();
+  unmount();
+  renderExtensions({ ...snapshot, agents: [{ tenant_id: 'A', alias: 'worker', harness_id: 'grok', extensions: [] }],
+    host_extensions_allowed: [{ host_id: 'test-host', extensions_allowed: { types: ['resources'], mount_roots: [], networks: [] } }] });
+  expect(screen.getByText(/una sola red y 512 procesos/)).toBeVisible();
+  const add = screen.getByRole('button', { name: 'Añadir ampliación Recursos' });
+  await waitFor(() => { expect(add).toBeEnabled(); });
+  await userEvent.setup().click(add);
+  expect(screen.getByRole('spinbutton', { name: 'Procesos (máx. 4096)' })).toHaveAttribute('placeholder', '512');
+});
+
 it('distinguishes a published empty host policy from an agent without an assigned computer', () => {
   const { unmount } = renderExtensions({ ...snapshot, host_extensions_allowed: [
     { host_id: 'test-host', extensions_allowed: { types: [], mount_roots: [], networks: [] } },
