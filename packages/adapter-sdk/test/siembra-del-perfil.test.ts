@@ -131,6 +131,18 @@ test("encendido, escribe el fichero del arnés en su sitio", () => {
   assert.ok(bloqueDePerfil(escrito) !== undefined, "no quedó un bloque legible");
 });
 
+test("un fallo al generar que no es un tope NO escribe nada y el log dice por qué", () => {
+  const d = disco();
+  const resultado = sembrarPerfilDelArnes("claude", contexto({ responsibilities: null as never }), {
+    habilitado: true, disco: d.puerto, entorno: ENTORNO,
+  });
+  assert.equal(resultado.estado, "no-se-genero");
+  assert.equal(d.escrituras.length, 0);
+  const resumen = resumenDeLaSiembra(resultado);
+  assert.match(resumen, /no se pudieron generar los ficheros: \S/u);
+  assert.doesNotMatch(resumen, /desconocido/u);
+});
+
 // ── WHAT IS NOT OVERWRITTEN ──────────────────────────────────────────────────────────────────
 
 test("lo que escribió una persona se conserva BYTE A BYTE", () => {

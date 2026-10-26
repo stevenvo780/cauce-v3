@@ -40,6 +40,8 @@ export type ResultadoDeLaSiembra =
     readonly estado: "no-entra"; readonly fichero: string; readonly medido: number;
     readonly tope: number; readonly unidad: UnidadDeTope; readonly fuente: FuenteDeTope;
   }
+  /** Generating the files failed for a reason other than a cap. NONE is written; `motivo` says why. */
+  | { readonly estado: "no-se-genero"; readonly motivo: string }
   | { readonly estado: "hecho"; readonly ficheros: readonly ResultadoDeFichero[] };
 
 /** Disk, injectable so seeding can be tested without touching the file system. */
@@ -537,10 +539,8 @@ export function sembrarPerfilDelArnes(
         unidad: error.unidad, fuente: error.fuente,
       };
     }
-    return {
-      estado: "no-entra", fichero: "desconocido", medido: 0, tope: 0,
-      unidad: topes?.unit ?? "utf16_strictest", fuente: topes?.fuente ?? "default",
-    };
+    // Not a cap: reporting it as one («desconocido mide 0 … el tope es 0») hid the real cause (hades 26-oct).
+    return { estado: "no-se-genero", motivo: (error instanceof Error ? error.message : String(error)).slice(0, 400) };
   }
 
   if (revisionNativa !== undefined && generados.some((fichero) => !existentes.has(fichero.nombre))) {
@@ -628,6 +628,9 @@ export function resumenDeLaSiembra(resultado: ResultadoDeLaSiembra): string {
   }
   if (resultado.estado === "sin-directorio") {
     return `siembra del perfil: el arnés «${resultado.harness}» no tiene un directorio absoluto medido`;
+  }
+  if (resultado.estado === "no-se-genero") {
+    return `siembra del perfil: NO se escribió nada, no se pudieron generar los ficheros: ${resultado.motivo}`;
   }
   if (resultado.estado === "no-entra") {
     return `siembra del perfil: NO se escribió nada, ${resultado.fichero} mide `
