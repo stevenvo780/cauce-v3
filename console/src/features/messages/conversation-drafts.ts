@@ -12,38 +12,15 @@ interface ConversationDraft {
 const EMPTY_DRAFT: ConversationDraft = { text: '', files: [], lane: 'interactive', sending: false };
 type DraftUpdate = (current: ConversationDraft) => ConversationDraft;
 
+// Drafts live only in memory for the console's lifetime: the console never writes conversation text to browser storage.
 export class ConversationDraftStore {
   private drafts = new Map<string, ConversationDraft>();
   private listeners = new Set<() => void>();
-  constructor(private readonly persistent = false) {}
-  get(key: string, persistenceKey?: string) {
-    const existing = this.drafts.get(key);
-    if (existing) return existing;
-    let draft = EMPTY_DRAFT;
-    if (this.persistent && persistenceKey) {
-      try {
-        const saved: unknown = JSON.parse(sessionStorage.getItem(`cauce.chat-draft.v1:${persistenceKey}`) ?? 'null');
-        if (saved && typeof saved === 'object' && 'text' in saved && typeof saved.text === 'string'
-          && 'lane' in saved && (saved.lane === 'interactive' || saved.lane === 'batch')
-          && (!('roomId' in saved) || typeof saved.roomId === 'string')) {
-          draft = { ...EMPTY_DRAFT, text: saved.text, lane: saved.lane,
-            ...('roomId' in saved ? { roomId: saved.roomId as string } : {}) };
-        }
-      } catch { /* Storage can be unavailable in private browsing or when its quota is exhausted. */ }
-    }
-    this.drafts.set(key, draft);
-    return draft;
+  get(key: string) {
+    return this.drafts.get(key) ?? EMPTY_DRAFT;
   }
-  update(key: string, update: DraftUpdate, persistenceKey?: string) {
-    const next = update(this.get(key, persistenceKey));
-    this.drafts.set(key, next);
-    if (this.persistent && persistenceKey) {
-      try {
-        const storageKey = `cauce.chat-draft.v1:${persistenceKey}`;
-        if (!next.text && !next.roomId && next.lane === 'interactive') sessionStorage.removeItem(storageKey);
-        else sessionStorage.setItem(storageKey, JSON.stringify({ text: next.text, lane: next.lane, roomId: next.roomId }));
-      } catch { /* Draft editing must remain available when storage is unavailable. */ }
-    }
+  update(key: string, update: DraftUpdate) {
+    this.drafts.set(key, update(this.get(key)));
     this.listeners.forEach((listener) => { listener(); });
   }
   subscribe = (listener: () => void) => {
@@ -54,12 +31,12 @@ export class ConversationDraftStore {
 
 export const ConversationDrafts = createContext<ConversationDraftStore | undefined>(undefined);
 
-export function useConversationDraft(key: string, persistenceKey?: string) {
+export function useConversationDraft(key: string) {
   const shared = useContext(ConversationDrafts);
   const [local] = useState(() => new ConversationDraftStore());
   const store = shared ?? local;
-  const get = useCallback(() => store.get(key, persistenceKey), [store, key, persistenceKey]);
+  const get = useCallback(() => store.get(key), [store, key]);
   const draft = useSyncExternalStore(store.subscribe, get, get);
-  const update = useCallback((next: DraftUpdate) => { store.update(key, next, persistenceKey); }, [store, key, persistenceKey]);
+  const update = useCallback((next: DraftUpdate) => { store.update(key, next); }, [store, key]);
   return [draft, update] as const;
 }
