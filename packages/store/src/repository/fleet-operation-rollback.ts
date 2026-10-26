@@ -89,6 +89,12 @@ export async function describesFleetCompensationTarget(client: DatabaseClient, s
     if (previous === undefined || prepared.compensation_snapshot === undefined
         || !canRestoreFleetUpdate({ desired_revision: row.desired_revision === null ? null : Number(row.desired_revision), steps: row.steps },
           row.request, prepared.previous_agents, prepared.compensation_snapshot)) continue;
+    // Only the operation that admitted the state being restored qualifies: the last create or update that settled before the
+    // failed update. An older settled operation with the same runtime fields describes a configuration that was replaced since.
+    const admitted = (await client.query<{ id: string }>(`SELECT id FROM fleet_operations WHERE company_id=$1 AND target=$2::jsonb
+      AND kind IN ('create','update') AND status='succeeded' AND created_at < (SELECT created_at FROM fleet_operations WHERE id=$3)
+      ORDER BY created_at DESC,id DESC LIMIT 1`, [settled.company_id, JSON.stringify(settled.target), row.id])).rows[0];
+    if (admitted?.id !== settled.id) continue;
     const desired = request.parameters;
     if (desired.runtime_key === previous.runtime_key && desired.harness_id === previous.harness_id
         && desired.primary_account_id === previous.primary_account_id && (desired.model_id ?? null) === (previous.model_id ?? null)

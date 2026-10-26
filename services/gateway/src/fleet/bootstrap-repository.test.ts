@@ -430,6 +430,11 @@ describe('state of an original runtime while its update compensation is pending'
     expect((await pool.query("SELECT reasoning_effort FROM agents WHERE alias='comp-agent'")).rows).toEqual([{ reasoning_effort: 'high' }]);
     // The rows hold the failed update until its compensation settles; the restarted original must still read its admission.
     expect(await repository.state(compensated, settled, 'normal')).toMatchObject({ status: 'succeeded', normal_admitted: false });
+    // An older settled operation of the same agent was replaced by the maintenance: the restoration does not revive it.
+    const older = (await pool.query<{ id: string }>(`SELECT id FROM fleet_operations WHERE target->>'alias'='comp-agent'
+      AND status='succeeded' AND id<>$1 ORDER BY created_at LIMIT 1`, [settled])).rows[0];
+    if (!older) throw new Error('older operation absent');
+    await expect(repository.state(compensated, older.id, 'normal')).rejects.toBeDefined();
     // Without a sealed restoration the changed rows still revoke the maintenance authority.
     await pool.query('UPDATE fleet_operations SET cancel_requested=false WHERE id=$1', [update]);
     await expect(repository.state(compensated, settled, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
