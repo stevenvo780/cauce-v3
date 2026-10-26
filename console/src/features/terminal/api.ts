@@ -334,13 +334,13 @@ export async function listTerminalTargets(): Promise<TerminalTargetsSnapshot> {
       items,
       ...(items ? {} : {
         reason: invalidInventory
-          ? 'El gateway publicó un inventario PTY parcial, duplicado o mal formado; no se asumió autoridad sobre ningún destino.'
-          : 'El gateway no publicó una lista de targets verificable.',
+          ? 'El servidor publicó una lista de destinos de terminal incompleta, repetida o con errores; no se asumió autoridad sobre ningún destino.'
+          : 'El servidor no publicó una lista de destinos verificable.',
       }),
     };
   } catch (error) {
     if (error instanceof TerminalApiError && (error.status === 404 || error.status === 501)) {
-      return { items: null, reason: 'El gateway no expone el inventario de targets PTY.' };
+      return { items: null, reason: 'El servidor no expone la lista de destinos de terminal.' };
     }
     throw error;
   }
@@ -376,7 +376,7 @@ export function createTerminalSession(
     // another tab or be outright hostile. The UI re-reads the exact operator inventory and only
     // exposes an explicit DELETE on a visible row; we never revoke blindly here.
     throw new TerminalApiError(
-      'El gateway devolvió un grant PTY incompleto. No se usó su session_id para revocar nada; se debe conciliar contra el inventario exacto de sesiones visibles.',
+      'El servidor devolvió un permiso de terminal incompleto. No se cerró nada con él; hay que comparar con la lista exacta de sesiones visibles.',
       409,
       'invalid_grant_receipt',
     );
@@ -653,7 +653,7 @@ export function deleteTerminalSession(
   ).then(({ status, body }) => {
     if (status !== 204 || body !== undefined) {
       throw new TerminalApiError(
-        'El gateway no devolvió el recibo vacío 204 que acredita la liberación de la sesión PTY.',
+        'El servidor no devolvió la confirmación que acredita la liberación de la sesión de terminal.',
         409,
         'invalid_release_receipt',
       );
@@ -689,7 +689,7 @@ export function rotateTerminalSessionOwner(
     session,
   ).then(({ status, body }) => {
     if (status !== 200 || body === null || typeof body !== 'object' || Array.isArray(body)) {
-      throw new TerminalApiError('El gateway no acreditó el takeover de la sesión PTY.', 409, 'invalid_owner_receipt');
+      throw new TerminalApiError('El servidor no confirmó la toma de control de la sesión de terminal.', 409, 'invalid_owner_receipt');
     }
     const record = body as Record<string, unknown>;
     const generation = positiveBigint(record.owner_generation);
@@ -700,7 +700,7 @@ export function rotateTerminalSessionOwner(
         || generation === undefined
         || expected === undefined
         || BigInt(generation) !== BigInt(expected) + 1n) {
-      throw new TerminalApiError('El gateway devolvió un takeover PTY ambiguo.', 409, 'invalid_owner_receipt');
+      throw new TerminalApiError('El servidor devolvió una toma de control ambigua.', 409, 'invalid_owner_receipt');
     }
     return { request_id: current.request_id, owner_generation: generation, owner_token: ownerToken,
       authority_proof: current.authority_proof };
@@ -736,7 +736,7 @@ export async function listTerminalSessions(session?: SesionConToken): Promise<Te
       || !hasExactKeys(payload, ['items'])
       || !Array.isArray(payload.items)) {
     throw new TerminalApiError(
-      'El gateway no devolvió un inventario verificable de sesiones PTY.', 409, 'invalid_sessions_receipt',
+      'El servidor no devolvió una lista verificable de sesiones de terminal.', 409, 'invalid_sessions_receipt',
     );
   }
   const result: TerminalSessionListItem[] = [];
@@ -744,7 +744,7 @@ export async function listTerminalSessions(session?: SesionConToken): Promise<Te
   for (const item of payload.items as unknown[]) {
     if (item === null || typeof item !== 'object' || Array.isArray(item)) {
       throw new TerminalApiError(
-        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+        'El servidor devolvió una sesión de terminal con errores.', 409, 'invalid_sessions_receipt',
       );
     }
     const record = item as Record<string, unknown>;
@@ -753,7 +753,7 @@ export async function listTerminalSessions(session?: SesionConToken): Promise<Te
       'request_id', 'owner_generation',
     ])) {
       throw new TerminalApiError(
-        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+        'El servidor devolvió una sesión de terminal con errores.', 409, 'invalid_sessions_receipt',
       );
     }
     const sessionId = boundedOpaque(record.session_id, 256);
@@ -770,7 +770,7 @@ export async function listTerminalSessions(session?: SesionConToken): Promise<Te
         || (state !== 'issued' && state !== 'active' && state !== 'closed')
         || !requestId || ownerGeneration === undefined || seen.has(sessionId)) {
       throw new TerminalApiError(
-        'El gateway devolvió una sesión PTY mal formada.', 409, 'invalid_sessions_receipt',
+        'El servidor devolvió una sesión de terminal con errores.', 409, 'invalid_sessions_receipt',
       );
     }
     seen.add(sessionId);

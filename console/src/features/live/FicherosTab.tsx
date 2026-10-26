@@ -73,7 +73,7 @@ export function FicherosTab({
   if (mapa.data && !mapa.data.publicado) {
     return (
       <EmptyState>
-        <strong>Este gateway todavía no publica el mapa de ficheros.</strong>{' '}
+        <strong>Este servidor todavía no publica el mapa de ficheros.</strong>{' '}
         {mapa.data.motivo ?? ''} No significa que estos agentes no tengan CLAUDE.md: significa que
         desde aquí no se ha mirado.
       </EmptyState>
@@ -156,7 +156,7 @@ function FilaDeFichero(
   const readable = item.readable === true;
   const editable = canEdit && !mutationBlocked;
   const reason = item.reason ?? (!readable
-    ? 'El gateway no acreditó que este contenido sea servible; no se envió ninguna lectura.'
+    ? 'El servidor no acreditó que este contenido sea servible; no se envió ninguna lectura.'
     : undefined);
   const modeLabel = !readable
     ? 'no se sirve'

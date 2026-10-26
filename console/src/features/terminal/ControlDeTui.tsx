@@ -18,6 +18,15 @@ import { NegativaPty } from './NegativaPty';
 import { YIELDS_FOCUS_ATTRIBUTE } from './pty-focus';
 import type { PtyChannelState } from './pty-types';
 
+/** Receipt fields shown to the person in their own words. */
+const DATO_DE_ARRIENDO: Readonly<Record<string, string>> = {
+  cuerpo: 'el contenido',
+  session_id: 'la sesión',
+  hold_id: 'el número de reserva',
+  held_by: 'quién la tiene',
+  expires_at: 'cuándo vence',
+};
+
 const BOTON = 'inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border-0 px-2.5 text-[13px] font-medium bg-brand text-on-brand hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50';
 const AVISO = 'm-0 rounded-md bg-warn-soft px-2 py-1 text-xs text-warn-ink';
 
@@ -38,8 +47,8 @@ const ETIQUETA_DE_FASE: Readonly<Record<FaseDeToma, string>> = {
 
 const NO_SE_ABRIO: DenegacionExplicada = {
   titulo: 'La consola no llegó a abrir la sesión con teclado',
-  porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el gateway lo rechazó '
-    + '—la explicación del gateway se conserva—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
+  porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el servidor lo rechazó '
+    + '—la explicación del servidor se conserva—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
     + 'control: el bus le sigue entregando a este alias.',
   quienLoLevanta: 'Tú: espera a que termine la reserva en curso y vuelve a pedir la toma.',
   linea: 'La consola no llegó a abrir la sesión con teclado y no se tomó ningún control.',
@@ -48,9 +57,9 @@ const NO_SE_ABRIO: DenegacionExplicada = {
 function sinEnganche(motivo: ResultadoDeEspera): DenegacionExplicada {
   const porQue = motivo === 'sin_canal'
     ? 'La sesión con teclado quedó pedida, pero su canal se cortó antes de que el relay redimiera el '
-      + 'ticket, así que el gateway todavía no la da por enganchada y rechazaría la toma.'
+      + 'permiso de conexión, así que el servidor todavía no la da por enganchada y rechazaría la toma.'
     : `La sesión con teclado quedó pedida, pero el relay no la enganchó en ${String(Math.round(ESPERA_DE_ENGANCHE_MS / 1000))} s. `
-      + 'El gateway solo acepta la toma sobre una sesión que el relay ya consumió.';
+      + 'El servidor solo acepta la toma sobre una sesión que la conexión de terminal ya usó.';
   return {
     titulo: 'La sesión con teclado no llegó a engancharse: sigues sin el teclado',
     porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el bus le sigue entregando a este alias.`,
@@ -91,7 +100,7 @@ function canRetryTake(error: DenegacionExplicada): boolean {
 
 function vencimiento(arriendo: ControlDeTuiTomado): string {
   return arriendo.expires_at === undefined
-    ? 'El gateway no dijo hasta cuándo vale el arriendo, así que devuélvelo tú en cuanto termines'
+    ? 'El servidor no dijo hasta cuándo vale el arriendo, así que devuélvelo tú en cuanto termines'
     : `El arriendo vence a las ${new Date(arriendo.expires_at).toLocaleTimeString()} y devolverlo destraba la cola`;
 }
 
@@ -356,7 +365,7 @@ export function ControlDeTui({ alias, grant, puedeEscribir, codigoDeCierre, pidi
           </p>
           {arriendo.dudoso.length > 0 ? (
             <p className={AVISO} role="status">
-              El gateway acreditó la toma con un recibo incompleto (sin {arriendo.dudoso.join(', ')}). El teclado es tuyo y la devolución queda registrada igual.
+              El servidor confirmó la toma con una confirmación incompleta (falta: {arriendo.dudoso.map((campo) => DATO_DE_ARRIENDO[campo] ?? campo).join(', ')}). El teclado es tuyo y la devolución queda registrada igual.
             </p>
           ) : null}
           <button

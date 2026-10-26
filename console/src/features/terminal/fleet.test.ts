@@ -112,7 +112,7 @@ it.each([
 it('treats an absent inventory as UNKNOWN and authorises nothing', () => {
   const [agent] = buildFleetAgents({ presence: [{ tenant_id: 'Steven', alias: 'jarvis' }] });
   expect(resolveTerminalTarget(undefined, agent)).toMatchObject({ status: 'unknown' });
-  expect(resolveTerminalTarget(null, agent).reason).toMatch(/no publicó el inventario/i);
+  expect(resolveTerminalTarget(null, agent).reason).toMatch(/no publicó la lista de destinos/i);
   expect(countOnlinePtyTargets(null)).toBeUndefined();
   expect(countOnlinePtyTargets([])).toBe(0);
 });

@@ -87,7 +87,7 @@ describe('estado después de escribir', () => {
     const mensaje = mensajeDeGuardado(resultado);
     expect(mensaje).toMatch(/^Escrito en/);
     expect(mensaje).not.toMatch(/Aplicado/);
-    expect(mensaje).not.toMatch(/no quedó confirmada/);
+    expect(mensaje).not.toMatch(/no confirmó por completo/);
     expect(mensaje).not.toContain(MENSAJES_DE_APLICACION.written_pending_session);
     expect(mensaje).not.toMatch(/recarg/);
   });
@@ -100,7 +100,7 @@ describe('estado después de escribir', () => {
     const mensaje = mensajeDeGuardado(legacy);
 
     expect(esAckAplicado(legacy)).toBe(false);
-    expect(mensaje).toMatch(/no quedó confirmada/);
+    expect(mensaje).toMatch(/no confirmó por completo/);
     expect(mensaje).not.toMatch(/^Aplicado/);
     expect(mensaje).not.toMatch(/^Escrito/);
   });
@@ -109,7 +109,7 @@ describe('estado después de escribir', () => {
     const ajeno = { ...ACK, state: 'done' } as Parameters<typeof mensajeDeGuardado>[0];
 
     expect(esAckAplicado(ajeno)).toBe(false);
-    expect(mensajeDeGuardado(ajeno)).toMatch(/no quedó confirmada/);
+    expect(mensajeDeGuardado(ajeno)).toMatch(/no confirmó por completo/);
   });
 });
 

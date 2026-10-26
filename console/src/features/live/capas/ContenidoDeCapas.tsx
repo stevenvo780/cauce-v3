@@ -138,7 +138,7 @@ export function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
     if (publicaFicherosPeroNoMemoria) {
       return (
         <SinMedir>
-          Este gateway publica los ficheros del alias pero no su índice de memoria, así que cuánto
+          Este servidor publica los ficheros del alias pero no su índice de memoria, así que cuánto
           recuerda es un dato que no tenemos. No es cero.
         </SinMedir>
       );
@@ -155,7 +155,7 @@ export function CapaDeMemoria({ recurso }: { recurso: RecursoDirectiva }) {
   if (!memoria || total === undefined) {
     return (
       <SinMedir>
-        Este gateway publica los ficheros del alias pero no su índice de memoria, así que cuánto
+        Este servidor publica los ficheros del alias pero no su índice de memoria, así que cuánto
         recuerda es un dato que no tenemos. No es cero.
       </SinMedir>
     );

@@ -120,12 +120,12 @@ export async function devolverControlDeTui(
   }, session, opciones.csrf);
   const record = recibo(
     body,
-    'El gateway no acreditó la devolución del control de la TUI.',
+    'El servidor no confirmó la devolución del control de la terminal.',
     'invalid_control_receipt',
   );
   if (record.session_id !== sessionId || record.released !== true) {
     throw new TerminalApiError(
-      'El gateway no confirmó que el control volviera al bus; el alias puede seguir en cola.',
+      'El servidor no confirmó que el control volviera al sistema; el agente puede seguir en pausa.',
       409,
       'invalid_control_receipt',
     );
@@ -148,14 +148,14 @@ export async function prorrogarSesion(
   }, session);
   const record = recibo(
     body,
-    'El gateway no acreditó la prórroga de la sesión PTY.',
+    'El servidor no confirmó la prórroga de la sesión de terminal.',
     'invalid_extend_receipt',
   );
   const expiresAt = texto(record.expires_at);
   if (record.session_id !== sessionId || record.request_id !== owner.request_id
       || expiresAt === undefined || !Number.isFinite(Date.parse(expiresAt))) {
     throw new TerminalApiError(
-      'El gateway devolvió una prórroga ambigua; la ventana de la sesión no se dio por movida.',
+      'El servidor devolvió una prórroga ambigua; la ventana de la sesión no se dio por movida.',
       409,
       'invalid_extend_receipt',
     );

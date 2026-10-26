@@ -133,13 +133,13 @@ function ausenciaDeDestino(
   if (nombre === undefined) {
     return {
       ausente: 'no-aplica',
-      motivo: `El arnés «${arnes}» no publica una proyección canónica editable en este gateway. `
+      motivo: `El arnés «${arnes}» no publica una proyección canónica editable en este servidor. `
         + 'Esto no significa que no pueda ejecutar tareas o conversar.',
     };
   }
   return {
     ausente: 'sin-dato',
-    motivo: `El arnés «${arnes}» escribiría ${nombre}, pero este gateway no lo publica entre sus `
+    motivo: `El arnés «${arnes}» escribiría ${nombre}, pero este servidor no lo publica entre sus `
       + 'ficheros gobernados, así que no se promete esa escritura.',
   };
 }

@@ -141,7 +141,7 @@ export function preserveSourceLineEndings(source: string, edited: string): strin
  */
 export function mensajeDeGuardado(resultado: AgentDocumentGuardado): string {
   if (!esAckAplicado(resultado)) {
-    return `El gateway respondió 2xx, pero la aplicación no quedó confirmada por un ACK completo.`;
+    return `El servidor respondió bien, pero el agente no confirmó por completo que aplicó el cambio.`;
   }
   const bytes = String(resultado.bytes);
   if (resultado.state === 'applied') {

@@ -8,8 +8,8 @@ const HARNESS_CONTEXT: Readonly<Record<string, string>> = {
   codex: 'Codex combina instrucciones de usuario y proyecto; los archivos override y los niveles más cercanos pueden cambiar la precedencia.',
   openclaw: 'OpenClaw reparte el perfil entre SOUL.md, IDENTITY.md, USER.md, AGENTS.md y TOOLS.md. MEMORY.md y HEARTBEAT.md pertenecen al agente.',
   muse: 'Muse recibe los campos canónicos en el AGENTS.md de su workspace medido.',
-  hermes: 'Hermes permite el manual AGENTS.md medido. Este gateway no publica aplicación del perfil canónico para este arnés.',
-  opencode: 'OpenCode puede ejecutar tareas y conversar. Este gateway no expone sus archivos de contexto ni una proyección canónica editable.',
+  hermes: 'Hermes permite el manual AGENTS.md medido. Este servidor no publica aplicación del perfil canónico para este arnés.',
+  opencode: 'OpenCode puede ejecutar tareas y conversar. Este servidor no expone sus archivos de contexto ni una proyección canónica editable.',
 };
 
 /** Three separate facts: saved, written to the files, and read by the live session. */

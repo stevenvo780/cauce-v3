@@ -157,7 +157,7 @@ export function PerfilTab({
     );
   }
   if (perfil.data && !perfil.data.publicado) {
-    return <EmptyState>{perfil.data.motivo ?? 'Este gateway no publica el perfil de los alias.'}</EmptyState>;
+    return <EmptyState>{perfil.data.motivo ?? 'Este servidor no publica el perfil de los alias.'}</EmptyState>;
   }
 
   function editarTexto(campo: (typeof CAMPOS_DE_TEXTO)[number], valor: string) {
@@ -353,7 +353,7 @@ export function PerfilTab({
     }
   }
   if (publicado && incoherente) {
-    estados.push({ key: 'incoherent', tone: 'danger', role: 'alert', body: 'Este gateway no informa presencia, revisión y estado deseado/aplicado de forma coherente. Guardado bloqueado para no perder concurrencia ni afirmar convergencia.' });
+    estados.push({ key: 'incoherent', tone: 'danger', role: 'alert', body: 'Este servidor no informa presencia, revisión y estado deseado/aplicado de forma coherente. Se bloquea el guardado para no pisar cambios de otra persona ni dar por aplicado lo que no se confirmó.' });
   }
   if (blockedByManualDraft) {
     estados.push({ key: 'manual', tone: 'warn', role: 'status', body: 'Hay un borrador manual pendiente. Guárdalo o descártalo antes de aplicar estos campos; el perfil cambia el mismo fichero y volvería obsoleta su huella CAS.' });
@@ -512,7 +512,7 @@ export function PerfilTab({
               : 'El registro no dice qué arnés corre este alias.'}
             {' '}
             {perfil.data?.base === 'fichero-vacio'
-              ? 'Compuesto sobre fichero vacío: el gateway no lee el disco del contenedor, así que lo '
+              ? 'Compuesto sobre fichero vacío: el servidor no lee el disco del contenedor, así que lo '
                 + 'que una persona haya escrito a mano NO aparece aquí — sigue en el fichero y no se toca.'
               : null}
           </p>

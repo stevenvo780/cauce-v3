@@ -183,7 +183,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
       setErrorPlazas(undefined);
     } catch (error) {
       if (revision !== revisionPlazasRef.current) return;
-      const detail = error instanceof Error ? error.message : 'El gateway no devolvió un inventario verificable.';
+      const detail = error instanceof Error ? error.message : 'El servidor no devolvió un inventario verificable.';
       setErrorPlazas(`No se pudo verificar el inventario de sesiones PTY: ${detail}`);
     } finally {
       if (revision === revisionPlazasRef.current) setRevisandoPlazas(false);

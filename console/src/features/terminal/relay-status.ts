@@ -31,7 +31,7 @@ export interface TerminalRelayState {
   cause?: TerminalRelayCause;
 }
 
-export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no está desplegado en este stack.';
+export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El servicio de terminales no está instalado en este servidor.';
 
 /**
  * Same wording split as `CONFIG_SIN_CONTROL_REASON` in `router.ts`, on purpose:
@@ -40,28 +40,28 @@ export const TERMINAL_RELAY_NOT_DEPLOYED_REASON = 'El relay de terminales no est
  */
 export const TERMINAL_RELAY_SIN_PERMISO_REASON =
   'Tu cuenta no tiene permiso de control sobre esta flota: la terminal de agentes es del dueño del bus. '
-  + 'El relay puede estar perfectamente desplegado; lo que falta es el permiso.';
+  + 'El servicio de terminales puede estar funcionando bien; lo que falta es el permiso.';
 
 /** The gateway replied, but could not reach its PTY upstream. */
 const UPSTREAM_INALCANZABLE = [502, 503, 504];
 
-export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar el canal PTY';
+export const TERMINAL_RELAY_SIN_COMPROBAR_TITULO = 'No se pudo comprobar la terminal';
 
 function terminalRelaySinComprobarReason(status?: number, detalle?: string): string {
   if (status === undefined) {
-    return 'No se pudo consultar o alcanzar el relay de terminales'
-      + `${detalle ? `: ${detalle}` : ''}. Reintenta; este fallo de transporte no permite saber `
-      + 'si el canal PTY está disponible.';
+    return 'No se pudo consultar o alcanzar el servicio de terminales'
+      + `${detalle ? `: ${detalle}` : ''}. Reintenta; este fallo de conexión no permite saber `
+      + 'si la terminal está disponible.';
   }
   if (UPSTREAM_INALCANZABLE.includes(status)) {
-    return `No se pudo alcanzar el relay de terminales a través del gateway (HTTP ${String(status)})`
-      + `${detalle ? `: ${detalle}` : ''}. Reintenta; el upstream no contestó y eso no permite `
-      + 'afirmar el estado del despliegue.';
+    return `No se pudo alcanzar el servicio de terminales a través del servidor (HTTP ${String(status)})`
+      + `${detalle ? `: ${detalle}` : ''}. Reintenta; el servicio de terminales no contestó y eso no permite `
+      + 'saber si está instalado.';
   }
-  return `El servidor respondió HTTP ${String(status)} al preguntar por el relay de terminales`
-    + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el relay falte —la ruta contestó—, `
+  return `El servidor respondió HTTP ${String(status)} al preguntar por el servicio de terminales`
+    + `${detalle ? `: ${detalle}` : ''}. Eso no dice que el servicio falte —el servidor contestó—, `
     + 'solo que esa consulta no se pudo completar. Reintenta; si sigue igual, es de la consola o '
-    + 'del gateway, no de tu permiso.';
+    + 'del servidor, no de tu permiso.';
 }
 
 const LECTURA_CONOCIDA: readonly (readonly [RegExp, string])[] = [
@@ -76,7 +76,7 @@ export function mensajeDeFalloDeLectura(error: unknown): string {
 
 export const CHECKING_RELAY_STATE: TerminalRelayState = {
   status: 'checking',
-  reason: 'Verificando el relay de terminales…',
+  reason: 'Comprobando el servicio de terminales…',
 };
 
 /**
@@ -119,7 +119,7 @@ export function deriveTerminalRelayState(
       cause: 'sin-comprobar',
       reason: terminalRelaySinComprobarReason(
         undefined,
-        'la respuesta no declaró si el relay estaba disponible',
+        'la respuesta no dijo si el servicio de terminales estaba disponible',
       ),
     };
   }

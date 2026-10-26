@@ -415,8 +415,8 @@ describe('la toma espera al enganche del relay', () => {
     await tomarElControl(user, controles);
 
     await screen.findByRole('button', { name: /devolver el control/i });
-    const recibo = screen.getByText(/recibo incompleto/i);
-    expect(recibo).toHaveTextContent(/held_by/);
+    const recibo = screen.getByText(/confirmación incompleta/i);
+    expect(recibo).toHaveTextContent(/quién la tiene/);
 
     vista.unmount();
     await waitFor(() => {

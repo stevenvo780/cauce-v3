@@ -141,7 +141,7 @@ export function terminalTargetForAgent(targets: TerminalTarget[] | null | undefi
  */
 export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefined, agent: FleetAgent): TerminalTargetResolution {
   if (!targets) {
-    return { status: 'unknown', reason: 'El gateway no publicó el inventario de destinos PTY, así que no se sabe si este alias tiene canal. No se asume que sí.' };
+    return { status: 'unknown', reason: 'El servidor no publicó la lista de destinos de terminal, así que no se sabe si este agente tiene terminal. No se asume que sí.' };
   }
   const target = terminalTargetForAgent(targets, agent);
   if (!target) {

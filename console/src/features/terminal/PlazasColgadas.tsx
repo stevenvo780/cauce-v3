@@ -14,7 +14,7 @@ function copia(items: number, aLaVista: number, motivo: MotivoReconciliacionPlaz
     return {
       titulo: 'No se pudo leer qué sesiones están ocupando el tope',
       cuerpo: items === 0
-        ? 'El inventario del gateway no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintenta la lectura antes de decidir qué cerrar.'
+        ? 'El inventario del servidor no es verificable. No se infiere que haya cero sesiones ni que todas estén abiertas en esta pantalla. Reintenta la lectura antes de decidir qué cerrar.'
         : `No se pudo actualizar el inventario. Las ${String(items)} filas de abajo son el último inventario verificable y pueden estar desactualizadas; no prueban cuántas plazas siguen ocupadas ahora.`,
     };
   }

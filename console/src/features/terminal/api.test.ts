@@ -68,7 +68,7 @@ it.each([404, 501])('treats %s on the optional targets endpoint as UNKNOWN, not 
   // UNKNOWN must stay UNKNOWN: an empty array would read as "no destination is authorised",
   // which is a different (and quietly wrong) statement.
   expect(snapshot.items).toBeNull();
-  expect(snapshot.reason).toMatch(/no expone el inventario/i);
+  expect(snapshot.reason).toMatch(/no expone la lista de destinos/i);
 });
 
 it('propagates a real failure as a typed error instead of swallowing it', async () => {
@@ -132,7 +132,7 @@ it.each([
   const snapshot = await listTerminalTargets();
 
   expect(snapshot.items).toBeNull();
-  expect(snapshot.reason).toMatch(/parcial, duplicado o mal formado/i);
+  expect(snapshot.reason).toMatch(/incompleta, repetida o con errores/i);
 });
 
 it('never infers a writable mode: an older gateway that omits `writable_modes` publishes none', async () => {

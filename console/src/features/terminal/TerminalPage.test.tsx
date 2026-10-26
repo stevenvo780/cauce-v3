@@ -320,7 +320,7 @@ it('con un 403 dice que falta el permiso y NUNCA que el relay no está desplegad
   expect(await screen.findByText('La terminal de agentes requiere permiso de control')).toBeInTheDocument();
   expect(screen.getByText(/no tiene permiso de control sobre esta flota/)).toBeInTheDocument();
   expect(screen.getByText(/lo que falta es el permiso/)).toBeInTheDocument();
-  expect(screen.queryByText(/no está desplegado en este stack/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/no está instalado en este servidor/)).not.toBeInTheDocument();
   expect(screen.queryByText(/HTTP 403 al consultarlo/)).not.toBeInTheDocument();
   expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
 }, 20_000);
@@ -334,10 +334,10 @@ it.each([502, 503, 504])(
     ));
     renderWithApi(<TerminalPage />);
 
-    expect(await screen.findByText('No se pudo comprobar el canal PTY')).toBeInTheDocument();
-    expect(screen.getByText(/no se pudo alcanzar el relay de terminales/i)).toBeInTheDocument();
+    expect(await screen.findByText('No se pudo comprobar la terminal')).toBeInTheDocument();
+    expect(screen.getByText(/no se pudo alcanzar el servicio de terminales/i)).toBeInTheDocument();
     expect(screen.getByText(new RegExp(`HTTP ${String(status)}`))).toBeInTheDocument();
-    expect(screen.queryByText(/no está desplegado en este stack/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no está instalado en este servidor/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Canal PTY no disponible en este stack')).not.toBeInTheDocument();
   },
   20_000,

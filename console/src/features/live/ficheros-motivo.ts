@@ -31,7 +31,7 @@ export function explicarFalloDeMotivo(
   if (status === 403 && codigo === 'writable_requires_attribution') {
     return {
       titulo: 'Esta sesión no acredita a la persona que escribe',
-      detalle: `${detalle ?? 'El gateway no reconoció a nadie detrás de esta sesión.'} Entra con tu `
+      detalle: `${detalle ?? 'El servidor no reconoció a nadie detrás de esta sesión.'} Entra con tu `
         + 'propia identidad de operador y vuelve a guardar: el borrador se conserva.',
       pendiente: true,
     };
@@ -39,7 +39,7 @@ export function explicarFalloDeMotivo(
   if (status === 400) {
     return {
       titulo: 'La auditoría no admitió este guardado',
-      detalle: `${detalle ?? 'El gateway rechazó el cuerpo de la escritura.'} Escribe a mano un `
+      detalle: `${detalle ?? 'El servidor rechazó el cuerpo de la escritura.'} Escribe a mano un `
         + `motivo de entre ${String(DOCUMENT_REASON_MIN)} y ${String(DOCUMENT_REASON_MAX)} `
         + 'caracteres y vuelve a guardar: el borrador se conserva.',
       pendiente: true,
