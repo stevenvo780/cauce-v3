@@ -23,7 +23,7 @@ transcript=directory/('rollout-now-'+native+'.jsonl')
 def append(kind,payload):
  with transcript.open('a') as stream:
   stream.write(json.dumps({'type':kind,'payload':payload})+'\\n');stream.flush();os.fsync(stream.fileno())
-if not transcript.exists():append('session_meta',{'id':native,'source':'cli'})
+if not transcript.exists():append('session_meta',{'id':native,'source':'cli','cwd':os.getcwd()})
 tty.setraw(sys.stdin.fileno())
 pending='';skip_lf=False
 def render_idle():

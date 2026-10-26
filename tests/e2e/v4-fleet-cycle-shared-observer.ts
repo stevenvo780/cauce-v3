@@ -186,6 +186,22 @@ print(json.dumps({'session':session,'pane':pane,'panePid':int(pid),'tmuxServerPi
  'socket':socket,'socketIdentity':before['socketIdentity'],'inputBarrier':barrier,'paneInputOff':int(input_off)}))
 `;
 
+const READ_RESUME_EVIDENCE = String.raw`
+import json,os,pathlib
+out={'sessions':[],'transcripts':[]}
+for root in ('/home','/data','/var/lib'):
+  for path in pathlib.Path(root).rglob('*'):
+    try:
+      if path.name=='sessions.json' and path.is_file():
+        out['sessions'].append({'path':str(path),'mode':oct(path.stat().st_mode),'uid':path.stat().st_uid,'body':path.read_text()[:2000]})
+      elif path.name.startswith('rollout-') and path.name.endswith('.jsonl'):
+        info=path.stat()
+        out['transcripts'].append({'path':str(path),'mode':oct(info.st_mode),'uid':info.st_uid,'nlink':info.st_nlink,'head':path.read_text()[:400]})
+    except OSError as error:
+      out.setdefault('errors',[]).append(str(error))
+print(json.dumps(out))
+`;
+
 const READ_FAILURE = String.raw`import hashlib,json,os,pathlib,pwd,re,stat,sys
 sys.path[:0]=['/cauce/lifecycle']
 from cauce_container_proc import matched_fs_credentials
@@ -236,6 +252,11 @@ export class SharedCycleObserver {
   private diagnosticTrace = 'before-trace';
 
   constructor(private readonly actor: { container: string; runtime: string; alias: string; user: string; tenant: string }) {}
+
+  /** What the resume check reads after a restart: the session pointer and the head of each transcript. */
+  async resumeEvidence(): Promise<unknown> {
+    return JSON.parse(await docker(['exec', '--user', '0', this.actor.container, 'python3', '-I', '-B', '-c', READ_RESUME_EVIDENCE])) as unknown;
+  }
 
   async failureSnapshot(): Promise<unknown> {
     return JSON.parse(await docker(['exec', '--user', '0', this.actor.container, 'python3', '-I', '-B', '-c',

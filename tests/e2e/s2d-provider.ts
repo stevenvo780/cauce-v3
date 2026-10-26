@@ -12,7 +12,7 @@ const native=crypto.randomUUID();const transcriptRoot=harness==='codex'?path.joi
 fs.mkdirSync(transcriptRoot,{recursive:true,mode:0o700});
 const transcript=path.join(transcriptRoot,harness==='codex'?'rollout-owned-'+native+'.jsonl':native+'.jsonl');
 function append(value){fs.appendFileSync(transcript,JSON.stringify(value)+'\n',{mode:0o600});}
-if(harness==='codex')append({type:'session_meta',payload:{id:native,source:'cli'}});
+if(harness==='codex')append({type:'session_meta',payload:{id:native,source:'cli',cwd:process.cwd()}});
 let pending='',draft='',inputBytes=0,submits=0,cursorAtStart=false,cursorLine=0,cursorColumn=0;
 const status=()=>{
  const target=path.join(config,'s2d-provider-state.json'),temporary=target+'.tmp-'+process.pid;

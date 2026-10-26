@@ -53,6 +53,7 @@ interface CycleTarget {
 }
 interface Operation {
   id: string; version: number; kind: string; status: string; created_at: string; error: unknown;
+  actor?: { actor_subject?: string };
   steps: { name: string; status: string; evidence?: Record<string, unknown> }[];
 }
 type BackupPhase = 'operations' | 'context' | 'purging' | 'purged' | 'purged-context';
@@ -335,6 +336,7 @@ async function enqueue(scope: V4Locator, kind: string, receipt = true): Promise<
       evidence.shared_operation_failure = { kind, operations: await operations(), traces: shared.traces };
       evidence.shared_failure_diagnostics = await Promise.allSettled([
         shared.failureSnapshot(),
+        shared.resumeEvidence(),
         (async () => {
           const journal = await harness?.onComputer(['journalctl', '--user', '--no-pager', '-n', '80']);
           return journal && { code: journal.code, stdout: journal.stdout.slice(-16_384), stderr: journal.stderr.slice(-2_048) };
@@ -376,11 +378,16 @@ async function renderOperationReceipt(operation: Operation): Promise<void> {
     await rendered.evaluate(element => { element.scrollIntoView({ block: 'start' }); });
 }
 
+/** Host-queued maintenance runs beside the operation the panel enqueued; the cycle follows the owner's. */
+function isAutomaticMaintenance(row: Operation): boolean {
+  return row.actor?.actor_subject?.startsWith('host:') === true;
+}
+
 async function waitForOperation(known: ReadonlySet<string>, kind: string): Promise<Operation> {
   const deadline = Date.now() + 240_000;
   let operation: Operation | undefined;
   while (Date.now() < deadline) {
-    operation = (await operations()).find(row => !known.has(row.id) && row.kind === kind);
+    operation = (await operations()).find(row => !known.has(row.id) && row.kind === kind && !isAutomaticMaintenance(row));
     if (operation && TERMINAL.includes(operation.status)) break;
     await view().waitForTimeout(1_000);
   }
