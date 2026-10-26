@@ -4,8 +4,8 @@ import { assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, Flee
   type DatabaseClient, type DatabasePool, type FleetOperationRow } from '@cauce/store';
 import { runAuthorityCommand, type AuthorityCommand } from './command.js';
 import { AuthorityHostSchema, AuthorityInventorySchema, AuthorityIssuedSchema, AuthorityRequestSchema,
-  AuthorityCheckpointSchema, AuthorityRollbackSchema, TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema,
-  FleetAuthorityError, type AuthorityRequest, type AuthorityScope } from './schemas.js';
+  AuthorityCheckpointSchema, AuthorityIssuedRevocationSchema, AuthorityRollbackSchema, TerminalGrantSchema, TerminalReceiptSchema,
+  TerminalRevokedSchema, FleetAuthorityError, type AuthorityRequest, type AuthorityScope } from './schemas.js';
 import { assertReplacementAuthority } from './replacement.js';
 
 const Agent = z.object({ tenant_id: z.string(), alias: z.string(), runtime_key: z.string(), host_id: z.string() }).loose();
@@ -87,6 +87,13 @@ async function resolveAuthority(client: DatabaseClient, scope: AuthorityScope, r
           || row.steps.some(step => step.name === 'admission' && step.status === 'running'))) {
       throw new FleetAuthorityError('AUTHORITY_REVOKED');
     }
+  } else if (request.action === 'revoke_issued') {
+    // Only a cancelled start revokes its own issuance alone: it never owned the runtime's other credentials (a relocated
+    // identity's legacy base records, the normal pair an earlier operation issued). Other kinds keep their own rollback.
+    if (row.target.resource !== 'agent' || row.kind !== 'start' || slice.placement_role !== undefined
+        || !(row.status === 'cancelling' || row.cancel_requested)) {
+      throw new FleetAuthorityError('AUTHORITY_REVOKED');
+    }
   } else if (request.action === 'revoke' && !(row.status === 'cancelling' || row.cancel_requested
       || row.steps.some(step => step.name === 'revoke' && step.status === 'running')
       || row.kind === 'purge' && row.steps.some(step => step.name === 'revoke' && step.status === 'succeeded')
@@ -132,6 +139,7 @@ export function createFleetAuthorityService(pool: DatabasePool, options: FleetAu
       : request.action === 'terminal_receipt' ? TerminalReceiptSchema.parse(output)
       : request.action === 'checkpoint_credentials' ? AuthorityCheckpointSchema.parse(output)
       : request.action === 'rollback_credentials' ? AuthorityRollbackSchema.parse(output)
+      : request.action === 'revoke_issued' ? AuthorityIssuedRevocationSchema.parse(output)
       : request.action === 'revoke_terminal' ? TerminalRevokedSchema.parse(output) : AuthorityInventorySchema.parse(output);
     if (request.action === 'rollback_credentials'
         && (!('checkpoint_sha256' in result) || result.checkpoint_sha256 !== request.checkpoint_sha256)) {

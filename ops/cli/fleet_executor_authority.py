@@ -222,7 +222,7 @@ def socket_identity(configuration: dict) -> tuple:
 def call(configuration: dict, scope: dict, action: str, **fields) -> dict:
     validate_authority(configuration, scope.get('host_id'))
     validate_scope(scope, configuration['host_id'])
-    allowed = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
+    allowed = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'}, 'revoke_issued': set(),
         'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
         'checkpoint_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id',
                                    'normal_certificate_sha256', 'normal_token_sha256'},
@@ -681,3 +681,34 @@ def verify_absence(reference: dict, agent: dict, operation_id: str) -> dict:
     if current != expected:
         raise SafeFailure('central authority changed after its absence observation')
     return current
+
+
+def issued_absent(observed: dict, revoked: list[dict]) -> None:
+    for row in observed['authorities']:
+        field = {'fleet_mtls': 'certificate_sha256', 'fleet_token': 'token_sha256'}.get(row['id'])
+        if field is not None and any(record.get(field) == credential[field]
+                                     for record in row['matching_records'] for credential in revoked):
+            raise SafeFailure('a credential this operation issued remains in the central authority')
+
+
+def revoke_issued(policy: dict, context: dict, agent: dict) -> list[dict]:
+    """Revokes only the credentials the central authority issued under this operation's scope, keeping every other
+    record of the runtime (legacy base records, normal credentials another operation issued, its terminal grant)."""
+    scope = scope_for(policy, context, agent)
+    configuration = policy['authority']
+    result = call(configuration, scope, 'revoke_issued')
+    if not isinstance(result, dict) or set(result) != {'authorities', 'revoked_credentials'} \
+            or not isinstance(result['revoked_credentials'], list) or len(result['revoked_credentials']) > 2:
+        raise SafeFailure('central issued-credential revocation is not exact')
+    revoked = result['revoked_credentials']
+    for credential in revoked:
+        if not isinstance(credential, dict) or set(credential) != {'phase', 'certificate_sha256', 'token_sha256'} \
+                or credential['phase'] not in ('bootstrap', 'normal') \
+                or any(not isinstance(credential[name], str) or HEX.fullmatch(credential[name]) is None
+                       for name in ('certificate_sha256', 'token_sha256')):
+            raise SafeFailure('central issued-credential revocation is not exact')
+    if len({credential['phase'] for credential in revoked}) != len(revoked):
+        raise SafeFailure('central issued-credential revocation is not exact')
+    issued_absent(inventory({'authorities': result['authorities']}, agent), revoked)
+    issued_absent(inventory(call(configuration, scope, 'inventory'), agent), revoked)
+    return revoked

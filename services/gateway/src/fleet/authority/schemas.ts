@@ -27,6 +27,11 @@ export const AuthorityInventorySchema = z.object({ authorities: z.array(z.object
   preserved: z.literal(true).optional(),
 }).strict().refine(row => row.preserved === undefined || row.id.startsWith('base_') || row.id === 'pty')).min(4).max(5)
   .refine(completeAuthorities) }).strict();
+const IssuedCredentialsSchema = z.array(z.object({ phase: z.enum(['bootstrap', 'normal']),
+  certificate_sha256: AuthorityDigestSchema, token_sha256: AuthorityDigestSchema }).strict()).max(2)
+  .refine(rows => new Set(rows.map(row => row.phase)).size === rows.length);
+/** What a cancelled operation revoked: only the credentials its own scope issued, with the runtime's remaining inventory. */
+export const AuthorityIssuedRevocationSchema = AuthorityInventorySchema.extend({ revoked_credentials: IssuedCredentialsSchema });
 export const AuthorityIssueSchema = z.object({
   phase: z.enum(['bootstrap', 'normal']), csr_pem: z.string().min(1).max(16_384), csr_sha256: AuthorityDigestSchema,
   idempotency_key: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u),
@@ -50,15 +55,14 @@ export const TerminalReceiptSchema = z.object({ grant: TerminalGrantSchema.nulla
 export const AuthorityCheckpointSchema = z.object({ checkpoint_sha256: AuthorityDigestSchema }).strict();
 export const AuthorityRollbackSchema = AuthorityCheckpointSchema.extend({ authority_sha256: AuthorityDigestSchema,
   shared_authority_preserved: z.literal(true), created_authority_revoked: z.literal(true),
-  revoked_credentials: z.array(z.object({ phase: z.enum(['bootstrap', 'normal']),
-    certificate_sha256: AuthorityDigestSchema, token_sha256: AuthorityDigestSchema }).strict()).max(2)
-    .refine(rows => new Set(rows.map(row => row.phase)).size === rows.length),
+  revoked_credentials: IssuedCredentialsSchema,
 });
 const ReplacementBinding = { snapshot_sha256: AuthorityDigestSchema, original_container_id: AuthorityDigestSchema };
 export const AuthorityRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('inventory'), scope: AuthorityScopeSchema }).strict(),
   z.object({ action: z.literal('verify_absent'), scope: AuthorityScopeSchema }).strict(),
   z.object({ action: z.literal('revoke'), scope: AuthorityScopeSchema, expected_inventory: AuthorityInventoryPinsSchema }).strict(),
+  z.object({ action: z.literal('revoke_issued'), scope: AuthorityScopeSchema }).strict(),
   AuthorityIssueSchema.extend({ action: z.literal('issue'), scope: AuthorityScopeSchema }),
   TerminalIssueSchema.extend({ action: z.literal('issue_terminal'), scope: AuthorityScopeSchema }),
   TerminalIssueSchema.extend({ action: z.literal('terminal_receipt'), scope: AuthorityScopeSchema }),

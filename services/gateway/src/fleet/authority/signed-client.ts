@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { HostId, SignedHostRequestSchema } from '@cauce/store';
 import { assertAuthBridgeParent } from '../auth-bridge-socket.js';
 import { AuthorityInventorySchema, AuthorityIssuedSchema, RuntimeAuthorityRequestSchema, RuntimeAuthoritySchema,
-  AuthorityCheckpointSchema, AuthorityRollbackSchema, TerminalGrantSchema, TerminalReceiptSchema, TerminalRevokedSchema } from './schemas.js';
+  AuthorityCheckpointSchema, AuthorityIssuedRevocationSchema, AuthorityRollbackSchema, TerminalGrantSchema, TerminalReceiptSchema,
+  TerminalRevokedSchema } from './schemas.js';
 
 export interface SignedFleetAuthoritySocketPolicy { ownerUid: number; peerUid: number; groupGid?: number }
 const ErrorCode = z.enum(['INVALID_REQUEST', 'AUTHORITY_REVOKED', 'AUTHORITY_UNAVAILABLE', 'forbidden', 'conflict', 'invalid_input']);
@@ -56,6 +57,7 @@ export class SignedFleetAuthorityClient {
         : action === 'terminal_receipt' ? TerminalReceiptSchema.parse(output)
         : action === 'checkpoint_credentials' ? AuthorityCheckpointSchema.parse(output)
         : action === 'rollback_credentials' ? AuthorityRollbackSchema.parse(output)
+        : action === 'revoke_issued' ? AuthorityIssuedRevocationSchema.parse(output)
         : action === 'revoke_terminal' ? TerminalRevokedSchema.parse(output) : AuthorityInventorySchema.parse(output);
     }, signal);
   }

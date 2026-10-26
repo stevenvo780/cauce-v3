@@ -178,7 +178,7 @@ def validate_packet(packet):
         if packet['preserve_terminal'] is not True:
             raise AuthorityError('invalid terminal preservation authority')
         required.add('preserve_terminal')
-    fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'},
+    fields = {'inventory': set(), 'verify_absent': set(), 'revoke': {'expected_inventory'}, 'revoke_issued': set(),
               'issue': {'phase', 'csr_pem', 'csr_sha256', 'idempotency_key'},
               'checkpoint_credentials': {'expected_inventory', 'snapshot_sha256', 'original_container_id',
                                          'normal_certificate_sha256', 'normal_token_sha256'},
@@ -335,7 +335,7 @@ def compensation_credentials(policy, packet, rows, journal, journal_path, journa
         normal = {name: packet[name] for name in ('normal_certificate_sha256', 'normal_token_sha256')}
         if any(not isinstance(value, str) or HEX.fullmatch(value) is None for value in normal.values()):
             raise AuthorityError('normal credential pins are invalid')
-        if journal.get('issued') or journal.get('terminal') or 'revoked' in journal:
+        if journal.get('issued') or journal.get('terminal') or 'revoked' in journal or 'issued_revoked' in journal:
             raise AuthorityError('credential checkpoint must precede issuance')
         compensation_normal(policy, packet, rows, normal)
         if checkpoint is None:
@@ -584,7 +584,7 @@ def expired(row) -> bool:
 
 
 def issue(policy, packet, rows, journal, journal_path, journal_stat):
-    if journal.get('revoked') or journal.get('credential_rollback_started'):
+    if journal.get('revoked') or journal.get('credential_rollback_started') or 'issued_revoked' in journal:
         raise AuthorityError('revoked authority journal cannot issue credentials')
     request_hash = digest(json.dumps(packet, sort_keys=True, separators=(',', ':')).encode())
     existing = journal.setdefault('issued', {}).get(packet['phase'])
@@ -621,6 +621,48 @@ def issue(policy, packet, rows, journal, journal_path, journal_stat):
     _, current_stat = read(journal_path, private=True)
     publish(journal_path, journal, current_stat)
     return receipt
+
+
+def revoke_issued(policy, packet, rows, journal, journal_path, journal_stat):
+    """Removes only the fleet records this scope issued (its journal names them) and refuses any later issuance in it.
+
+    Cancelling an operation that never owned the runtime's other credentials (a start of a relocated identity keeps its
+    legacy base records and the normal pair an earlier operation issued) must not revoke them: a full revoke would."""
+    _, registries, owners = policy_paths(policy)
+    revoked, owned = [], {'fleet_mtls': set(), 'fleet_token': set()}
+    for phase, issued in sorted(journal.get('issued', {}).items()):
+        receipt = issued.get('receipt') if isinstance(issued, dict) else None
+        if phase not in {'bootstrap', 'normal'} or not isinstance(receipt, dict) \
+                or any(not isinstance(receipt.get(name), str) or HEX.fullmatch(receipt[name]) is None
+                       for name in ('certificate_sha256', 'token_sha256')):
+            raise AuthorityError('credential issuance journal is invalid')
+        revoked.append({'phase': phase, 'certificate_sha256': receipt['certificate_sha256'], 'token_sha256': receipt['token_sha256']})
+        owned['fleet_mtls'].add(receipt['certificate_sha256'])
+        owned['fleet_token'].add(receipt['token_sha256'])
+    if 'issued_revoked' not in journal:
+        journal['issued_revoked'] = revoked
+        publish(journal_path, journal, journal_stat)
+    elif journal['issued_revoked'] != revoked:
+        raise AuthorityError('authority replay changed its issued revocation')
+    for name, document, original, _ in rows:
+        if not owned.get(name):
+            continue
+        field = 'certificate_sha256' if name.endswith('mtls') else 'token_sha256'
+        if any(record.get(field) in owned[name] and not target(packet['agent'], record) for record in document['identities']):
+            raise AuthorityError('an issued fingerprint is registered to another principal')
+        kept = [record for record in document['identities'] if record.get(field) not in owned[name]]
+        if kept != document['identities']:
+            publish(registries[name], {**document, 'identities': kept}, original, owners[registries[name]])
+    rows = inventory(registries, owners, packet['agent'], packet.get('preserve_legacy', False), packet.get('preserve_terminal', False))
+    for name, _, _, observed in rows:
+        field = 'certificate_sha256' if name.endswith('mtls') else 'token_sha256'
+        if any(record.get(field) in owned.get(name, ()) for record in observed['matching_records']):
+            raise AuthorityError('issued credentials remain after revocation')
+    if not journal.get('issued_revoke_complete'):
+        journal['issued_revoke_complete'] = True
+        _, current_stat = read(journal_path, private=True)
+        publish(journal_path, journal, current_stat)
+    return {**observation(rows), 'revoked_credentials': revoked}
 
 
 def perform(policy, packet):
@@ -669,6 +711,8 @@ def perform(policy, packet):
             return observation(rows)
         if action == 'issue':
             return issue(policy, packet, rows, journal, journal_path, journal_stat)
+        if action == 'revoke_issued':
+            return revoke_issued(policy, packet, rows, journal, journal_path, journal_stat)
         if action == 'revoke':
             expected = packet['expected_inventory']
             actual = [{'id': row[3]['id'], 'sha256': row[3]['sha256']} for row in rows]

@@ -14,7 +14,7 @@ import { FleetAuthorityClient } from './client.js';
 import { createFleetAuthorityService } from './service.js';
 import { startFleetAuthoritySocket } from './socket.js';
 import { runAuthorityReadiness, type AuthorityCommand } from './command.js';
-import { AuthorityInventorySchema, type AuthorityScope, type TerminalIssue } from './schemas.js';
+import { AuthorityInventorySchema, AuthorityIssuedRevocationSchema, type AuthorityScope, type TerminalIssue } from './schemas.js';
 
 const execute = promisify(execFile);
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
@@ -298,5 +298,31 @@ describe('central fleet authority through a private host socket and PostgreSQL',
     expect(JSON.stringify(revoked)).not.toContain(issued.token);
     await chmod(join(directory, 'host-a.sock'), 0o660);
     await expect(client.inventory(scope)).rejects.toMatchObject({ code: 'AUTHORITY_UNAVAILABLE' });
+  });
+  it('revokes only what a cancelled start issued and refuses every other kind or a running start', async () => {
+    const issued = await client.issue(scope, request);
+    const kept = { certificate_sha256: 'c'.repeat(64), principal: { tenant_id: 'Steven', alias: 'authority_agent', channel: 'adapter',
+      session_id: 'adapter-runtime-a', roles: ['adapter'], permissions: ['route', 'read'] }, expires_at: '2099-01-01T00:00:00Z' };
+    const policy = JSON.parse(await readFile(join(directory, 'policy.json'), 'utf8')) as { registries: Record<string, string> };
+    const base = policy.registries.base_mtls ?? '';
+    await writeFile(base, JSON.stringify({ version: 1, identities: [kept] }), { mode: 0o600 });
+    await expect(client.invoke({ action: 'revoke_issued', scope })).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    const operation = await repo.get('Steven', 'authority_operator', scope.operation_id, `console:${humanId}`);
+    await repo.cancel('Steven', 'authority_operator', scope.operation_id, operation.version, `console:${humanId}`);
+    // A cancelled create keeps its full revocation: only a start never owned the runtime's other credentials.
+    await expect(client.invoke({ action: 'revoke_issued', scope })).rejects.toMatchObject({ code: 'AUTHORITY_REVOKED' });
+    // The fixture's create stands in for a cancelled start: its kind is immutable, so the fixture bypasses the guard.
+    const admin = await current?.adminPool.connect();
+    try {
+      await admin?.query("SET session_replication_role = replica");
+      await admin?.query("UPDATE fleet_operations SET kind='start' WHERE id=$1", [scope.operation_id]);
+    } finally { await admin?.query('RESET session_replication_role'); admin?.release(); }
+    const revoked = AuthorityIssuedRevocationSchema.parse(await client.invoke({ action: 'revoke_issued', scope }));
+    expect(revoked.revoked_credentials).toEqual([{ phase: 'bootstrap', certificate_sha256: issued.certificate_sha256, token_sha256: issued.token_sha256 }]);
+    expect(revoked.authorities.find(row => row.id === 'base_mtls')?.matching_records).toEqual([kept]);
+    expect(revoked.authorities.filter(row => row.id.startsWith('fleet_')).every(row => row.matching_records.length === 0)).toBe(true);
+    expect(JSON.parse(await readFile(base, 'utf8'))).toEqual({ version: 1, identities: [kept] });
+    expect(AuthorityIssuedRevocationSchema.parse(await client.invoke({ action: 'revoke_issued', scope }))).toEqual(revoked);
+    expect(JSON.stringify(revoked)).not.toContain(issued.token);
   });
 });

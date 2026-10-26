@@ -588,9 +588,7 @@ class Executor:
         generation = self.state / 'generations' / receipt['generation']
         self.journal['admission_pending_generation'] = receipt['generation']
         self.save()
-        current = load_applied_fleet(self.state)['generation'] if (self.state / 'applied-fleet.json').exists() else None
-        if current not in {self.journal['expected_applied'], receipt['generation']}:
-            raise SafeFailure('applied fleet changed before admission runtime effects')
+        expected = self.admission_base(agent, receipt)
         self.prepare_credentials(agent, generation, bootstrap=False)
         try:
             evidence = start(self.policy, agent, bootstrap=False, operation_id=self.context['operation_id'])
@@ -610,7 +608,7 @@ class Executor:
                 if proof.get('terminal_verified') is not True:
                     raise SafeFailure('terminal provisioning failed')
                 terminal = {key: proof[key] for key in ('terminal_verified', 'terminal_certificate_sha256')}
-            publish_applied(self.state, receipt['generation'], self.journal.get('expected_applied'))
+            publish_applied(self.state, receipt['generation'], expected)
         except BaseException:
             stop(self.policy, agent)
             raise
@@ -619,6 +617,35 @@ class Executor:
         self.save()
         from fleet_executor_replacement import admission_replacement_evidence
         return {'artifact_sha256': receipt['generation'], **evidence, **terminal, **admission_replacement_evidence(self)}
+
+    def admission_base(self, agent: dict, receipt: dict) -> str | None:
+        """The applied generation admission publishes over. An operation that waited (a human provider login) may find it
+        moved by another operation of this host (a retire, a deploy-time restoration). The admission receipt is rendered
+        from the current, revision-locked fleet snapshot, so it already carries that other effect: when the applied and
+        the receipt agree artifact by artifact on every runtime but this agent's, the admission rebases onto the applied
+        generation without undoing anyone's work. Any other difference keeps it refused. The executor lock serializes
+        every applied publication of this host, so nothing moves it again before the compare-and-swap below."""
+        if not (self.state / 'applied-fleet.json').exists():
+            if self.journal['expected_applied'] is not None:
+                raise SafeFailure('applied fleet changed before admission runtime effects')
+            return None
+        applied = load_applied_fleet(self.state)
+        current = applied['generation']
+        if current in {self.journal['expected_applied'], receipt['generation']}:
+            return current
+        from fleet_executor_replacement_rollback import differs_only_in_runtime
+        try:
+            rebased = differs_only_in_runtime(self.state, applied, receipt, agent['runtime_key'])
+        except (OSError, KeyError, TypeError, ValueError):
+            rebased = False
+        if not rebased:
+            raise SafeFailure('applied fleet changed before admission runtime effects')
+        rebase = {'from': current, 'to': receipt['generation']}
+        history = self.journal.setdefault('admission_rebased_applied', [])
+        if rebase not in history:
+            history.append(rebase)
+            self.save()
+        return current
 
     def admit_memberships(self):
         if self.context['request']['kind'] != 'restore':
@@ -687,6 +714,10 @@ class Executor:
             rollback_terminal(self.policy, self.context, self.agent(), self.journal, self.save)
         if self.context['request']['kind'] == 'stop' and placement_role(self.context) is None:
             return self.compensate_stop()
+        if self.context['request']['kind'] == 'start' and placement_role(self.context) is None and 'authority' in self.policy \
+                and any(row.get('fleet_baseline') is True for row in rows):
+            from fleet_executor_start_compensation import compensate_baseline_start
+            return compensate_baseline_start(self, rows)
         if placement_role(self.context) == 'source':
             from fleet_executor_authority import call, inventory, scope_for
             for row in rows:
