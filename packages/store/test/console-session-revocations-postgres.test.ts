@@ -5,6 +5,11 @@ import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
+function required<T>(value: T | null | undefined): T {
+  if (value === undefined || value === null) throw new Error('expected test value is unavailable');
+  return value;
+}
+
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let admin: DatabasePool;
@@ -24,7 +29,7 @@ const sid = (): string => randomUUID();
 
 describe('console session revocations (migration 093)', () => {
   it('lets the runtime login record, read and prune revocations but not rewrite them', async () => {
-    const pool = runtime as DatabasePool;
+    const pool = required(runtime);
     const id = sid();
     await pool.query(`INSERT INTO console_session_revocations(sid,human_id,not_after) VALUES($1,$2,now()+interval '1 day')`, [id, randomUUID()]);
     expect((await pool.query('SELECT sid FROM console_session_revocations WHERE sid=$1', [id])).rowCount).toBe(1);

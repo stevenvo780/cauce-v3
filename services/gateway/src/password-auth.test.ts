@@ -16,6 +16,11 @@ import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gatewa
 import type { ConsoleSessionRevocations } from './console-session-revocations.js';
 import { MemoryConsoleSessionRevocations } from './test-support/console-session-revocations.js';
 
+function required<T>(value: T | null | undefined): T {
+  if (value === undefined || value === null) throw new Error('expected test value is unavailable');
+  return value;
+}
+
 /**
  * Everything asserted here is asserted on the EFFECT: the real `Set-Cookie` header, the real
  * status code and the real response body. Nothing is taken as good just because the type compiles.
@@ -772,14 +777,14 @@ describe('sesión deslizante de la consola', () => {
       const second = renewedCookie(slid.headers);
       expect(second).toBeDefined();
       expect(String(slid.headers['set-cookie'])).toMatch(/HttpOnly; Secure; SameSite=Strict; Max-Age=3600/);
-      expect(expiryOf(second as string)).toBe(expiryOf(first) + 40 * 60 * 1_000);
-      const claims = (cookie: string) => JSON.parse(Buffer.from(decodeURIComponent(cookie.split('=')[1] as string).split('.')[1] as string, 'base64url')
+      expect(expiryOf(required(second))).toBe(expiryOf(first) + 40 * 60 * 1_000);
+      const claims = (cookie: string) => JSON.parse(Buffer.from(required(decodeURIComponent(required(cookie.split('=')[1])).split('.')[1]), 'base64url')
         .toString('utf8')) as Record<string, unknown>;
-      expect({ ...claims(second as string), exp: 0 }).toEqual({ ...claims(first), exp: 0 });
+      expect({ ...claims(required(second)), exp: 0 }).toEqual({ ...claims(first), exp: 0 });
 
       test.advance(40 * 60 * 1_000);
       expect((await use(test, first)).statusCode).toBe(401);
-      expect((await use(test, second as string)).statusCode).toBe(200);
+      expect((await use(test, required(second))).statusCode).toBe(200);
     } finally {
       await test.app.close();
     }
@@ -871,7 +876,7 @@ describe('sesión deslizante de la consola', () => {
       const first = cookieFrom(login.headers);
       const csrf = login.json<{ csrf_token: string }>().csrf_token;
       test.advance(40 * 60 * 1_000);
-      const second = renewedCookie((await use(test, first)).headers) as string;
+      const second = required(renewedCookie((await use(test, first)).headers));
       expect((await use(test, second)).statusCode).toBe(200);
 
       const logout = await test.app.inject({
@@ -960,7 +965,7 @@ describe('sesión deslizante: carreras, dispositivo y estados', () => {
       const fresh = fakeReply();
       test.provider.slideSession(current, fresh.reply);
       expect(fresh.headers).toHaveLength(1);
-      expect(claimsOf(cookieFromHeader(fresh.headers[0] as string)).cmp).toBe('otra');
+      expect(claimsOf(cookieFromHeader(required(fresh.headers[0]))).cmp).toBe('otra');
     } finally {
       await test.app.close();
     }
@@ -995,7 +1000,7 @@ describe('sesión deslizante: carreras, dispositivo y estados', () => {
       const login = await test.login(EMAIL, PASSWORD);
       let original = cookieFrom(login.headers);
       const stamp = claimsOf(original).credential_stamp as string;
-      const user = (await test.users.findByEmail(EMAIL)) as ConsoleUser;
+      const user = required(await test.users.findByEmail(EMAIL));
       for (let step = 0; step < 2; step += 1) {
         test.advance(55 * 60 * 1_000);
         original = cookieFromHeader(setCookies((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: original } })).headers)[0] ?? original);
@@ -1005,16 +1010,16 @@ describe('sesión deslizante: carreras, dispositivo y estados', () => {
       const approver = await test.provider.verifiedConsoleSession({ headers: { cookie: original } } as unknown as FastifyRequest);
       expect(approver?.authTimeMs).toBe(T0);
       const issued = fakeReply();
-      await test.provider.completeDeviceLogin(issued.reply, { ...grant, sessionAuthAtMs: approver?.authTimeMs as number });
-      const device = cookieFromHeader(issued.headers[0] as string);
+      await test.provider.completeDeviceLogin(issued.reply, { ...grant, sessionAuthAtMs: required(approver?.authTimeMs) });
+      const device = cookieFromHeader(required(issued.headers[0]));
       expect(claimsOf(device).auth_time).toBe(T0 / 1_000);
       expect(claimsOf(device).exp).toBe((T0 + 170 * 60 * 1_000) / 1_000);
 
       const chained = await test.provider.verifiedConsoleSession({ headers: { cookie: device } } as unknown as FastifyRequest);
       expect(chained?.authTimeMs).toBe(T0);
       const second = fakeReply();
-      await test.provider.completeDeviceLogin(second.reply, { ...grant, sessionAuthAtMs: chained?.authTimeMs as number });
-      expect(claimsOf(cookieFromHeader(second.headers[0] as string)).auth_time).toBe(T0 / 1_000);
+      await test.provider.completeDeviceLogin(second.reply, { ...grant, sessionAuthAtMs: required(chained?.authTimeMs) });
+      expect(claimsOf(cookieFromHeader(required(second.headers[0]))).auth_time).toBe(T0 / 1_000);
 
       test.advance(71 * 60 * 1_000);
       expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: device } })).statusCode).toBe(401);
@@ -1032,7 +1037,7 @@ describe('sesión deslizante: carreras, dispositivo y estados', () => {
       const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
       test.advance(40 * 60 * 1_000);
       const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
-      const renewed = cookieFromHeader(setCookies(state.headers)[0] as string);
+      const renewed = cookieFromHeader(required(setCookies(state.headers)[0]));
       expect(state.json<{ expires_at: string }>().expires_at).toBe(new Date((claimsOf(renewed).exp as number) * 1_000).toISOString());
       expect(claimsOf(renewed).exp as number).toBeGreaterThan(claimsOf(cookie).exp as number);
     } finally {
@@ -1084,7 +1089,7 @@ describe('sesión deslizante: carreras, dispositivo y estados', () => {
 });
 
 function cookieFromHeader(header: string): string {
-  return header.split(';', 1)[0] as string;
+  return required(header.split(';', 1)[0]);
 }
 
 describe('isConsoleSurface clasifica la ruta como la resuelve el router, nunca por el texto crudo', () => {

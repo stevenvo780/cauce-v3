@@ -61,7 +61,7 @@ async function approveAndRedeem(session: Awaited<ReturnType<typeof login>>) {
   const token = await app().inject({ method: 'POST', url: '/v3/auth/device/token', payload: { device_code: codes.device_code } });
   expect(token.statusCode).toBe(200);
   const raw = token.headers['set-cookie'];
-  const cookie = ((Array.isArray(raw) ? raw : [raw ?? '']).find(value => String(value).startsWith('__Host-cauce_session=')) ?? '').split(';')[0] ?? '';
+  const cookie = ((Array.isArray(raw) ? raw : [raw ?? '']).find(value => value.startsWith('__Host-cauce_session=')) ?? '').split(';')[0] ?? '';
   const csrf = token.json<{ csrf_token: string }>().csrf_token;
   return { cookie, origin: 'http://localhost', 'x-csrf-token': csrf };
 }
