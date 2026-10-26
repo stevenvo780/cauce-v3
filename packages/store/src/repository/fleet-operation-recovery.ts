@@ -16,9 +16,10 @@ export async function assertFleetRecoveryIdle(client: DatabaseClient, request: F
 export async function lockFleetRecoveryConnection(client: DatabaseClient, row: FleetOperationRow): Promise<void> {
   if (row.request.kind !== 'recover' || row.request.parameters.action !== 'apply') return;
   const target = row.request.target;
-  const lease = (await client.query<{ instance_id: string }>(`SELECT instance_id FROM connection_leases
-    WHERE tenant_id=$1 AND alias=$2 AND lease_until>clock_timestamp() FOR UPDATE`, [target.tenant_id, target.alias])).rows[0];
-  if (lease?.instance_id !== row.request.parameters.identity.writer_instance_id) {
+  const lease = (await client.query<{ instance_id: string; live: boolean }>(`SELECT instance_id,lease_until>clock_timestamp() AS live
+    FROM connection_leases WHERE tenant_id=$1 AND alias=$2 FOR UPDATE`, [target.tenant_id, target.alias])).rows[0];
+  // A relaunch replaces the adapter process, so its preparation fences the lease instead of keeping the confirmed writer.
+  if (row.request.parameters.strategy !== 'relaunch' && (!lease?.live || lease.instance_id !== row.request.parameters.identity.writer_instance_id)) {
     throw new FleetOperationError('conflict', 'recovery adapter connection differs from its confirmed identity');
   }
 }
@@ -28,6 +29,10 @@ export async function prepareFleetRecovery(client: DatabaseClient, row: FleetOpe
   await assertFleetRecoveryIdle(client, row.request);
   await client.query(`UPDATE agents SET enabled=false,lifecycle_state='verifying',updated_at=clock_timestamp()
     WHERE tenant_id=$1 AND alias=$2`, [row.request.target.tenant_id, row.request.target.alias]);
+  if (row.request.parameters.strategy === 'relaunch') {
+    await client.query(`UPDATE connection_leases SET lease_until=now(),epoch=epoch+1,connection_token=gen_random_uuid()
+      WHERE tenant_id=$1 AND alias=$2`, [row.request.target.tenant_id, row.request.target.alias]);
+  }
 }
 
 export async function restoreFleetRecovery(client: DatabaseClient, row: FleetOperationRow, previousAgents: Record<string, unknown>[]): Promise<void> {

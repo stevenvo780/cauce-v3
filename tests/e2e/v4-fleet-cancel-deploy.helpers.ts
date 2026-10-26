@@ -11,7 +11,7 @@ import { HostSetupConfigSchema } from '../../services/gateway/src/fleet/host-set
 import { startTrustedBrowser, type TrustedBrowser } from './console-functional-browser.fixtures.js';
 import { reserveNamedLoopbackPorts } from './port-reservation.js';
 import { type CancelFixture } from './v4-fleet-cancel.helpers.js';
-import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, openRegistration,
+import { asV4Page, bodySnippet, BrowserErrorLog, fillRegistration, HERMETIC_INSTANCE_RULES, type IgnoredConsoleRule, openRegistration,
   PATTERN_DEFECT_RULE, syntheticPerson, type V4Page } from './v4-console-real-browser.helpers.js';
 import { cancelDeployRuntime } from './v4-fleet-cancel-deploy.runtime.js';
 import { installCancelDeploySetup, type CancelDeploySetup } from './v4-fleet-cancel-deploy.setup.js';
@@ -31,7 +31,8 @@ export interface CancelDeployFixture extends CancelFixture {
   deploymentImages: Map<string, string>;
 }
 
-export async function startCancelDeployFixture(options: { runtimeBundle?: typeof cancelDeployRuntime; initialSharedTui?: boolean } = {}): Promise<CancelDeployFixture> {
+export async function startCancelDeployFixture(options: { runtimeBundle?: typeof cancelDeployRuntime; initialSharedTui?: boolean;
+  errorRules?: readonly IgnoredConsoleRule[]; } = {}): Promise<CancelDeployFixture> {
   await mkdir(cancelDeployReceipts, { recursive: true, mode: 0o700 });
   if (process.env.CAUCE_REQUIRE_TESTCONTAINERS !== '1'
       || !process.env.HOME?.startsWith(`/tmp/cauce-e2e-home-${CANCEL_DEPLOY_OWNER}-`)) {
@@ -51,7 +52,7 @@ export async function startCancelDeployFixture(options: { runtimeBundle?: typeof
   let vite: { close(): Promise<void>; listen(): Promise<void> } | undefined;
   let page: V4Page | undefined;
   const deploymentImages = new Map<string, string>();
-  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE]);
+  const errors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES, PATTERN_DEFECT_RULE, ...(options.errorRules ?? [])]);
   const close = async () => {
     const failures: unknown[] = [];
     for (const action of [async () => trusted?.close(), async () => vite?.close(), async () => {

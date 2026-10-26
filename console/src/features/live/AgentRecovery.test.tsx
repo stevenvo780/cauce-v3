@@ -189,3 +189,22 @@ it('no ofrece cerrar una actualización fallida sin restaurar', async () => {
   expect(await screen.findByRole('button', { name: 'Ver operación' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Cerrar la actualización y continuar' })).toBeNull();
 });
+
+it('relanza con la versión vigente un adaptador de otra release y confirma la estrategia exacta', async () => {
+  const relaunch = { ...recovery, strategy: 'relaunch' as const, recreates_container: true };
+  vi.spyOn(testApi, 'previewFleetOperation').mockImplementation(async input => ({ kind: input.kind, target: input.target,
+    request_sha256: await fleetRequestHash(input), expected_revision: input.expected_revision,
+    steps: [], dependencies: [], resources: [], can_apply: true }));
+  const enqueue = vi.spyOn(testApi, 'enqueueFleetOperation').mockImplementation(async input => ({
+    ...await operation(input, 'succeeded'), steps: ['runtime', 'verify'].map(name => ({ name: name as 'runtime' | 'verify', status: 'succeeded' as const,
+      evidence: { runtime_digest: 'd'.repeat(64), recovery: { ...relaunch, session: { ...session, state: 'resumed' as const } } } })) }));
+  const recovered = vi.fn();
+  server.use(http.get(path, () => HttpResponse.json({ ...ready, recovery: relaunch })));
+  renderWithApi(<AgentRecovery tenantId="A" alias="one" permission="allowed" onRecovered={recovered} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Reiniciar agente' }));
+  expect(await screen.findByText(/El adaptador corre con una versión anterior: se detendrá y se relanzará con la versión vigente\. Su contenedor se recreará/u)).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Confirmar reinicio y reanudar' }));
+  await waitFor(() => { expect(recovered).toHaveBeenCalled(); });
+  expect(enqueue.mock.calls[0]?.[0].parameters).toEqual({ action: 'apply', identity, expected_fingerprint: fingerprint, force: true, strategy: 'relaunch' });
+});

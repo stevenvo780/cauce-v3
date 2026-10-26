@@ -17,6 +17,9 @@ sys.path.insert(0, str(OPS / 'container-runtime'))
 sys.path.insert(0, str(OPS / 'cli'))
 import fleet_executor_container as container  # noqa: E402
 import fleet_executor_recovery as recovery  # noqa: E402
+import fleet_executor_recovery_relaunch as relaunch  # noqa: E402
+import fleet_executor_resume  # noqa: E402
+import fleet_executor_runtime  # noqa: E402
 import test_fleet_executor_rebind as fixtures  # noqa: E402
 from fleet_executor_policy import SafeFailure  # noqa: E402
 
@@ -32,30 +35,47 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
         self.document['agent'] = self.raw_agent
         self.fake = fixtures.FakeDocker()
         self.fake.add(self.name, container.expected_labels(self.policy, self.agent), self.mounts(self.old), running=True)
-        self.patch_docker = mock.patch.object(container, 'docker', self.fake)
-        self.patch_docker.start()
-        self.addCleanup(self.patch_docker.stop)
+        for patch in (mock.patch.object(container, 'docker', self.fake), mock.patch.object(fixtures.rebind, 'docker', self.fake),
+                      mock.patch.object(container, 'checked_command', lambda command, **_kwargs: self.fake(*command[1:]))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.fake.volumes[self.name + '-state'] = dict(container.expected_labels(self.policy, self.agent))
+        self.relaunch = mock.patch.object(relaunch, 'observe', return_value=None)
+        self.relaunch.start()
+        self.addCleanup(self.relaunch.stop)
         self.identity = {'container_id': '1' * 64, 'generation': '2' * 64,
                          'writer_instance_id': '00000000-0000-4000-8000-000000000001'}
         self.session = {'type': 'session', 'state': 'present', 'resumable': True,
                         'fingerprint': '3' * 64, 'reason': 'La conversación puede reanudarse.'}
 
     def assert_read_only(self):
-        self.assertTrue(all(call[0] in {'ps', 'inspect'} for call in self.fake.calls), self.fake.calls)
+        observations = {('helper', 'stopped'), ('helper', 'observe'), ('volume', 'ls'), ('volume', 'inspect')}
+        self.assertTrue(all(call[0] in {'ps', 'inspect'} or call[:2] in observations or '/usr/bin/getent' in call
+                            for call in self.fake.calls), self.fake.calls)
         self.assertEqual(list(pathlib.Path(self.policy['roots']['state']).glob('operations/*')), [])
 
-    def test_previous_trusted_release_mounts_require_update_without_observing_or_replacing_process(self):
-        with mock.patch.object(container, 'process_proof', side_effect=AssertionError('process helper launched')):
+    def observe_relaunch(self):
+        self.relaunch.stop()
+        for patch in (mock.patch.object(fleet_executor_resume, 'resume_proof', return_value={'resumable': True, 'fingerprint': '9' * 64}),
+                      mock.patch.object(fleet_executor_runtime, 'sdk_environment',
+                                        return_value={'CAUCE_INSTANCE_ID': self.identity['writer_instance_id']})):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.relaunch.start = lambda: None
+
+    def test_previous_trusted_release_mounts_offer_a_relaunch_that_recreates_the_container_without_effects(self):
+        self.observe_relaunch()
+        with mock.patch.object(container, 'process_proof', side_effect=AssertionError('current bundle check launched')):
             result = recovery.preflight(self.policy, self.document)
-        self.assertEqual(result, {'status': 'update_required', 'reason_code': 'runtime_mounts_differ',
-                                 'reason': recovery.REASONS['runtime_mounts_differ'], 'next_action': 'update'})
-        self.assertNotIn('identity', result)
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual((result['recovery']['strategy'], result['recovery']['recreates_container']), ('relaunch', True))
+        self.assertEqual(result['recovery']['session']['state'], 'absent')
         self.assert_read_only()
 
     def test_mount_drift_does_not_hide_security_or_identity_failures(self):
+        self.observe_relaunch()
         original = copy.deepcopy(self.fake.containers[self.name])
         mutations = {
-            'foreign_image': lambda row: row.update(Image='sha256:' + 'e' * 64),
             'foreign_alias': lambda row: row['Config']['Labels'].update({'cauce.fleet.alias': 'foreign'}),
             'privileged': lambda row: row['HostConfig'].update(Privileged=True),
             'foreign_state': lambda row: row['Mounts'][0].update(Name='foreign-state'),
@@ -74,7 +94,15 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
                 self.assertIsNone(recovery.failure_reason(raised.exception))
                 self.assert_read_only()
 
+    def test_previous_image_is_relaunched_on_the_approved_image_like_start(self):
+        self.observe_relaunch()
+        self.fake.containers[self.name]['Image'] = 'sha256:' + 'e' * 64
+        result = recovery.preflight(self.policy, self.document)
+        self.assertEqual((result['recovery']['strategy'], result['recovery']['recreates_container']), ('relaunch', True))
+        self.assert_read_only()
+
     def test_untrusted_previous_release_is_not_an_update_offer(self):
+        self.observe_relaunch()
         (self.old / 'ops/cli').chmod(0o777)
         with self.assertRaisesRegex(SafeFailure, 'ownership or mode') as raised:
             recovery.preflight(self.policy, self.document)
@@ -82,6 +110,7 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
         self.assert_read_only()
 
     def test_missing_previous_release_fails_closed_without_update_marker(self):
+        self.observe_relaunch()
         self.old.rename(self.old.with_name(self.old.name + '-missing'))
         with self.assertRaises(SafeFailure) as raised:
             recovery.preflight(self.policy, self.document)
@@ -89,6 +118,7 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
         self.assert_read_only()
 
     def test_unexplained_current_release_mount_change_fails_closed(self):
+        self.observe_relaunch()
         self.fake.containers[self.name]['Mounts'] = self.mounts(self.new)[:-1]
         with self.assertRaisesRegex(SafeFailure, 'mounts differ') as raised:
             recovery.preflight(self.policy, self.document)
@@ -174,12 +204,12 @@ class RecoveryPreflightTest(fixtures.ReleaseFixture):
         self.assertEqual(self.fake.calls, [])
 
     def test_operation_preview_remains_strict_and_returns_only_typed_known_reason(self):
+        self.observe_relaunch()
         context = {'request': {'kind': 'recover', 'target': {'resource': 'agent',
                        'tenant_id': self.agent['tenant_id'], 'alias': self.agent['alias']}, 'parameters': {'action': 'probe'}},
                    'snapshot': {'agents': [self.raw_agent]}, 'previous_agents': []}
-        with self.assertRaises(recovery.RecoveryFailure) as raised:
-            recovery.preview(self.policy, context)
-        self.assertEqual(recovery.failure_reason(raised.exception), 'runtime_mounts_differ')
+        self.assertEqual(recovery.preview(self.policy, context)['strategy'], 'relaunch')
+        self.assertEqual(recovery.failure_reason(recovery.RecoveryFailure('runtime_mounts_differ')), 'runtime_mounts_differ')
         self.assertIsNone(recovery.failure_reason(SafeFailure('container runtime mounts differ')))
         self.assert_read_only()
 

@@ -68,7 +68,7 @@ export async function runStopDeployScenario(fixture: CancelDeployFixture, eviden
   await assertLive(actor, 'stop-started-current-deployment');
 }
 
-async function currentBundleCheck(actor: CancelDeployActor, deployment: CancelDeployment): Promise<{ code: number; stderr: string }> {
+export async function currentBundleCheck(actor: CancelDeployActor, deployment: CancelDeployment): Promise<{ code: number; stderr: string }> {
   const script = `import json,pathlib,runpy,sys
 runtime,digest=sys.argv[1:3];control=pathlib.Path('/run/cauce-fleet')/runtime
 metadata=json.loads((control/'cauce-v3-adapter.json').read_text())

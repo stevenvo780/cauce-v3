@@ -75,7 +75,8 @@ def fingerprint(value) -> str:
 def validate_parameters(parameters: dict) -> None:
     if parameters == {'action': 'probe'}:
         return
-    if set(parameters) != {'action', 'expected_fingerprint', 'force', 'identity'} or parameters['action'] != 'apply' \
+    if set(parameters) - {'strategy'} != {'action', 'expected_fingerprint', 'force', 'identity'} or parameters['action'] != 'apply' \
+            or parameters.get('strategy', 'relaunch') != 'relaunch' \
             or not isinstance(parameters['expected_fingerprint'], str) \
             or SHA.fullmatch(parameters['expected_fingerprint']) is None or type(parameters['force']) is not bool:
         raise SafeFailure('invalid exact recovery confirmation')
@@ -220,7 +221,9 @@ def observed_preview(agent: dict, identity: dict, values: dict, bundle: dict) ->
 
 
 def preview_agent(policy: dict, agent: dict) -> dict:
-    return observed_preview(agent, *observe(policy, agent))
+    from fleet_executor_recovery_relaunch import observe as relaunch
+    relaunched = relaunch(policy, agent)
+    return relaunched[0] if relaunched is not None else observed_preview(agent, *observe(policy, agent))
 
 
 def preview(policy: dict, context: dict) -> dict:
@@ -253,6 +256,10 @@ def preflight(policy: dict, document: dict) -> dict:
     bundle = approved_bundle(policy, agent)
     unsupported = unsupported_reason(agent, bundle)
     if unsupported is None:
+        from fleet_executor_recovery_relaunch import observe as relaunch
+        relaunched = relaunch(policy, agent)
+        if relaunched is not None:
+            return {'status': 'ready', 'recovery': relaunched[0]}
         try:
             identity, values, bundle = observe(policy, agent)
         except RecoveryFailure as error:
@@ -292,6 +299,10 @@ def perform(policy: dict, context: dict, step: str) -> dict:
     journal = json.loads(filename.read_bytes()) if filename.exists() else {'request_sha256': request_hash}
     if journal.get('request_sha256') != request_hash:
         raise SafeFailure('recovery replay changed its confirmed request')
+    if parameters.get('strategy') == 'relaunch':
+        from fleet_executor_recovery_relaunch import perform as relaunch
+        return relaunch(policy, agent, parameters, journal,
+                        lambda: atomic_write(filename, json.dumps(journal, sort_keys=True).encode(), mode=0o600), step)
     if step == 'compensate':
         if journal.get('attempted'):
             expires_at = journal.get('helper_expires_at')
@@ -308,6 +319,8 @@ def perform(policy: dict, context: dict, step: str) -> dict:
                 raise SafeFailure('recovery compensation could not observe the confirmed runtime conversation')
         return {'evidence': {'recovery_compensated': True}}
     current = preview(policy, context)
+    if current['strategy'] != 'shared_tui':
+        raise SafeFailure('recovery strategy changed after confirmation')
     if current['identity'] != parameters['identity']:
         raise SafeFailure('recovery runtime identity changed after confirmation')
     if current['session']['state'] == 'unsupported':

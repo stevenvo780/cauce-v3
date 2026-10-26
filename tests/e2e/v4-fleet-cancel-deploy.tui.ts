@@ -87,7 +87,7 @@ print(json.dumps({name:values.get(name.encode(),b'').decode() or None for name i
   return JSON.parse(await docker(['exec', '--user', '0', actor.container, 'python3', '-I', '-B', '-c', script, actor.runtime])) as unknown;
 }
 
-async function observeNativeTurn(actor: CancelDeployActor, deliveryId: string): Promise<unknown> {
+export async function observeNativeTurn(actor: CancelDeployActor, deliveryId: string): Promise<unknown> {
   const state = `/home/cauce/.cauce/${actor.runtime}`;
   const format = '#{@cauce_alias}|#{@cauce_harness}|#{window_name}|#{pane_dead}|#{pane_current_path}';
   const markers = (await docker(['exec', '--user', 'cauce', '--env', `TMUX_TMPDIR=${state}`, actor.container,

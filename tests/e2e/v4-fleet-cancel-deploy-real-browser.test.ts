@@ -6,12 +6,23 @@ import { cancelOperations } from './v4-fleet-cancel.helpers.js';
 import { bodySnippet } from './v4-console-real-browser.helpers.js';
 import { assertCancelDeployLive } from './v4-fleet-cancel-deploy.delivery.js';
 import { runFreshStopDeployScenario, runStopDeployScenario } from './v4-fleet-stop-deploy.flow.js';
+import { RECOVER_TERMINAL_RULES, recoverDeployRuntime, runRecoverDeployScenario } from './v4-fleet-recover-deploy.flow.js';
 import { cancelDeployTuiRuntime, runSharedPolicyDeployScenario } from './v4-fleet-cancel-deploy.tui.js';
 import { createCancelDeployActor, runCancelDeployScenario } from './v4-fleet-cancel-deploy.flow.js';
 import { cancelDeployCapture, cancelDeployPrefix, cancelDeployReceipts, cancelDeployRun, startCancelDeployFixture,
   type CancelDeployFixture } from './v4-fleet-cancel-deploy.helpers.js';
 
 const evidence: Record<string, unknown> = { run: cancelDeployRun };
+
+function deliveredId(live: Record<string, unknown>): string {
+  if (!Array.isArray(live.delivery) || live.delivery.length !== 1) throw new Error('the phase must finish one durable delivery');
+  const delivery: unknown = live.delivery[0];
+  if (!delivery || typeof delivery !== 'object' || !('id' in delivery) || typeof delivery.id !== 'string' ||
+    !/^[a-f0-9-]{36}$/u.test(delivery.id) || !('status' in delivery) || delivery.status !== 'done') {
+    throw new Error('the phase lacks its completed durable delivery identity');
+  }
+  return delivery.id;
+}
 
 async function collectReceipt(fixture: CancelDeployFixture, name: string, observed: Record<string, unknown>): Promise<void> {
   observed.journal = (await fixture.computer.onComputer(['journalctl', '--user', '--no-pager', '-n', '250'])).stdout;
@@ -90,16 +101,21 @@ describe('cancelación con despliegue aprobado durante una actualización', () =
         const live: Record<string, unknown> = {};
         observed[phase] = live;
         await assertCancelDeployLive(actor, phase, live);
-        if (!Array.isArray(live.delivery) || live.delivery.length !== 1) throw new Error('the policy phase must finish one durable delivery');
-        const delivery: unknown = live.delivery[0];
-        if (!delivery || typeof delivery !== 'object' || !('id' in delivery) || typeof delivery.id !== 'string' ||
-          !/^[a-f0-9-]{36}$/u.test(delivery.id) || !('status' in delivery) || delivery.status !== 'done') {
-          throw new Error('the policy phase lacks its completed durable delivery identity');
-        }
-        return delivery.id;
+        return deliveredId(live);
       });
     }, { runtimeBundle: cancelDeployTuiRuntime, initialSharedTui: false });
   }, 900_000);
+
+  it('reinicia con el bundle vigente un agente lanzado con la release anterior, también tras Ctrl+C de su adaptador', async () => {
+    await runCase('recover-deployment', async (fixture, observed) => {
+      await runRecoverDeployScenario(fixture, observed, async (actor, phase) => {
+        const live: Record<string, unknown> = {};
+        observed[phase] = live;
+        await assertCancelDeployLive(actor, phase, live);
+        return deliveredId(live);
+      });
+    }, { runtimeBundle: recoverDeployRuntime, errorRules: RECOVER_TERMINAL_RULES });
+  }, 1_500_000);
 
   it('arranca el SDK real y procesa una entrega durable desde Chromium', async () => {
     await runCase('sdk', async (fixture, observed) => {

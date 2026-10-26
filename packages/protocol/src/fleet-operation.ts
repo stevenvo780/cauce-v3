@@ -60,7 +60,7 @@ export const FleetRecoveryIdentitySchema = z.object({
 const FleetRecoveryParametersSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('probe') }).strict(),
   z.object({ action: z.literal('apply'), expected_fingerprint: Sha256HexSchema,
-    force: z.boolean(), identity: FleetRecoveryIdentitySchema }).strict(),
+    force: z.boolean(), identity: FleetRecoveryIdentitySchema, strategy: z.literal('relaunch').optional() }).strict(),
 ]);
 export const FleetOperationRequestSchema = z.union([
   z.object({ ...RequestBase, kind: z.enum(['create', 'update']), target: AgentTargetSchema, parameters: AgentParametersSchema }).strict()
@@ -118,7 +118,7 @@ export const FleetEvidenceSchema = z.object({
       state: z.enum(['present', 'absent', 'resumed', 'recreated', 'unsupported', 'conflict', 'failed']),
       resumable: z.boolean(), fingerprint: Sha256HexSchema.nullable(),
       reason: z.string().min(1).max(500).regex(/^[^\p{Cc}]+$/u),
-    }).strict(), strategy: z.literal('shared_tui'), preserves_conversation: z.literal(true), recreates_container: z.literal(false),
+    }).strict(), strategy: z.enum(['shared_tui', 'relaunch']), preserves_conversation: z.literal(true), recreates_container: z.boolean(),
   }).strict().optional(),
   recovery_compensated: z.boolean().optional(),
   extensions_receipt: ExtensionPreparationReceiptSchema.optional(),
