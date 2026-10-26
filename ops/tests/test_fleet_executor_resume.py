@@ -181,6 +181,29 @@ class ResumeProofTest(unittest.TestCase):
                 self.run_proof()
             self.assertEqual(self.calls[-1], ('rm', '-f', 'e' * 64))
 
+    def test_launch_proof_asks_the_current_sdk_for_its_launch_with_the_exact_operation(self):
+        operation = '6b8e4c1e-8a1d-4a51-9c11-0f6d2b1a7e11'
+        self.result = json.dumps({'launchable': True, 'resumed': False}).encode()
+        proof = resume.launch_proof(self.policy, self.agent, self.observed, self.bundle, '1000', '1000', operation)
+        self.assertEqual(proof, {'launchable': True, 'resumed': False})
+        run = next(call for call in self.calls if call[0] == 'run')
+        self.assertIn('launch-proof', run)
+        self.assertNotIn('resume-proof', run)
+        self.assertIn('CAUCE_FLEET_OPERATION_ID=' + operation, run)
+        self.assertFalse(any(value.startswith('CAUCE_SHARED_SESSION_REQUIRE_RESUME=') for value in run))
+        self.assertEqual(self.calls[-1], ('rm', '-f', 'e' * 64))
+        for result in ({'launchable': False, 'resumed': False}, {'launchable': True, 'resumed': 'yes'},
+                       {'launchable': True, 'resumed': True, 'fingerprint': 'c' * 64}, {'resumable': True, 'fingerprint': 'c' * 64}):
+            with self.subTest(result=result):
+                self.result = json.dumps(result).encode()
+                with self.assertRaisesRegex(SafeFailure, '^current SDK did not accredit a shared terminal launch$'):
+                    resume.launch_proof(self.policy, self.agent, self.observed, self.bundle, '1000', '1000', operation)
+        runs = sum(call[0] == 'run' for call in self.calls)
+        for identity in ('not-an-operation', operation.upper(), None):
+            with self.subTest(identity=identity), self.assertRaisesRegex(SafeFailure, 'exact fleet operation identity'):
+                resume.launch_proof(self.policy, self.agent, self.observed, self.bundle, '1000', '1000', identity)
+        self.assertEqual(sum(call[0] == 'run' for call in self.calls), runs)
+
     def test_failed_sdk_launch_has_bounded_failure_and_owned_cleanup(self):
         self.run_error = SafeFailure('arbitrary CLI diagnostics')
         with self.assertRaisesRegex(SafeFailure, '^current SDK did not accredit an exact shared resume$'):

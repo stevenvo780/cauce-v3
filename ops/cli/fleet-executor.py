@@ -30,7 +30,7 @@ FAILURE_REASONS = {
     'functional hook has not demonstrated its effect': 'provider_functional_proof_failed',
     'functional proof identity or nonce differs': 'provider_functional_proof_failed',
     'terminal provisioning failed': 'terminal_provision_failed',
-    'shared terminal has no exact Codex conversation to resume': 'shared_conversation_unaccredited',
+    'shared terminal has no accredited conversation to continue': 'shared_conversation_unaccredited',
     'replacement snapshot missing': 'replacement_snapshot_missing',
     'replacement original unverified': 'replacement_original_unverified',
     'replacement authority unverified': 'replacement_authority_unverified',

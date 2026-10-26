@@ -89,6 +89,28 @@ def _volume_mounts(runtime, policy: dict, agent: dict, observed: dict) -> list[s
 
 
 def resume_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: int | str, gid: int | str) -> dict:
+    proof = _sdk_proof(policy, agent, observed, bundle, uid, gid, 'resume-proof', {'CAUCE_SHARED_SESSION_REQUIRE_RESUME': '1'})
+    if set(proof) != {'resumable', 'fingerprint'} or proof['resumable'] is not True or not isinstance(proof['fingerprint'], str) \
+            or SHA.fullmatch(proof['fingerprint']) is None:
+        raise SafeFailure('current SDK did not accredit an exact shared resume')
+    return proof
+
+
+def launch_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: int | str, gid: int | str, operation_id: str) -> dict:
+    """The shared terminal the current SDK would start for a launch that may also begin an empty conversation tree."""
+    try:
+        if str(uuid.UUID(operation_id)) != operation_id:
+            raise ValueError
+    except (TypeError, ValueError, AttributeError):
+        raise SafeFailure('launch proof requires the exact fleet operation identity') from None
+    proof = _sdk_proof(policy, agent, observed, bundle, uid, gid, 'launch-proof', {'CAUCE_FLEET_OPERATION_ID': operation_id})
+    if set(proof) != {'launchable', 'resumed'} or proof['launchable'] is not True or type(proof['resumed']) is not bool:
+        raise SafeFailure('current SDK did not accredit a shared terminal launch')
+    return proof
+
+
+def _sdk_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: int | str, gid: int | str,
+               command: str, selection: dict) -> dict:
     import fleet_executor_container as runtime
     from fleet_executor_runtime import provider_base_environment
     placement = agent['_placement']
@@ -113,7 +135,7 @@ def resume_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: i
     provider = provider_base_environment(policy, agent)
     environment = {key: value for key, value in provider.items() if key in ENVIRONMENT}
     environment.update(PATH='/usr/local/bin:/usr/bin:/bin', HOME=agent['home_directory'],
-        CAUCE_RUNTIME_KEY=agent['runtime_key'], CAUCE_SHARED_SESSION='1', CAUCE_SHARED_SESSION_REQUIRE_RESUME='1')
+        CAUCE_RUNTIME_KEY=agent['runtime_key'], CAUCE_SHARED_SESSION='1', **selection)
     for field, variable in (('model_id', 'CAUCE_MODEL_ID'), ('reasoning_effort', 'CAUCE_REASONING_EFFORT')):
         if agent.get(field) is not None:
             environment[variable] = agent[field]
@@ -132,7 +154,7 @@ def resume_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: i
                     *[value for key, item in labels.items() for value in ('--label', key + '=' + item)], *mounts,
                     '--entrypoint', '/usr/bin/env', placement['image'], '-i',
                     *[key + '=' + value for key, value in environment.items()],
-                    bundle['executable'], str(entry), 'resume-proof', '--alias', agent['alias'],
+                    bundle['executable'], str(entry), command, '--alias', agent['alias'],
                     '--harness', agent['harness_id'], '--state', agent['state_directory'], '--workspace', workspace]
                 raw = runtime.checked_command([runtime.DOCKER, *arguments], timeout=12)
             except (SafeFailure, subprocess.TimeoutExpired):
@@ -143,9 +165,7 @@ def resume_proof(policy: dict, agent: dict, observed: dict, bundle: dict, uid: i
                 proof = json.loads(raw)
             except (ValueError, UnicodeError):
                 raise SafeFailure('resume proof is not a bounded SDK result') from None
-            if not isinstance(proof, dict) or set(proof) != {'resumable', 'fingerprint'} \
-                    or proof['resumable'] is not True or not isinstance(proof['fingerprint'], str) \
-                    or SHA.fullmatch(proof['fingerprint']) is None:
+            if not isinstance(proof, dict):
                 raise SafeFailure('current SDK did not accredit an exact shared resume')
             return proof
         finally:
