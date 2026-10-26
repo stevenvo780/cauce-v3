@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,6 +7,7 @@ import {
   applyMigrations, createPool, lockCompanyAuthority, PostgresDeviceAuthorizationStore, purgeCompany, registerCompany, withTransaction,
   type DatabasePool, type DeviceAuthorizationDecision, type DeviceAuthorizationIdentity,
 } from '../src/index.js';
+import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { seedCompanyIsolation, type CompanyIsolationFixture } from './companies-postgres.fixtures.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -48,8 +49,10 @@ async function pending(): Promise<{ device: string; user: string; id: string }> 
   return { device, user, id: request.id };
 }
 
+const SESSION_AUTH_AT = Date.now() - 3_600_000;
+
 function decision(userCodeHash: string, value: 'approve' | 'deny' = 'approve'): DeviceAuthorizationDecision {
-  return { userCodeHash, decision: value, ...actor(), verifyCredentialStamp: verify, sessionExpiresAtMs: Date.now()+60_000 };
+  return { userCodeHash, decision: value, ...actor(), verifyCredentialStamp: verify, sessionExpiresAtMs: Date.now()+60_000, sessionAuthAtMs: SESSION_AUTH_AT };
 }
 
 async function allowPoll(id: string): Promise<void> {
@@ -64,7 +67,7 @@ describe('device authorization with real PostgreSQL', () => {
     expect(await store.lookup(codes.user)).toBeUndefined();
     expect(await store.decide(decision(codes.user))).toBe('invalid_request');
     await allowPoll(codes.id);
-    expect(await store.poll(codes.device, verify)).toEqual({ status: 'approved', ...actor() });
+    expect(await store.poll(codes.device, verify)).toEqual({ status: 'approved', ...actor(), sessionAuthAtMs: SESSION_AUTH_AT });
     expect(await store.poll(codes.device, verify)).toEqual({ status: 'invalid_grant' });
     const audit = (await admin.query<{ action: string; metadata: Record<string, unknown>; actor_human_id: string | null; company_id: string | null }>(
       "SELECT action,metadata,actor_human_id,company_id FROM audit_events WHERE action LIKE 'auth.device.%' ORDER BY id",
@@ -128,6 +131,16 @@ describe('device authorization with real PostgreSQL', () => {
     expect(await store.poll(codes.device, () => false)).toEqual({ status: 'access_denied' });
   });
 
+  it('anchors the approving session login instant and keeps it immutable', async () => {
+    const codes = await pending();
+    await expect(store.decide({ ...decision(codes.user), sessionAuthAtMs: Date.now() + 60_000 })).rejects.toMatchObject({ code: 'forbidden' });
+    expect(await store.decide(decision(codes.user))).toBe('approved');
+    await expect(admin.query("UPDATE device_authorizations SET session_auth_at=now() WHERE id=$1", [codes.id]))
+      .rejects.toThrow('session anchor is immutable');
+    expect((await admin.query<{ at: Date }>('SELECT session_auth_at AS at FROM device_authorizations WHERE id=$1', [codes.id]))
+      .rows[0]?.at.getTime()).toBe(SESSION_AUTH_AT);
+  });
+
   it('revalidates person, membership revision and requested platform company before redemption', async () => {
     const codes = await pending(); await store.decide(decision(codes.user));
     await admin.query("UPDATE human_tenant_memberships SET permissions=ARRAY['read'] WHERE human_id=$1", [actors.leon]);
@@ -188,7 +201,7 @@ describe('device authorization with real PostgreSQL', () => {
   });
 
   it('keeps the down migration reversible and refuses to destroy a live authorization', async () => {
-    const down = await readFile(new URL('../migrations/down/089_device_authorizations.sql', import.meta.url), 'utf8');
+    const down = (await downsThrough('089_device_authorizations.sql')).join('\n');
     const codes = await pending();
     await expect(withTransaction(admin, client => client.query(down))).rejects.toThrow('wait for pending device authorizations');
     expect(await store.lookup(codes.user)).toMatchObject({ id: codes.id });
@@ -198,5 +211,14 @@ describe('device authorization with real PostgreSQL', () => {
     await applyMigrations(admin);
     expect(await store.create({ deviceCodeHash: hash(randomUUID()), userCodeHash: hash(randomUUID()),
       clientName: 'zz-canary-reapplied', maskedIp: '192.0.2.0/24' })).toMatchObject({ interval: 5 });
+  });
+
+  it('reverts the session anchor column alone and reapplies it', async () => {
+    const [down] = await downsThrough('094_device_authorization_session_anchor.sql');
+    await withTransaction(admin, client => client.query(down as string));
+    expect((await admin.query("SELECT 1 FROM information_schema.columns WHERE table_name='device_authorizations' AND column_name='session_auth_at'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM pg_proc WHERE proname IN ('cauce_runtime_grants_094','cauce_device_authorization_session_anchor')")).rowCount).toBe(0);
+    await applyMigrations(admin);
+    expect((await admin.query("SELECT 1 FROM information_schema.columns WHERE table_name='device_authorizations' AND column_name='session_auth_at'")).rowCount).toBe(1);
   });
 });

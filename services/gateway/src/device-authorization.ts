@@ -131,7 +131,7 @@ export function registerDeviceAuthorization(app: FastifyInstance, provider: Pass
     const result = await store.decide({ userCodeHash: hash(code), decision: body.decision as 'approve' | 'deny',
       humanId: verified.humanId, tenantId: verified.tenantId, actorAlias: verified.actorAlias,
       activeCompany: state.authority.acting_company, credentialStamp: verified.credentialStamp,
-      sessionExpiresAtMs: verified.expiresAtMs, verifyCredentialStamp: verify });
+      sessionExpiresAtMs: verified.expiresAtMs, sessionAuthAtMs: verified.authTimeMs ?? verified.issuedAtMs, verifyCredentialStamp: verify });
     if (result === 'expired_token' || result === 'invalid_request') { await failure(reply, result, 404); return; }
     await reply.send({ status: result });
   });

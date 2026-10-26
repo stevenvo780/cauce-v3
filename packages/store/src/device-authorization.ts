@@ -24,7 +24,7 @@ export interface DeviceAuthorizationCreate {
 export type DeviceAuthorizationPoll =
   | { readonly status: 'authorization_pending' | 'slow_down'; readonly interval: number }
   | { readonly status: 'expired_token' | 'access_denied' | 'invalid_grant' }
-  | ({ readonly status: 'approved' } & DeviceAuthorizationIdentity);
+  | ({ readonly status: 'approved'; readonly sessionAuthAtMs?: number } & DeviceAuthorizationIdentity);
 
 export type DeviceAuthorizationDecisionResult = 'approved' | 'denied' | 'expired_token' | 'invalid_request';
 
@@ -40,6 +40,7 @@ interface DeviceRow {
   state: 'pending' | 'approved' | 'denied' | 'consumed' | 'expired';
   human_id: string | null; tenant_id: string | null; actor_alias: string | null; active_company: string | null;
   credential_stamp: string | null; membership_revision: string | null; membership_snapshot: string | null;
+  session_auth_at: Date | null;
 }
 
 function validHash(value: string): boolean { return /^[a-f0-9]{64}$/u.test(value); }
@@ -121,16 +122,18 @@ export class PostgresDeviceAuthorizationStore implements DeviceAuthorizationStor
       if (row.state === 'expired' || await expire(client, row.id)) return 'expired_token';
       if (row.state !== 'pending') return 'invalid_request';
       const membership = await lockDeviceIdentity(client, input, input.verifyCredentialStamp);
-      if (!Number.isFinite(input.sessionExpiresAtMs) || input.sessionExpiresAtMs <= Date.now()) {
+      if (!Number.isFinite(input.sessionExpiresAtMs) || input.sessionExpiresAtMs <= Date.now()
+        || !Number.isFinite(input.sessionAuthAtMs) || input.sessionAuthAtMs > Date.now()) {
         throw new StoreError('forbidden', 'device authorization session expired');
       }
       const state = input.decision === 'approve' ? 'approved' : 'denied';
       const updated = await client.query(`UPDATE device_authorizations SET state=$2,human_id=$3,tenant_id=$4,
-        actor_alias=$5,active_company=$6,credential_stamp=$7,membership_revision=$8,membership_snapshot=$9,decided_at=clock_timestamp()
+        actor_alias=$5,active_company=$6,credential_stamp=$7,membership_revision=$8,membership_snapshot=$9,decided_at=clock_timestamp(),
+        session_auth_at=to_timestamp($11::double precision/1000)
         WHERE id=$1 AND state='pending' AND expires_at>clock_timestamp()
           AND to_timestamp($10::double precision/1000)>clock_timestamp() RETURNING id`,
       [row.id, state, input.humanId, input.tenantId, input.actorAlias, input.activeCompany, input.credentialStamp,
-        membership.revision, membership.snapshot, input.sessionExpiresAtMs]);
+        membership.revision, membership.snapshot, input.sessionExpiresAtMs, input.sessionAuthAtMs]);
       if (updated.rowCount !== 1) {
         if (await expire(client, row.id)) return 'expired_token';
         throw new StoreError('forbidden', 'device authorization session expired');
@@ -183,6 +186,7 @@ export class PostgresDeviceAuthorizationStore implements DeviceAuthorizationStor
       WHERE id=$1 AND state='approved' AND expires_at>clock_timestamp() RETURNING id`, [row.id]);
     if (consumed.rowCount !== 1) { await expire(client, row.id); return { status: 'expired_token' }; }
     await audit(client, row.id, 'auth.device.redeemed', actor);
-    return { status: 'approved', ...actor };
+    return { status: 'approved', ...actor,
+      ...(row.session_auth_at === null ? {} : { sessionAuthAtMs: row.session_auth_at.getTime() }) };
   }
 }

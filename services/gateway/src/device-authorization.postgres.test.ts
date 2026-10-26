@@ -48,7 +48,35 @@ async function pending(ip = '192.0.2.1') {
     verification_uri_complete: string; expires_in: number; interval: number }>();
 }
 
+const claimsOf = (cookie: string): { iat: number; auth_time?: number; exp: number } =>
+  JSON.parse(Buffer.from(decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1)).split('.')[1] ?? '', 'base64url').toString('utf8')) as
+    { iat: number; auth_time?: number; exp: number };
+
+async function approveAndRedeem(session: Awaited<ReturnType<typeof login>>) {
+  const codes = await pending();
+  const approved = await app().inject({ method: 'POST', url: '/v3/auth/device/approve', headers: session,
+    payload: { user_code: codes.user_code, decision: 'approve' } });
+  expect(approved.statusCode).toBe(200);
+  await admin().query("UPDATE device_authorizations SET next_poll_at=clock_timestamp()-interval '1 second' WHERE state='approved'");
+  const token = await app().inject({ method: 'POST', url: '/v3/auth/device/token', payload: { device_code: codes.device_code } });
+  expect(token.statusCode).toBe(200);
+  const raw = token.headers['set-cookie'];
+  const cookie = ((Array.isArray(raw) ? raw : [raw ?? '']).find(value => String(value).startsWith('__Host-cauce_session=')) ?? '').split(';')[0] ?? '';
+  const csrf = token.json<{ csrf_token: string }>().csrf_token;
+  return { cookie, origin: 'http://localhost', 'x-csrf-token': csrf };
+}
+
 describe('device authorization gateway with real PostgreSQL', () => {
+  it('hands the login instant of the approving session down a chain of device approvals', async () => {
+    const original = await login();
+    const loginIat = claimsOf(original.cookie).iat;
+    const first = await approveAndRedeem(original);
+    expect(claimsOf(first.cookie).auth_time).toBe(loginIat);
+    const second = await approveAndRedeem(first);
+    expect(claimsOf(second.cookie).auth_time).toBe(loginIat);
+    expect(claimsOf(second.cookie).iat).toBeGreaterThanOrEqual(loginIat);
+  });
+
   it('uses the validated requested console Origin when multiple origins are configured', async () => {
     if (!current) throw new Error('test database unavailable');
     const alternate = await buildGateway({ pool: current.pool, consoleOrigins: ['https://canonical.example.invalid', 'https://second.example.invalid'],

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applyMigrations, createPool, withTransaction, type DatabasePool } from '../src/index.js';
+import { downsThrough } from './migration-downs.fixtures.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
@@ -36,7 +36,7 @@ describe('console session revocations (migration 093)', () => {
   });
 
   it('reverts cleanly and reapplies', async () => {
-    const down = await readFile(new URL('../migrations/down/093_console_session_revocations.sql', import.meta.url), 'utf8');
+    const down = (await downsThrough('093_console_session_revocations.sql')).join('\n');
     await withTransaction(admin, client => client.query(down));
     expect((await admin.query("SELECT to_regclass('console_session_revocations') AS name")).rows[0]).toEqual({ name: null });
     expect((await admin.query("SELECT 1 FROM pg_proc WHERE proname='cauce_runtime_grants_093'")).rowCount).toBe(0);

@@ -1,4 +1,4 @@
-import type { FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPublishReceipt, type Permission } from '@cauce/protocol';
 import { buildGateway, type GatewayRepository } from './app.js';
@@ -13,6 +13,7 @@ import {
 } from './password-auth.js';
 import { verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
+import type { ConsoleSessionRevocations } from './console-session-revocations.js';
 import { MemoryConsoleSessionRevocations } from './test-support/console-session-revocations.js';
 
 /**
@@ -158,6 +159,7 @@ async function fixture(options: {
   companyAuthority?: ConsoleCompanyAuthority;
   sessionMaxMs?: number;
   revocations?: boolean;
+  sessionRevocations?: ConsoleSessionRevocations;
 } = {}) {
   let now = Date.UTC(2026, 7, 6, 12, 0, 0);
   const user = options.user ?? await makeUser();
@@ -167,6 +169,7 @@ async function fixture(options: {
     signingKey: Buffer.alloc(32, 7),
     sessionTtlMs: 60 * 60 * 1_000,
     ...(options.sessionMaxMs === undefined ? {} : { sessionMaxMs: options.sessionMaxMs }),
+    ...(options.sessionRevocations === undefined ? {} : { sessionRevocations: options.sessionRevocations }),
     ...(options.revocations === true ? { sessionRevocations: new MemoryConsoleSessionRevocations() } : {}),
     companyAuthority: options.companyAuthority ?? {
       resolve: async () => ({ role: 'tenant_operator', scope: 'tenant', home_company: 'humanizar',
@@ -894,6 +897,195 @@ describe('sesión deslizante de la consola', () => {
     })).toThrow(/tope absoluto/);
   });
 });
+
+describe('sesión deslizante: carreras, dispositivo y estados', () => {
+  const HOUR = 60 * 60 * 1_000;
+  const T0 = Date.UTC(2026, 7, 6, 12, 0, 0);
+  const setCookies = (headers: Record<string, unknown>): string[] => {
+    const raw = headers['set-cookie'];
+    return Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : [];
+  };
+  const claimsOf = (cookie: string): Record<string, unknown> =>
+    JSON.parse(Buffer.from(decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1)).split('.')[1] ?? '', 'base64url')
+      .toString('utf8')) as Record<string, unknown>;
+  const fakeReply = () => {
+    const headers: string[] = [];
+    const reply = {
+      statusCode: 200,
+      hasHeader: () => false,
+      header(name: string, value: string) { if (name.toLowerCase() === 'set-cookie') headers.push(value); return reply; },
+      code() { return reply; },
+      send() { return Promise.resolve(reply); },
+    };
+    return { reply: reply as unknown as FastifyReply, headers };
+  };
+  const switching = (): ConsoleCompanyAuthority => ({
+    resolve: async (_user, requested) => ({ role: 'platform_admin', scope: 'platform', home_company: 'humanizar',
+      acting_company: requested ?? 'humanizar', platform_override: requested !== undefined && requested !== 'humanizar' }),
+    switchCompany: async (_user, company) => ({ role: 'platform_admin', scope: 'platform', home_company: 'humanizar',
+      acting_company: company ?? 'humanizar', platform_override: company !== null && company !== 'humanizar' }),
+  });
+
+  it('una respuesta tardía lanzada antes de cambiar de empresa no pisa la cookie de la empresa nueva', async () => {
+    const test = await fixture({ companyAuthority: switching() });
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+      const switchTo = (cookie: string, company: string) => test.app.inject({
+        method: 'POST', url: '/v3/auth/session/company', payload: { company_id: company },
+        headers: { cookie, origin: 'http://localhost', 'x-csrf-token': csrf },
+      });
+      const first = await switchTo(cookieFrom(login.headers), 'praxis');
+      expect(first.statusCode).toBe(200);
+      const cookieA = cookieFrom(first.headers);
+      expect(claimsOf(cookieA).cmp).toBe('praxis');
+
+      test.advance(10 * 60 * 1_000);
+      const stale = { headers: { cookie: cookieA }, url: '/v3/console/agents' } as unknown as FastifyRequest;
+      await test.provider.authenticateHttp(stale);
+
+      const second = await switchTo(cookieA, 'otra');
+      expect(second.statusCode).toBe(200);
+      const cookieB = cookieFrom(second.headers);
+      expect(claimsOf(cookieB).cmp).toBe('otra');
+      expect(claimsOf(cookieB).exp as number).toBeGreaterThan(claimsOf(cookieA).exp as number);
+
+      const late = fakeReply();
+      test.provider.slideSession(stale, late.reply);
+      expect(late.headers).toEqual([]);
+
+      const current = { headers: { cookie: cookieB }, url: '/v3/console/agents' } as unknown as FastifyRequest;
+      test.advance(10 * 60 * 1_000);
+      await test.provider.authenticateHttp(current);
+      const fresh = fakeReply();
+      test.provider.slideSession(current, fresh.reply);
+      expect(fresh.headers).toHaveLength(1);
+      expect(claimsOf(cookieFromHeader(fresh.headers[0] as string)).cmp).toBe('otra');
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('volver a la empresa de origen tampoco deja que una cookie anterior la deshaga', async () => {
+    const test = await fixture({ companyAuthority: switching() });
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+      const switchTo = (cookie: string, company: string | null) => test.app.inject({
+        method: 'POST', url: '/v3/auth/session/company', payload: { company_id: company },
+        headers: { cookie, origin: 'http://localhost', 'x-csrf-token': csrf },
+      });
+      const cookieA = cookieFrom((await switchTo(cookieFrom(login.headers), 'praxis')).headers);
+      test.advance(10 * 60 * 1_000);
+      const stale = { headers: { cookie: cookieA }, url: '/v3/console/agents' } as unknown as FastifyRequest;
+      await test.provider.authenticateHttp(stale);
+      const home = await switchTo(cookieA, null);
+      expect(claimsOf(cookieFrom(home.headers)).cmp).toBeUndefined();
+      const late = fakeReply();
+      test.provider.slideSession(stale, late.reply);
+      expect(late.headers).toEqual([]);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('aprobar un dispositivo no da un tope nuevo: la sesión emitida hereda el login de la que aprobó', async () => {
+    const test = await fixture({ sessionMaxMs: 3 * HOUR });
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      let original = cookieFrom(login.headers);
+      const stamp = claimsOf(original).credential_stamp as string;
+      const user = (await test.users.findByEmail(EMAIL)) as ConsoleUser;
+      for (let step = 0; step < 2; step += 1) {
+        test.advance(55 * 60 * 1_000);
+        original = cookieFromHeader(setCookies((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: original } })).headers)[0] ?? original);
+      }
+      const grant = { humanId: user.id, tenantId: user.tenant_id, actorAlias: user.alias, activeCompany: 'humanizar', credentialStamp: stamp };
+
+      const approver = await test.provider.verifiedConsoleSession({ headers: { cookie: original } } as unknown as FastifyRequest);
+      expect(approver?.authTimeMs).toBe(T0);
+      const issued = fakeReply();
+      await test.provider.completeDeviceLogin(issued.reply, { ...grant, sessionAuthAtMs: approver?.authTimeMs as number });
+      const device = cookieFromHeader(issued.headers[0] as string);
+      expect(claimsOf(device).auth_time).toBe(T0 / 1_000);
+      expect(claimsOf(device).exp).toBe((T0 + 170 * 60 * 1_000) / 1_000);
+
+      const chained = await test.provider.verifiedConsoleSession({ headers: { cookie: device } } as unknown as FastifyRequest);
+      expect(chained?.authTimeMs).toBe(T0);
+      const second = fakeReply();
+      await test.provider.completeDeviceLogin(second.reply, { ...grant, sessionAuthAtMs: chained?.authTimeMs as number });
+      expect(claimsOf(cookieFromHeader(second.headers[0] as string)).auth_time).toBe(T0 / 1_000);
+
+      test.advance(71 * 60 * 1_000);
+      expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie: device } })).statusCode).toBe(401);
+      const refused = fakeReply();
+      await expect(test.provider.completeDeviceLogin(refused.reply, { ...grant, sessionAuthAtMs: T0 })).rejects.toThrow('access_denied');
+      expect(refused.headers).toEqual([]);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el estado de sesión informa el vencimiento ya renovado', async () => {
+    const test = await fixture();
+    try {
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
+      test.advance(40 * 60 * 1_000);
+      const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
+      const renewed = cookieFromHeader(setCookies(state.headers)[0] as string);
+      expect(state.json<{ expires_at: string }>().expires_at).toBe(new Date((claimsOf(renewed).exp as number) * 1_000).toISOString());
+      expect(claimsOf(renewed).exp as number).toBeGreaterThan(claimsOf(cookie).exp as number);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('si la autoridad de la sesión ya no vale, el estado dice no autenticado y no renueva la cookie', async () => {
+    let revoked = false;
+    const test = await fixture({ companyAuthority: {
+      resolve: async () => {
+        if (revoked) throw new AuthError('la empresa ya no vale');
+        return { role: 'tenant_operator', scope: 'tenant', home_company: 'humanizar', acting_company: 'humanizar', platform_override: false };
+      },
+      switchCompany: async () => { throw new Error('unused'); },
+    } });
+    try {
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
+      test.advance(40 * 60 * 1_000);
+      revoked = true;
+      const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
+      expect(state.json<{ authenticated: boolean }>().authenticated).toBe(false);
+      expect(setCookies(state.headers)).toEqual([]);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el logout borra la cookie aunque falle la revocación y el proceso sigue rechazando esa sesión', async () => {
+    const failing: ConsoleSessionRevocations = {
+      revoke: () => Promise.reject(new Error('database unavailable')),
+      isRevoked: () => Promise.resolve(false),
+    };
+    const test = await fixture({ sessionRevocations: failing });
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const cookie = cookieFrom(login.headers);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+      const logout = await test.app.inject({
+        method: 'POST', url: '/v3/auth/logout', headers: { cookie, origin: 'http://localhost', 'x-csrf-token': csrf },
+      });
+      expect(logout.statusCode).toBe(204);
+      expect(setCookies(logout.headers).join()).toContain('Max-Age=0');
+      expect((await test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } })).statusCode).toBe(401);
+    } finally {
+      await test.app.close();
+    }
+  });
+});
+
+function cookieFromHeader(header: string): string {
+  return header.split(';', 1)[0] as string;
+}
 
 describe('isConsoleSurface clasifica la ruta como la resuelve el router, nunca por el texto crudo', () => {
   it.each([

@@ -32,6 +32,7 @@ const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_SESSION_MAX_MS = 30 * 24 * 60 * 60 * 1_000;
 /** A renewal is skipped unless it would extend the expiry by at least this fraction of the inactivity window. */
 const RENEWAL_STEP_DIVISOR = 24;
+const MAX_TRACKED_SWITCHES = 10_000;
 const MIN_SIGNING_KEY_BYTES = 32;
 /** Single message for "not found", "wrong password", and "disabled account". See `login()`. */
 const CREDENTIAL_FAILURE_MESSAGE = 'Correo o contraseña incorrectos.';
@@ -44,6 +45,11 @@ export interface ConsoleSessionClaims {
   csrf: string;
   iat: number;
   exp: number;
+  /**
+   * Login instant (seconds) a session issued by a device approval inherits from the session that
+   * approved it; anchors the absolute ceiling. Absent on a password login, where `iat` is the anchor.
+   */
+  auth_time?: number;
   credential_stamp?: string;
   /** Company a platform administrator switched to; every authority decision revalidates it against the database. */
   cmp?: string;
@@ -112,6 +118,10 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
   }
   if (typeof claims.iat !== 'number' || !Number.isFinite(claims.iat)) throw new AuthError('emisión del token inválida');
   if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw new AuthError('vencimiento del token inválido');
+  if (claims.auth_time !== undefined
+      && (typeof claims.auth_time !== 'number' || !Number.isFinite(claims.auth_time) || claims.auth_time > claims.iat)) {
+    throw new AuthError('inicio de sesión inválido');
+  }
   if (claims.credential_stamp !== undefined
       && (typeof claims.credential_stamp !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(claims.credential_stamp))) {
     throw new AuthError('sello de credenciales inválido');
@@ -122,6 +132,11 @@ export function verifyConsoleSession(key: Buffer, token: string, nowMs: number):
   // No clock-skew tolerance for the future: issuer and verifier are THE SAME process.
   if (claims.exp * 1_000 <= nowMs) throw new SessionExpiredError();
   return claims as ConsoleSessionClaims;
+}
+
+/** Seconds of the login that anchors the absolute ceiling. */
+function anchorSeconds(claims: Pick<ConsoleSessionClaims, 'iat' | 'auth_time'>): number {
+  return claims.auth_time ?? claims.iat;
 }
 
 /**
@@ -304,6 +319,8 @@ export interface VerifiedConsoleSession {
   readonly tenantId: Principal['tenant_id'];
   readonly actorAlias: string;
   readonly issuedAtMs: number;
+  /** Login instant that anchors the absolute ceiling; differs from `issuedAtMs` for a session born from a device approval. */
+  readonly authTimeMs?: number;
   readonly expiresAtMs: number;
   readonly credentialStamp?: string;
   /** The raw `cmp` claim; the store resolver decides inside the caller transaction whether it holds. */
@@ -326,6 +343,10 @@ export class PasswordAuthProvider implements AuthProvider {
   private readonly machineChannelRequiringSession: string;
   private companyAuthority: ConsoleCompanyAuthority | undefined;
   private readonly requestCache = new WeakMap<FastifyRequest, LoadedSession>();
+  /** Company each session was last switched to; a cookie minted before the switch must not overwrite it. */
+  private readonly companySwitches = new Map<string, { company: string | undefined; atMs: number }>();
+  /** Sessions closed here, kept in case the revocation store is unavailable at logout. */
+  private readonly closedSessions = new Map<string, number>();
 
   constructor(options: PasswordAuthProviderOptions) {
     if (options.signingKey.byteLength < MIN_SIGNING_KEY_BYTES) {
@@ -395,9 +416,9 @@ export class PasswordAuthProvider implements AuthProvider {
     if (token === undefined) throw new AuthError(SESSION_REQUIRED_MESSAGE);
     const nowMs = this.now();
     const claims = verifyConsoleSession(this.signingKey, token, nowMs);
-    // `iat` is the login instant and never moves, so it anchors the ceiling; `exp` is what slides.
-    if (claims.iat * 1_000 + this.sessionMaxMs <= nowMs) throw new SessionExpiredError();
-    if (await this.sessionRevocations?.isRevoked(claims.sid)) throw new SessionExpiredError();
+    // The login instant never moves, so it anchors the ceiling; `exp` is what slides.
+    if (this.ceilingMs(claims) <= nowMs) throw new SessionExpiredError();
+    if (this.closedHere(claims.sid, nowMs) || await this.sessionRevocations?.isRevoked(claims.sid)) throw new SessionExpiredError();
     const user = await this.users.findById(claims.sub);
     // ALWAYS re-read. A signed token is not authority over the current state of the account.
     if (!user?.active) throw new AuthError('la cuenta de consola no está habilitada');
@@ -409,6 +430,18 @@ export class PasswordAuthProvider implements AuthProvider {
     const loaded = { claims, user, principal: consoleUserPrincipal(user, `console:${claims.sid}`, 'console') };
     this.requestCache.set(request, loaded);
     return loaded;
+  }
+
+  private ceilingMs(claims: Pick<ConsoleSessionClaims, 'iat' | 'auth_time'>): number {
+    return anchorSeconds(claims) * 1_000 + this.sessionMaxMs;
+  }
+
+  private closedHere(sid: string, nowMs: number): boolean {
+    const notAfter = this.closedSessions.get(sid);
+    if (notAfter === undefined) return false;
+    if (notAfter > nowMs) return true;
+    this.closedSessions.delete(sid);
+    return false;
   }
 
   verifyCredentialStamp(stamp: string, current: Readonly<ConsoleCredentialSnapshot>): boolean {
@@ -424,7 +457,7 @@ export class PasswordAuthProvider implements AuthProvider {
     if (!this.handles(request)) return undefined;
     const { claims, user, principal } = await this.load(request);
     return Object.freeze({ humanId: user.id, loginSid: claims.sid, tenantId: principal.tenant_id, actorAlias: principal.alias,
-      issuedAtMs: claims.iat * 1000, expiresAtMs: claims.exp * 1000,
+      issuedAtMs: claims.iat * 1000, authTimeMs: anchorSeconds(claims) * 1000, expiresAtMs: claims.exp * 1000,
       ...(claims.credential_stamp === undefined ? {} : { credentialStamp: claims.credential_stamp }),
       ...(claims.cmp === undefined ? {} : { requestedCompany: claims.cmp }) });
   }
@@ -457,7 +490,9 @@ export class PasswordAuthProvider implements AuthProvider {
     }
   }
 
-  private sessionState(claims: ConsoleSessionClaims, user: ConsoleUser, authority?: ConsoleSessionAuthority): ConsolePasswordAuthState {
+  private sessionState(
+    claims: ConsoleSessionClaims, user: ConsoleUser, authority?: ConsoleSessionAuthority, expiresAtSeconds = claims.exp,
+  ): ConsolePasswordAuthState {
     const ceiling = consoleRoleAuthority(user.role);
     return {
       authenticated: true,
@@ -467,7 +502,7 @@ export class PasswordAuthProvider implements AuthProvider {
       name: user.display_name,
       roles: ceiling.roles,
       permissions: ceiling.permissions,
-      expires_at: new Date(claims.exp * 1_000).toISOString(),
+      expires_at: new Date(expiresAtSeconds * 1_000).toISOString(),
       csrf_token: claims.csrf,
       ...(authority === undefined ? {} : { authority })
     };
@@ -477,8 +512,11 @@ export class PasswordAuthProvider implements AuthProvider {
     if (!this.handles(request)) return { authenticated: false, login_mode: 'password' };
     try {
       const { claims, user } = await this.load(request);
-      return this.sessionState(claims, user, await this.sessionAuthority(request, user, claims.cmp));
+      const authority = await this.sessionAuthority(request, user, claims.cmp);
+      return this.sessionState(claims, user, authority, this.nextExpiry(claims));
     } catch (error) {
+      // A session whose authority no longer holds must not be renewed by the reply that reports it.
+      this.requestCache.delete(request);
       if (error instanceof SessionExpiredError) {
         return { authenticated: false, login_mode: 'password', reason: error.message };
       }
@@ -513,16 +551,40 @@ export class PasswordAuthProvider implements AuthProvider {
     const loaded = this.requestCache.get(request);
     if (loaded === undefined || reply.statusCode >= 400 || reply.hasHeader('set-cookie')) return;
     const { claims } = loaded;
+    const exp = this.nextExpiry(claims);
+    if (exp === claims.exp) return;
     const nowMs = this.now();
-    const targetMs = Math.min(nowMs + this.sessionTtlMs, claims.iat * 1_000 + this.sessionMaxMs);
-    if (targetMs - claims.exp * 1_000 < this.sessionTtlMs / RENEWAL_STEP_DIVISOR) return;
-    const exp = Math.floor(targetMs / 1_000);
     const next: ConsoleSessionClaims = { ...claims, exp };
     void reply.header('Set-Cookie', hostSessionCookie(this.cookieName, signConsoleSession(this.signingKey, next),
       exp - nowMs / 1_000, 'Strict'));
   }
 
-  /** Reissues the same session with the new `cmp` claim: same sid, CSRF token, issue time and expiry. */
+  /**
+   * Expiry (seconds) the session would slide to now; `claims.exp` itself when there is nothing to renew.
+   * A cookie whose company is not the one the session was last switched to is stale and never renews.
+   */
+  private nextExpiry(claims: ConsoleSessionClaims): number {
+    const switched = this.companySwitches.get(claims.sid);
+    if (switched !== undefined && switched.company !== claims.cmp) return claims.exp;
+    const target = this.slidTarget(claims);
+    return (target * 1_000 - claims.exp * 1_000) < this.sessionTtlMs / RENEWAL_STEP_DIVISOR ? claims.exp : target;
+  }
+
+  private slidTarget(claims: ConsoleSessionClaims): number {
+    return Math.floor(Math.min(this.now() + this.sessionTtlMs, this.ceilingMs(claims)) / 1_000);
+  }
+
+  private recordCompanySwitch(sid: string, company: string | undefined): void {
+    const nowMs = this.now();
+    for (const [key, entry] of this.companySwitches) {
+      if (nowMs - entry.atMs < this.sessionTtlMs && this.companySwitches.size < MAX_TRACKED_SWITCHES) break;
+      this.companySwitches.delete(key);
+    }
+    this.companySwitches.delete(sid);
+    this.companySwitches.set(sid, { company, atMs: nowMs });
+  }
+
+  /** Reissues the same session with the new `cmp` claim: same sid, CSRF token and issue time, and a slid expiry. */
   async switchCompany(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     await this.requireCsrf(request);
     const { claims, user } = await this.load(request);
@@ -543,12 +605,14 @@ export class PasswordAuthProvider implements AuthProvider {
       throw error;
     }
     const { cmp: _previous, ...base } = claims;
-    const next: ConsoleSessionClaims = authority.platform_override ? { ...base, cmp: authority.acting_company } : base;
+    const switched: ConsoleSessionClaims = authority.platform_override ? { ...base, cmp: authority.acting_company } : base;
+    const next: ConsoleSessionClaims = { ...switched, exp: Math.max(claims.exp, this.slidTarget(claims)) };
+    this.recordCompanySwitch(claims.sid, next.cmp);
     this.requestCache.delete(request);
     await reply
       .header('Cache-Control', 'no-store')
       .header('Set-Cookie', hostSessionCookie(this.cookieName, signConsoleSession(this.signingKey, next),
-        claims.exp - this.now() / 1_000, 'Strict'))
+        next.exp - this.now() / 1_000, 'Strict'))
       .send(this.sessionState(next, user, authority));
   }
 
@@ -568,7 +632,7 @@ export class PasswordAuthProvider implements AuthProvider {
     await reply.header('Cache-Control', 'no-store').send({ name: saved });
   }
 
-  private issue(user: ConsoleUser, company?: string): { token: string; claims: ConsoleSessionClaims } {
+  private issue(user: ConsoleUser, company?: string, authTimeMs?: number): { token: string; claims: ConsoleSessionClaims } {
     const issuedAtMs = this.now();
     const claims: ConsoleSessionClaims = {
       iss: JWT_ISSUER,
@@ -577,7 +641,9 @@ export class PasswordAuthProvider implements AuthProvider {
       sid: randomUUID(),
       csrf: randomBytes(32).toString('base64url'),
       iat: Math.floor(issuedAtMs / 1_000),
-      exp: Math.floor((issuedAtMs + this.sessionTtlMs) / 1_000),
+      exp: Math.floor((Math.min(issuedAtMs + this.sessionTtlMs, authTimeMs === undefined ? Infinity
+        : authTimeMs + this.sessionMaxMs)) / 1_000),
+      ...(authTimeMs === undefined ? {} : { auth_time: Math.floor(authTimeMs / 1_000) }),
       credential_stamp: createConsoleCredentialStamp(this.signingKey, credentialSnapshot(user)),
       ...(company === undefined ? {} : { cmp: company }),
     };
@@ -586,6 +652,7 @@ export class PasswordAuthProvider implements AuthProvider {
 
   async completeDeviceLogin(reply: FastifyReply, grant: {
     humanId: string; tenantId: string; actorAlias: string; activeCompany: string; credentialStamp: string;
+    sessionAuthAtMs?: number;
   }): Promise<void> {
     const user = await this.users.findById(grant.humanId);
     if (!user?.active || user.tenant_id !== grant.tenantId || user.alias !== grant.actorAlias
@@ -594,18 +661,25 @@ export class PasswordAuthProvider implements AuthProvider {
     if (authority === undefined || authority.scope === 'none' || authority.acting_company !== grant.activeCompany) {
       throw new AuthError('access_denied');
     }
-    await this.sendLogin(reply, user, authority);
+    // A device approval is not a new login: the session it issues keeps the ceiling of the one that approved it.
+    if (grant.sessionAuthAtMs !== undefined && grant.sessionAuthAtMs + this.sessionMaxMs <= this.now()) {
+      throw new AuthError('access_denied');
+    }
+    await this.sendLogin(reply, user, authority, grant.sessionAuthAtMs);
   }
 
-  private async sendLogin(reply: FastifyReply, user: ConsoleUser, authority?: ConsoleSessionAuthority): Promise<void> {
-    const { token, claims } = this.issue(user, authority?.platform_override ? authority.acting_company : undefined);
+  private async sendLogin(
+    reply: FastifyReply, user: ConsoleUser, authority?: ConsoleSessionAuthority, authTimeMs?: number,
+  ): Promise<void> {
+    const { token, claims } = this.issue(user, authority?.platform_override ? authority.acting_company : undefined, authTimeMs);
     try {
       await this.users.recordLogin(user.id, new Date(this.now()));
     } catch {
       // The last-login marker must not prevent session issuance.
     }
     await reply.header('Cache-Control', 'no-store')
-      .header('Set-Cookie', hostSessionCookie(this.cookieName, token, this.sessionTtlMs / 1_000, 'Strict'))
+      .header('Set-Cookie', hostSessionCookie(this.cookieName, token,
+        authTimeMs === undefined ? this.sessionTtlMs / 1_000 : claims.exp - this.now() / 1_000, 'Strict'))
       .code(200).send(this.sessionState(claims, user, authority));
   }
 
@@ -666,6 +740,15 @@ export class PasswordAuthProvider implements AuthProvider {
     await this.sendLogin(reply, user);
   }
 
+  private closeHere(sid: string, notAfterMs: number): void {
+    const nowMs = this.now();
+    for (const [key, until] of this.closedSessions) {
+      if (until > nowMs && this.closedSessions.size < MAX_TRACKED_SWITCHES) break;
+      this.closedSessions.delete(key);
+    }
+    this.closedSessions.set(sid, notAfterMs);
+  }
+
   /**
    * Logging out clears the cookie and, when revocations are configured, records the session id
    * until the day its absolute ceiling would have ended it: a copy of the cookie stops working
@@ -682,7 +765,14 @@ export class PasswordAuthProvider implements AuthProvider {
         claims = undefined;
       }
       if (claims !== undefined) {
-        await this.sessionRevocations.revoke(claims.sid, claims.sub, claims.iat * 1_000 + this.sessionMaxMs);
+        const notAfterMs = this.ceilingMs(claims);
+        this.closeHere(claims.sid, notAfterMs);
+        try {
+          await this.sessionRevocations.revoke(claims.sid, claims.sub, notAfterMs);
+        } catch (error) {
+          // The browser must still lose its cookie; this process refuses the session until it restarts.
+          request.log.error({ event: 'console_session_revocation_failed', reason: errorLabel(error) }, 'session revocation not persisted');
+        }
       }
     }
     await reply

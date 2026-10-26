@@ -16,6 +16,8 @@ export interface DeviceAuthorizationDecision extends DeviceAuthorizationIdentity
   readonly decision: 'approve' | 'deny';
   readonly verifyCredentialStamp: ConsoleCredentialStampVerifier;
   readonly sessionExpiresAtMs: number;
+  /** Login instant of the approving session: the session the device receives inherits it as its ceiling anchor. */
+  readonly sessionAuthAtMs: number;
 }
 
 export async function lockDeviceIdentity(
