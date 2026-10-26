@@ -383,7 +383,7 @@ class ProviderCacheIntegrationTest(unittest.TestCase):
                     side_effect=self.docker_result(outcome)) as run:
                 self.assertIs(cache.cached_probe(self.root, key, self.container_probe, now=100), value)
                 self.assertIs(cache.cached_probe(self.root, key, self.container_probe, now=101), value)
-                self.assertEqual([item.args[0][1] for item in run.call_args_list], ['run', 'rm'])
+                self.assertEqual([item.args[0][1] for item in run.call_args_list], ['run', 'rm', 'container'])
 
     def test_container_errors_and_missing_markers_are_never_cached(self):
         outcomes = [(subprocess.CompletedProcess(['docker'], code, b'cauce-probe:false\n', b''),
@@ -398,7 +398,10 @@ class ProviderCacheIntegrationTest(unittest.TestCase):
                     with self.assertRaises(error_type):
                         cache.cached_probe(self.root, self.key, self.container_probe, now=now)
                     self.assertFalse((self.root / 'provider-probes' / (self.key + '.json')).exists())
-                self.assertEqual([item.args[0][1] for item in run.call_args_list], ['run', 'rm', 'run', 'rm'])
+                self.assertEqual([item.args[0][1] for item in run.call_args_list], ['run', 'rm', 'container'] * 2)
+                prune = run.call_args_list[2].args[0]
+                self.assertEqual(prune[2:], ['prune', '-f', '--filter', 'label=cauce.fleet.capability_probe=grok',
+                                             '--filter', 'until=10m'])
 
     def test_measured_capability_retries_then_caches_and_invalidates_after_code_changes(self):
         module = importlib.import_module('fleet_provider_grok')

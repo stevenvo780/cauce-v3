@@ -5,6 +5,8 @@ import pathlib
 import subprocess
 import uuid
 
+PROBE_LABEL = 'cauce.fleet.capability_probe'
+
 
 def container_probe(binding: dict, placement: dict, harness: str, *, tmpfs_size: str,
                     volumes: tuple[str, ...] = ()) -> bool:
@@ -20,6 +22,7 @@ def container_probe(binding: dict, placement: dict, harness: str, *, tmpfs_size:
     try:
         mounts = [value for volume in (f'{directory}:/cauce/executor:ro,z', *volumes) for value in ('--volume', volume)]
         result = subprocess.run(['/usr/bin/docker', 'run', '--rm', '--pull=never', '--name', name, '-i',
+            '--label', PROBE_LABEL + '=' + harness,
             '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
             '--tmpfs', f'/tmp:rw,nosuid,nodev,size={tmpfs_size}', '--user', placement['runtime_user'],
             *mounts, '--entrypoint', placement['python'], placement['image'], '-I', '-B', '-c', program],
@@ -31,6 +34,9 @@ def container_probe(binding: dict, placement: dict, harness: str, *, tmpfs_size:
         return result.stdout == b'cauce-probe:true\n'
     finally:
         try:
-            subprocess.run(['/usr/bin/docker', 'rm', '-f', name], capture_output=True, timeout=5, check=False)
+            subprocess.run(['/usr/bin/docker', 'rm', '-f', name], capture_output=True, timeout=20, check=False)
+            # A client killed by its timeout can leave the probe created but never started, after its own rm -f ran.
+            subprocess.run(['/usr/bin/docker', 'container', 'prune', '-f', '--filter', f'label={PROBE_LABEL}={harness}',
+                            '--filter', 'until=10m'], capture_output=True, timeout=20, check=False)
         except (OSError, subprocess.SubprocessError):
             pass
