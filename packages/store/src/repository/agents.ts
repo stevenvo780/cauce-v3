@@ -17,6 +17,7 @@ import { StoreError } from './errors.js';
 import { hubStarRouteSql } from './acl-edges.js';
 import { fleetReadableSql } from '../fleet-activity.js';
 import { agentDeploymentStatus, type DeliveryRow } from './observability.js';
+import type { ConfigurationAuthorityResolver } from '../configuration/contracts.js';
 import type { HumanMessageOptions } from './messages/contracts.js';
 import { withHumanMessageTransaction } from './messages/human-authority.js';
 import { runtimePrincipalScopeSql } from './system-principal-scope.js';
@@ -262,14 +263,48 @@ export abstract class AgentsRepository extends DeliveryAcksRepository {
 
 
 
+  /**
+   * With a console `authority`, a platform administrator acting in a company other than their home one gets
+   * that company's leases (the same tenants `topology()` lists for that session) instead of the home tenant's
+   * reach. The authority is resolved by the store, so a person who is not a platform administrator never widens.
+   */
   async listPresence(
-    actorTenant: Tenant, actorAlias: string, options?: HumanMessageOptions,
+    actorTenant: Tenant, actorAlias: string, options?: HumanMessageOptions, authority?: ConfigurationAuthorityResolver,
   ): Promise<Record<string, unknown>[]> {
-    if (options === undefined) return this.readPresence(this.pool, actorTenant, actorAlias);
+    if (options === undefined) {
+      if (authority === undefined) return this.readPresence(this.pool, actorTenant, actorAlias);
+      return withTransaction(this.pool, async (client) => {
+        await this.assertPermission(actorTenant, actorAlias, 'read', client);
+        const resolved = await authority(client);
+        return resolved.platformOverride
+          ? this.readCompanyPresence(client, actorTenant, actorAlias, resolved.actingCompany)
+          : this.readPresence(client, actorTenant, actorAlias);
+      });
+    }
     return withHumanMessageTransaction(this.pool, options, actorTenant, actorAlias, async (client) => {
       await this.assertPermission(actorTenant, actorAlias, 'read', client, true);
       return this.readPresence(client, actorTenant, actorAlias, true);
     });
+  }
+
+  private async readCompanyPresence(
+    reader: Pick<DatabaseClient, 'query'>, actorTenant: Tenant, actorAlias: string, company: string,
+  ): Promise<Record<string, unknown>[]> {
+    const result = await reader.query<Record<string, unknown>>(
+      `SELECT l.tenant_id,l.alias,l.instance_id,l.epoch,l.capabilities,l.last_heartbeat_at,l.lease_until,
+               (l.lease_until > now()) AS online
+        FROM connection_leases l
+        JOIN tenants t ON t.id=l.tenant_id
+        WHERE EXISTS (
+          SELECT 1 FROM memberships own JOIN role_policies role ON role.role=own.role
+          WHERE own.tenant_id=$1 AND own.alias=$2 AND own.enabled AND role.allow_read
+        ) AND ${runtimePrincipalScopeSql('l.tenant_id', 'l.alias')}
+          AND t.company_id=$3 AND t.retired_at IS NULL AND t.purged_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM agents gone WHERE gone.tenant_id=l.tenant_id AND gone.alias=l.alias
+                          AND (gone.retired_at IS NOT NULL OR gone.purged_at IS NOT NULL))
+       ORDER BY l.tenant_id,l.alias`, [actorTenant, actorAlias, company]
+    );
+    return result.rows.map((row) => ({ ...row, epoch: Number(row.epoch) }));
   }
 
   private async readPresence(
