@@ -912,6 +912,46 @@ class ImageRefreshTests(ReleaseFixture):
                     if outside.is_symlink():
                         outside.unlink()
 
+    def test_restoration_without_refresh_prepares_the_dynamic_profile_against_the_sibling_release_mounts(self):
+        """The real launch prepares the provider profile; it validated the current release mounts and stalled the compensation."""
+        import fleet_executor_profiles as profiles
+        import fleet_executor_templates as templates
+
+        class Prepared(Exception):
+            pass
+
+        (self.old / '.verified').write_text(self.old.name + '\n')
+        self.agent['primary_account_id'] = 'dynamic-account'
+        binding = {'provider': 'grok', 'path': '/tmp/cauce-state/profiles/physical-one/fixture'}
+        for drift in ('sibling', 'foreign'):
+            with self.subTest(drift=drift):
+                self.docker.containers.clear()
+                before = self.old_container(root=self.old)
+                before['Image'] = IMAGE
+                if drift == 'foreign':
+                    before['Mounts'].append({'Type': 'bind', 'Source': '/srv/foreign', 'Destination': '/srv/foreign', 'RW': False})
+                with mock.patch.object(runtime, 'materialized_sdk_identity_absent', return_value=False), \
+                        mock.patch.object(container, 'helper', return_value=b''), \
+                        mock.patch.object(container, 'process_proof', side_effect=SafeFailure('adapter is not running')), \
+                        mock.patch.object(templates, 'resolve_profile', return_value=binding), \
+                        mock.patch.object(templates, 'resolved_template', return_value={'path_root': '/tmp/cauce-state/profiles'}), \
+                        mock.patch.object(profiles, 'run_extension_prepare', side_effect=Prepared) as prepared:
+                    with self.assertRaises(Prepared if drift == 'sibling' else SafeFailure) as raised:
+                        container.restore_existing_adapter(self.policy, self.agent, bootstrap=False, allow_refresh=False)
+                if drift == 'sibling':
+                    prepared.assert_called_once()
+                else:
+                    self.assertEqual(str(raised.exception), 'container runtime mounts differ')
+                    prepared.assert_not_called()
+                self.assertEqual(self.docker.containers[self.name]['Mounts'], before['Mounts'])
+                self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
+        observed = self.docker.containers[self.name]
+        observed['Mounts'] = [row for row in observed['Mounts'] if row['Destination'] != '/srv/foreign']
+        with mock.patch.object(templates, 'resolve_profile', return_value=binding), \
+                mock.patch.object(templates, 'resolved_template', return_value={'path_root': '/tmp/cauce-state/profiles'}), \
+                self.assertRaisesRegex(SafeFailure, 'container runtime mounts differ'):
+            profiles.prepare_profile(self.policy, {**self.agent, '_placement': {**self.agent['_placement'], 'image': IMAGE}})
+
     def test_refresh_without_a_materialized_normal_sdk_identity_preserves_the_original(self):
         for operation in (None, str(uuid.uuid4())):
             with self.subTest(operation=operation):

@@ -151,8 +151,8 @@ def run_extension_prepare(policy: dict, agent: dict, binding: dict, identity: di
     return receipt
 
 
-def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None = None):
-    from fleet_executor_policy import approve_agent
+def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None = None, previous_release_ok: bool = False):
+    from fleet_executor_policy import SafeFailure, approve_agent
     from fleet_executor_templates import resolve_profile, resolved_template
     agent = approve_agent(policy, raw_agent)
     account = agent.get('primary_account_id')
@@ -177,16 +177,29 @@ def prepare_profile(policy: dict, raw_agent: dict, *, operation_id: str | None =
     from fleet_executor_container import (
         DOCKER,
         EXECUTOR_DESTINATION,
+        RELEASE_ROOT,
         checked_command,
         docker,
         identity_for,
         inspect_container,
         isolated_python,
+        runtime_mounts,
         user_identity,
         validate_container,
     )
     observed = inspect_container(agent['container_name'])
-    validate_container(policy, agent, observed)
+    try:
+        validate_container(policy, agent, observed)
+    except SafeFailure as error:
+        # A preserved original restored without recreation starts its adapter from the bundle of the installed sibling
+        # release it still binds; its profile is prepared against exactly those mounts, and any other drift is refused.
+        if not previous_release_ok or str(error) != 'container runtime mounts differ':
+            raise
+        from fleet_executor_rebind import bound_release
+        previous = bound_release(observed, RELEASE_ROOT)
+        if previous is None:
+            raise
+        validate_container(policy, agent, observed, runtime_mounts(policy, agent, previous, RELEASE_ROOT))
     identity = identity_for(agent, observed)
     uid, gid = user_identity(agent, identity)
     if dynamic:

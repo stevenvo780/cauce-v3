@@ -104,7 +104,9 @@ def start_existing_adapter(policy: dict, agent: dict, observed: dict, bundle: di
     if (fallback := runtime.pairing(agent)) is not None and fallback['server']:
         runtime.helper(agent, identity, 'prepare-state', '--mount', fallback['destination'], '--state', fallback['destination'], '--uid', uid, '--gid', gid)
     from fleet_executor_profiles import prepare_profile
-    prepare_profile(policy, agent, operation_id=operation_id)
+    # Only a bundle outside the current release (the sibling one a preserved original binds) accepts those mounts.
+    sibling = not pathlib.PurePosixPath(bundle['directory']).is_relative_to(runtime.RELEASE_ROOT)
+    prepare_profile(policy, agent, operation_id=operation_id, previous_release_ok=sibling)
     runtime.helper(agent, identity, 'prepare-control', '--base', str(identity['control'].parent), '--alias', agent['runtime_key'])
     view = pathlib.Path('/run/cauce-credentials') / agent['runtime_key'] / ('bootstrap' if bootstrap else 'normal')
     runtime.checked_command([runtime.DOCKER, 'exec', '-i', '-w', '/', '--user', '0', identity['container_id'],
