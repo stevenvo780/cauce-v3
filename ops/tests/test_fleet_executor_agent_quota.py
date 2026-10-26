@@ -308,6 +308,7 @@ print(json.dumps(document,ensure_ascii=False))
         packet = self.configure_canary(binds=binds)
         response = self.query(packet, executable)
         self.assertNotEqual(response.returncode, 0)
+        self.assertIn('container runtime mounts differ', response.stderr)
         self.assertNotIn(IDENTITY, response.stdout + response.stderr)
 
 class AgentQuotaContrastAuditTest(unittest.TestCase):
