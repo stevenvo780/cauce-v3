@@ -4,16 +4,15 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import test from "node:test";
 import { consumptionWitness, inputDigest, matchingConsumptionWitness } from "../src/shared-session/consumption.js";
-import type { HarnessConsumptionWitness } from "../src/sdk/types.js";
 import { NativePointerAttestor } from "../src/shared-session/native-witness.js";
 import { SharedTuiPointerStore } from "../src/shared-session/native-pointer.js";
 import { claudeTranscript, claudeProvesConsumption, type TranscriptEntry } from "../src/shared-session/transcript.js";
-import { codexProvesConsumption, codexProvesSilentClose, codexTranscript } from "../src/shared-session/rollout.js";
+import { codexProvesConsumption, codexTranscript } from "../src/shared-session/rollout.js";
 import { museProvesConsumption, museTranscript, type MuseLogLine } from "../src/shared-session/muse.js";
 import { PasteSessionRunner } from "../src/shared-session/paste-runner.js";
 import { beforeDeadline } from "../src/shared-session/paste-runner/runtime.js";
 import { transcriptDirectory } from "../src/shared-session/session.js";
-import { FakeTmux, adapterFor, assistantEntry, claudeRunner, envelopeText, freshState, userEntry } from "./shared-session-fixtures.js";
+import { FakeTmux, assistantEntry, claudeRunner, envelopeText, freshState, userEntry } from "./shared-session-fixtures.js";
 import { MuseLog, museWorkspace } from "./muse-shared-session-fixtures.js";
 
 const line = (type: string, payload: Record<string, unknown>): string => JSON.stringify({ type, payload });
@@ -56,16 +55,6 @@ test("Codex requires this injected turn's final response, never start or another
   assert.equal(codexProvesConsumption([started, final], "A", "answer", "sid", "input"), false);
   assert.equal(codexProvesConsumption([input, final], "B", "answer", "sid", "input"), true);
   assert.equal(codexProvesConsumption([input, final], "B", "", "sid", "input"), false);
-});
-
-test("Codex credits a silent close only for this input's clean task_complete", () => {
-  const input = { type: "response_item", payload: { type: "message", role: "user",
-    content: [{ type: "input_text", text: "input" }], internal_chat_message_metadata_passthrough: { turn_id: "B" } } };
-  const close = { type: "event_msg", payload: { type: "task_complete", turn_id: "B", last_agent_message: null } };
-  assert.equal(codexProvesSilentClose([input, close], "B", "sid", "input"), true);
-  assert.equal(codexProvesSilentClose([input, close], "B", "sid", "other input"), false);
-  assert.equal(codexProvesSilentClose([input, { ...close, payload: { ...close.payload, error: { message: "quota" } } }], "B", "sid", "input"), false);
-  assert.equal(codexProvesSilentClose([input, { type: "event_msg", payload: { type: "turn_aborted", turn_id: "B" } }], "B", "sid", "input"), false);
 });
 
 test("Muse accepted input and committed text stay unknown until the same run closes", () => {
@@ -115,34 +104,6 @@ test("shared Codex requires a CLI rollout and emits a same-input turn receipt", 
     turnTimeoutMs: 2_000, injectTimeoutMs: 20, settleMs: 0, pollMs: 1, readyTimeoutMs: 30 });
   assert.deepEqual((await runner.run(request("codex"))).consumptionWitness, consumptionWitness("codex", sid, turn, "input A"));
 });
-
-for (const deposited of [true, false]) {
-  test(`shared Codex closing silently after cauce_reply ${deposited ? "emits" : "without a deposit withholds"} its receipt`, async () => {
-    const { state, home } = await freshState(`receipt-silent-codex-${String(deposited)}`);
-    const codexHome = join(home, ".codex"), directory = join(codexHome, "sessions");
-    await mkdir(directory, { recursive: true });
-    const sid = randomUUID(), turn = randomUUID(), file = join(directory, `rollout-now-${sid}.jsonl`);
-    await appendFile(file, line("session_meta", { id: sid, source: "cli" }) + "\n");
-    const tmux = new FakeTmux(); tmux.sessionName = "cauce-socrates"; tmux.paneStartCommand = "exec codex"; tmux.paneContent = "› ";
-    tmux.onSubmit = async (text) => {
-      await appendFile(file, [line("event_msg", { type: "task_started", turn_id: turn }),
-        line("response_item", { type: "message", role: "user", content: [{ type: "input_text", text }],
-          internal_chat_message_metadata_passthrough: { turn_id: turn } }),
-        line("event_msg", { type: "task_complete", turn_id: turn, last_agent_message: null })].join("\n") + "\n");
-    };
-    const runner = new PasteSessionRunner({ alias: "socrates", harness: "codex", workspace: "/workspace",
-      transcript: codexTranscript(codexHome), tmux, sleep: () => Promise.resolve(), acquireTimeoutMs: 30,
-      turnTimeoutMs: 2_000, injectTimeoutMs: 20, settleMs: 0, pollMs: 1, readyTimeoutMs: 30 });
-    const deposit = { reply: "depositado", messages: [], notify: [], status: "done" as const, retryable: false, artifacts: [] };
-    let witness: HarnessConsumptionWitness | undefined;
-    const execution = (await adapterFor(runner, state, "socrates", "codex")).execute({ prompt: "hola",
-      sessionKey: "auth-v2:prueba", timeoutMs: 2_000, signal: new AbortController().signal,
-      onConsumptionWitness: (proof) => { witness = proof; }, ...(deposited ? { emissionOutput: () => deposit } : {}) });
-    if (!deposited) { await assert.rejects(execution); assert.equal(witness, undefined); return; }
-    assert.equal((await execution).reply, "depositado");
-    assert.equal(witness?.native_session_id, sid); assert.equal(witness.native_turn_id, turn);
-  });
-}
 
 test("shared Muse emits receipt from committed final text and same intent run terminal", async () => {
   const { museData, log } = await museWorkspace("receipt-native-muse");

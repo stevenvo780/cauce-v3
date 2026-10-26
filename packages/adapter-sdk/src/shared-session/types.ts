@@ -100,8 +100,6 @@ export interface TranscriptReader<E> {
   /** The outcome of that turn, or `undefined` while it is still running. */
   findAnswer(entries: readonly E[], key: string): TurnOutcome | undefined;
   provesConsumption?(entries: readonly E[], key: string, text: string, sessionId: string, promptText: string): boolean;
-  /** The turn of exactly `promptText` closed cleanly without a final message: enough when its answer was a `cauce_reply` deposit. */
-  provesSilentClose?(entries: readonly E[], key: string, sessionId: string, promptText: string): boolean;
   lingering?( // Turns closed, background work still running (grok): outcome so far + progress token.
     entries: readonly E[],
     key: string,
