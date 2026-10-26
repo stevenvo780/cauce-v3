@@ -9,9 +9,10 @@ import { prepareMuseProfile } from '../shared-session/muse-profile.js';
 import { prepareGrokWorkspace } from '../shared-session/grok-trust.js';
 import { exactConversationIsSecure } from "../shared-session/resume.js";
 import { readDegradations } from "../shared-session/degradation-log.js";
-import { TUI_WINDOW, isSharedSessionHarness, sessionName } from "../shared-session/types.js";
+import { TUI_WINDOW, isSharedSessionHarness, sessionName, type ResumeLaunchPlan } from "../shared-session/types.js";
 import type { SharedSessionSpec } from "../shared-session/session.js";
 import { applySessionRecovery, previewSessionRecovery } from '../shared-session/recovery.js';
+import { unpointedCodexConversation } from '../shared-session/codex-resume.js';
 import { assertCommandPins } from '../sdk/command-pins.js';
 
 /**
@@ -99,9 +100,10 @@ async function main(): Promise<void> {
   const options = parse(process.argv.slice(2));
   const home = process.env.HOME ?? homedir();
   if (options.command === 'resume-proof') {
-    const sessionSpec = spec(options, home, { ...process.env, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '1' });
+    const environment = { ...process.env, CAUCE_SHARED_SESSION_REQUIRE_RESUME: '1' };
+    const sessionSpec = spec(options, home, environment);
     await assertCommandPins(sessionSpec.command ?? sessionSpec.harness, sessionSpec.commandPins);
-    const plan = await sessionSpec.resume?.resolveLaunch?.();
+    const plan = await resumeProofPlan(options, sessionSpec, home, environment);
     const resumable = plan?.state === 'launch' && plan.resumed;
     const fingerprint = resumable ? createHash('sha256').update(JSON.stringify({
       alias: options.alias, harness: sessionSpec.harness, state: options.stateDirectory,
@@ -194,6 +196,16 @@ async function main(): Promise<void> {
   }
 
   usage();
+}
+
+async function resumeProofPlan(options: Options, sessionSpec: SharedSessionSpec, home: string,
+  environment: NodeJS.ProcessEnv): Promise<ResumeLaunchPlan | undefined> {
+  const plan = await sessionSpec.resume?.resolveLaunch?.();
+  if (sessionSpec.harness !== 'codex' || plan?.state !== 'blocked' || options.stateDirectory === undefined) return plan;
+  const seeded = await unpointedCodexConversation({ stateDirectory: options.stateDirectory, namespace: options.alias,
+    configDirectory: harnessConfigDirectory('codex', home, environment, sessionSpec.alias), workspace: sessionSpec.workspace })
+    .catch(() => undefined);
+  return seeded === undefined ? plan : { state: 'launch', args: ['resume', seeded], resumed: true };
 }
 
 async function seed(options: Options, sessionSpec: SharedSessionSpec, home: string): Promise<void> {

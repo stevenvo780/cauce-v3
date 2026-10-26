@@ -399,6 +399,8 @@ class Executor:
                     if observed is not None:
                         previous[row['runtime_key']] = adapter_restart_state(self.policy, agent, observed)
                         self.save()
+                from fleet_executor_update_resume import preflight
+                preflight(self)
             self.stop_placement(row)
             self.close_previous_tui(row, capture=True)
         self.journal['stopped'] = True
@@ -742,9 +744,11 @@ class Executor:
                        ('host_id', 'container_name', 'runtime_user', 'home_directory', 'state_directory')):
             raise SafeFailure('runtime restoration differs from the previous placement')
         from fleet_executor_container import restore_existing_adapter
+        from fleet_executor_update_resume import untouched_restoration
         previous_state = self.journal.get('previous_adapter_state', {}).get(agent['runtime_key'], {})
-        restored = restore_existing_adapter(self.policy, {**agent, '_trusted_accounts': self.context.get('trusted_accounts', []),
-                                            '_trusted_accounts_present': 'trusted_accounts' in self.context},
+        trusted = {**agent, '_trusted_accounts': self.context.get('trusted_accounts', []),
+                   '_trusted_accounts_present': 'trusted_accounts' in self.context}
+        restored = untouched_restoration(self, trusted) or restore_existing_adapter(self.policy, trusted,
                                             was_running=previous_state.get('adapter_running', agent.get('enabled') is True),
                                             bootstrap=previous_state.get('adapter_bootstrap', False),
                                             operation_id=previous_state.get('adapter_operation_id'))

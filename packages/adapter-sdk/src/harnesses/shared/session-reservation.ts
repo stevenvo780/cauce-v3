@@ -2,6 +2,9 @@ import { abortReason } from "./errors.js"; /* eslint @typescript-eslint/no-unnec
 import type { HarnessSessionReservation } from "../../contracts/harness.js";
 import { signalAborted } from "../../runtime-state.js";
 
+/** Suffix distinguishing the agent lane's session key. */
+export const AGENT_LANE_SUFFIX = ".agent-lane";
+
 export class SessionReservation implements HarnessSessionReservation {
   private released = false;
 

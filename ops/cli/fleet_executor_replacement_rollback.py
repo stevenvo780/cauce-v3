@@ -359,8 +359,10 @@ def compensate(executor) -> dict | None:
         executor.save()
         restored_agent = {**agent, '_trusted_accounts': executor.context.get('trusted_accounts', []),
                           '_trusted_accounts_present': 'trusted_accounts' in executor.context}
-        proof = restore_existing_adapter(executor.policy, restored_agent, was_running=True, bootstrap=False,
-                                         operation_id=state.get('adapter_operation_id'), allow_refresh=False)
+        from fleet_executor_update_resume import untouched_restoration
+        proof = untouched_restoration(executor, restored_agent) or restore_existing_adapter(
+            executor.policy, restored_agent, was_running=True, bootstrap=False,
+            operation_id=state.get('adapter_operation_id'), allow_refresh=False)
         if not isinstance(proof.get('runtime_digest'), str):
             raise SafeFailure('replacement original unverified')
         entry['phase'] = 'verifying_original'

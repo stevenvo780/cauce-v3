@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { open, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, join, normalize } from 'node:path';
 import { readSessionsSecure } from '../sdk/durable-store/session-file.js';
+import { AGENT_LANE_SUFFIX } from '../harnesses/shared/session-reservation.js';
 import type { ResumeLaunchPlan } from './types.js';
 
 interface Binding { stateDirectory: string; configDirectory: string; namespace: string; workspace: string }
@@ -84,13 +85,13 @@ export async function exactCodexLaunch(input: Binding, allowNew = false): Promis
     ? { state: 'launch', args: ['resume', pointer.native_id], resumed: true } : blocked;
 }
 
-type CreatedConversation = { readonly state: 'pending' | 'refused' } | { readonly state: 'created'; readonly nativeId: string };
+type SingleConversation = { readonly state: 'pending' | 'refused' } | { readonly state: 'created'; readonly nativeId: string };
 
 /**
- * The conversation a TUI started from an empty tree: its single rollout, accredited exactly as a resume
- * would be. Several rollouts, a pointer already present or any unsafe metadata are refused; no rollout yet is pending.
+ * The tree's only conversation while no pointer names one: its single rollout, accredited exactly as a resume would be.
+ * Several rollouts, a pointer already present or any unsafe metadata are refused; no rollout yet is pending.
  */
-export async function createdCodexConversation(input: Binding): Promise<CreatedConversation> {
+async function singleCodexConversation(input: Binding): Promise<SingleConversation> {
   try {
     if (!await secureDirectory(input.stateDirectory) || !await secureDirectory(input.configDirectory)) return { state: 'refused' };
     if (await pointerOf(input) !== undefined) return { state: 'refused' };
@@ -105,10 +106,36 @@ export async function createdCodexConversation(input: Binding): Promise<CreatedC
   }
 }
 
+/** The pointer counts only after it reads back as the exact resume of that same id. */
+async function publishExactPointer(input: Binding, nativeId: string, publish: (nativeId: string) => Promise<boolean>): Promise<string | undefined> {
+  if (!await publish(nativeId)) return undefined;
+  const plan = await exactCodexLaunch(input).catch((): ResumeLaunchPlan => ({ state: 'blocked', detail: '' }));
+  return plan.state === 'launch' && plan.resumed && plan.args[1] === nativeId ? nativeId : undefined;
+}
+
 /**
- * Publishes the conversation a TUI just created from an empty tree, waiting a bounded time for its rollout.
- * The pointer counts only after it reads back as the exact resume of that same id.
+ * The conversation the agent already holds without a canonical pointer, such as the one it kept before the policy
+ * enabled its shared TUI: the tree's single accredited rollout, provided no session of another person or scope names it.
  */
+export async function unpointedCodexConversation(input: Binding): Promise<string | undefined> {
+  const single = await singleCodexConversation(input);
+  if (single.state !== 'created') return undefined;
+  const canonical = codexSharedPointerKey(input.namespace);
+  const sessions = (await readSessionsSecure(join(input.stateDirectory, 'sessions.json'))).sessions;
+  return Object.entries(sessions).some(([key, record]) => record.native_id === single.nativeId
+    && key !== canonical && key !== `${canonical}${AGENT_LANE_SUFFIX}`) ? undefined : single.nativeId;
+}
+
+/** Names that conversation as the canonical pointer before the TUI starts, so the launch resumes it exactly. */
+export async function seedUnpointedCodexConversation(
+  input: Binding,
+  publish: (nativeId: string) => Promise<boolean>,
+): Promise<string | undefined> {
+  const nativeId = await unpointedCodexConversation(input).catch(() => undefined);
+  return nativeId === undefined ? undefined : await publishExactPointer(input, nativeId, publish);
+}
+
+/** Publishes the conversation a TUI just created from an empty tree, waiting a bounded time for its rollout. */
 export async function adoptCreatedCodexConversation(
   input: Binding,
   publish: (nativeId: string) => Promise<boolean>,
@@ -117,13 +144,9 @@ export async function adoptCreatedCodexConversation(
   attempts = 50,
 ): Promise<string | undefined> {
   for (let attempt = 0; attempt < attempts && signal?.aborted !== true; attempt += 1) {
-    const created = await createdCodexConversation(input);
+    const created = await singleCodexConversation(input);
     if (created.state === 'refused') return undefined;
-    if (created.state === 'created') {
-      if (!await publish(created.nativeId)) return undefined;
-      const plan = await exactCodexLaunch(input).catch((): ResumeLaunchPlan => ({ state: 'blocked', detail: '' }));
-      return plan.state === 'launch' && plan.resumed && plan.args[1] === created.nativeId ? created.nativeId : undefined;
-    }
+    if (created.state === 'created') return await publishExactPointer(input, created.nativeId, publish);
     if (attempt + 1 < attempts) await sleep(100);
   }
   return undefined;

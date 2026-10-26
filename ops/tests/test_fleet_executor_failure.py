@@ -56,7 +56,8 @@ class FleetFailureReasonTest(unittest.TestCase):
     def test_every_known_literal_emits_only_its_closed_code(self):
         self.assertEqual(set(self.cli.FAILURE_REASONS.values()), {'runtime_identity_mismatch', 'runtime_security_mismatch',
             'runtime_bundle_changed', 'runtime_stop_unverified', 'provider_functional_proof_failed', 'terminal_provision_failed',
-            'replacement_snapshot_missing', 'replacement_original_unverified', 'replacement_authority_unverified'})
+            'replacement_snapshot_missing', 'replacement_original_unverified', 'replacement_authority_unverified',
+            'shared_conversation_unaccredited'})
         for message, reason in self.cli.FAILURE_REASONS.items():
             with self.subTest(message=message):
                 output = self.failure_output(SafeFailure(message), step='compensate')

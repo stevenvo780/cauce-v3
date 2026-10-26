@@ -29,4 +29,6 @@ export const FLEET_FAILURE_TEXT: Record<NonNullable<FleetError['reason']>, { mes
     next: 'Revisa su cuenta y su autenticación; después vuelve a comprobar la operación.' },
   terminal_provision_failed: { message: 'No se pudo preparar y comprobar la terminal del agente.',
     next: 'Revisa el canal de terminal del equipo y reintenta la operación antes de utilizar el agente.' },
+  shared_conversation_unaccredited: { message: 'La TUI compartida no podría reanudar la conversación de Codex de este agente: su historial no tiene una única conversación propia que se pueda acreditar.',
+    next: 'No se detuvo nada y el agente sigue con su ejecución anterior. Para activar la TUI compartida, deja una sola conversación propia en su historial de Codex y prepara una actualización nueva.' },
 };

@@ -22,6 +22,7 @@ const PREFIX = `zz-canary-${OWNER}-${RUN}`;
 const ALIAS = `policy${RUN}`;
 const KEY = `physical-${RUN}`;
 const DATUM = `MEMORY-${RUN}-${randomUUID().slice(0, 8)}`;
+const SECOND = randomUUID();
 const EVIDENCE = join(process.cwd(), '.delegados/v4/recibos', OWNER, `e2e-policy-${RUN}`);
 const consoleRequire = createRequire(join(process.cwd(), 'console/package.json'));
 let harness: ComputerHarness | undefined;
@@ -45,7 +46,7 @@ const browserErrors = new BrowserErrorLog([...HERMETIC_INSTANCE_RULES,
     matches: (text, url) => text.includes('status of 404')
       && ['/v3/console/terminal/targets', '/v3/console/terminal/sessions'].includes(new URL(url).pathname) }]);
 
-interface Operation { id: string; kind: string; status: string; error: unknown; steps: { name: string; status: string; evidence?: Record<string, unknown> }[] }
+interface Operation { id: string; kind: string; status: string; version?: number; error: unknown; steps: { name: string; status: string; evidence?: Record<string, unknown> }[] }
 interface Launch { pid: number; native_id: string; resumed: boolean; mode: 'exec' | 'tui'; cwd: string }
 interface ProcessProbe { launches: Launch[]; adapter: Record<string, unknown>; pointer: Record<string, unknown>; home: string; state: string; shared: string | null }
 function active() { if (!harness) throw new Error('computer fixture absent'); return harness; }
@@ -84,13 +85,24 @@ async function enabled(locator: V4Locator) {
   await expect.poll(() => locator.isDisabled(), { timeout: 30_000 }).toBe(false);
 }
 
-async function enqueue(panel: V4Locator, kind: string) {
+async function enqueue(panel: V4Locator, kind: string, status = 'succeeded') {
   const known = new Set((await operations()).map(row => row.id));
   const preview = panel.getByRole('button', { name: 'Previsualizar operación', exact: true });
   await enabled(preview); await preview.click();
   const confirm = panel.getByRole('button', { name: 'Confirmar operación', exact: true });
   await enabled(confirm); await capture(`${kind}-preview`); await confirm.click();
-  return waitOperation(kind, known);
+  return waitOperation(kind, known, status);
+}
+
+async function secondRollout(home: string, cwd: string, present: boolean) {
+  const script = `import json,os,pathlib,sys
+path=pathlib.Path(sys.argv[1])/'sessions'/('rollout-canary-'+sys.argv[2]+'.jsonl')
+if sys.argv[4]=='1':
+ fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ with os.fdopen(fd,'w') as stream: stream.write(json.dumps({'type':'session_meta','payload':{'id':sys.argv[2],'source':'cli','cwd':sys.argv[3]}})+'\\n')
+else: path.unlink()
+`;
+  await docker(['exec', '--user', 'cauce', container, 'python3', '-c', script, home, SECOND, cwd, present ? '1' : '0']);
 }
 
 async function processProbe(): Promise<ProcessProbe> {
@@ -275,6 +287,29 @@ describe('reinicio V4 después de actualizar una política sin TUI compartida', 
       expect((await operations()).filter(row => row.kind === 'recover')).toHaveLength(0);
       expect((await processProbe()).adapter).toEqual(legacy.adapter);
       await capture('02-update-required-without-operation');
+      await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).click();
+      expect(await panel.getByLabel('¿Qué quieres hacer?').inputValue()).toBe('update');
+      const workspace = legacy.launches.at(-1)?.cwd ?? '';
+      await secondRollout(legacy.home, workspace, true);
+      let refused = await enqueue(panel, 'update', 'failed');
+      await expect.poll(async () => {
+        refused = (await operations()).find(row => row.id === refused.id) ?? refused;
+        return refused.steps.find(step => step.name === 'stop')?.status;
+      }, { timeout: 120_000, interval: 1_000 }).toBe('compensated');
+      expect(refused.status).toBe('failed');
+      expect(refused.error).toMatchObject({ code: 'STEP_FAILED', step: 'stop', retryable: false, reason: 'shared_conversation_unaccredited' });
+      const refusal = panel.getByText(/La TUI compartida no podría reanudar la conversación de Codex/u).first();
+      await refusal.waitFor({ timeout: 30_000 });
+      const untouched = await processProbe();
+      expect(untouched.adapter).toEqual(legacy.adapter);
+      expect(untouched.launches).toEqual(legacy.launches);
+      expect(untouched.shared).toBeNull();
+      evidence.refused_update = { operation: refused, notice: await refusal.innerText(), adapter: untouched.adapter };
+      await capture('02b-update-refused-ambiguous-conversation');
+      evidence.refused_closed = await cancelFailed(refused);
+      expect((await processProbe()).adapter).toEqual(legacy.adapter);
+      await secondRollout(legacy.home, workspace, false);
+      await openRecovery();
       await recovery().getByRole('button', { name: 'Actualizar ejecución', exact: true }).click();
       expect(await panel.getByLabel('¿Qué quieres hacer?').inputValue()).toBe('update');
       evidence.update = await enqueue(panel, 'update');

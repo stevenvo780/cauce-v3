@@ -65,10 +65,12 @@ test('startup creates the canonical TUI without a delivery and reacquiring the l
   for (const command of ['kill-session', 'send-keys', 'paste-buffer', 'respawn-pane']) assert.equal(tmux.used(command), false);
 });
 
-async function codexFleetStartup(name: string, rollouts: (codexHome: string) => Promise<void>, before?: (codexHome: string) => Promise<void>) {
+async function codexFleetStartup(name: string, rollouts: (codexHome: string) => Promise<void>,
+  before?: (codexHome: string, store: DurableStore) => Promise<void>) {
   const { state, home, workspace } = await freshState(name);
   const codexHome = join(state, 'codex'); await mkdir(codexHome, { mode: 0o700 });
-  await before?.(codexHome);
+  const store = await DurableStore.open(state); const logs: AdapterLog[] = [];
+  await before?.(codexHome, store);
   const command = join(state, 'codex-pinned'); const body = '#!/bin/sh\n';
   await writeFile(command, body, { mode: 0o700 });
   const environment = { HOME: home, CODEX_HOME: codexHome, CAUCE_SHARED_SESSION: '1', CAUCE_SHARED_SESSION_WORKSPACE: workspace,
@@ -82,7 +84,6 @@ async function codexFleetStartup(name: string, rollouts: (codexHome: string) => 
     if (args[0] === 'new-session') await rollouts(codexHome);
     return result;
   } };
-  const store = await DurableStore.open(state); const logs: AdapterLog[] = [];
   const startup = ensureSharedSessionStartup(configured, entry => { logs.push(entry); }, tmux, undefined, async (nativeId) => {
     if (store.getSession('codex:socrates:shared:socrates') !== undefined) return false;
     await store.setSession('codex:socrates:shared:socrates', { native_id: nativeId, initialized: true });
@@ -125,11 +126,70 @@ test('creation adopts nothing it cannot accredit as the one rollout of that same
   }
 });
 
-test('a rollout that predates the launch is never adopted and still blocks the fresh start', async () => {
-  const run = await codexFleetStartup('codex-pointer-preexisting', () => Promise.resolve(), home => codexRollout(home, randomUUID())());
-  await assert.rejects(run.startup, (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE');
-  assert.equal(run.store.getSession('codex:socrates:shared:socrates'), undefined);
-  assert.equal(run.fake.used('new-session'), false);
+test('the one conversation the agent already held is seeded as the canonical pointer and the TUI resumes it', async () => {
+  const id = randomUUID();
+  const run = await codexFleetStartup('codex-pointer-preexisting', () => Promise.resolve(), home => codexRollout(home, id)());
+  await run.startup;
+  assert.deepEqual(run.store.getSession('codex:socrates:shared:socrates'), { native_id: id, initialized: true });
+  const created = run.fake.calls.find(args => args[0] === 'new-session');
+  assert.ok(created?.some(arg => arg.includes(`resume ${id}`) || arg === id), JSON.stringify(created));
+  assert.deepEqual(await run.update(), { state: 'launch', args: ['resume', id], resumed: true });
+  assert.ok(run.logs.some(entry => entry.event === 'shared_session_resume' && entry.error_message?.includes(`previa ${id}`)));
+  for (const command of ['send-keys', 'paste-buffer', 'kill-session']) assert.equal(run.fake.used(command), false);
+});
+
+test('a previous conversation is not seeded unless it is the single accredited own one', async () => {
+  const isolated = randomUUID();
+  const cases: [string, (home: string, store: DurableStore) => Promise<void>][] = [
+    ['codex-seed-foreign-cwd', home => codexRollout(home, randomUUID(), { cwd: '/elsewhere' })()],
+    ['codex-seed-subagent', home => codexRollout(home, randomUUID(), { source: { subagent: 'review' } })()],
+    ['codex-seed-exec', home => codexRollout(home, randomUUID(), { source: 'exec' })()],
+    ['codex-seed-mismatched-id', home => codexRollout(home, randomUUID(), { id: randomUUID() })()],
+    ['codex-seed-two-rollouts', async home => { await codexRollout(home, randomUUID())(); await codexRollout(home, randomUUID())(); }],
+    ['codex-seed-isolated-session', async (home, store) => {
+      await codexRollout(home, isolated)();
+      await store.setSession('codex:socrates:auth-v3:telegram-dm', { native_id: isolated, initialized: true });
+    }],
+  ];
+  for (const [name, before] of cases) {
+    const run = await codexFleetStartup(name, () => Promise.resolve(), before);
+    await assert.rejects(run.startup, (error: unknown) => error instanceof ProcessExecutionError && error.code === 'SHARED_TUI_UNAVAILABLE', name);
+    assert.equal(run.store.getSession('codex:socrates:shared:socrates'), undefined, name);
+    assert.equal(run.fake.used('new-session'), false, name);
+    assert.equal((await run.update())?.state, 'blocked', name);
+  }
+});
+
+async function codexResumeProof(name: string, before: (codexHome: string) => Promise<void>) {
+  const { state, home, workspace } = await freshState(name);
+  const codexHome = join(state, 'codex'); await mkdir(codexHome, { mode: 0o700 });
+  await before(codexHome);
+  const command = join(state, 'codex-pinned'); const body = '#!/bin/sh\n';
+  await writeFile(command, body, { mode: 0o700 });
+  const env = { PATH: process.env.PATH ?? '', HOME: home, CODEX_HOME: codexHome, CAUCE_HARNESS_COMMAND: command,
+    CAUCE_HARNESS_COMMAND_SHA256: createHash('sha256').update(body).digest('hex') };
+  const proof = async () => {
+    const child = spawn(process.execPath, [new URL('../src/bin/shared-session.js', import.meta.url).pathname, 'resume-proof',
+      '--alias', 'socrates', '--harness', 'codex', '--state', state, '--workspace', workspace], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    await once(child, 'close');
+    return JSON.parse(output) as { resumable: boolean; fingerprint: string | null };
+  };
+  return { proof, store: await DurableStore.open(state) };
+}
+
+test('resume-proof accredits the conversation startup would seed with the fingerprint of its canonical pointer', async () => {
+  const id = randomUUID();
+  const seedable = await codexResumeProof('codex-resume-proof-seed', home => codexRollout(home, id)());
+  const before = await seedable.proof();
+  assert.equal(before.resumable, true);
+  assert.match(before.fingerprint ?? '', /^[a-f0-9]{64}$/u);
+  await seedable.store.setSession('codex:socrates:shared:socrates', { native_id: id, initialized: true });
+  assert.deepEqual(await seedable.proof(), before);
+  const ambiguous = await codexResumeProof('codex-resume-proof-two', async home => {
+    await codexRollout(home, randomUUID())(); await codexRollout(home, randomUUID())();
+  });
+  assert.deepEqual(await ambiguous.proof(), { resumable: false, fingerprint: null });
 });
 
 test('startup refuses a foreign canonical session without replacing it or injecting a turn', async () => {

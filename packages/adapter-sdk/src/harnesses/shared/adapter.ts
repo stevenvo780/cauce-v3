@@ -54,11 +54,8 @@ import {
   sinMarcaDeArranque,
 } from "./errors.js";
 import { protocolPrompt, textoFijoDelSobre, textoNativoDelSobre } from "./prompt.js";
-import { SessionReservation } from "./session-reservation.js";
+import { AGENT_LANE_SUFFIX, SessionReservation } from "./session-reservation.js";
 import { projectSelectionArguments } from '../../sdk/execution-selection.js';
-
-/** Suffix distinguishing the agent lane's session key. */
-const AGENT_LANE_SUFFIX = ".agent-lane";
 
 function workspaceCwd(): { cwd?: string } {
   const workspace = process.env.CAUCE_AGENT_WORKSPACE?.trim() ?? "";

@@ -37,7 +37,7 @@ import type { PasteSessionOptions } from "../shared-session/paste-runner/contrac
 import { loadSharedSessionConfig, type SharedSessionConfig } from "../shared-session/config.js";
 import { exactConversationIsSecure, sharedSessionResume } from "../shared-session/resume.js";
 import { SharedTuiPointerStore } from "../shared-session/native-pointer.js";
-import { adoptCreatedCodexConversation, codexConversationTreeIsEmpty, codexSharedPointerKey } from '../shared-session/codex-resume.js';
+import { adoptCreatedCodexConversation, codexConversationTreeIsEmpty, codexSharedPointerKey, seedUnpointedCodexConversation } from '../shared-session/codex-resume.js';
 import { NativePointerAttestor } from "../shared-session/native-witness.js";
 import type { CommandRunner } from "../sdk/types.js";
 import { EmissionRuntime } from "../sdk/mcp-emission/runtime.js";
@@ -231,6 +231,11 @@ export async function ensureSharedSessionStartup(
     ? { stateDirectory: shared.stateDirectory, configDirectory: shared.configDirectory, namespace: shared.namespace, workspace: shared.workspace }
     : undefined;
   const emptyCodexTree = codex !== undefined && await codexConversationTreeIsEmpty(codex);
+  if (codex !== undefined && !emptyCodexTree && publishCodexConversation !== undefined) {
+    const seeded = await seedUnpointedCodexConversation(codex, publishCodexConversation);
+    if (seeded !== undefined) logger({ event: 'shared_session_resume', alias: shared.alias,
+      error_message: `la conversación previa ${seeded} de Codex quedó como puntero canónico antes de crear la TUI` });
+  }
   const result = await ensureSharedSession(boundedTmux, spec, { ...options, readyTimeoutMs: 0 });
   const readiness = result.pane !== undefined && (result.ready || result.failure === 'tui_absent' || result.failure === 'provider_login_required')
     ? await waitForAccreditedTui(boundedTmux, spec, result.pane, { ...options,
