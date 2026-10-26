@@ -377,6 +377,31 @@ class RestoreSourceRebaseTest(unittest.TestCase):
             restore()
         self.assertEqual(self.load_applied(self.state)['generation'], foreign)
 
+    def test_a_system_principal_only_on_the_host_is_refused(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades')))
+        # A principal without an agent row sits under a map the rebase never strips: it must match verbatim.
+        extra = self.source(agents=[self.row('kant'), failed],
+                            memberships=[self.membership('kant'), self.membership('hades'), self.membership('ops-bot')])
+        foreign = self.publish(extra)
+        _, restore = self.restore(self.fleet(self.row('kant'), failed), expected)
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified'):
+            restore()
+        self.assertEqual(self.load_applied(self.state)['generation'], foreign)
+
+    def test_an_artifact_edited_on_disk_after_publication_is_not_compared(self):
+        failed = self.row('hades', enabled=False, lifecycle_state='failed')
+        expected = self.publish(self.fleet(self.row('kant'), self.row('hades'), self.row('canary')))
+        later = self.publish(self.fleet(self.row('kant'), failed))
+        receipt = self.materialize(self.fleet(self.row('kant'), self.row('hades')), {}, self.state)
+        applied = self.load_applied(self.state)
+        self.assertNotEqual(expected, later)
+        self.assertTrue(rollback.differs_only_in_runtime(self.state, applied, receipt, 'hades'))
+        edited = self.state / 'generations' / later / 'flota.json'
+        edited.write_bytes(edited.read_bytes().replace(b'kant', b'kanz'))
+        with self.assertRaises(ValueError):
+            rollback.differs_only_in_runtime(self.state, applied, receipt, 'hades')
+
     def test_a_tampered_applied_artifact_is_refused(self):
         failed = self.row('hades', enabled=False, lifecycle_state='failed')
         expected = self.publish(self.fleet(self.row('kant'), self.row('hades'), self.row('canary')))
