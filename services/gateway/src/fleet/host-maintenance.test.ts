@@ -3,7 +3,7 @@ import { FleetOperationRequestSchema, sha256Hex, type FleetOperation } from '@ca
 import type { FleetOperationClaim } from '@cauce/store';
 import { FleetExecutor, type FleetExecution } from './executor.js';
 import { HostMaintenance } from './host-maintenance.js';
-import type { MaintenanceGuard } from './host-maintenance-guard.js';
+import { MaintenanceGuardUnavailable, maintenanceGuardFailureDetail, type MaintenanceGuard } from './host-maintenance-guard.js';
 import type { FleetHostConfig } from './main.js';
 import type { SignedHostChannel } from './signed-source.js';
 
@@ -145,6 +145,45 @@ describe('automatic host maintenance', () => {
     expect(f.channelRequest).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel',
       expect.objectContaining({ action: 'defer', reason: 'composer_busy' }), expect.any(AbortSignal));
     expect(f.calls).toEqual(['hold', 'abort']);
+  });
+  it('journals why an unverified guard deferred without crossing any other helper output', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const f = fixture();
+      beginGuard.mockRejectedValueOnce(new MaintenanceGuardUnavailable(maintenanceGuardFailureDetail(
+        'PRIVATE_SECRET_DIAGNOSTIC token=abc\nCAUCE_FLEET_FAILURE=runtime_identity_mismatch\n'
+        + 'fleet effect failed: running runtime has another SDK identity or transport\n')));
+      expect(await f.maintenance.prepare(f.execution(), f.claim, new AbortController().signal)).toBe(false);
+      expect(f.channelRequest).toHaveBeenCalledWith('POST', '/v3/fleet/hosts/test-host/channel',
+        expect.objectContaining({ action: 'defer', reason: 'preflight_unavailable' }), expect.any(AbortSignal));
+      const lines = write.mock.calls.map(call => String(call[0]));
+      expect(lines).toContain(`Host maintenance deferred operation_id=${OPERATION} agent=Steven/one reason=preflight_unavailable stage=guard`
+        + ' detail=runtime_identity_mismatch: running runtime has another SDK identity or transport\n');
+      expect(lines.join('')).not.toContain('PRIVATE_SECRET_DIAGNOSTIC');
+    } finally { write.mockRestore(); }
+  });
+  it('journals the fixed preflight cause and the resume proof stage of each deferral', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const f = fixture(); f.guard.first = { state: 'deferred', reason: 'preflight_unavailable', detail: 'bundle_without_shared_tui' };
+      expect(await f.maintenance.prepare(f.execution(), f.claim, new AbortController().signal)).toBe(false);
+      const g = fixture(); proveResume.mockRejectedValueOnce(new Error('missing native pointer'));
+      expect(await g.maintenance.prepare(g.execution(), g.claim, new AbortController().signal)).toBe(false);
+      const lines = write.mock.calls.map(call => String(call[0]));
+      expect(lines).toContain(`Host maintenance deferred operation_id=${OPERATION} agent=Steven/one reason=preflight_unavailable`
+        + ' stage=preflight detail=bundle_without_shared_tui\n');
+      expect(lines).toContain(`Host maintenance deferred operation_id=${OPERATION} agent=Steven/one reason=preflight_unavailable`
+        + ' stage=resume_proof detail=shared_resume_unaccredited\n');
+      expect(lines.join('')).not.toContain('missing native pointer');
+    } finally { write.mockRestore(); }
+  });
+  it('keeps only allowlisted, redacted helper failure lines as the guard detail', () => {
+    expect(maintenanceGuardFailureDetail('')).toBe('helper_unverified');
+    expect(maintenanceGuardFailureDetail('Traceback (most recent call last):\n  secret=hunter2\n')).toBe('helper_unverified');
+    expect(maintenanceGuardFailureDetail('fleet effect failed: maintenance selection identity is unavailable\n'))
+      .toBe('maintenance selection identity is unavailable');
+    expect(maintenanceGuardFailureDetail(`fleet effect failed: digest ${'a'.repeat(64)} differs\n`)).toBe('digest [redacted] differs');
+    expect(maintenanceGuardFailureDetail('fleet effect failed: <script>\nCAUCE_FLEET_FAILURE=Bad Code\n')).toBe('helper_unverified');
   });
   it('defers a runtime without an exact resume proof before preparation and restores the retained input guard', async () => {
     const f = fixture(); proveResume.mockRejectedValueOnce(new Error('missing native pointer'));

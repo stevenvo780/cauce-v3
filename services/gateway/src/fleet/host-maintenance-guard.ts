@@ -4,13 +4,17 @@ import type { FleetExecution } from './executor.js';
 import type { HostCommandConfig } from './host-command.js';
 import type { FleetOperationClaim } from '@cauce/store';
 import { boundedProviderReceipt } from './provider-login.js';
+import { BoundedTail, redactExecutorStderr } from './host-stderr.js';
 
 export const MaintenanceDeferReasonSchema = z.enum(['pending_deliveries', 'provider_login', 'composer_busy',
   'turn_active', 'tui_unreadable', 'preflight_unavailable']);
 const Hash = z.string().regex(/^[a-f0-9]{64}$/u);
 const Ready = z.object({ state: z.literal('ready'), operation_id: z.uuid(), container_id: Hash,
   generation: Hash, guard_id: z.string().regex(/^[a-f0-9]{32,64}$/u) }).strict();
-const Event = z.union([Ready, z.object({ state: z.literal('deferred'), reason: MaintenanceDeferReasonSchema }).strict(),
+/** The fixed cause the Python preflight names for its own `preflight_unavailable` deferral. */
+const Detail = z.string().regex(/^[a-z][a-z_]{0,63}$/u);
+const Event = z.union([Ready, z.object({ state: z.literal('deferred'), reason: MaintenanceDeferReasonSchema,
+  detail: Detail.optional() }).strict(),
   z.object({ state: z.enum(['runtime_current', 'stopped', 'aborted']) }).strict()]);
 export type MaintenanceGuardEvent = z.infer<typeof Event>;
 export interface MaintenanceGuard {
@@ -18,6 +22,22 @@ export interface MaintenanceGuard {
   finish(commit: boolean): Promise<void>;
 }
 const unavailable = () => new Error('Host maintenance guard could not be verified');
+const FAILURE_CODE = /^CAUCE_FLEET_FAILURE=([a-z][a-z0-9_]{0,63})$/u;
+const FAILURE_TEXT = /^fleet effect failed: ([A-Za-z0-9 ,.;:()'_/=-]{1,160})$/u;
+
+/** The helper's own fixed failure lines, bounded and redacted: the guard otherwise only says it could not be verified. */
+export function maintenanceGuardFailureDetail(stderr: string): string {
+  let code: string | undefined, text: string | undefined;
+  for (const line of stderr.split('\n')) {
+    code = FAILURE_CODE.exec(line.trim())?.[1] ?? code;
+    text = FAILURE_TEXT.exec(line.trim())?.[1] ?? text;
+  }
+  const detail = [code, text === undefined ? undefined : redactExecutorStderr(text)].filter(Boolean).join(': ');
+  return detail || 'helper_unverified';
+}
+export class MaintenanceGuardUnavailable extends Error {
+  constructor(readonly detail: string) { super('Host maintenance guard could not be verified'); }
+}
 
 function maintenancePacket(execution: FleetExecution, claim: FleetOperationClaim): Record<string, unknown> {
   const target = execution.request.target;
@@ -55,6 +75,7 @@ export async function beginMaintenanceGuard(config: HostCommandConfig, execution
       HOME: process.env.HOME ?? '', TMPDIR: '/var/tmp', PYTHONDONTWRITEBYTECODE: '1' },
   });
   let output = '', stderrBytes = 0, total = 0, ended = false, rejected = false;
+  const stderr = new BoundedTail();
   let first: MaintenanceGuardEvent | undefined;
   let terminal: 'stopped' | 'aborted' | undefined;
   let finishStarted = false;
@@ -77,7 +98,7 @@ export async function beginMaintenanceGuard(config: HostCommandConfig, execution
   const timeout = setTimeout(terminate, config.timeoutMs ?? 150_000);
   signal.addEventListener('abort', terminate, { once: true });
   child.stdin.on('error', terminate);
-  child.stderr.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; if (stderrBytes > 8192) terminate(); });
+  child.stderr.on('data', (chunk: Buffer) => { stderrBytes += chunk.length; stderr.push(chunk); if (stderrBytes > 8192) terminate(); });
   child.stdout.on('data', (chunk: Buffer) => {
     total += chunk.length;
     if (total > 8192) { terminate(); return; }
@@ -102,7 +123,10 @@ export async function beginMaintenanceGuard(config: HostCommandConfig, execution
   child.once('close', code => {
     ended = true; clearTimeout(timeout); if (force) clearTimeout(force);
     signal.removeEventListener('abort', terminate);
-    if (!first || rejected || code !== 0 || output.trim()) { rejectFirst(unavailable()); rejectExit(unavailable()); }
+    if (!first || rejected || code !== 0 || output.trim()) {
+      const failure = new MaintenanceGuardUnavailable(maintenanceGuardFailureDetail(stderr.text()));
+      rejectFirst(failure); rejectExit(failure);
+    }
     else resolveExit();
   });
   child.stdin.write(packet + '\n');

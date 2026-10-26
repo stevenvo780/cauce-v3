@@ -200,6 +200,11 @@ def request_agent(policy: dict, document: dict) -> dict:
     return approve_agent(policy, {**agent, '_trusted_accounts': document['trusted_accounts'], '_trusted_accounts_present': True})
 
 
+def unavailable(detail: str) -> dict:
+    """A preflight deferral naming its fixed, secret-free cause for the executor journal."""
+    return {'state': 'deferred', 'reason': 'preflight_unavailable', 'detail': detail}
+
+
 def emit(stream, document: dict) -> None:
     stream.write(json.dumps(document, separators=(',', ':')) + '\n')
     stream.flush()
@@ -280,7 +285,13 @@ def hold(agent: dict, spec: dict, incoming: JsonLines, output) -> None:
 def run(policy: dict, input_stream, output) -> None:
     from fleet_executor_container import identity_for, inspect_container, observe_adapter_state, validate_container
     from fleet_executor_image import assert_no_login, assert_persistent_profile, image_guard, validate_previous
-    from fleet_executor_runtime import approved_bundle, provider_base_environment, sdk_environment_proof
+    from fleet_executor_runtime import (
+        NamespaceMismatch,
+        approved_bundle,
+        headless_predecessor_proof,
+        provider_base_environment,
+        sdk_environment_proof,
+    )
     incoming = JsonLines(input_stream)
     document = incoming.read(time.monotonic() + TTL)
     if document is None:
@@ -288,10 +299,10 @@ def run(policy: dict, input_stream, output) -> None:
     try:
         agent = request_agent(policy, document)
     except PreflightUnavailable:
-        emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
+        emit(output, unavailable('selection_identity_unavailable'))
         return
     if agent['runtime_mode'] != 'container' or agent['_placement'].get('ownership') == 'shared':
-        emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
+        emit(output, unavailable('placement_not_dedicated'))
         return
     observed = inspect_container(agent['container_name'])
     if observed is None:
@@ -307,7 +318,7 @@ def run(policy: dict, input_stream, output) -> None:
             previous = validate_previous(policy, agent, observed)
             bundle = approved_bundle(policy, agent)
             if agent['harness_id'] not in {'claude', 'codex', 'grok', 'muse'}:
-                emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
+                emit(output, unavailable('harness_without_maintenance'))
                 return
             assert_persistent_profile(policy, agent)
             state, environment = observe_adapter_state(previous, observed)
@@ -319,7 +330,13 @@ def run(policy: dict, input_stream, output) -> None:
                 else:
                     emit(output, {'state': 'runtime_current'})
                 return
-            sdk_environment_proof(policy, agent, environment, state['adapter_bootstrap'], state['adapter_operation_id'])
+            headless = False
+            try:
+                sdk_environment_proof(policy, agent, environment, state['adapter_bootstrap'], state['adapter_operation_id'])
+            except NamespaceMismatch:
+                # Started before its bundle gained the shared TUI: the refresh replaces it, never reports it current.
+                headless_predecessor_proof(policy, agent, environment, state['adapter_bootstrap'], state['adapter_operation_id'])
+                headless = True
             profile = provider_base_environment(policy, agent)
             profile_keys = {'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GROK_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'}
             if environment.get('HOME') != agent['home_directory'] or not profile_keys.intersection(profile) \
@@ -331,11 +348,11 @@ def run(policy: dict, input_stream, output) -> None:
                 if str(error) != 'container runtime mounts differ' and previous['_placement']['image'] == agent['_placement']['image']:
                     raise
             else:
-                if state.get('adapter_bundle_digest') == bundle['digest']:
+                if state.get('adapter_bundle_digest') == bundle['digest'] and not headless:
                     emit(output, {'state': 'runtime_current'})
                     return
             if bundle.get('shared_tui') is not True:
-                emit(output, {'state': 'deferred', 'reason': 'preflight_unavailable'})
+                emit(output, unavailable('bundle_without_shared_tui'))
                 return
             identity = identity_for(previous, observed)
             from fleet_executor_container import user_identity

@@ -249,6 +249,24 @@ def sdk_environment_proof(policy: dict, agent: dict, observed: dict, bootstrap: 
         raise NamespaceMismatch('running runtime has another SDK identity or transport')
 
 
+SHARED_TUI_ENVIRONMENT = frozenset({'CAUCE_SHARED_SESSION', 'CAUCE_SHARED_SESSION_WORKSPACE',
+                                    'CAUCE_SHARED_SESSION_REQUIRE_RESUME', 'CAUCE_SHARED_HUMAN_IDS', 'TMUX_TMPDIR'})
+
+
+def headless_predecessor_proof(policy: dict, agent: dict, observed: dict, bootstrap: bool, operation_id: str | None):
+    """The running adapter was started before its bundle gained the shared TUI: same SDK identity, no shared session.
+
+    Only maintenance accepts it, because replacing exactly this runtime is its job; every key outside the shared
+    session must still match the approved fleet, and the shared resume proof still gates the stop.
+    """
+    if agent['harness_id'] == 'openclaw' or policy['bundles'][agent['harness_id']].get('shared_tui') is not True \
+            or any(key in observed for key in SHARED_TUI_ENVIRONMENT):
+        raise NamespaceMismatch('running runtime has another SDK identity or transport')
+    expected = sdk_environment(policy, agent, bootstrap, operation_id)
+    if any(observed.get(key) != value for key, value in expected.items() if key not in SHARED_TUI_ENVIRONMENT):
+        raise NamespaceMismatch('running runtime has another SDK identity or transport')
+
+
 def teardown_sdk_environment_proof(agent: dict, identity: dict, observed: dict) -> None:
     room = agent.get('primary_room_id')
     if not isinstance(room, str) or not 1 <= len(room) <= 128 or any(ord(char) < 32 for char in room):

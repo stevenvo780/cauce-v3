@@ -158,8 +158,60 @@ class MaintenancePreflightTest(fixtures.ReleaseFixture):
 
     def test_nullable_selection_is_deferred_without_observing_or_stopping(self):
         self.raw['model_id'] = None
-        self.assertEqual(self.run_guard(), [{'state': 'deferred', 'reason': 'preflight_unavailable'}])
+        self.assertEqual(self.run_guard(), [{'state': 'deferred', 'reason': 'preflight_unavailable',
+                                             'detail': 'selection_identity_unavailable'}])
         self.assertEqual(self.fake.calls, [])
+
+    def test_bundle_without_shared_tui_names_its_deferral(self):
+        self.policy['bundles']['codex']['shared_tui'] = False
+        with mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold', side_effect=AssertionError('stop launched')):
+            self.assertEqual(self.run_guard(), [{'state': 'deferred', 'reason': 'preflight_unavailable',
+                                                 'detail': 'bundle_without_shared_tui'}])
+
+    def headless(self, **changes):
+        """The adapter started before its bundle gained the shared TUI: the approved SDK identity without a shared session."""
+        expected = {'CAUCE_ROOM': 'room', 'CAUCE_INSTANCE_ID': 'instance', 'CAUCE_RELAY_URL': 'wss://gateway/v3/ws',
+                    'CAUCE_MODEL_ID': 'model', 'CAUCE_SHARED_SESSION': '1', 'CAUCE_SHARED_SESSION_WORKSPACE': '/state/space/projects',
+                    'TMUX_TMPDIR': '/state'}
+        del self.environment['CAUCE_SHARED_SESSION']
+        self.environment.update({key: value for key, value in expected.items() if key not in runtime.SHARED_TUI_ENVIRONMENT},
+                                **changes)
+        runtime.sdk_environment_proof.side_effect = runtime.NamespaceMismatch('running runtime has another SDK identity or transport')
+        return mock.patch.object(runtime, 'sdk_environment', return_value=expected)
+
+    def test_headless_predecessor_of_a_shared_tui_bundle_reaches_the_exact_guard(self):
+        with self.headless(), mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold') as stop:
+            self.assertEqual(self.run_guard(), [])
+        stop.assert_called_once()
+        self.assertEqual(stop.call_args.args[1]['environment'], self.environment)
+
+    def test_headless_predecessor_with_the_current_bundle_is_never_reported_current(self):
+        self.observed['Mounts'] = self.mounts(self.new)
+        with self.headless(), mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold') as stop:
+            self.assertEqual(self.run_guard(), [])
+        stop.assert_called_once()
+
+    def test_sdk_mismatch_outside_the_shared_session_never_enters_stop_guard(self):
+        original = dict(self.environment)
+        for changes in ({'CAUCE_RELAY_URL': 'wss://foreign/v3/ws'}, {'CAUCE_MODEL_ID': 'other'},
+                        {'CAUCE_SHARED_SESSION': '0'}, {'TMUX_TMPDIR': '/state'}):
+            self.environment.clear()
+            self.environment.update(original)
+            with self.subTest(changes=changes), self.headless(**changes), \
+                    mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                    mock.patch.object(maintenance, 'hold', side_effect=AssertionError('stop launched')):
+                with self.assertRaises(runtime.NamespaceMismatch):
+                    self.run_guard()
+
+    def test_headless_runtime_of_a_bundle_without_shared_tui_keeps_its_sdk_mismatch(self):
+        self.policy['bundles']['codex']['shared_tui'] = False
+        with self.headless(), mock.patch.object(image, 'image_guard', return_value=contextlib.nullcontext()), \
+                mock.patch.object(maintenance, 'hold', side_effect=AssertionError('stop launched')):
+            with self.assertRaises(runtime.NamespaceMismatch):
+                self.run_guard()
 
 
 REMOTE_FIXTURE = '''import contextlib,json,os,pathlib,sys

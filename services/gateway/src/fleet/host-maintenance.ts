@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { z } from 'zod';
-import { beginMaintenanceGuard, proveMaintenanceResume, MaintenanceDeferReasonSchema, type MaintenanceGuard } from './host-maintenance-guard.js';
+import { beginMaintenanceGuard, proveMaintenanceResume, MaintenanceDeferReasonSchema, MaintenanceGuardUnavailable,
+  type MaintenanceGuard } from './host-maintenance-guard.js';
 import type { FleetExecution } from './executor.js';
 import type { FleetOperationClaim } from '@cauce/store';
 import type { SignedHostChannel } from './signed-source.js';
@@ -9,6 +10,13 @@ import { performHostMaintenanceCheckpoint } from './host-command.js';
 import { replacementCompensationSnapshot } from './replacement-compensation.js';
 
 const maintenance = (execution: FleetExecution) => execution.operation.actor.actor_subject?.startsWith('host:') === true;
+/** One journal line per automatic deferral: which stage held it back and the helper's fixed, secret-free cause. */
+function journalDeferral(execution: FleetExecution, reason: string, stage: string, detail?: string): void {
+  const target = execution.request.target;
+  const alias = target.resource === 'agent' ? ` agent=${target.tenant_id}/${target.alias}` : '';
+  process.stderr.write(`Host maintenance deferred operation_id=${execution.operation.id}${alias} reason=${reason} stage=${stage}`
+    + `${detail === undefined ? '' : ` detail=${detail.replace(/[\p{Cc}\s]+/gu, ' ').slice(0, 200)}`}\n`);
+}
 export class HostMaintenance {
   private pending = true;
   private retryAt = 0;
@@ -48,6 +56,8 @@ export class HostMaintenance {
     try { guard = await beginMaintenanceGuard(this.config.command, execution, claim, signal); }
     catch (error) {
       if (execution.operation.desired_revision !== null || signal.aborted) throw error;
+      journalDeferral(execution, 'preflight_unavailable', 'guard',
+        error instanceof MaintenanceGuardUnavailable ? error.detail : 'guard_unverified');
       await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal);
       return false;
     }
@@ -55,13 +65,16 @@ export class HostMaintenance {
     try {
       const first = guard.first;
       if (first.state === 'deferred' && execution.operation.desired_revision === null) {
-        await this.request('defer', { claim: fence, reason: MaintenanceDeferReasonSchema.parse(first.reason) }, signal);
+        const reason = MaintenanceDeferReasonSchema.parse(first.reason);
+        journalDeferral(execution, reason, 'preflight', first.detail);
+        await this.request('defer', { claim: fence, reason }, signal);
         return false;
       }
       if (first.state === 'runtime_current' && execution.operation.desired_revision === null) {
         await this.request('skip', { claim: fence }, signal); return false;
       }
       if (first.state === 'stopped' && execution.operation.desired_revision === null) {
+        journalDeferral(execution, 'preflight_unavailable', 'stopped_runtime');
         await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal); return false;
       }
       if (first.state === 'stopped' && execution.operation.steps.some(step => step.name === 'prepare' && step.status === 'succeeded')
@@ -75,6 +88,7 @@ export class HostMaintenance {
       try { resumeSha256 = await proveMaintenanceResume(this.config.command, execution, claim, first, signal); }
       catch (error) {
         if (execution.operation.desired_revision !== null || signal.aborted) throw error;
+        journalDeferral(execution, 'preflight_unavailable', 'resume_proof', 'shared_resume_unaccredited');
         await this.request('defer', { claim: fence, reason: 'preflight_unavailable' }, signal);
         return false;
       }
