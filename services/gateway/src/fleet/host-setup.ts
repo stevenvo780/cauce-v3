@@ -33,6 +33,8 @@ const LegacyBackupContainer = z.object({
   runtime_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
   systemd_user: z.string().regex(/^[a-z_][a-z0-9_-]{0,31}$/u),
   home_directory: LoginPathSchema.refine(value => !value.endsWith('/') && !value.split('/').includes('..')),
+  // The owner knows this V3 container runs privileged (the ws-* workspaces); without it the executor refuses to copy it.
+  privileged_container: z.literal(true).optional(),
 }).strict();
 const LegacyBackupHosts = z.record(Name, z.record(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/u), LegacyBackupContainer)
   .refine(value => Object.keys(value).length <= 100)).refine(value => Object.keys(value).length <= 100);

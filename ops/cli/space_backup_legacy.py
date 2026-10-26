@@ -39,8 +39,9 @@ def approve(policy: dict, snapshot: dict, row: dict) -> tuple[dict, dict]:
         raise SafeFailure('approved backup container is not observed running')
     configuration = observed.get('HostConfig', {})
     from quota_runtime import normalized_capabilities
-    if configuration.get('Privileged') is not False or configuration.get('PidMode') == 'host' \
-            or 'SYS_ADMIN' in normalized_capabilities(configuration.get('CapAdd')):
+    # A privileged container is copied only when its approval says so; the host PID namespace never is.
+    privileged = configuration.get('Privileged') is not False or 'SYS_ADMIN' in normalized_capabilities(configuration.get('CapAdd'))
+    if configuration.get('PidMode') == 'host' or privileged and row.get('privileged_container') is not True:
         raise SafeFailure('legacy backup container isolation differs')
     if re.fullmatch('[a-f0-9]{64}', observed.get('Id', '')) is None \
             or re.fullmatch('sha256:[a-f0-9]{64}', observed.get('Image', '')) is None:

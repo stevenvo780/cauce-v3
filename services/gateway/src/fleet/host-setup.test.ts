@@ -78,9 +78,13 @@ describe('host setup packages', () => {
       expect(subject.build(outside).package.policy).not.toHaveProperty('execution_scope');
     }
     for (const row of [{ ...approval, command: '/bin/sh' }, { ...approval, home_directory: '/' },
-      { ...approval, home_directory: '/home/node/' }, { ...approval, runtime_user: 'node;id' }]) {
+      { ...approval, home_directory: '/home/node/' }, { ...approval, runtime_user: 'node;id' }, { ...approval, privileged_container: false }]) {
       expect(HostSetupConfigSchema.safeParse({ ...config, legacy_backup_containers: { acme: { 'acme-laptop': { 'ws-legacy': row } } } }).success).toBe(false);
     }
+    const privileged = { ...approval, privileged_container: true };
+    const approvedPrivileged = new HostSetupPackager(HostSetupConfigSchema.parse({ ...config,
+      legacy_backup_containers: { acme: { 'acme-laptop': { 'ws-legacy': privileged } } } }), generateKeyPairSync('ed25519').privateKey);
+    expect(approvedPrivileged.build(scope).package.policy).toMatchObject({ shared_containers: { 'ws-legacy': { backup_only: true, ...privileged } } });
     expect(HostSetupConfigSchema.safeParse({ ...config, policy: { ...config.policy, shared_containers: { 'ws-legacy': approval } } }).success).toBe(false);
     expect(HostSetupConfigSchema.safeParse({ ...config, backup_only_hosts: { acme: ['acme-laptop', 'acme-laptop'] } }).success).toBe(false);
     const key = createPublicKey({ key: Buffer.from(signed.signer_public_key, 'base64'), format: 'der', type: 'spki' });

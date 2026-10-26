@@ -20,7 +20,8 @@ def absolute(value):
 
 
 def validate_backup_container(row: dict):
-    if set(row) != {'backup_only', 'runtime_user', 'systemd_user', 'home_directory'} or row['backup_only'] is not True \
+    if set(row) - {'privileged_container'} != {'backup_only', 'runtime_user', 'systemd_user', 'home_directory'} \
+            or row['backup_only'] is not True or row.get('privileged_container', True) is not True \
             or any(not isinstance(row[key], str) or re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', row[key]) is None
                    for key in ('runtime_user', 'systemd_user')) \
             or not isinstance(row['home_directory'], str) or len(row['home_directory']) > 4096 \

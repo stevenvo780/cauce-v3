@@ -401,6 +401,17 @@ class LegacyContainerApprovalTest(unittest.TestCase):
             observed['HostConfig']['Privileged'] = True
             with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'isolation differs'):
                 space_backup_runtime.approve_legacy_container(policy, self.snapshot)
+            observed['HostConfig'] = {'Privileged': True, 'PidMode': '', 'CapAdd': ['ALL']}
+            privileged = {'shared_containers': {'ws-legado': {**row, 'privileged_container': True}}, 'host_id': 'host-x'}
+            self.assertEqual(space_backup_runtime.approve_legacy_container(privileged, self.snapshot)[1]['container_id'], observed['Id'])
+            observed['HostConfig']['PidMode'] = 'host'
+            with self.assertRaisesRegex(space_backup_runtime.SafeFailure, 'isolation differs'):
+                space_backup_runtime.approve_legacy_container(privileged, self.snapshot)
+        import fleet_executor_legacy
+        fleet_executor_legacy.validate_backup_container({**row, 'privileged_container': True})
+        for value in (False, 'yes', None):
+            with self.subTest(privileged_container=value), self.assertRaises(ValueError):
+                fleet_executor_legacy.validate_backup_container({**row, 'privileged_container': value})
 
 
 class SpaceBackupFailureTest(unittest.TestCase):
