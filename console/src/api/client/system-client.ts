@@ -31,7 +31,7 @@ export async function getConsoleAccess(request: RequestFn): Promise<ConsoleAcces
       return { permissions: null, roles: null, reason: 'El servidor no publicó los permisos de forma verificable.' };
     }
     if (error instanceof ApiError && error.status === 403) {
-      return { permissions: [], roles: [], reason: 'El servidor denegó la consulta RBAC.' };
+      return { permissions: [], roles: [], reason: 'El servidor denegó la consulta de permisos.' };
     }
     throw error;
   }

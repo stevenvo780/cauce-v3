@@ -149,7 +149,7 @@ function decidirEstado(
     return { state: 'down', reason: 'Deshabilitado en el registro de agentes: no se le asigna trabajo.', overloaded };
   }
   if (flags.includes('never_connected')) {
-    return { state: 'down', reason: 'Nunca abrió una conexión: no hay conexión de este alias.', overloaded };
+    return { state: 'down', reason: 'Nunca se ha conectado este alias.', overloaded };
   }
   if (flags.includes('lease_expired') || agent.presence?.online === false) {
     return { state: 'down', reason: 'La conexión venció. El adaptador no está sosteniendo la conexión.', overloaded };
@@ -277,7 +277,7 @@ function decidirEstado(
     };
   }
 
-  return { state: 'idle', reason: 'Conectado, con conexión vigente y nada en vuelo.', overloaded };
+  return { state: 'idle', reason: 'Conectado y nada en vuelo.', overloaded };
 }
 
 function nuncaPreparado(agent: FleetActivityAgent): boolean {

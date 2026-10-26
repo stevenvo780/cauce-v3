@@ -88,7 +88,7 @@ function usePlatformCatalog(ctx: ConfigWrites) {
         await ctx.config.reload();
         setNotice({
           tone: 'error',
-          text: 'El servidor respondió sin el recibo durable exacto del cambio. Puede haberse aplicado; '
+          text: 'El servidor respondió sin el recibo exacto del cambio. Puede haberse aplicado; '
             + 'verifica la lista releída antes de repetirlo.',
         });
         return false;
@@ -119,7 +119,7 @@ function usePlatformCatalog(ctx: ConfigWrites) {
 type Catalog = ReturnType<typeof usePlatformCatalog>;
 
 function catalogoNoLeido(): React.ReactNode {
-  return <EmptyState>La configuración todavía no se leyó; el catálogo aparece cuando llega el snapshot.</EmptyState>;
+  return <EmptyState>La configuración todavía no se leyó; el catálogo aparece cuando llegan los datos.</EmptyState>;
 }
 
 function soloLectura(catalog: Catalog, entidad: string): React.ReactNode {

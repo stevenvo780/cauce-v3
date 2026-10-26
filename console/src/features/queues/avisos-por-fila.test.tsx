@@ -88,14 +88,14 @@ describe('el aviso de cada entrega es suyo', () => {
     />);
 
     await confirmar(user, screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${PRIMERA}`, 'i') }));
-    await screen.findByText(/Resultado incierto del reinyectado de 10000000…00aaaa/);
+    await screen.findByText(/Resultado incierto de la reinyección de 10000000…00aaaa/);
     await confirmar(user, screen.getByRole('button', { name: new RegExp(`cancelar entrega ${VIVA}`, 'i') }));
 
     expect(await screen.findByText(/Cancelada 10000000…00cccc/)).toBeInTheDocument();
     // The uncertain one is still on screen and remains locked: a response-shaped `{}` is not
     // evidence that a replay clone exists.
-    expect(screen.getByText(/Resultado incierto del reinyectado de 10000000…00aaaa/))
-      .toHaveTextContent(/snapshot no demuestra el efecto/i);
+    expect(screen.getByText(/Resultado incierto de la reinyección de 10000000…00aaaa/))
+      .toHaveTextContent(/la lectura no demuestra el efecto/i);
   }, 20_000);
 
   it('🔴 una relectura inconcluyente NO habilita re-POST sobre la misma entrega', async () => {
@@ -117,14 +117,14 @@ describe('el aviso de cada entrega es suyo', () => {
 
     const boton = screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${PRIMERA}`, 'i') });
     await confirmar(user, boton);
-    expect(await screen.findByText(/Resultado incierto del reinyectado de 10000000…00aaaa/)).toBeInTheDocument();
+    expect(await screen.findByText(/Resultado incierto de la reinyección de 10000000…00aaaa/)).toBeInTheDocument();
 
-    await screen.findByText(/snapshot no demuestra el efecto/i);
+    await screen.findByText(/la lectura no demuestra el efecto/i);
     expect(boton).toBeDisabled();
     await user.click(boton);
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(intentos).toBe(1);
-    expect(screen.queryByText(/Replay encolado/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reinyección encolada/)).not.toBeInTheDocument();
     expect(avisos()).toHaveLength(1);
   }, 20_000);
 });

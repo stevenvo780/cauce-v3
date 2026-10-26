@@ -91,7 +91,7 @@ function QueuesPageContent() {
 
       {resource.error ? (
         <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 basis-64">No se pudieron actualizar las entregas: {resource.error.message} Se conservan las filas del último snapshot; pueden estar desactualizadas.</span>
+          <span className="min-w-0 flex-1 basis-64">No se pudieron actualizar las entregas: {resource.error.message} Se conservan las filas de la última lectura; pueden estar desactualizadas.</span>
           <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => resource.reload()} />
         </Notice>
       ) : null}
@@ -221,7 +221,7 @@ function TarjetaFiltro({ etiqueta, valor, tono = 'neutral', detalle, grupo, acti
       aria-pressed={activo}
       disabled={bloqueado}
       title={bloqueado ? TITULO_FOCO : recortada
-        ? `El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque el snapshot viene recortado por su LIMIT.`
+        ? `El servidor cuenta ${cifra} en total; en esta página caben ${String(enPagina)} porque la lista llega recortada por el servidor.`
         : `Ver ${ROTULO_DEL_GRUPO[grupo]}`}
       onClick={() => { onElegir(grupo); }}
       className={cn(

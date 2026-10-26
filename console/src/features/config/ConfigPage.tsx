@@ -191,7 +191,7 @@ function SinPermisoDeLectura({ detalle }: { detalle: string }) {
       <strong>«Ajustes» necesita permiso de lectura</strong>
       <p className="m-0 text-[13px] text-fg-2">{CONFIG_SIN_LECTURA_REASON}</p>
       <p className="m-0 text-xs text-muted">
-        El servidor contestó 403: <span className="font-mono">{detalle || 'sin mensaje'}</span>. Reintentar
+        El servidor lo rechazó: <span className="font-mono">{detalle || 'sin mensaje'}</span>. Reintentar
         no cambia nada: falta el permiso, no se cayó Cauce.
       </p>
       <LinkButton href="/" onClick={(event) => { onNavClick(event, '/'); }}>Ir a la portada</LinkButton>

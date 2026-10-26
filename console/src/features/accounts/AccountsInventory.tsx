@@ -99,7 +99,7 @@ export function AccountsInventory({ config, access, registry }: {
     ? accounts.items.find((item) => item.id === form.edit.id)
     : undefined;
   const editInvalid = form?.kind === 'edit'
-    ? (editing ? editBlocker(editing) : 'La cuenta que estabas editando ya no está en el snapshot: vuelve al inventario.')
+    ? (editing ? editBlocker(editing) : 'La cuenta que estabas editando ya no está en los datos leídos: vuelve al inventario.')
     : undefined;
   const accountCeilings = form?.kind === 'delete'
     ? ceiling.items.filter((entry) => entry.accountId === form.accountId)

@@ -45,7 +45,7 @@ export function appearanceDraftProblem(draft: AppearanceDraft): string | undefin
 }
 
 function agentPath(prefix: string, tenantId: string, alias: string, suffix = ''): string {
-  if (!tenantId || !alias) throw new Error('Falta el tenant o el alias del agente.');
+  if (!tenantId || !alias) throw new Error('Falta la empresa o el alias del agente.');
   return `${prefix}/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}${suffix}`;
 }
 

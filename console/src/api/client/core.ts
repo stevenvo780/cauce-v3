@@ -23,7 +23,7 @@ export class ApiError extends Error {
 /** Reliable and bounded 409: there is a prior exact effect that must be closed before publishing another. */
 export class PublishIntentReconciliationError extends ApiError {
   constructor(readonly reconciliation: PreparePublishIntentReconciliation) {
-    super('Hay una publicación durable anterior que requiere reconciliación.', 409,
+    super('Hay una publicación anterior pendiente de cerrar antes de publicar otra.', 409,
       'publish_intent_reconciliation_required');
     this.name = 'PublishIntentReconciliationError';
   }

@@ -154,9 +154,9 @@ async function runDeliveryCommandSafely(
       effectProven,
       reconciliation: command.reconciliation,
       notice: `${heading} ${effectProven
-        ? 'La relectura demostró el efecto durable; no se repetirá el POST.'
+        ? 'La relectura demostró el efecto durable; no se repetirá la petición.'
         : snapshot.completed
-          ? 'La cola se releyó, pero el snapshot no demuestra el efecto; la acción permanece bloqueada.'
+          ? 'La cola se releyó, pero la lectura no demuestra el efecto; la acción permanece bloqueada.'
           : 'No hubo una relectura verificable y la acción permanece bloqueada.'}`,
     };
   }
@@ -170,7 +170,7 @@ export function replayDeliverySafely(input: SafeDeliveryActionInput): Promise<Sa
     exactReceipt: (result) => exactReplayReceipt(result, deliveryId),
     missingReceipt: 'el servidor no devolvió un recibo exacto de la reinyección',
     confirmedNotice: `Reinyección encolada para ${compactId(deliveryId)}`,
-    uncertainHeading: `Resultado incierto del reinyectado de ${compactId(deliveryId)}`,
+    uncertainHeading: `Resultado incierto de la reinyección de ${compactId(deliveryId)}`,
     reconciliation: { action: 'replay', deliveryId },
   });
 }
