@@ -168,8 +168,8 @@ export function replayDeliverySafely(input: SafeDeliveryActionInput): Promise<Sa
   return runDeliveryCommandSafely(input, {
     run: () => api.replayDelivery(deliveryId),
     exactReceipt: (result) => exactReplayReceipt(result, deliveryId),
-    missingReceipt: 'el gateway no devolvió un recibo durable exacto del replay',
-    confirmedNotice: `Replay encolado para ${compactId(deliveryId)}`,
+    missingReceipt: 'el servidor no devolvió un recibo exacto de la reinyección',
+    confirmedNotice: `Reinyección encolada para ${compactId(deliveryId)}`,
     uncertainHeading: `Resultado incierto del reinyectado de ${compactId(deliveryId)}`,
     reconciliation: { action: 'replay', deliveryId },
   });
@@ -181,8 +181,8 @@ export function cancelDeliverySafely(input: SafeDeliveryActionInput): Promise<Sa
   return runDeliveryCommandSafely(input, {
     run: () => api.cancelDelivery(deliveryId),
     exactReceipt: (result) => exactCancelReceipt(result, deliveryId),
-    missingReceipt: 'el gateway no devolvió un recibo durable exacto de la cancelación',
-    confirmedNotice: `Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede replayar)`,
+    missingReceipt: 'el servidor no devolvió un recibo exacto de la cancelación',
+    confirmedNotice: `Cancelada ${compactId(deliveryId)} (queda en DLQ, se puede reinyectar)`,
     uncertainHeading: `Resultado incierto de la cancelación de ${compactId(deliveryId)}`,
     reconciliation: { action: 'cancel', deliveryId },
   });

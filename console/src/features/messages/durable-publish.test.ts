@@ -226,7 +226,7 @@ describe('durable console publish', () => {
 
     await expect(publishDurably({
       api, input, publisherSubject: 'Steven:kant', expectedDeliveries: 1, reconcile: vi.fn(),
-    })).rejects.toThrow(/intención durable exacta/u);
+    })).rejects.toThrow(/confirmación exacta del envío/u);
     expect(api.publishMessage).not.toHaveBeenCalled();
     expect(api.confirmPublishIntent).not.toHaveBeenCalled();
   });

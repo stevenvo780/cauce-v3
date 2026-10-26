@@ -92,8 +92,8 @@ async function confirmDeliveryAction(
   page: Awaited<ReturnType<typeof newTrustedPage>>, action: 'cancel' | 'replay', deliveryId: string,
 ) {
   const button = action === 'cancel'
-    ? page.getByRole('button', { name: `Cancelar delivery ${deliveryId}`, exact: true })
-    : page.getByRole('button', { name: `Replay delivery ${deliveryId}`, exact: true });
+    ? page.getByRole('button', { name: `Cancelar entrega ${deliveryId}`, exact: true })
+    : page.getByRole('button', { name: `Reinyectar entrega ${deliveryId}`, exact: true });
   await button.click();
   const confirmName = action === 'cancel' ? 'Sí, cancelar la entrega' : 'Sí, reinyectar';
   await page.getByRole('alertdialog').getByRole('button', { name: confirmName, exact: true }).click();
@@ -170,7 +170,7 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
-  it('permite lectura sin controles al reader y persiste cancelación, replay y cierre DLQ sin replay en 360/1440', async () => {
+  it('permite lectura sin controles al reader y persiste cancelación, replay y cierre DLQ sin reinyectar en 360/1440', async () => {
     if (!fixture) throw new Error('functional browser fixture is not initialized');
     const active = fixture;
     const operator = await login(isaTenant, { width: 1440, height: 1000 });
@@ -182,8 +182,8 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
 
     const readerPage = await login({ ...isaTenant, email: reader.email, password: reader.password }, { width: 360, height: 800 });
     await readerPage.goto(`${active.baseUrl}/queues`, { waitUntil: 'domcontentloaded' });
-    const readerCancel = readerPage.getByRole('button', { name: `Cancelar delivery ${cancelSource.delivery_id}`, exact: true });
-    const readerReplay = readerPage.getByRole('button', { name: `Replay delivery ${cancelSource.delivery_id}`, exact: true });
+    const readerCancel = readerPage.getByRole('button', { name: `Cancelar entrega ${cancelSource.delivery_id}`, exact: true });
+    const readerReplay = readerPage.getByRole('button', { name: `Reinyectar entrega ${cancelSource.delivery_id}`, exact: true });
     const readerQueues = await readerPage.evaluate(async () => {
       const response = await fetch('/v3/console/queues', { credentials: 'include' });
       return { status: response.status, body: await response.text() };
@@ -200,7 +200,7 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
     expect(readerAccess.permissions).not.toContain('dlq.resolve');
     expect(await readerCancel.count()).toBe(1);
     const readerControlStates = await readerPage.evaluate(() => Array.from(
-      document.querySelectorAll<HTMLButtonElement>('button[aria-label^="Cancelar delivery"],button[aria-label^="Replay delivery"]'),
+      document.querySelectorAll<HTMLButtonElement>('button[aria-label^="Cancelar entrega"],button[aria-label^="Reinyectar entrega"]'),
     ).map((button) => ({ label: button.getAttribute('aria-label'), disabled: button.disabled })));
     expect(readerControlStates.length).toBe(2);
     expect(readerControlStates.every((control) => control.disabled)).toBe(true);
@@ -209,7 +209,7 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
 
     await operator.setViewportSize({ width: 360, height: 800 });
     await operator.goto(`${active.baseUrl}/queues`, { waitUntil: 'domcontentloaded' });
-    await operator.getByRole('button', { name: `Cancelar delivery ${cancelSource.delivery_id}`, exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
+    await operator.getByRole('button', { name: `Cancelar entrega ${cancelSource.delivery_id}`, exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
     await confirmDeliveryAction(operator, 'cancel', cancelSource.delivery_id);
     await operator.getByText('MUERTA', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
     const cancelled = await active.database.pool.query<{
@@ -227,9 +227,9 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
 
     await operator.setViewportSize({ width: 1440, height: 1000 });
     await operator.screenshot({ path: `${artifacts}/operator-1440-cancelled.png`, fullPage: true });
-    await operator.getByRole('button', { name: `Replay delivery ${cancelSource.delivery_id}`, exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
+    await operator.getByRole('button', { name: `Reinyectar entrega ${cancelSource.delivery_id}`, exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
     await confirmDeliveryAction(operator, 'replay', cancelSource.delivery_id);
-    await operator.getByText(/Replay encolado para/u).waitFor({ state: 'visible', timeout: 15_000 });
+    await operator.getByText(/Reinyección encolada para/u).waitFor({ state: 'visible', timeout: 15_000 });
 
     const replayState = await active.database.pool.query<{
       original_state: string; letter_resolved: Date | null; replay_count: string; outbox_count: string;
@@ -267,19 +267,19 @@ describe('colas y DLQ operativo con consola HTTPS y PostgreSQL reales', () => {
     await operator.getByRole('tab', { name: 'DLQ operativo', exact: true }).click();
     await operator.getByRole('heading', { name: 'DLQ operativo', exact: true }).waitFor({ timeout: 15_000 });
     const resolveDlq = operator.locator(`tr:has(span[title="${resolveIncidentId}"])`);
-    await resolveDlq.getByRole('button', { name: /Cerrar sin replay/u }).waitFor({ state: 'visible', timeout: 15_000 });
+    await resolveDlq.getByRole('button', { name: /Cerrar sin reinyectar/u }).waitFor({ state: 'visible', timeout: 15_000 });
     const priorWakeCount = await active.database.pool.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM adapter_outbox WHERE kind='wake' AND delivery_id=$1",
       [resolveSource.delivery_id],
     );
     expect(priorWakeCount.rows).toHaveLength(1);
-    await resolveDlq.getByRole('button', { name: /Cerrar sin replay/u }).click();
+    await resolveDlq.getByRole('button', { name: /Cerrar sin reinyectar/u }).click();
     const compactIncidentId = `${resolveIncidentId.slice(0, 8)}…${resolveIncidentId.slice(-6)}`;
-    const resolution = operator.getByRole('alertdialog', { name: `Cerrar ${compactIncidentId} sin replay`, exact: true });
+    const resolution = operator.getByRole('alertdialog', { name: `Cerrar ${compactIncidentId} sin reinyectar`, exact: true });
     await resolution.locator('textarea[aria-label="Motivo operativo"]').fill('Prueba E2E: cierre manual sin reinyección.');
     await resolution.locator('input[type="checkbox"]').click();
-    await resolution.getByRole('button', { name: 'Cerrar sin replay', exact: true }).click();
-    await operator.getByRole('status').filter({ hasText: 'cerrado sin replay' }).waitFor({ timeout: 15_000 });
+    await resolution.getByRole('button', { name: 'Cerrar sin reinyectar', exact: true }).click();
+    await operator.getByRole('status').filter({ hasText: 'cerrado sin reinyectar' }).waitFor({ timeout: 15_000 });
     const resolvedState = await active.database.pool.query<{
       delivery_state: string; resolved_at: Date | null; disposition: string; audit_count: string; clone_count: string;
     }>(

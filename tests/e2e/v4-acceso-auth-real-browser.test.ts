@@ -287,7 +287,7 @@ describe('acceso con Chromium, gateway y PostgreSQL reales', () => {
       await blocker.query('BEGIN');
       await blocker.query('LOCK TABLE console_users IN ACCESS EXCLUSIVE MODE');
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.getByText('Verificando la sesión con el gateway…', { exact: true }).waitFor({ timeout: 15_000 });
+      await page.getByText('Verificando tu sesión con el servidor…', { exact: true }).waitFor({ timeout: 15_000 });
       await screenshot(page, 'desktop-session-checking');
       await page.setViewportSize({ width: 390, height: 844 });
       await screenshot(page, 'mobile-session-checking');

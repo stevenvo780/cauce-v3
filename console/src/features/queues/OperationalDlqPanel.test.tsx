@@ -271,9 +271,9 @@ it('requires reason plus both uncertainty acknowledgements and sends an exact no
   const user = userEvent.setup();
   renderWithApi(<OperationalDlqPanel />);
 
-  await user.click(await screen.findByRole('button', { name: /cerrar sin replay/i }));
+  await user.click(await screen.findByRole('button', { name: /cerrar sin reinyectar/i }));
   const dialog = screen.getByRole('alertdialog');
-  const submit = within(dialog).getByRole('button', { name: /cerrar sin replay/i });
+  const submit = within(dialog).getByRole('button', { name: /cerrar sin reinyectar/i });
   expect(submit).toBeDisabled();
   await user.type(within(dialog).getByRole('textbox', { name: /motivo operativo/i }), 'Validación causal del operador');
   expect(submit).toBeDisabled();
@@ -284,7 +284,7 @@ it('requires reason plus both uncertainty acknowledgements and sends an exact no
   expect(submit).toBeEnabled();
   await user.click(submit);
 
-  expect(await screen.findByText(/cerrado sin replay/i)).toBeInTheDocument();
+  expect(await screen.findByText(/cerrado sin reinyectar/i)).toBeInTheDocument();
   expect(requestedPath).toBe(`/v3/console/dlq/outbox/${incident.id}/resolve-without-replay`);
   expect(requestBody).toEqual({
     evidence_sha256: incident.evidenceSha256,
@@ -312,14 +312,14 @@ it.each(['safe_retry', 'auth'] as const)(
     const user = userEvent.setup();
     renderWithApi(<OperationalDlqPanel />);
 
-    await user.click(await screen.findByRole('button', { name: /cerrar sin replay/i }));
+    await user.click(await screen.findByRole('button', { name: /cerrar sin reinyectar/i }));
     const dialog = screen.getByRole('alertdialog');
     expect(within(dialog).getAllByRole('checkbox')).toHaveLength(1);
     await user.type(within(dialog).getByRole('textbox', { name: /motivo operativo/i }), 'Cierre causal comprobado');
     await user.click(within(dialog).getByRole('checkbox'));
-    await user.click(within(dialog).getByRole('button', { name: /cerrar sin replay/i }));
+    await user.click(within(dialog).getByRole('button', { name: /cerrar sin reinyectar/i }));
 
-    expect(await screen.findByText(/cerrado sin replay/i)).toBeInTheDocument();
+    expect(await screen.findByText(/cerrado sin reinyectar/i)).toBeInTheDocument();
     expect(requestBody).toMatchObject({
       possible_duplicate_acknowledged: false,
       possible_no_delivery_acknowledged: true,
@@ -335,7 +335,7 @@ it('does not offer a mutation for open unclassified evidence even if a stale ser
   renderWithApi(<OperationalDlqPanel />);
 
   expect(within(await screen.findByRole('table', { name: /incidentes de dlq/i })).getByText('SIN CLASIFICAR')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /cerrar sin replay/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /cerrar sin reinyectar/i })).not.toBeInTheDocument();
   expect(screen.getByText('Requiere evidencia causal')).toBeInTheDocument();
 });
 
@@ -354,15 +354,15 @@ it('does not claim success when a 2xx response lacks the exact durable receipt',
   const user = userEvent.setup();
   renderWithApi(<OperationalDlqPanel />);
 
-  await user.click(await screen.findByRole('button', { name: /cerrar sin replay/i }));
+  await user.click(await screen.findByRole('button', { name: /cerrar sin reinyectar/i }));
   const dialog = screen.getByRole('alertdialog');
   await user.type(within(dialog).getByRole('textbox', { name: /motivo operativo/i }), 'Cierre causal comprobado');
   for (const checkbox of within(dialog).getAllByRole('checkbox')) await user.click(checkbox);
-  await user.click(within(dialog).getByRole('button', { name: /cerrar sin replay/i }));
+  await user.click(within(dialog).getByRole('button', { name: /cerrar sin reinyectar/i }));
 
-  expect(await screen.findByRole('status')).toHaveTextContent(/no devolvió un recibo durable exacto/i);
+  expect(await screen.findByRole('status')).toHaveTextContent(/no devolvió un recibo exacto/i);
   expect(screen.getByRole('alertdialog')).toBeInTheDocument();
-  expect(screen.queryByText(/cerrado sin replay; Cauce no reinyectó/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/cerrado sin reinyectar; Cauce no reinyectó/i)).not.toBeInTheDocument();
 });
 
 it('fails closed without crashing when the server returns a prototype-key disposition', async () => {
@@ -374,7 +374,7 @@ it('fails closed without crashing when the server returns a prototype-key dispos
 
   const table = await screen.findByRole('table', { name: /incidentes de dlq/i });
   expect(within(table).getAllByText('sin dato').length).toBeGreaterThan(0);
-  expect(screen.queryByRole('button', { name: /cerrar sin replay/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /cerrar sin reinyectar/i })).not.toBeInTheDocument();
   expect(screen.getByText('Requiere evidencia causal')).toBeInTheDocument();
 });
 

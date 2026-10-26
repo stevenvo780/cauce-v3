@@ -17,8 +17,8 @@ export const WORK_STATE_LABEL: Record<FleetWorkState, string> = {
 
 export const FLAG_LABEL: Record<FleetActivityFlag, string> = {
   saturated: 'Saturado',
-  ack_stalled: 'Sin ACK',
-  overdue_acks: 'ACK vencido',
+  ack_stalled: 'Sin confirmación',
+  overdue_acks: 'Confirmación vencida',
   lease_expired: 'Caído',
   never_connected: 'Nunca conectó',
   unregistered: 'Fuera del registro',
@@ -37,8 +37,8 @@ export type EstadosVivos = ReadonlyMap<string, LiveState>;
 export function formatAckAge(secondsSinceLastAck: number | null | undefined, ackLookbackSeconds: number | null | undefined): string {
   if (secondsSinceLastAck === null || secondsSinceLastAck === undefined) {
     return ackLookbackSeconds !== null && ackLookbackSeconds !== undefined
-      ? `> ${formatDurationSeconds(ackLookbackSeconds)} sin ACK`
-      : 'ningún ACK, y el servidor no dice desde cuándo';
+      ? `> ${formatDurationSeconds(ackLookbackSeconds)} sin confirmación`
+      : 'ninguna confirmación, y el servidor no dice desde cuándo';
   }
   return `hace ${formatDurationSeconds(secondsSinceLastAck)}`;
 }

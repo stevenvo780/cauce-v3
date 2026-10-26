@@ -264,10 +264,10 @@ describe('CauceApi', () => {
     await expect(request).rejects.toMatchObject({ rateLimit: { retry_after_seconds: 86_400 } });
   });
 
-  it('treats a missing PTY backend as disabled', async () => {
+  it('treats a missing terminal service as disabled', async () => {
     server.use(http.get('http://localhost/v3/console/terminal/capability', () => new HttpResponse(null, { status: 404 })));
     const capability = await new CauceApi('http://localhost').getTerminalCapability();
-    expect(capability).toEqual({ available: false, reason: 'El backend del terminal no está habilitado. Pide a un administrador que configure el servicio PTY para esta instalación.' });
+    expect(capability).toEqual({ available: false, reason: 'El servicio de terminales no está habilitado. Pide a un administrador que lo active para esta instalación.' });
   });
 
   it('distinguishes an absent agent from an unpublished directive or history endpoint', async () => {

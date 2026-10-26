@@ -137,8 +137,8 @@ async function publishPending(page: BrowserPage, marker: string) {
 
 async function confirmDelivery(page: BrowserPage, action: 'cancel' | 'replay', deliveryId: string) {
   const button = action === 'cancel'
-    ? page.getByRole('button', { name: `Cancelar delivery ${deliveryId}`, exact: true })
-    : page.getByRole('button', { name: `Replay delivery ${deliveryId}`, exact: true });
+    ? page.getByRole('button', { name: `Cancelar entrega ${deliveryId}`, exact: true })
+    : page.getByRole('button', { name: `Reinyectar entrega ${deliveryId}`, exact: true });
   await button.click();
   const confirmName = action === 'cancel' ? 'Sí, cancelar la entrega' : 'Sí, reinyectar';
   await page.getByRole('alertdialog').getByRole('button', { name: confirmName, exact: true }).click();
@@ -273,7 +273,7 @@ beforeAll(async () => {
 afterAll(async () => { await fixture?.close(); });
 
 describe('operación de colas, señales, auditoría y ayuda', () => {
-  it('filtra colas, enfoca una entrega, muestra el último error y cierra un DLQ sin replay', async () => {
+  it('filtra colas, enfoca una entrega, muestra el último error y cierra un DLQ sin reinyectar', async () => {
     if (!fixture) throw new Error('functional browser fixture is not initialized');
     const active = fixture;
     const operator = await login(isaTenant, DESKTOP);
@@ -294,11 +294,11 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
       const readerPage = await login({ ...isaTenant, email: reader.email, password: reader.password }, PHONE);
       try {
         await readerPage.goto(`${active.baseUrl}/queues`, { waitUntil: 'domcontentloaded' });
-        await readerPage.getByRole('button', { name: `Cancelar delivery ${pending.deliveryId}`, exact: true }).waitFor({ timeout: 20_000 });
+        await readerPage.getByRole('button', { name: `Cancelar entrega ${pending.deliveryId}`, exact: true }).waitFor({ timeout: 20_000 });
         const states = await readerPage.evaluate(() => Array.from(
-          document.querySelectorAll<HTMLButtonElement>('button[aria-label^="Cancelar delivery"],button[aria-label^="Replay delivery"]'),
+          document.querySelectorAll<HTMLButtonElement>('button[aria-label^="Cancelar entrega"],button[aria-label^="Reinyectar entrega"]'),
         ).map((button) => ({ label: button.getAttribute('aria-label'), disabled: button.disabled })));
-        expect(states).toEqual([{ label: `Cancelar delivery ${pending.deliveryId}`, disabled: true }]);
+        expect(states).toEqual([{ label: `Cancelar entrega ${pending.deliveryId}`, disabled: true }]);
         await shot(readerPage, 'colas-lector-390');
       } finally {
         await readerPage.context().close();
@@ -373,14 +373,14 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
       await operator.getByText('No hay incidentes que coincidan con el filtro.', { exact: true }).waitFor();
       await disposition.selectOption('safe_retry');
       const resolveDlq = operator.locator(`tr:has(span[title="${incidentId}"])`);
-      await resolveDlq.getByRole('button', { name: /Cerrar sin replay/u }).waitFor({ state: 'visible', timeout: 15_000 });
-      await resolveDlq.getByRole('button', { name: /Cerrar sin replay/u }).click();
+      await resolveDlq.getByRole('button', { name: /Cerrar sin reinyectar/u }).waitFor({ state: 'visible', timeout: 15_000 });
+      await resolveDlq.getByRole('button', { name: /Cerrar sin reinyectar/u }).click();
       const compactIncidentId = `${incidentId.slice(0, 8)}…${incidentId.slice(-6)}`;
-      const resolution = operator.getByRole('alertdialog', { name: `Cerrar ${compactIncidentId} sin replay`, exact: true });
+      const resolution = operator.getByRole('alertdialog', { name: `Cerrar ${compactIncidentId} sin reinyectar`, exact: true });
       await resolution.locator('textarea[aria-label="Motivo operativo"]').fill('Prueba E2E: cierre manual sin reinyección.');
       await resolution.locator('input[type="checkbox"]').click();
-      await resolution.getByRole('button', { name: 'Cerrar sin replay', exact: true }).click();
-      await operator.getByRole('status').filter({ hasText: 'cerrado sin replay' }).waitFor({ timeout: 20_000 });
+      await resolution.getByRole('button', { name: 'Cerrar sin reinyectar', exact: true }).click();
+      await operator.getByRole('status').filter({ hasText: 'cerrado sin reinyectar' }).waitFor({ timeout: 20_000 });
       const closed = await active.database.pool.query<{ audit_count: string; replay: string; wake: string }>(
         `SELECT
            (SELECT count(*)::text FROM dlq_operator_resolutions resolution
@@ -396,7 +396,7 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
 
       const cancelable = await publishPending(operator, `${PREFIX}-cancelar`);
       await operator.goto(`${active.baseUrl}/queues`, { waitUntil: 'domcontentloaded' });
-      await operator.getByRole('button', { name: `Cancelar delivery ${cancelable.deliveryId}`, exact: true }).click();
+      await operator.getByRole('button', { name: `Cancelar entrega ${cancelable.deliveryId}`, exact: true }).click();
       await operator.getByRole('alertdialog').waitFor();
       controls(operator);
       await operator.keyboard.press('Escape');
@@ -415,7 +415,7 @@ describe('operación de colas, señales, auditoría y ayuda', () => {
       );
       expect(cancelled.rows).toEqual([{ status: 'dead', audit_count: '1' }]);
       await confirmDelivery(operator, 'replay', cancelable.deliveryId);
-      await operator.getByText(/Replay encolado para/u).waitFor({ timeout: 20_000 });
+      await operator.getByText(/Reinyección encolada para/u).waitFor({ timeout: 20_000 });
       const replay = await active.database.pool.query<{ clone_state: string | null }>(
         `SELECT cloned.status AS clone_state
            FROM audit_events replay

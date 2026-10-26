@@ -157,8 +157,8 @@ const none = (text: string) => <span className="text-muted">{text}</span>;
 function Now({ view }: { view: LiveAgentView }) {
   return (
     <Rows rows={[
-      ['Último ACK', view.secondsSinceLastAck === null || view.secondsSinceLastAck === undefined
-        ? none('sin ACK dentro de la ventana de búsqueda')
+      ['Última confirmación', view.secondsSinceLastAck === null || view.secondsSinceLastAck === undefined
+        ? none('sin confirmación dentro de la ventana de búsqueda')
         : `hace ${humanSeconds(view.secondsSinceLastAck)}`],
       ['Delega a', view.delegatesTo.length > 0 ? view.delegatesTo.map(aliasDe).join(', ') : none('nadie ahora mismo')],
       ['Trabaja para', view.delegatedFrom.length > 0 ? view.delegatedFrom.map(aliasDe).join(', ') : none('nadie ahora mismo')],
@@ -186,7 +186,7 @@ function Connection({ view, status }: { view: LiveAgentView; status: Resource<Sy
         ? none('no: apareció por entregas o por una conexión')
         : <Unknown value={view.agent.registered} key="r" />],
       ['Capacidades', status.error && !status.data
-        ? none(`no se pudo leer /v3/status: ${status.error.message}`)
+        ? none(`no se pudo leer el estado del servidor: ${status.error.message}`)
         : capabilities?.length ? capabilities.join(', ') : none('sin dato')],
     ]} />
   );
@@ -214,7 +214,7 @@ function Deliveries({ view, items }: { view: LiveAgentView; items: FleetActivity
               ['Se lo pidió', origin(view.origenes[index])],
               ['Carril', <Unknown value={safeJobLane(item.lane)} key="c" />],
               ['Intento', <Unknown value={item.attempt} key="a" />],
-              ['Deadline de ACK', <Time value={item.ack_deadline_at} key="d" />],
+              ['Plazo de confirmación', <Time value={item.ack_deadline_at} key="d" />],
             ]} />
             {queuePath ? (
               <a

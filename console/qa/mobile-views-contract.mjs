@@ -23,7 +23,7 @@ export const VIEWS = [
   ...[['Inventario', 'inventario'], ['Asignaciones', 'asignaciones']].map(([name, id]) =>
     view(`accounts-${id}`, '/accounts', `#view-panel-${id}`, [tab(name)])),
   view('queues', '/queues', '#view-panel-entregas tbody tr'),
-  view('observability-signals', '/observability', '#view-panel-senales', [tab('Señales y relays')]),
+  view('observability-signals', '/observability', '#view-panel-senales', [tab('Señales y reenvíos')]),
   view('observability-audit', '/observability', '#view-panel-auditoria', [tab('Auditoría')]),
   ...SECCIONES_DE_AJUSTES.map((name, index) => view(`config-${index}`, '/config', 'main [role="tabpanel"]', [tab(name)])),
   view('terminal', '/terminal', `${ESCENARIO} h2`),

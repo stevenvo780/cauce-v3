@@ -75,7 +75,7 @@ export async function getAgentDocumentContent(
   );
   const malformed = (): never => {
     throw new ApiError(
-      'El gateway devolvió un contenido de documento incompleto o incoherente; no se mostrará como si el fichero estuviera vacío.',
+      'El servidor devolvió un contenido de documento incompleto o incoherente; no se mostrará como si el fichero estuviera vacío.',
       502,
       'invalid_document_content',
     );
@@ -410,7 +410,7 @@ export async function getTerminalCapability(request: RequestFn): Promise<Termina
     return await request('/v3/console/terminal/capability');
   } catch (error) {
     if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-      return { available: false, reason: 'El backend del terminal no está habilitado. Pide a un administrador que configure el servicio PTY para esta instalación.' };
+      return { available: false, reason: 'El servicio de terminales no está habilitado. Pide a un administrador que lo active para esta instalación.' };
     }
     throw error;
   }

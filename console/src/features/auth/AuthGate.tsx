@@ -143,7 +143,7 @@ function CheckingScreen() {
     <AuthScreen role="status">
       <div className="flex items-center gap-3 text-[13px] text-fg-2" aria-live="polite">
         <Spinner />
-        <p className="m-0">Verificando la sesión con el gateway…</p>
+        <p className="m-0">Verificando tu sesión con el servidor…</p>
       </div>
     </AuthScreen>
   );
@@ -156,7 +156,7 @@ function ErrorScreen({ error, onRetry }: { error: Error; onRetry: () => void }) 
       <h1>No se pudo verificar la sesión</h1>
       <Lede>{error.message}</Lede>
       <p className="m-0 text-xs text-muted">
-        Un gateway que no contesta <strong className="text-fg">no es una autorización</strong>: la consola se queda
+        Un servidor que no contesta <strong className="text-fg">no es una autorización</strong>: la consola se queda
         cerrada hasta poder comprobar quién eres.
       </p>
       <Button variant="primary" className="min-h-10" onClick={onRetry}>Reintentar</Button>
@@ -191,7 +191,7 @@ export function UnmanagedAuthBanner() {
     <div className="flex items-start gap-2.5 border-b border-warn/40 bg-warn-soft px-4 py-2 text-warn-ink" role="status">
       <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
       <p className="m-0 text-xs leading-snug">
-        <strong>Esta consola no tiene login de usuario.</strong> El gateway corre con
+        <strong>Esta consola no tiene login de usuario.</strong> El servidor corre con
         <code className="font-mono"> CAUCE_AUTH_PROVIDER=mtls</code>: el único control es la contraseña compartida
         de Caddy, sin identidad, cierre de sesión ni vencimiento. Ver <code className="font-mono">ops/console-login/README.md</code>.
       </p>

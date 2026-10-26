@@ -140,7 +140,7 @@ export function LoadingState({ label = 'Cargando datos del servidor…', pacienc
         <p>{label}</p>
         {tardando ? (
           <p className="text-xs text-muted">
-            Está tardando más de lo normal: el gateway va lento. La espera se corta sola a los{' '}
+            Está tardando más de lo normal: el servidor va lento. La espera se corta sola a los{' '}
             {Math.round(TIEMPO_MAXIMO_MS / 1000)} s y vas a poder reintentar.
           </p>
         ) : null}

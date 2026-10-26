@@ -73,7 +73,7 @@ export function HostExtensionsPanel({ snapshot, hosts, onReloaded }: {
       </label>
       {published && !published.published ? <Notice tone="info" role="note">
         El servidor aún no publica los permisos de este ordenador. Puedes preparar el borrador; la vista previa
-        la aceptará el gateway cuando la mutación <code>host_extensions_allowed</code> esté disponible.
+        la aceptará el servidor cuando la mutación <code>host_extensions_allowed</code> esté disponible.
       </Notice> : null}
       <fieldset className="grid gap-2 border-0 p-0">
         <legend className="text-[13px] font-medium">Tipos admitidos</legend>

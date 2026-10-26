@@ -392,7 +392,7 @@ export function OfficeGame({ agents, groups, selectedId, sheetOpen, highlight, o
         </div>
         {agents.length === 0 ? (
           <p className="pointer-events-auto m-0 max-w-xs border-2 border-[#0e0f17] bg-[#1a1c2c]/95 p-2.5 text-[12px] leading-snug text-[#c5d3dc]">
-            No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con lease reciente. Los edificios de cada grupo ya están en pie.
+            No hay ningún agente en la oficina: ni configurado, ni con entregas abiertas, ni con conexión reciente. Los edificios de cada grupo ya están en pie.
           </p>
         ) : null}
       </div>

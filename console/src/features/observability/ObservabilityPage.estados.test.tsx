@@ -88,12 +88,12 @@ it('sin traza no ofrece un botón que no llevaría a ninguna parte', async () =>
   expect(within(row).queryByRole('button', { name: /ver auditoría/i })).not.toBeInTheDocument();
 });
 
-it('cero relays visibles explica el vacío de la cuenta y no pinta una tabla', async () => {
+it('cero reenvíos visibles explica el vacío de la cuenta y no pinta una tabla', async () => {
   observability();
   relays([]);
   renderWithApi(<ObservabilityPage />);
 
-  const panel = (await screen.findByRole('heading', { name: /relays al canal de origen/i })).closest('section');
+  const panel = (await screen.findByRole('heading', { name: /reenvíos al canal de origen/i })).closest('section');
   if (!panel) throw new Error('panel not found');
   expect(panel).toHaveTextContent(/No hay avisos de vuelta a tu cuenta/i);
   expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ it('si la lectura de señales falla entera, la pantalla lo dice y el reintento v
   await waitFor(() => { expect(relaysPedidos).toBeGreaterThan(antesRelays); });
 });
 
-it('mientras los relays viajan se dice que se están leyendo, no que no hay ninguno', async () => {
+it('mientras los reenvíos viajan se dice que se están leyendo, no que no hay ninguno', async () => {
   observability();
   server.use(http.get(RELAYS_URL, async () => {
     await new Promise(resolve => { setTimeout(resolve, 600); });
@@ -146,12 +146,12 @@ it('mientras los relays viajan se dice que se están leyendo, no que no hay ning
   }));
   renderWithApi(<ObservabilityPage />);
 
-  expect(await screen.findByText(/Leyendo relays al canal de origen…/i)).toBeInTheDocument();
+  expect(await screen.findByText(/Leyendo reenvíos al canal de origen…/i)).toBeInTheDocument();
   expect(screen.queryByText(/no devolvió ningún relay visible/i)).not.toBeInTheDocument();
   expect(await screen.findByText(/relay-0001/i)).toBeInTheDocument();
 });
 
-it('una relectura fallida avisa en señales y relays y conserva la última lectura buena', async () => {
+it('una relectura fallida avisa en señales y reenvíos y conserva la última lectura buena', async () => {
   let senales = 0;
   let listados = 0;
   server.use(
@@ -175,7 +175,7 @@ it('una relectura fallida avisa en señales y relays y conserva la última lectu
   await user.click(screen.getByRole('button', { name: /actualizar/i }));
 
   expect(await screen.findByText(/No se pudieron actualizar las señales: observabilidad caída/i)).toBeInTheDocument();
-  expect(await screen.findByText(/No se pudieron actualizar los relays: relays caídos/i)).toBeInTheDocument();
+  expect(await screen.findByText(/No se pudieron actualizar los reenvíos: relays caídos/i)).toBeInTheDocument();
   expect(screen.getByText('En línea')).toBeInTheDocument();
   expect(await relayRow('relay-0001')).toBeInTheDocument();
 });

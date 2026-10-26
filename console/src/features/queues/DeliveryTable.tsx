@@ -16,11 +16,11 @@ import { leerUltimoError } from './ultimo-error';
 
 /** Explanation of each action before confirmation. */
 export const EXPLICACION_REPLAY =
-  'Replay vuelve a encolar esta entrega: el adaptador del destinatario la recibe otra vez y puede '
+  'Reinyectar vuelve a encolar esta entrega: el adaptador del destinatario la recibe otra vez y puede '
   + 'volver a ejecutar lo que pida. No duplica el mensaje original ni borra la fila de dead letters.';
 export const EXPLICACION_CANCEL =
   'Cancelar detiene esta entrega antes de que un adaptador la tome. Queda en dead letters y se '
-  + 'puede replayar después: no es irreversible.';
+  + 'puede reinyectar después: no es irreversible.';
 
 interface Pendiente {
   accion: 'replay' | 'cancel';
@@ -249,11 +249,11 @@ export function DeliveryTable({
                   </td>
                   <td data-label="Acción" data-wide>
                     {replayable ? (
-                      <Button size="sm" onClick={() => { setPendiente({ accion: 'replay', deliveryId, alias }); }} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Replay delivery ${deliveryId}`}>
+                      <Button size="sm" onClick={() => { setPendiente({ accion: 'replay', deliveryId, alias }); }} disabled={!canReplay || replayInFlight || outcomeUncertain} aria-label={`Reinyectar entrega ${deliveryId}`}>
                         <RotateCcw size={14} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : replayInFlight ? 'Enviando…' : 'Replay'}
                       </Button>
                     ) : cancellable ? (
-                      <Button size="sm" onClick={() => { setPendiente({ accion: 'cancel', deliveryId, alias }); }} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar delivery ${deliveryId}`}>
+                      <Button size="sm" onClick={() => { setPendiente({ accion: 'cancel', deliveryId, alias }); }} disabled={!canCancel || cancelInFlight || outcomeUncertain} aria-label={`Cancelar entrega ${deliveryId}`}>
                         <Ban size={14} aria-hidden="true" />{outcomeUncertain ? 'Revisión pendiente' : cancelInFlight ? 'Cancelando…' : 'Cancelar'}
                       </Button>
                     ) : <span className="muted">No aplica</span>}

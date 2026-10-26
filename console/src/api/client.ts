@@ -282,7 +282,7 @@ export class CauceApi {
       if (reloj !== undefined) clearTimeout(reloj);
     }
 
-    if (response === undefined) throw new Error('la petición terminó sin respuesta HTTP');
+    if (response === undefined) throw new Error('la petición terminó sin respuesta del servidor');
 
     if (!response.ok) {
       if (response.status === 401 && !path.startsWith(AUTH_PATH)
@@ -453,7 +453,7 @@ export class CauceApi {
       return state;
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-        const state: ConsoleAuthState = { authenticated: null, reason: 'El gateway usa autenticación no-BFF.' };
+        const state: ConsoleAuthState = { authenticated: null, reason: 'El servidor no usa el inicio de sesión de esta consola.' };
         if (generation === this.authGeneration && read === this.sessionRead) this.acceptSession(state);
         return state;
       }

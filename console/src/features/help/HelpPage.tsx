@@ -17,7 +17,7 @@ const DETALLE: Record<string, string> = {
     + 'actualización del CLI y baja.',
   messages: 'Redactar y publicar mensajes durables, con el estado de sus entregas.',
   queues: 'Reinyectar, cancelar o resolver entregas, con confirmación y recibo exacto.',
-  observability: 'Instantánea del gateway, avisos de vuelta al canal de origen y el registro inmutable '
+  observability: 'Señales del servidor, avisos de vuelta al canal de origen y el registro inmutable '
     + 'de decisiones de auditoría.',
   config: 'Topología (tenants, salas, membresías, roles y ACL) con historial de revisiones y reversión. '
     + 'No edita contextos ni cuentas: eso vive en Contexto y Cuentas.',
@@ -44,7 +44,7 @@ const ENTREGA_DETALLE: Record<(typeof DELIVERY_STATES)[number], string> = {
   pending: 'En la cola; todavía ningún agente la tomó.',
   leased: 'Un agente reservó el turno, pero aún no aceptó el trabajo.',
   accepted: 'El agente aceptó la entrega y todavía no empezó a ejecutarla.',
-  started: 'Un agente la tomó con un lease y está trabajando en ella.',
+  started: 'Un agente la tomó y está trabajando en ella.',
   done: 'El agente la cerró bien.',
   failed: 'Terminó con fallo y espera revisión; se puede reinyectar.',
   retry: 'Falló y el bus la vuelve a intentar sola.',
@@ -180,7 +180,7 @@ export function HelpPage() {
               })}
             </dl>
             <p className="m-0 mt-3 text-xs text-muted">
-              Si el lease vence o hay un consumidor concurrente, la entrega queda revocada (<em>fenced</em>) y su resultado tardío se descarta.
+              Si la conexión del agente vence o hay otro agente trabajando la misma entrega, esta queda revocada y su resultado tardío se descarta.
             </p>
           </Seccion>
 

@@ -128,8 +128,8 @@ function ConversationPaneContent({
   const sinOrdenador = live?.state === 'unprepared' || hostId === null || (typeof hostId === 'string' && hostId.trim() === '');
   const avisoDeLease = agent.leaseState === 'online' ? undefined
     : agent.leaseState === 'expired'
-      ? `El lease de ${agent.alias} está vencido: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a reclamar.`
-      : `El servidor no informa el lease de ${agent.alias} (sin dato, que no es lo mismo que vencido): Cauce encola el mensaje igual.`;
+      ? `La conexión de ${agent.alias} está vencida: Cauce encola el mensaje igual y se lo entrega cuando el agente vuelva a conectarse.`
+      : `El servidor no informa la conexión de ${agent.alias} (sin dato, que no es lo mismo que vencido): Cauce encola el mensaje igual.`;
   // The ITEM is selected, not the delivery: room, lane, actor and trace live on the message.
   const selectedInWindow = hilo.find((item) => mensajeElegido != null && item.message.message_id === mensajeElegido);
   useEffect(() => {
@@ -248,7 +248,7 @@ function ConversationPaneContent({
       }));
     } catch (causa) {
       const motivo = causa instanceof ApiError && (causa.status === 404 || causa.status === 501)
-        ? `No se pudo obtener el cuerpo completo (HTTP ${String(causa.status)}). El servidor no devolvió el contenido; la vista previa sigue disponible.`
+        ? `No se pudo obtener el cuerpo completo (error ${String(causa.status)}). El servidor no devolvió el contenido; la vista previa sigue disponible.`
         : causa instanceof Error ? causa.message : 'No se pudo leer el cuerpo del mensaje.';
       setCuerpos((previo) => ({ ...previo, [messageId]: { estado: 'fallo', motivo } }));
     }
@@ -320,7 +320,7 @@ function ConversationPaneContent({
             text: current.text === snapshotText ? '' : current.text,
             files: current.files.length === snapshotFiles.length
               && snapshotFiles.every((file, index) => current.files[index] === file) ? [] : current.files,
-            notice: { tone: 'success', text: `Aceptado por el control plane · ${compactId(receipt.message_id)}. Confirmación pendiente; todavía no hay estado de entrega.` },
+            notice: { tone: 'success', text: `Aceptado por el servidor · ${compactId(receipt.message_id)}. Confirmación pendiente; todavía no hay estado de entrega.` },
           }));
           if (!stillActive()) return;
           setReceiptRoot({ key: replyScopeKey, root: { messageId: receipt.message_id, deliveryId: receipt.delivery_ids[0] } });
@@ -334,7 +334,7 @@ function ConversationPaneContent({
 
       setAviso({
         tone: journalStatus === 'confirmed' ? 'success' : 'parcial',
-        text: `${reconciled ? 'Publicación reconciliada desde el journal durable' : 'Aceptado por el control plane'} · ${compactId(resultado.message_id)}. `
+        text: `${reconciled ? 'Publicación confirmada desde el registro del servidor' : 'Aceptado por el servidor'} · ${compactId(resultado.message_id)}. `
           + (journalStatus === 'confirmed'
             ? 'Intención confirmada.'
             : journalStatus === 'pending'

@@ -210,7 +210,7 @@ export async function executeConfigurationChange(
         uncertain: !options.dryRun,
         message: options.dryRun
           ? 'El servidor respondió sin el recibo exacto de la vista previa; no se habilitó aplicar.'
-          : 'El servidor devolvió un 2xx sin el recibo durable exacto del cambio. La escritura puede haberse aplicado; verifica la relectura antes de repetirla.',
+          : 'El servidor respondió sin el recibo exacto del cambio. La escritura puede haberse aplicado; verifica la relectura antes de repetirla.',
         ...(recarga === undefined ? {} : { recarga }),
       };
     }

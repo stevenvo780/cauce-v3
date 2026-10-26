@@ -198,8 +198,8 @@ describe('Huecos E2E en Colas y DLQ operativo (v4-huecos-colas)', () => {
       await page.getByText('Esta lectura no trae ninguna fila para la entrega pedida.', { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
 
       // 3. Abrir diálogo de cancelar y descartar con "No hacer nada"
-      await page.getByRole('button', { name: `Cancelar delivery ${delivery.deliveryId}`, exact: true }).waitFor({ timeout: 10_000 });
-      await page.getByRole('button', { name: `Cancelar delivery ${delivery.deliveryId}`, exact: true }).click();
+      await page.getByRole('button', { name: `Cancelar entrega ${delivery.deliveryId}`, exact: true }).waitFor({ timeout: 10_000 });
+      await page.getByRole('button', { name: `Cancelar entrega ${delivery.deliveryId}`, exact: true }).click();
       await page.getByRole('alertdialog').waitFor({ timeout: 10_000 });
 
       // Pulsar "No hacer nada"

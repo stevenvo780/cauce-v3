@@ -94,15 +94,15 @@ it('emite el mensaje al agente elegido derivando el room, sin pedirlo escrito a 
     body: { text: 'revisa la cola' },
     lane: 'interactive',
   });
-  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  expect(within(hilo).queryByText(/Aceptado por el servidor/i)).not.toBeInTheDocument();
   expect(within(hilo).queryByText(/ACK llega por polling/i)).not.toBeInTheDocument();
   expect(within(hilo).queryByText(/Mensaje aceptado para entrega/i)).not.toBeInTheDocument();
   const receipt = await abrirRecibo(user, hilo);
-  expect(within(receipt).getByText(/Aceptado por el control plane/i)).toBeVisible();
+  expect(within(receipt).getByText(/Aceptado por el servidor/i)).toBeVisible();
   expect(receipt).toHaveTextContent('Intención confirmada.');
   expect(receipt).toHaveTextContent('no demuestra lectura ni ejecución');
   await user.keyboard('{Escape}');
-  await waitFor(() => { expect(screen.queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument(); });
+  await waitFor(() => { expect(screen.queryByText(/Aceptado por el servidor/i)).not.toBeInTheDocument(); });
   expect(screen.getByRole('button', { name: 'Opciones de la conversación' })).toHaveFocus();
   expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue('');
 }, 25_000);
@@ -122,9 +122,9 @@ it('no inventa éxito ni borra el borrador ante un 202 sin recibo durable exacto
   await user.type(campo, 'no perder este texto');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(await within(hilo).findByText(/no devolvió un recibo durable exacto/i)).toBeInTheDocument();
+  expect(await within(hilo).findByText(/no devolvió un recibo exacto/i)).toBeInTheDocument();
   expect(campo).toHaveValue('no perder este texto');
-  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  expect(within(hilo).queryByText(/Aceptado por el servidor/i)).not.toBeInTheDocument();
   expect(keys).toHaveLength(2);
   expect(new Set(keys).size).toBe(1);
 }, 25_000);
@@ -163,7 +163,7 @@ it('conserva el borrador y no reintenta cuando el servidor prueba que la reserva
   expect(campo).toHaveValue('reserva vencida sin efecto');
   expect(publishes).toBe(1);
   expect(confirmations).toBe(0);
-  expect(within(hilo).queryByText(/Aceptado por el control plane/i)).not.toBeInTheDocument();
+  expect(within(hilo).queryByText(/Aceptado por el servidor/i)).not.toBeInTheDocument();
 }, 25_000);
 
 it('recupera el journal sin body al cerrar y reabrir la conversación tras dos respuestas inciertas', async () => {
@@ -207,7 +207,7 @@ it('recupera el journal sin body al cerrar y reabrir la conversación tras dos r
   await user.type(campoReabierto, 'retry exacto al reabrir');
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
+  expect(within(await abrirRecibo(user, hilo)).getByText(/confirmada desde el registro del servidor/i)).toBeVisible();
   expect(keys).toHaveLength(2);
   expect(new Set(keys).size).toBe(1);
 }, 30_000);
@@ -258,7 +258,7 @@ it('recupera del servidor un publish confirmado tras recargar sin repetir el POS
   );
   await user.click(within(hilo).getByRole('button', { name: /^enviar$/i }));
 
-  expect(within(await abrirRecibo(user, hilo)).getByText(/reconciliada desde el journal durable/i)).toBeVisible();
+  expect(within(await abrirRecibo(user, hilo)).getByText(/confirmada desde el registro del servidor/i)).toBeVisible();
   await user.keyboard('{Escape}');
   await waitFor(() => { expect(within(hilo).getByRole('textbox', { name: /mensaje para argos/i })).toHaveValue(''); });
   expect(publishes).toBe(2);
@@ -322,7 +322,7 @@ function servidorConGaia({ enElRegistro }: { enElRegistro: boolean }) {
   );
 }
 
-it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso gaia', async () => {
+it('un mensaje a un alias SIN membresía ni conexión sigue teniendo hilo: el caso gaia', async () => {
   const user = userEvent.setup();
   servidorConGaia({ enElRegistro: true });
   renderChat();
@@ -334,7 +334,7 @@ it('un mensaje a un alias SIN membresía ni lease sigue teniendo hilo: el caso g
   expect(within(hilo).getByText('Conexión sin dato · envío en cola')).toBeVisible();
   await user.click(within(hilo).getByRole('button', { name: /^Ver detalles:/ }));
   expect(notaQueDice(hilo, /registro de agentes y en NINGUNA sala/i)).toBe(true);
-  expect(notaQueDice(hilo, /El servidor no informa el lease de gaia/i)).toBe(true);
+  expect(notaQueDice(hilo, /El servidor no informa la conexión de gaia/i)).toBe(true);
 }, 25_000);
 
 it('con el registro caído, el hilo sigue existiendo porque el propio feed lo sostiene', async () => {

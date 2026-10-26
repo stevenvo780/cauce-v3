@@ -24,7 +24,7 @@ const ESTADO_RELAY: Readonly<Record<string, string>> = {
 type Tab = 'senales' | 'auditoria';
 
 const TABS = [
-  { id: 'senales' as const, label: 'Señales y relays' },
+  { id: 'senales' as const, label: 'Señales y reenvíos' },
   { id: 'auditoria' as const, label: 'Auditoría' },
 ];
 
@@ -57,10 +57,10 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
 
   return <div>
     <PageHeader
-      eyebrow="Señales del gateway"
+      eyebrow="Señales del servidor"
       title="Señales y auditoría"
-      description="Snapshot real del gateway, el estado durable del egress al origen y el registro inmutable de decisiones: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se sintetizan señales en el browser."
-      notes={<p>ENVIADO exige <code>sent_at</code>; un relay fallido nunca se presenta como entregado.</p>}
+      description="Estado real del servidor, el estado guardado de los reenvíos al origen y el registro inmutable de decisiones: qué pasó y quién lo autorizó. Una métrica que no llegó se dice «sin dato»; no se inventan señales en el navegador."
+      notes={<p>ENVIADO exige <code>sent_at</code>; un reenvío fallido nunca se presenta como entregado.</p>}
       actions={<PageFreshness at={data?.observed_at ?? null} loading={resource.loading || relays.loading} onRefresh={reloadAll} />}
     />
     <ViewTabs tabs={TABS} active={tab} onSelect={setTab} label="Señales y auditoría" />
@@ -73,32 +73,32 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
         </Notice>
       ) : null}
       <KpiGrid label="Indicadores">
-        <Kpi label="En línea" value={status.online} tone="positive" detail="leases vigentes" />
+        <Kpi label="En línea" value={status.online} tone="positive" detail="conexiones vigentes" />
         <Kpi label="En cola" value={status.queued} tone="warning" detail="entregas no terminales" />
         <Kpi label="DLQ" value={status.dead_letters} tone="danger" detail="entregas muertas abiertas" />
-        <Kpi label="Salida pendiente" value={status.outbox_pending} detail="despertar + relay al origen" />
+        <Kpi label="Salida pendiente" value={status.outbox_pending} detail="despertar + reenvío al origen" />
       </KpiGrid>
       <a href="/queues" onClick={(event) => { onNavClick(event, '/queues'); }}
         className="mb-4 inline-flex items-center gap-1 text-[13px] text-brand-ink no-underline hover:underline">
         Ver el detalle en Colas y DLQ <ArrowRight size={14} aria-hidden="true" />
       </a>
-      <SectionCard title="Relays al canal de origen" description="La consola observa; no ejecuta egress ni reintenta relays. Solo se ven los relays en los que este actor participa.">
+      <SectionCard title="Reenvíos al canal de origen" description="La consola observa; no ejecuta reenvíos ni los reintenta. Solo se ven los reenvíos en los que este actor participa.">
         {relays.error && relays.data ? (
           <Notice tone="danger" role="alert" className="mb-3 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1">No se pudieron actualizar los relays: {relays.error.message} Se muestra la última lista buena.</span>
+            <span className="min-w-0 flex-1">No se pudieron actualizar los reenvíos: {relays.error.message} Se muestra la última lista buena.</span>
             <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => reloadAll()} />
           </Notice>
         ) : null}
         {relays.loading && !relays.data
-          ? <LoadingState label="Leyendo relays al canal de origen…" />
+          ? <LoadingState label="Leyendo reenvíos al canal de origen…" />
           : relays.error && !relays.data
-          ? <Notice tone="danger" role="alert">No se pudieron leer los origin relays: {relays.error.message}. Las señales de arriba sí llegaron.</Notice>
+          ? <Notice tone="danger" role="alert">No se pudieron leer los reenvíos al canal de origen: {relays.error.message}. Las señales de arriba sí llegaron.</Notice>
           : relayItems.length === 0
             ? <EmptyState>No hay avisos de vuelta a tu cuenta. Aparecen aquí cuando un mensaje tiene que salir de Cauce hacia su canal de origen.</EmptyState>
-            : <Desplazable etiqueta="Estado real de origin relays" className={SCROLL}>
+            : <Desplazable etiqueta="Estado real de los reenvíos al canal de origen" className={SCROLL}>
               <table className={CARD_TABLE}>
-                <caption className="sr-only">Estado real de origin relays</caption>
-                <thead><tr><th>Relay</th><th>Adapter</th><th>Tenant</th><th>Delivery</th><th>Estado</th><th>Intentos</th><th>Creado</th><th>Enviado</th><th>Auditoría</th></tr></thead>
+                <caption className="sr-only">Estado real de los reenvíos al canal de origen</caption>
+                <thead><tr><th>Reenvío</th><th>Adaptador</th><th>Empresa</th><th>Entrega</th><th>Estado</th><th>Intentos</th><th>Creado</th><th>Enviado</th><th>Auditoría</th></tr></thead>
                 <tbody>{relayItems.map((item, index) => {
                   const state = safeOriginRelayState(item.status);
                   const actuallySent = state === 'sent' && typeof item.sent_at === 'string' && !Number.isNaN(Date.parse(item.sent_at));
@@ -106,7 +106,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                   const traceId = item.trace_id;
                   return (
                     <tr key={item.id ?? index}>
-                      <td data-label="Relay">
+                      <td data-label="Reenvío">
                         <span className="inline-flex items-center gap-1.5"><RadioTower size={14} aria-hidden="true" className="text-muted" /><span className="mono">{compactId(item.id)}</span></span>
                         {item.request_id || item.trace_id ? (
                           <small className="subline">
@@ -118,9 +118,9 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                           <small className="subline">sin petición registrada</small>
                         )}
                       </td>
-                      <td data-label="Adapter"><Unknown value={item.adapter} /></td>
-                      <td data-label="Tenant"><Unknown value={item.tenant_id} /></td>
-                      <td data-label="Delivery">
+                      <td data-label="Adaptador"><Unknown value={item.adapter} /></td>
+                      <td data-label="Empresa"><Unknown value={item.tenant_id} /></td>
+                      <td data-label="Entrega">
                         <span className="mono">{compactId(item.delivery_id)}</span>
                         {item.message_id
                           ? <small className="subline">mensaje <span className="mono">{compactId(item.message_id)}</span></small>
@@ -136,7 +136,7 @@ export function ObservabilityPage({ initialTab = 'senales' }: { initialTab?: Tab
                       {/* The dash is decorative for the listener: `Unknown` is what announces the phrase. */}
                       <td data-label="Enviado">{actuallySent
                         ? <Time value={item.sent_at} relativo />
-                        : <Unknown value={null} ausente="no-aplica" motivo="El servidor no informó hora de envío para este relay." />}</td>
+                        : <Unknown value={null} ausente="no-aplica" motivo="El servidor no informó hora de envío para este reenvío." />}</td>
                       <td data-label="Auditoría" data-wide>
                         {typeof traceId === 'string' && traceId.length > 0
                           ? <Button size="sm" onClick={() => { investigate(traceId); }} aria-label={`Ver la auditoría del trace ${traceId}`}>

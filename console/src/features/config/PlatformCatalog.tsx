@@ -16,7 +16,7 @@ interface CatalogNotice { text: string; tone: 'success' | 'error' | 'parcial' }
 const CAPABILITY_OPTIONS: readonly { id: string; label: string }[] = [
   { id: 'messages.receive', label: 'Recibir mensajes' },
   { id: 'ack.timeline', label: 'Confirmar en la línea de tiempo' },
-  { id: 'origin.relay', label: 'Retransmitir el origen' },
+  { id: 'origin.relay', label: 'Reenviar al canal de origen' },
   { id: 'jobs.interactive', label: 'Trabajos interactivos' },
   { id: 'jobs.batch', label: 'Trabajos por lote' },
 ];

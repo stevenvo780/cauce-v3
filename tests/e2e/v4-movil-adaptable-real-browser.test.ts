@@ -678,11 +678,11 @@ describe('V4 diseño adaptable en navegador real (390×844, 768×1024 y 1440×90
       await auditLayout(page, vp, 'my-quotas-delete-confirm', mobile);
       await page.getByRole('region', { name: 'Confirmar eliminación de cuenta', exact: true }).getByRole('button', { name: 'Cancelar', exact: true }).click();
 
-      // Colas: Entregas + diálogo Reinyectar + DLQ operativo + diálogo Cerrar sin replay
+      // Colas: Entregas + diálogo Reinyectar + DLQ operativo + diálogo Cerrar sin reinyectar
       await spaNavigate(page, '/queues');
       await page.getByRole('heading', { name: 'Colas y DLQ operativo', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       await page.getByRole('tab', { name: 'Entregas', exact: true }).click();
-      const replayBtn = page.getByRole('button', { name: `Replay delivery ${activeSeeded().pendingDeliveryId}`, exact: true });
+      const replayBtn = page.getByRole('button', { name: `Reinyectar entrega ${activeSeeded().pendingDeliveryId}`, exact: true });
       await replayBtn.waitFor({ state: 'visible', timeout: 20_000 });
       await auditLayout(page, vp, 'queues-deliveries', true);
 
@@ -692,18 +692,18 @@ describe('V4 diseño adaptable en navegador real (390×844, 768×1024 y 1440×90
       await page.locator('body').press('Escape');
 
       await page.getByRole('tab', { name: /DLQ operativo/u }).click();
-      await page.getByRole('button', { name: 'Cerrar sin replay', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
+      await page.getByRole('button', { name: 'Cerrar sin reinyectar', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
       await auditLayout(page, vp, 'queues-dlq', mobile);
 
-      await page.getByRole('button', { name: 'Cerrar sin replay', exact: true }).click();
-      await page.getByRole('alertdialog', { name: /^Cerrar .* sin replay$/u }).waitFor({ state: 'visible', timeout: 15_000 });
+      await page.getByRole('button', { name: 'Cerrar sin reinyectar', exact: true }).click();
+      await page.getByRole('alertdialog', { name: /^Cerrar .* sin reinyectar$/u }).waitFor({ state: 'visible', timeout: 15_000 });
       await auditLayout(page, vp, 'queues-dlq-resolve-dialog', mobile);
       await page.locator('body').press('Escape');
 
-      // Observabilidad: Señales y relays + Auditoría
+      // Observabilidad: Señales y reenvíos + Auditoría
       await spaNavigate(page, '/observability');
       await page.getByRole('heading', { name: 'Señales y auditoría', exact: true }).waitFor({ state: 'visible', timeout: 20_000 });
-      await page.getByRole('tab', { name: 'Señales y relays', exact: true }).click();
+      await page.getByRole('tab', { name: 'Señales y reenvíos', exact: true }).click();
       await auditLayout(page, vp, 'observability-signals', true);
 
       await page.getByRole('tab', { name: 'Auditoría', exact: true }).click();

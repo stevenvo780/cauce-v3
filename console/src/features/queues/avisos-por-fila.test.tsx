@@ -58,12 +58,12 @@ describe('el aviso de cada entrega es suyo', () => {
       onChanged={async () => ({ data: {} })}
     />);
 
-    await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${PRIMERA}`, 'i') }));
-    await screen.findByText(/Replay encolado para 10000000…00aaaa/);
-    await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${SEGUNDA}`, 'i') }));
+    await confirmar(user, screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${PRIMERA}`, 'i') }));
+    await screen.findByText(/Reinyección encolada para 10000000…00aaaa/);
+    await confirmar(user, screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${SEGUNDA}`, 'i') }));
 
-    expect(await screen.findByText(/Replay encolado para 10000000…00bbbb/)).toBeInTheDocument();
-    expect(screen.getByText(/Replay encolado para 10000000…00aaaa/)).toBeInTheDocument();
+    expect(await screen.findByText(/Reinyección encolada para 10000000…00bbbb/)).toBeInTheDocument();
+    expect(screen.getByText(/Reinyección encolada para 10000000…00aaaa/)).toBeInTheDocument();
     expect(avisos()).toHaveLength(2);
   }, 20_000);
 
@@ -87,9 +87,9 @@ describe('el aviso de cada entrega es suyo', () => {
       onChanged={async () => ({ data: {} })}
     />);
 
-    await confirmar(user, screen.getByRole('button', { name: new RegExp(`replay delivery ${PRIMERA}`, 'i') }));
+    await confirmar(user, screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${PRIMERA}`, 'i') }));
     await screen.findByText(/Resultado incierto del reinyectado de 10000000…00aaaa/);
-    await confirmar(user, screen.getByRole('button', { name: new RegExp(`cancelar delivery ${VIVA}`, 'i') }));
+    await confirmar(user, screen.getByRole('button', { name: new RegExp(`cancelar entrega ${VIVA}`, 'i') }));
 
     expect(await screen.findByText(/Cancelada 10000000…00cccc/)).toBeInTheDocument();
     // The uncertain one is still on screen and remains locked: a response-shaped `{}` is not
@@ -115,7 +115,7 @@ describe('el aviso de cada entrega es suyo', () => {
       onChanged={async () => ({ data: {} })}
     />);
 
-    const boton = screen.getByRole('button', { name: new RegExp(`replay delivery ${PRIMERA}`, 'i') });
+    const boton = screen.getByRole('button', { name: new RegExp(`reinyectar entrega ${PRIMERA}`, 'i') });
     await confirmar(user, boton);
     expect(await screen.findByText(/Resultado incierto del reinyectado de 10000000…00aaaa/)).toBeInTheDocument();
 

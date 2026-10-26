@@ -28,7 +28,7 @@ export async function getConsoleAccess(request: RequestFn): Promise<ConsoleAcces
     return await request('/v3/console/access');
   } catch (error) {
     if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-      return { permissions: null, roles: null, reason: 'El gateway no publicó un snapshot RBAC verificable.' };
+      return { permissions: null, roles: null, reason: 'El servidor no publicó los permisos de forma verificable.' };
     }
     if (error instanceof ApiError && error.status === 403) {
       return { permissions: [], roles: [], reason: 'El servidor denegó la consulta RBAC.' };

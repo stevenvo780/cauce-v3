@@ -156,7 +156,7 @@ export function LiveFleetPage() {
       const key = agentKey(agent);
       const state = estados.get(key) ?? 'down';
       const ack = formatAckAge(agent.seconds_since_last_ack, lookback);
-      return { key, name: agent.display_name ?? agent.alias, state, title: `${key}: ${LIVE_STATE_META[state].hint} Último ACK ${ack}.`, detail: ack };
+      return { key, name: agent.display_name ?? agent.alias, state, title: `${key}: ${LIVE_STATE_META[state].hint} Última confirmación ${ack}.`, detail: ack };
     });
   }, [snapshot, estados]);
 

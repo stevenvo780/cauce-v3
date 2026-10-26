@@ -47,7 +47,7 @@ export function DiagnosticChainPanel() {
   return (
     <SectionCard
       title="Consultar una cadena"
-      description="El identificador puede ser un mensaje, una entrega, una traza, una sesión, una operación o una copia. La lista es la que el gateway puede demostrar."
+      description="El identificador puede ser un mensaje, una entrega, una traza, una sesión, una operación o una copia. La lista es la que el servidor puede demostrar."
       className="mb-4"
     >
       <form className="flex flex-wrap items-end gap-2" onSubmit={(event) => { event.preventDefault(); void consult(); }}>

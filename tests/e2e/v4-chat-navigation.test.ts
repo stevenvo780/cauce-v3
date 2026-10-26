@@ -134,7 +134,7 @@ describe('V4 chat navigation with real Chromium, gateway and PostgreSQL', () => 
       await page.getByRole('button', { name: /^Ver detalles:.*Conexión sin dato/u }).click();
       const notices = page.getByRole('region', { name: 'Detalles de los avisos', exact: true });
       await notices.waitFor({ timeout: 10_000 });
-      expect(await notices.innerText()).toContain(`El servidor no informa el lease de ${tenant.target}`);
+      expect(await notices.innerText()).toContain(`El servidor no informa la conexión de ${tenant.target}`);
       await screenshot(page, `${label}-notices`);
       await page.getByRole('button', { name: 'Cerrar avisos', exact: true }).click();
       await notices.waitFor({ state: 'hidden', timeout: 10_000 });

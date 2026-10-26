@@ -83,7 +83,7 @@ export async function publishDurably({
   const prepareExact = async (): Promise<ExactPreparePublishIntentResult> => {
     const candidate = await api.preparePublishIntent(prepareInput);
     if (!exactPreparedPublishIntent(candidate, expectedDeliveries, publisherSubject)) {
-      throw new Error('El gateway no devolvió una intención durable exacta; no se publicó nada.');
+      throw new Error('El servidor no devolvió una confirmación exacta del envío; no se publicó nada.');
     }
     return candidate;
   };
@@ -126,7 +126,7 @@ export async function publishDurably({
     reconcile();
   } else {
     if (prepared?.state !== 'prepared') {
-      throw new Error('El gateway no preparó ni reconcilió una intención durable exacta.');
+      throw new Error('El servidor no preparó ni confirmó el envío de forma exacta.');
     }
     const command = { ...input, idempotency_key: prepared.idempotency_key };
     const publishExact = async (): Promise<DurablePublishReceipt> => {
@@ -134,7 +134,7 @@ export async function publishDurably({
       if (!exactPublishReceipt(
         candidate, expectedDeliveries, prepared.idempotency_key, publisherSubject,
       )) {
-        throw new Error('el gateway no devolvió un recibo durable exacto');
+        throw new Error('el servidor no devolvió un recibo exacto');
       }
       return candidate;
     };
@@ -153,7 +153,7 @@ export async function publishDurably({
           ? retryError.message
           : firstError instanceof Error ? firstError.message : 'el servidor no dijo por qué';
         throw new Error(
-          `Resultado incierto: ${detail}. La intención durable quedó en el servidor; `
+          `Resultado incierto: ${detail}. El envío quedó guardado en el servidor; `
           + 'al reintentar o recargar se recuperará antes de crear otra publicación.',
         );
       }
@@ -174,7 +174,7 @@ export async function publishDurably({
       causal_hash: receipt.causal_hash,
     });
     if (!exactConfirmedPublishIntent(confirmation, receipt)) {
-      throw new Error('el gateway no confirmó exactamente el journal durable');
+      throw new Error('el servidor no confirmó exactamente el registro guardado');
     }
   };
   try {

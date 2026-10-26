@@ -43,7 +43,7 @@ describe('liveState', () => {
       { nowMs: NOW },
     );
     expect(result.state).toBe('blocked');
-    expect(result.reason).toContain('ningún ACK');
+    expect(result.reason).toContain('ninguna confirmación');
     expect(result.reason).not.toContain('0 s');
   });
 
@@ -55,7 +55,7 @@ describe('liveState', () => {
       }),
       { nowMs: NOW, thresholds: { stall_after_seconds: 300 } },
     );
-    expect(result.reason).toContain('último ACK fue hace 14 min');
+    expect(result.reason).toContain('la última confirmación fue hace 14 min');
     expect(result.reason).not.toContain('25 min');
   });
 
@@ -124,7 +124,7 @@ describe('liveState', () => {
       { nowMs: NOW },
     );
     expect(result.state).toBe('down');
-    expect(result.reason).toContain('El lease venció');
+    expect(result.reason).toContain('La conexión venció');
   });
 
   it.each(['overdue_acks', 'ack_stalled', 'claimed_not_started'] as const)('cola conectada conserva la señal real %s', (flag) => {
@@ -200,7 +200,7 @@ describe('liveState', () => {
       }),
       { nowMs: NOW, thresholds: { start_after_seconds: 60, stall_after_seconds: 300 } },
     );
-    expect(neverAcked.reason).toContain('nunca registró un ACK propio');
+    expect(neverAcked.reason).toContain('nunca registró una confirmación propia');
     expect(staleAck.reason).toContain('actividad propia hace 5 min');
   });
 
@@ -221,8 +221,8 @@ describe('liveState', () => {
       }),
       { nowMs: NOW },
     );
-    expect(overdue.reason).toContain('deadline de ACK vencido');
-    expect(ack.reason).toContain('último ACK fue hace 15 min');
+    expect(overdue.reason).toContain('plazo de confirmación vencido');
+    expect(ack.reason).toContain('la última confirmación fue hace 15 min');
   });
 
   it('marca saturación contra el umbral del servidor, no contra un número fijo del cliente', () => {
@@ -353,7 +353,7 @@ describe('fleetVerdict', () => {
       })]),
       { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
-    expect(veredicto.culpables[0].motivo).toBe('trabado: sin ACK reciente');
+    expect(veredicto.culpables[0].motivo).toBe('trabado: sin confirmación reciente');
     expect(veredicto.culpables[0].motivo).not.toContain('0 s');
   });
 
@@ -371,8 +371,8 @@ describe('fleetVerdict', () => {
       vistas([agent({ ...base, flags: ['claimed_not_started', 'ack_stalled'] })]),
       { observedAt: RECIEN, nowMs: AHORA, staleAfterMs: 12_000 },
     );
-    expect(overdue.culpables[0].motivo).toContain('ACK vencido');
-    expect(ack.culpables[0].motivo).toContain('último ACK hace 15 min');
+    expect(overdue.culpables[0].motivo).toContain('confirmación vencida');
+    expect(ack.culpables[0].motivo).toContain('última confirmación hace 15 min');
   });
 
   it('distingue servicio vivo ocupado de servicio vivo sin progreso de ACK', () => {
@@ -393,7 +393,7 @@ describe('fleetVerdict', () => {
     );
     expect(veredicto.culpables.map((culpable) => culpable.alias)).toEqual(['kant']);
     expect(veredicto.culpables[0].motivo).toBe(
-      'trabado: último ACK hace 14 min; entrega en vuelo hace 25 min',
+      'trabado: última confirmación hace 14 min; entrega en vuelo hace 25 min',
     );
     expect(veredicto.culpables[0].motivo).not.toContain('trabado hace 25 min');
   });
@@ -461,7 +461,7 @@ describe('D3 · una entrega que desaparece no es una entrega cerrada', () => {
     ]);
 
     const estado = liveState(agent(), { nowMs: NOW + 4_500, pulses: pulsos['Steven/zeus'] });
-    expect(estado.reason).toMatch(/deadline de ACK ya vencido/i);
+    expect(estado.reason).toMatch(/plazo de confirmación ya vencido/i);
     expect(estado.reason).not.toMatch(/terminó el turno/i);
   });
 
@@ -506,7 +506,7 @@ describe('D4 · un alias fuera del registro no está "deshabilitado"', () => {
       { nowMs: NOW },
     );
     expect(resultado.state).toBe('down');
-    expect(resultado.reason).toMatch(/lease venció/i);
+    expect(resultado.reason).toMatch(/conexión venció/i);
     expect(resultado.reason).not.toMatch(/Deshabilitado en el registro/);
   });
 });

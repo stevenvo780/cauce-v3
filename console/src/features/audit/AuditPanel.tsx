@@ -231,7 +231,7 @@ export function AuditPanel({ query, onQuery }: { query: string; onQuery: (value:
         <EmptyState>
           {serverFilter
             ? 'No hay eventos que coincidan con el filtro del servidor.'
-            : 'Todavía no hay eventos de auditoría en esta lectura. Cuando el gateway registre decisiones, aparecerán aquí; si esperabas eventos, pulsa «Releer auditoría».'}
+            : 'Todavía no hay eventos de auditoría en esta lectura. Cuando el servidor registre decisiones, aparecerán aquí; si esperabas eventos, pulsa «Releer auditoría».'}
         </EmptyState>
       ) : null}
       {resource.data && filtered.length > 0 ? (

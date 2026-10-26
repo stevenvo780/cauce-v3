@@ -45,7 +45,7 @@ interface LiveStateMeta {
 }
 
 export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
-  down: { label: 'Caído', hint: 'Sin lease vigente o nunca conectó: nadie va a tomar su trabajo.' },
+  down: { label: 'Caído', hint: 'Sin conexión vigente o nunca conectó: nadie va a tomar su trabajo.' },
   blocked: { label: 'Trabado', hint: 'Tomó trabajo y no avanza. Es el fallo que se ve como "tarda", no como error.' },
   delegating: { label: 'Delegando', hint: 'Le pasó trabajo a otro agente, que ya lo tiene en vuelo.' },
   settled: {
@@ -56,7 +56,7 @@ export const LIVE_STATE_META: Record<LiveState, LiveStateMeta> = {
   thinking: { label: 'Trabajando', hint: 'Turno en curso: el arnés está masticando la entrega.' },
   idle: {
     label: 'Libre',
-    hint: 'Nada en vuelo. En el mapa, además, con lease vigente: un alias sin trabajo Y sin lease se dibuja Caído, que gana.',
+    hint: 'Nada en vuelo. En el mapa, además, con conexión vigente: un alias sin trabajo Y sin conexión se dibuja Caído, que gana.',
   },
   unprepared: {
     label: 'Sin preparar',
@@ -149,10 +149,10 @@ function decidirEstado(
     return { state: 'down', reason: 'Deshabilitado en el registro de agentes: no se le asigna trabajo.', overloaded };
   }
   if (flags.includes('never_connected')) {
-    return { state: 'down', reason: 'Nunca abrió una conexión: no hay lease de este alias.', overloaded };
+    return { state: 'down', reason: 'Nunca abrió una conexión: no hay conexión de este alias.', overloaded };
   }
   if (flags.includes('lease_expired') || agent.presence?.online === false) {
-    return { state: 'down', reason: 'El lease venció. El adaptador no está sosteniendo la conexión.', overloaded };
+    return { state: 'down', reason: 'La conexión venció. El adaptador no está sosteniendo la conexión.', overloaded };
   }
 
   if (agent.provider_login_required === true) {
@@ -160,15 +160,15 @@ function decidirEstado(
   }
 
   if (flags.includes('overdue_acks')) {
-    return { state: 'blocked', reason: 'Tiene entregas con el deadline de ACK vencido: el turno se le está muriendo.', overloaded };
+    return { state: 'blocked', reason: 'Tiene entregas con el plazo de confirmación vencido: el turno se le está muriendo.', overloaded };
   }
   if (flags.includes('ack_stalled')) {
     const since = agent.seconds_since_last_ack;
     return {
       state: 'blocked',
       reason: since === null || since === undefined
-        ? 'Trabajo en vuelo y ningún ACK dentro de la ventana de búsqueda: la señal más grave.'
-        : `Trabajo en vuelo y el último ACK fue hace ${humanSeconds(since)}.`,
+        ? 'Trabajo en vuelo y ninguna confirmación dentro de la ventana de búsqueda: la señal más grave.'
+        : `Trabajo en vuelo y la última confirmación fue hace ${humanSeconds(since)}.`,
       overloaded,
     };
   }
@@ -177,7 +177,7 @@ function decidirEstado(
     if (typeof withoutAckAge === 'number' && withoutAckAge > startAfter) {
       return {
         state: 'blocked',
-        reason: `Tomó trabajo hace ${humanSeconds(withoutAckAge)} y nunca registró un ACK propio.`,
+        reason: `Tomó trabajo hace ${humanSeconds(withoutAckAge)} y nunca registró una confirmación propia.`,
         overloaded,
       };
     }
@@ -227,7 +227,7 @@ function decidirEstado(
     return {
       state: 'settled',
       reason: settled.outcome === 'deadline_vencido'
-        ? 'Una entrega suya salió de vuelo con el deadline de ACK ya vencido: no fue un cierre limpio.'
+        ? 'Una entrega suya salió de vuelo con el plazo de confirmación ya vencido: no fue un cierre limpio.'
         : 'Una de sus entregas dejó de figurar entre las activas durante la última actualización. '
           + 'Esta vista no permite confirmar si terminó, falló o venció.',
       overloaded,
@@ -277,7 +277,7 @@ function decidirEstado(
     };
   }
 
-  return { state: 'idle', reason: 'Conectado, con lease vigente y nada en vuelo.', overloaded };
+  return { state: 'idle', reason: 'Conectado, con conexión vigente y nada en vuelo.', overloaded };
 }
 
 function nuncaPreparado(agent: FleetActivityAgent): boolean {
@@ -381,24 +381,24 @@ function motivoDe(view: LiveAgentView): string {
   const enVuelo = typeof view.oldestInFlightSeconds === 'number'
     ? `; entrega en vuelo hace ${humanSeconds(view.oldestInFlightSeconds)}`
     : '';
-  if (view.flags.includes('overdue_acks')) return `trabado: ACK vencido${enVuelo}`;
+  if (view.flags.includes('overdue_acks')) return `trabado: confirmación vencida${enVuelo}`;
   if (view.flags.includes('ack_stalled')) {
     const ack = view.secondsSinceLastAck;
     return ack === null || ack === undefined
-      ? `trabado: sin ACK reciente${enVuelo}`
-      : `trabado: último ACK hace ${humanSeconds(ack)}${enVuelo}`;
+      ? `trabado: sin confirmación reciente${enVuelo}`
+      : `trabado: última confirmación hace ${humanSeconds(ack)}${enVuelo}`;
   }
   if (view.flags.includes('claimed_not_started')) {
     if (view.claimedNotStartedNeverAcked) {
       const age = view.oldestClaimedNotStartedWithoutAckSeconds;
       return typeof age === 'number'
-        ? `trabado: tomó y no empezó; nunca dio ACK propio en ${humanSeconds(age)}`
-        : 'trabado: tomó y no empezó; nunca dio ACK propio';
+        ? `trabado: tomó y no empezó; nunca confirmó por su cuenta en ${humanSeconds(age)}`
+        : 'trabado: tomó y no empezó; nunca confirmó por su cuenta';
     }
     const age = view.oldestClaimedNotStartedActivitySeconds
       ?? view.oldestClaimedNotStartedSeconds;
     return typeof age === 'number'
-      ? `trabado: tomó y no empezó; último ACK propio hace ${humanSeconds(age)}`
+      ? `trabado: tomó y no empezó; última confirmación propia hace ${humanSeconds(age)}`
       : 'trabado: tomó y no empezó';
   }
   if (view.flags.includes('queued_without_consumer')) return 'trabado: cola sin consumidor';

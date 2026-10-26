@@ -262,11 +262,11 @@ export function OperationalDlqPanel() {
         possibleNoDeliveryAcknowledged: draft.possibleNoDelivery,
       });
       if (!exactResolutionReceipt(result, draft)) {
-        throw new Error('el gateway no devolvió un recibo durable exacto; el estado se conserva como desconocido');
+        throw new Error('el servidor no devolvió un recibo exacto; el estado se conserva como desconocido');
       }
       setNotice(result.alreadyApplied
         ? `El incidente ${compactId(draft.item.id)} ya estaba cerrado con esta misma evidencia.`
-        : `Incidente ${compactId(draft.item.id)} cerrado sin replay; Cauce no reinyectó ningún efecto.`);
+        : `Incidente ${compactId(draft.item.id)} cerrado sin reinyectar; Cauce no reinyectó ningún efecto.`);
       setDraft(undefined);
       await reloadFirstPage();
     } catch (error) {
@@ -328,8 +328,8 @@ export function OperationalDlqPanel() {
 
       <ConfirmDialog
         open={draft !== undefined}
-        title={draft ? <>Cerrar <span className="mono">{compactId(draft.item.id)}</span> sin replay</> : null}
-        confirmLabel={submitting ? 'Cerrando…' : 'Cerrar sin replay'}
+        title={draft ? <>Cerrar <span className="mono">{compactId(draft.item.id)}</span> sin reinyectar</> : null}
+        confirmLabel={submitting ? 'Cerrando…' : 'Cerrar sin reinyectar'}
         busy={submitting}
         confirmDisabled={!confirmationReady}
         onConfirm={() => void resolveWithoutReplay()}
@@ -354,7 +354,7 @@ export function OperationalDlqPanel() {
               checked={draft.possibleNoDelivery}
               onChange={(event) => { setDraft({ ...draft, possibleNoDelivery: event.target.checked }); }}
             />
-            Entiendo que cerrar sin replay puede dejar el efecto sin entregar.
+            Entiendo que cerrar sin reinyectar puede dejar el efecto sin entregar.
           </label>
           {duplicateRequired ? (
             <label className={ACK}>
@@ -390,7 +390,7 @@ export function OperationalDlqPanel() {
                   <td data-label="Acción" data-wide>
                     {resolvable ? (
                       <Button size="sm" onClick={() => { setDraft({ item, reason: '', possibleDuplicate: false, possibleNoDelivery: false }); }}>
-                        <ShieldAlert size={14} aria-hidden="true" /> Cerrar sin replay
+                        <ShieldAlert size={14} aria-hidden="true" /> Cerrar sin reinyectar
                       </Button>
                     ) : <span className="muted">{item.open ? 'Requiere evidencia causal' : 'Cerrado'}</span>}
                   </td>

@@ -186,7 +186,7 @@ function QueuesPageContent() {
 
       <ViewTabPanel id="dlq" hidden={pestana !== 'dlq'}>
         {dlqAccess === 'allowed' ? <OperationalDlqPanel /> : (
-          <SectionCard title="DLQ operativo" description="La reconciliación causal está separada de replay y cancelación de entregas.">
+          <SectionCard title="DLQ operativo" description="La reconciliación causal está separada de la reinyección y la cancelación de entregas.">
             <Notice>
               {dlqAccess === 'denied'
                 ? 'Tu sesión no tiene control operativo para leer o cerrar incidentes DLQ.'

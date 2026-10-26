@@ -28,7 +28,7 @@ const ETIQUETAS: Record<string, string> = {
   account_label: 'Cuenta', window_key: 'Ventana', group_key: 'Grupo',
   max_priority: 'Prioridad máxima', rank: 'Orden', notes: 'Notas', reason: 'Motivo',
   expires_at: 'Vence', paused_until: 'Pausada hasta', paused_reason: 'Motivo de la pausa',
-  progress_relay_enabled: 'Relé de progreso', progress_relay_max_events: 'Eventos por relé',
+  progress_relay_enabled: 'Reenvío de progreso', progress_relay_max_events: 'Eventos por reenvío',
   cycle_cut_enabled: 'Corte de ciclos', failure_coalesce_enabled: 'Agrupar fallos',
   failure_coalesce_window_seconds: 'Ventana de agrupación', delegation_caps_enabled: 'Topes de delegación',
   max_fanout_per_turn: 'Abanico por turno', max_edge_repeats_per_root: 'Repeticiones de arista',
