@@ -38,7 +38,7 @@ Los límites de recursos de un agente solo existen como ampliación `resources` 
 |---|---|---|---|
 | `mount` | `source` (ruta absoluta del host, dentro de una raíz permitida), `target` (ruta absoluta), `mode` `ro`\|`rw` | `--volume source:target:mode,z` | medio (`ro`), alto (`rw`) |
 | `network` | `name` (red Docker existente y permitida) | `docker network connect` tras crear | medio |
-| `resources` | `memory` (p. ej. `2g`), `cpus`, `pids` (≤ 4096) | `--memory`, `--cpus`, `--pids-limit` | bajo |
+| `resources` | `memory` (p. ej. `2g`), `cpus`, `pids` (≤ 4096; por defecto 128, y 512 para un agente Grok) | `--memory`, `--cpus`, `--pids-limit` | bajo |
 | `gpu` | — | `--gpus all` | medio |
 | `ssh` | `hosts` (lista de `usuario@host[:puerto]`) | `prepare` genera una clave ed25519 **dentro del volumen de perfil** (la privada no sale nunca) y la consola muestra la pública para añadirla al `authorized_keys` del destino. Hace falta salida de red al destino | alto |
 | `docker` | `access` `read`\|`control` | Sidecar `docker-socket-proxy` propio del agente, en una red privada agente↔proxy, con allowlist (`read`: CONTAINERS, INFO, PING, VERSION; `control`: además POST, EXEC, IMAGES, NETWORKS, VOLUMES). `DOCKER_HOST` apunta al proxy. `read` expone los metadatos y el entorno de todos los contenedores del ordenador. Para `control`, la opción preferida es un daemon propio del agente (Docker rootless o sysbox) en lugar del socket del host | alto (`read`: metadatos y entorno de todos los contenedores; `control`: equivale a root en el ordenador) |

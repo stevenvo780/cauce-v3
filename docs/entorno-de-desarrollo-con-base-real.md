@@ -118,9 +118,9 @@ sin lo que quieren observar:
 - `companies-migration-postgres.test.ts`
 - `companies-isolation-migration-postgres.test.ts`
 
-La lista vive en `SUITES_SIN_PLANTILLA`, en `tests/helpers/postgres.ts`, y **no se mantiene a
-mano**: `tests/unit/suites-de-migracion-sin-plantilla.test.ts` la compara contra el disco, de modo
-que una suite `*-migration-postgres.test.ts` nueva no puede perder el opt-out en silencio. Se añadió
+La lista vive en `SUITES_SIN_PLANTILLA`, en `tests/helpers/postgres.ts`. Ninguna prueba la compara
+con el disco: una suite `*-migration-postgres.test.ts` nueva que observe la migración tiene que
+añadirse a mano. Se añadió
 por eso: `secret-handoff-migration-postgres.test.ts` ya existía y ya se había quedado fuera.
 
 En la rama de testcontainers la base **del fichero** nace vacía con su contenedor y esta plantilla no
@@ -190,10 +190,6 @@ ella. Son dos vías:
 Lo que se imprime es el nombre del fichero a secas, sin ruta. Comprobado: entre los emisores no hay
 dos nombres de fichero repetidos, así que la línea identifica un único fichero.
 
-Hay un llamador directo más que no cuenta: `tests/unit/base-de-pruebas-guarda.test.ts` prueba el
-propio helper con una sonda doblada y ejerce sus dos ramas, así que registra una ejecución y **no
-imprime** la línea. Comprobado corriéndolo.
-
 Comprobado en uno de los directos:
 
 ```bash
@@ -204,9 +200,8 @@ env -u CAUCE_TEST_DATABASE_URL npx vitest run tests/gateway-hardening/wake-outbo
 ### Qué sigue mudo
 
 Un fichero que se apaga **sin pasar por el helper** no puede decir nada, porque nadie cuenta su
-salto. Es el caso de `tests/terminal-pty/relay-contract-lifecycle.test.ts` y
-`tests/unit/provision-terminal-client.test.ts`: los dos se apagan con `describe.skipIf` (relé
-ausente, OpenSSL ausente) y **nunca** llaman a `dockerTestRequirement`, así que **no imprimen
+salto. Es el caso de `tests/unit/provision-terminal-client.test.ts`: se apaga con `describe.skipIf` (OpenSSL
+ausente) y **nunca** llama a `dockerTestRequirement`, así que **no imprimen
 `[capacidad]` y no lo harán**. Saltan legítimamente en el nocturno, que corre como root; su silencio
 no es un fallo del mecanismo, está fuera de él. Es una señal para leer, no un gate.
 

@@ -1,8 +1,8 @@
 # Parámetros del orquestador
 
 Tabla única: cada parámetro que gobierna el sistema con unidad, fuente y valor
-documentado. `tests/unit/parametros.test.ts` falla si aparece un parámetro en
-código sin fila aquí. Las preguntas abiertas están al final.
+documentado. Ninguna prueba la vigila: al añadir un parámetro en código, añade su fila
+aquí en el mismo commit. Las preguntas abiertas están al final.
 
 Fuente: `medido` = hecho de runtime por alias; `env` = variable con defecto;
 `DB` = fila/tabla; `fijo` = constante; `dueño` = solo el dueño lo fija.

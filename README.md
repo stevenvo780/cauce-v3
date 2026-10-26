@@ -31,6 +31,7 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 | [`services/gateway`](services/gateway/README.md) | HTTP/WS, frontera de identidad, fachadas `/v3/console/*`, plano de terminal |
 | [`services/dispatcher`](services/dispatcher/README.md) | segador de reintentos (no entrega mensajes) |
 | [`services/terminal-relay`](services/terminal-relay/README.md) | puente navegador↔pty-agent con TLS mutuo |
+| [`services/decisiones`](services/decisiones/README.md) | servicio de decisiones (ver `docs/operacion.md`, «Servicio de decisiones») |
 | [`services/telegram-bridge`](services/telegram-bridge/README.md) | polling/egress Telegram con cursor y lease cercados |
 | [`console`](console/README.md) | SPA React del operador |
 | [`ops/pty-agent`](ops/pty-agent/README.md) | agente Python dentro de cada contenedor: PTY + ficheros de gobierno |
@@ -45,6 +46,9 @@ export CAUCE_FASE3_CON_DUENO=si CAUCE_DEPLOY_CONFIRMADO=si
 | [`docs/roadmap.md`](docs/roadmap.md) | qué falta, priorizado |
 | [`docs/v4-pruebas.md`](docs/v4-pruebas.md) | inventario verificable de pruebas V4 y límites pendientes |
 | [`docs/v4-guia.md`](docs/v4-guia.md) | uso y administración de lo implementado en V4 |
+| [`docs/v4-cli.md`](docs/v4-cli.md) | CLI `cauce`: login, terminal, espacios, contexto, ordenadores |
+| [`docs/sesiones-consola.md`](docs/sesiones-consola.md) | sesión de consola y del CLI: 24 h deslizantes, tope de 30 días |
+| [`docs/consola.md`](docs/consola.md) | la consola web del operador |
 | [`docs/adr/`](docs/adr/) | decisiones de diseño aceptadas |
 | [`docs/threat-model.md`](docs/threat-model.md) | amenazas y controles |
 | [`ops/runbooks/`](ops/runbooks/) | procedimientos operativos detallados |

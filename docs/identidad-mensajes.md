@@ -63,14 +63,9 @@ Esto puede representar colaboración deliberada: el perfil humano no introduce
 por sí solo privacidad entre esas personas. Los filtros actuales siguen
 aplicándose por tenant, alias, participación y ACL.
 
-La regresión `tests/unit/gateway-human-accounts.test.ts` enlaza dos logins del
-proveedor real con sesión, acceso, prepare, publicación y confirmación del
-gateway. Comprueba nombre/sujeto humano, cambio de sesión, relectura del perfil,
-rol por cuenta, separación de actores de servicio y filtros técnicos. Usa sólo
-usuarios y repositorio en memoria con `app.inject`; no prueba PostgreSQL,
-aprovisionamiento real, navegador ni aislamiento durable nuevo. Las regresiones
-de `AuthGate.account-lifecycle.test.tsx`, `auth-session.test.ts` y
-`client.auth-race.test.ts` cubren por separado borradores y respuestas pendientes.
+Las regresiones de `AuthGate.account-lifecycle.test.tsx`, `auth-session.test.ts` y
+`client.auth-race.test.ts` (en `console/src`) cubren borradores y respuestas pendientes
+al cambiar de cuenta.
 
 ## Decisiones pendientes para representación y privacidad
 
