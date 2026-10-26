@@ -126,7 +126,7 @@ export function FicherosTab({
       {mutationBlocked ? (
         <Notice tone="warn" role="status" className="flex items-start gap-2">
           <Lock size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
-          Aplicación de campos canónicos en curso. El manual queda bloqueado hasta recibir su ACK.
+          Aplicación de campos canónicos en curso. El manual queda bloqueado hasta recibir su confirmación.
         </Notice>
       ) : null}
 
@@ -346,7 +346,7 @@ function Editor({
     if (mutationBlocked) {
       setFallo({
         titulo: 'Aplicación canónica en curso',
-        detalle: 'Espera el ACK del perfil antes de cambiar el manual.',
+        detalle: 'Espera la confirmación del perfil antes de cambiar el manual.',
       });
       return;
     }

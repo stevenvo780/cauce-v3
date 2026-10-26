@@ -43,7 +43,7 @@ async function attached(page: V4Page): Promise<string> {
 
 async function closeSession(page: V4Page, fixture: RealPtyFixture, id: string): Promise<void> {
   await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
   await expect.poll(async () => {
     const rows = await fixture.database.pool.query<{ closed: boolean; holds: string }>(
       `SELECT closed_at IS NOT NULL AS closed,

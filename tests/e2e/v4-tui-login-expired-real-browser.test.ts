@@ -73,7 +73,7 @@ it('termina rápido ante login caducado, lo explica y procesa la siguiente entre
     await expect.poll(() => page.locator('.xterm-rows').innerText(), { timeout: 15_000 }).toContain('Paste code here if prompted >');
     await capture(page, 'expired-tui');
     await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
     await page.goto(`${runtime.baseUrl}/messages/Steven/${runtime.alias}`, { waitUntil: 'domcontentloaded' });
     const firstText = `H8C_EXPIRED_${randomUUID()}`;
     const started = performance.now();

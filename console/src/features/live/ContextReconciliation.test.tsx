@@ -79,7 +79,7 @@ it('requires a reason, a fresh preview and an explicit confirmation before writi
   expect(callbacks.onVeredicto).toHaveBeenCalledWith({ contaminated: false, findings: [] });
   expect(callbacks.onSettled).toHaveBeenCalledOnce();
   expect(callbacks.onWriteInFlightChange.mock.calls).toEqual([[true], [false], [true], [false]]);
-  expect(screen.getByRole('status')).toHaveTextContent('Falta el ACK de adopción');
+  expect(screen.getByRole('status')).toHaveTextContent('Falta la confirmación de adopción');
 });
 
 it.each([{ permitida: false }, { bloqueada: true }])('sends nothing without permission or while another write is pending: %j', (blocked) => {

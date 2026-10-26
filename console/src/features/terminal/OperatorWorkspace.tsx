@@ -79,7 +79,7 @@ function terminalCapabilityUuid(): string {
   if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
   }
-  throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión PTY.');
+  throw new Error('Este navegador no ofrece UUID seguros para cercar la sesión de terminal.');
 }
 
 function omitKey<T>(map: Record<string, T>, keyToOmit: string): Record<string, T> {
@@ -184,7 +184,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
     } catch (error) {
       if (revision !== revisionPlazasRef.current) return;
       const detail = error instanceof Error ? error.message : 'El servidor no devolvió un inventario verificable.';
-      setErrorPlazas(`No se pudo verificar el inventario de sesiones PTY: ${detail}`);
+      setErrorPlazas(`No se pudo verificar el inventario de sesiones de terminal: ${detail}`);
     } finally {
       if (revision === revisionPlazasRef.current) setRevisandoPlazas(false);
     }
@@ -236,7 +236,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
   ): Promise<TerminalGrantRequestOutcome> {
     if (!workspaceMountedRef.current || sessionTokensRef.current.get(id) !== sessionToken) {
       return Promise.reject(new TerminalApiError(
-        'La pestaña que pidió el canal PTY ya no está abierta.', 409, 'stale_terminal_tab',
+        'La pestaña que pidió la terminal ya no está abierta.', 409, 'stale_terminal_tab',
       ));
     }
     const inputKey = terminalRequestInputKey(input);
@@ -254,7 +254,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
     if (existing?.sessionToken === sessionToken) {
       if (existing.inputKey !== inputKey) {
         return Promise.reject(new TerminalApiError(
-          'Ya hay otra reserva PTY en curso para esta pestaña.', 409, 'request_in_flight',
+          'Ya hay otra reserva de terminal en curso para esta pestaña.', 409, 'request_in_flight',
         ));
       }
       existing.subscribers.add(sessionToken);
@@ -342,7 +342,7 @@ export function OperatorWorkspace({ agents, agentId, live, summary, access, term
         return (
           <div role="alert" key={id} className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-danger/30 bg-danger-soft px-3 py-2 text-[13px] text-danger-ink">
             <AlertTriangle size={15} aria-hidden="true" className="shrink-0" />
-            <span className="min-w-0 flex-1">No se confirmó la revocación de la sesión PTY. El canal local se cerró; vuelve a intentarlo.</span>
+            <span className="min-w-0 flex-1">No se confirmó la revocación de la sesión de terminal. El canal local se cerró; vuelve a intentarlo.</span>
             <Button size="sm" onClick={() => { void releaseChannel(id); }}>Reintentar revocación</Button>
           </div>
         );

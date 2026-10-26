@@ -174,13 +174,13 @@ export function SessionStage({
   }, [channelView?.state, channelLive]);
 
   const channel = terminalChannelGate(capability, access, targets, agent);
-  const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'PTY no habilitado';
+  const channelLabel = channel.status !== 'blocked' ? TERMINAL_ACCESS_LABELS[channel.status] : 'Terminal no habilitada';
   const channelTarget = terminalTargetForAgent(targets?.items, agent);
   const liveTui = liveTuiGate(capability, access, targets, agent);
   const liveTuiLabel = liveTui.status === 'blocked' ? 'TUI no habilitada' : LIVE_TUI_LABELS[liveTui.status];
   const channelReason = channel.reason
     ? traducirCodigosEnTexto(channel.reason)
-    : 'Todavía no se pudo leer si hay canal PTY para este alias.';
+    : 'Todavía no se pudo leer si hay terminal para este alias.';
   const tuiReason = traducirCodigosEnTexto(liveTui.reason);
 
   const targetMode = grant ? grant.target.mode : memory.channelMode;
@@ -486,7 +486,7 @@ export function SessionStage({
               ? <Loader2 size={20} aria-hidden="true" className="animate-spin text-muted" />
               : <CircleOff size={20} aria-hidden="true" className="text-muted" />}
             <h3 className="m-0 text-sm font-semibold">
-              {requesting ? 'Abriendo el canal…' : viewEnabled ? 'No hay canal PTY abierto' : wantsTui ? liveTuiLabel : channelLabel}
+              {requesting ? 'Abriendo el canal…' : viewEnabled ? 'No hay terminal abierta' : wantsTui ? liveTuiLabel : channelLabel}
             </h3>
             {requesting || viewEnabled || ptyClosedAll ? null : (
               <p className="m-0 max-w-md text-[13px] text-muted">{wantsTui ? tuiReason : channelReason}</p>

@@ -151,7 +151,7 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
       + 'Si administras tú la empresa, entra ahí y dátelo.',
   },
   agent_offline: {
-    titulo: 'El agente PTY del contenedor no está conectado',
+    titulo: 'El agente de terminal del contenedor no está conectado',
     porQue: 'Dentro del contenedor vive un programa que es el que abre la sesión, y el servidor no lo ve conectado '
       + '—o no publica el modo que pediste—. El permiso puede estar perfectamente bien: lo que falta es el agente.',
     quienLoLevanta: 'Nadie tiene que darte un permiso: hay que levantar ese programa dentro del contenedor. '
@@ -177,8 +177,8 @@ export const TERMINAL_DENY_MESSAGES: Readonly<Record<TerminalDenialCode, Termina
       + 'reintenta sin editar nada para conservar la misma identidad de la operación.',
   },
   not_installed: {
-    titulo: 'La conexión del agente PTY no está comprobada',
-    porQue: 'El estado heredado no acredita una presencia del agente PTY. No se puede concluir si está instalado '
+    titulo: 'La conexión del agente de terminal no está comprobada',
+    porQue: 'El estado heredado no acredita una presencia del agente de terminal. No se puede concluir si está instalado '
       + 'o si la conexión está caída.',
     quienLoLevanta: 'Tú: sincroniza el inventario o comprueba la presencia del agente en ese contenedor.',
   },

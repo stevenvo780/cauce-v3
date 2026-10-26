@@ -38,7 +38,7 @@ export function AvisoDeContaminacion({ contaminacion }: { contaminacion: Contami
       </p>
       {contaminacion.findings.length === 0 ? (
         <p>
-          El gateway marcó contaminación pero no dijo en qué fichero ni de quién. Se trata como
+          El servidor marcó contaminación pero no dijo en qué fichero ni de quién. Se trata como
           sucio igual: un veredicto que no se puede leer no se presenta como limpio.
         </p>
       ) : (
@@ -121,8 +121,8 @@ export function RecargaDeContexto({
       if (leido !== undefined) onVeredicto(leido);
       if (!esRecargaHecha(respuesta, { tenantId, alias })) {
         setFallo({
-          titulo: 'El gateway no acreditó la recarga',
-          detalle: 'Respondió 2xx sin decir estado, revisión y huellas por fichero. No se presenta '
+          titulo: 'El servidor no acreditó la recarga',
+          detalle: 'Respondió que sí, pero sin decir estado, revisión y huellas por fichero. No se presenta '
             + 'como reescrito lo que nadie acreditó.',
         });
         return;

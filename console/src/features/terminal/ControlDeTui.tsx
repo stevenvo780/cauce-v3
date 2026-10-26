@@ -49,22 +49,22 @@ const NO_SE_ABRIO: DenegacionExplicada = {
   titulo: 'La consola no llegó a abrir la sesión con teclado',
   porQue: 'El pedido de sesión escribible no quedó adoptado por esta pestaña: o el servidor lo rechazó '
     + '—la explicación del servidor se conserva—, o ya había otra reserva en vuelo para este panel. No se tomó ningún '
-    + 'control: el bus le sigue entregando a este alias.',
+    + 'control: el alias sigue recibiendo mensajes.',
   quienLoLevanta: 'Tú: espera a que termine la reserva en curso y vuelve a pedir la toma.',
   linea: 'La consola no llegó a abrir la sesión con teclado y no se tomó ningún control.',
 };
 
 function sinEnganche(motivo: ResultadoDeEspera): DenegacionExplicada {
   const porQue = motivo === 'sin_canal'
-    ? 'La sesión con teclado quedó pedida, pero su canal se cortó antes de que el relay redimiera el '
+    ? 'La sesión con teclado quedó pedida, pero su canal se cortó antes de que el servidor aceptara el '
       + 'permiso de conexión, así que el servidor todavía no la da por enganchada y rechazaría la toma.'
-    : `La sesión con teclado quedó pedida, pero el relay no la enganchó en ${String(Math.round(ESPERA_DE_ENGANCHE_MS / 1000))} s. `
+    : `La sesión con teclado quedó pedida, pero el servidor no la enganchó en ${String(Math.round(ESPERA_DE_ENGANCHE_MS / 1000))} s. `
       + 'El servidor solo acepta la toma sobre una sesión que la conexión de terminal ya usó.';
   return {
     titulo: 'La sesión con teclado no llegó a engancharse: sigues sin el teclado',
-    porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el bus le sigue entregando a este alias.`,
+    porQue: `${porQue} Estás sobre una sesión escribible en solo lectura: nadie quedó silenciado y el alias sigue recibiendo mensajes.`,
     quienLoLevanta: 'Tú: reintenta la toma de esta misma sesión. Si vuelve a fallar, cierra la terminal y '
-      + 'revisa que el agente PTY del contenedor siga conectado.',
+      + 'revisa que el agente de terminal del contenedor siga conectado.',
     linea: 'La sesión con teclado no llegó a engancharse; no se tomó el control y el alias sigue recibiendo.',
   };
 }

@@ -95,7 +95,7 @@ export async function usePtyFleetShells(fixture: PtyFleetFixture, cli: PtyFleetC
   expect(web).toContain('UID:' + String(uid)); expect(web).toContain('PWD:/home/cauce');
   await capturePtyFleet(fixture.page, phase + '-web-shell');
   await fixture.page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-  await fixture.page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+  await fixture.page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
   await fixture.page.getByRole('button', { name: 'Abrir terminal', exact: true }).waitFor();
   await released(fixture);
   const cliNonce = randomUUID(), cliMarker = 'H12-CLI-' + cliNonce;

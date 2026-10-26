@@ -33,13 +33,13 @@ export function StageMenu({ agent, hasGrant, canExtend, extending, onExtend, onC
               className={ITEM}
               disabled={!canExtend || extending}
               onClick={onExtend}
-              title={canExtend ? 'Prorrogar la ventana de esta sesión con auditoría' : 'Disponible cuando el relay ya enganchó y consumió el ticket'}
+              title={canExtend ? 'Prorrogar la ventana de esta sesión con auditoría' : 'Disponible cuando la terminal ya está conectada'}
             >
               <Hourglass size={15} aria-hidden="true" />{extending ? 'Prorrogando sesión…' : 'Prorrogar sesión'}
             </Menu.Item>
             <Menu.Item className={cn(ITEM, 'data-[highlighted]:text-danger-ink')} disabled={!hasGrant} onClick={onClose}
-              title="Revoca la sesión PTY en el servidor y cierra el canal">
-              <PowerOff size={15} aria-hidden="true" />Cerrar sesión PTY
+              title="Cierra la sesión de terminal en el servidor y cierra el canal">
+              <PowerOff size={15} aria-hidden="true" />Cerrar sesión de terminal
             </Menu.Item>
             <Menu.Separator className="my-1 h-px bg-line" />
             <Menu.Item className={ITEM} onClick={onRefresh}>

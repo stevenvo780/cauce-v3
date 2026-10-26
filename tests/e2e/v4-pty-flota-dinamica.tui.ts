@@ -193,7 +193,7 @@ export async function usePtyFleetTui(fixture: PtyFleetFixture, cli: PtyFleetCli,
   await capturePtyFleet(fixture.page, phase + '-web-tui');
   await control.getByRole('button', { name: 'Devolver el control', exact: true }).click();
   await fixture.page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-  await fixture.page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+  await fixture.page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
   await released(fixture);
   const previousReaders = new Set((await fixture.computer.pool.query<{ id: string }>(
     "SELECT id FROM terminal_sessions WHERE tenant_id=$1 AND alias=$2 AND mode='harness'",

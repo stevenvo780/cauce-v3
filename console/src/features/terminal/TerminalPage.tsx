@@ -84,7 +84,7 @@ function TerminalPageContent({ params }: TerminalPageProps) {
         <Notice tone="danger" className={BANNER} role="status">
           <span>
             <strong>{relay.cause === 'sin-permiso' ? 'La terminal de agentes requiere permiso de control'
-              : relay.cause === 'sin-comprobar' ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO : 'Canal PTY no disponible en este stack'}</strong>
+              : relay.cause === 'sin-comprobar' ? TERMINAL_RELAY_SIN_COMPROBAR_TITULO : 'La terminal no está disponible en este servidor'}</strong>
             {' '}<span>{relay.reason}</span>
           </span>
         </Notice>

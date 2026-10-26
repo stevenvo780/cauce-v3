@@ -40,7 +40,7 @@ export function ultimateTerminalGate(capability: TerminalCapability | undefined,
   if (permissionState(access, 'ultimate-terminal.connect') !== 'allowed') {
     return { enabled: false, reason: 'Tu cuenta no tiene concedido el permiso de conectar a la terminal, o no se pudo leer el permiso. Ante la duda, cerrado.' };
   }
-  if (capability?.available !== true) return { enabled: false, reason: capability?.reason ?? 'El servidor no dijo si el canal PTY está disponible en este stack.' };
+  if (capability?.available !== true) return { enabled: false, reason: capability?.reason ?? 'El servidor no dijo si la terminal está disponible en este servidor.' };
   if (capability.plugin_id !== ULTIMATE_TERMINAL_PLUGIN_ID) return { enabled: false, reason: 'El servidor anunció otro cliente de terminal, no éste: la consola no se conecta a un canal que no reconoce.' };
   if (!Array.isArray(capability.capabilities) || !capability.capabilities.every((item) => typeof item === 'string')) {
     return { enabled: false, reason: 'Payload de capabilities inválido.' };
@@ -109,7 +109,7 @@ export function terminalChannelGate(
     return {
       enabled: false,
       status: 'unknown',
-      reason: `El agente PTY de ${agent.alias} está conectado, pero no publica el modo shell. `
+      reason: `El agente de terminal de ${agent.alias} está conectado, pero no publica el modo shell. `
         + 'La consola no convierte una TUI de solo lectura en una terminal interactiva.',
       websocketPath: gate.websocketPath,
     };

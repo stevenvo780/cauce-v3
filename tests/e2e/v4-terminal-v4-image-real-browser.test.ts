@@ -293,7 +293,7 @@ describe.sequential('TUI del launcher real con adaptador e imagen V4 reales', ()
           await writeFile(join(evidence, `${harness}-${String(width)}.json`), JSON.stringify({ harness, width, markers,
             binding: runtime.binding, observation, native_processes: nativeProcesses, targets: await targets(page), session_id: sessionId, mode: 'harness', deliveries: 0, inference: false }, null, 2));
           await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-          await page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+          await page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
           await expect.poll(async () => (await runtime.database.pool.query<{ closed: boolean }>('SELECT closed_at IS NOT NULL AS closed FROM terminal_sessions WHERE id=$1', [sessionId])).rows[0]?.closed,
             { timeout: 15_000 }).toBe(true);
         } catch (error) {

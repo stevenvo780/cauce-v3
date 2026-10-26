@@ -95,7 +95,7 @@ it('releases a late successful take after leaving the terminal tab', async () =>
   const { controls, completeTake } = arrange();
   const { user } = await openPageAndTake(controls);
   await user.click(screen.getByRole('button', { name: 'Más acciones' }));
-  await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
+  await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión de terminal/i }));
   expect(screen.queryByLabelText('Control de la TUI')).not.toBeInTheDocument();
   await completeTake();
   const releases = controls.filter(call => call.body.action === 'release');

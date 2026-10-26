@@ -53,7 +53,7 @@ async function attached(page: V4Page, phase = ''): Promise<string> {
 }
 async function closeSession(page: V4Page): Promise<void> {
   await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
   await page.getByRole('button', { name: 'Abrir terminal', exact: true }).waitFor({ timeout: 20_000 });
 }
 

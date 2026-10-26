@@ -126,7 +126,7 @@ export function ContextReconciliation(props: ContextReconciliationProps) {
       </div> : null}
       {error ? <Notice tone="danger" role="alert">{error}</Notice> : null}
       {written ? <Notice tone="warn" role="status">
-        Escritura y huellas verificadas; estado pending_session_refresh. Falta el ACK de adopción
+        Escritura y huellas verificadas; estado pending_session_refresh. Falta la confirmación de adopción
         del modelo: no se presenta como contexto ya adoptado.
       </Notice> : null}
     </SectionCard>

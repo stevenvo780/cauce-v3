@@ -177,7 +177,7 @@ function DiarioDePerfil({ tenantId, alias, onRestaurar }: HistorialDeContextoPro
                 <span className={NOTE}>
                   {vacia
                     ? 'Esta revisión borró el perfil: cargarla deja los siete campos vacíos en el borrador. No guarda nada.'
-                    : 'No guarda nada: carga los siete campos canónicos en el borrador de Perfil para revisarlos y aplicarlos con CAS, motivo y ACK.'}
+                    : 'No guarda nada: carga los siete campos canónicos en el borrador de Perfil para revisarlos y aplicarlos con CAS, motivo y confirmación.'}
                 </span>
               )}
 
@@ -375,7 +375,7 @@ function PieDeDiario({ diario, alias, leidas, paso, cargando, error, onMas, onRe
   if (paso === 'ventana-agotada') {
     return (
       <p className={NOTE}>
-        Se ven las {leidas} entradas más nuevas. Este gateway no devuelve más de {TOPE_DE_PAGINA}{' '}
+        Se ven las {leidas} entradas más nuevas. Este servidor no devuelve más de {TOPE_DE_PAGINA}{' '}
         entradas por lectura y esa ventana ya se pidió entera: si el diario es más largo, lo
         anterior queda sin leer —no es que no exista—.
       </p>
@@ -406,7 +406,7 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
     return (
       <Notice tone="danger" role="alert">
         No se pudo leer el inventario de ficheros de {alias}: {recurso.error.message}. Eso no dice
-        que este gateway no lo publique ni que {alias} no tenga ficheros gobernados: dice que la
+        que este servidor no lo publique ni que {alias} no tenga ficheros gobernados: dice que la
         consola no lo pudo mirar, así que solo se ofrece el diario de los campos canónicos.
       </Notice>
     );
@@ -419,7 +419,7 @@ function AvisoDeInventario({ recurso, alias, ficheros }: {
   if (!recurso.data.publicado) {
     return (
       <p className={NOTE}>
-        {recurso.data.motivo ?? `Este gateway no publica el inventario de ficheros de ${alias}.`}
+        {recurso.data.motivo ?? `Este servidor no publica el inventario de ficheros de ${alias}.`}
         {' '}Solo se puede ofrecer el diario de los campos canónicos.
       </p>
     );

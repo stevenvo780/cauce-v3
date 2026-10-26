@@ -221,7 +221,7 @@ it('fences two clicks in the same render to one PTY reservation POST', async () 
 /** The menu is the only place that closes the session. */
 async function closeSessionFromMenu(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Más acciones' }));
-  await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
+  await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión de terminal/i }));
 }
 
 it('releases the grant server-side when the operator closes the session', async () => {
@@ -299,7 +299,7 @@ it('surfaces a 409 conflict from the gateway inline, without a modal and without
   await user.click(screen.getByRole('button', { name: /^Terminal$/i }));
 
   // The 409 is explained: what happened, why, and who can lift it.
-  expect(await screen.findByText(/El agente PTY del contenedor no está conectado/i)).toBeInTheDocument();
+  expect(await screen.findByText(/El agente de terminal del contenedor no está conectado/i)).toBeInTheDocument();
   expect(screen.getByText(/HTTP 409/)).toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(document.body.textContent).not.toContain('agent_offline');

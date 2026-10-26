@@ -19,7 +19,6 @@ import type { ReconciliationApply } from '../../features/live/context-reconcilia
 
 async function getPublishedResource<T extends object>(
   load: () => Promise<T>,
-  route: string,
   unavailable: T,
 ): Promise<T & { publicado: boolean; motivo?: string }> {
   try {
@@ -30,7 +29,7 @@ async function getPublishedResource<T extends object>(
       return {
         ...unavailable,
         publicado: false,
-        motivo: `Este gateway no publica GET ${route} (respondió ${String(error.status)}).`,
+        motivo: `El servidor todavía no ofrece este dato (respondió ${String(error.status)}).`,
       };
     }
     throw error;
@@ -49,7 +48,6 @@ export async function getAgentDirective(
   const ruta = `/v3/console/agents/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}/directive`;
   return getPublishedResource<Omit<AgentDirective, 'publicado' | 'motivo'>>(
     () => request<Omit<AgentDirective, 'publicado' | 'motivo'>>(ruta),
-    ruta,
     {},
   );
 }
@@ -62,7 +60,6 @@ export async function getAgentDocuments(
   const ruta = `/v3/console/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(alias)}/documents`;
   return getPublishedResource<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(
     () => request<Omit<AgentDocumentsMap, 'publicado' | 'motivo'>>(ruta),
-    ruta,
     {},
   );
 }
@@ -163,7 +160,6 @@ export async function getAgentPerfil(
     () => request<Omit<AgentPerfil, 'publicado' | 'motivo'>>(ruta, { cache: 'no-store' }, {
       mapError: perfilNoEncontrado,
     }),
-    ruta,
     {
       perfil: {
         purpose: null, role_summary: null, human_brief: null,

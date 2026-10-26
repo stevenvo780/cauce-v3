@@ -30,7 +30,7 @@ it('reads the binding on mount and offers only the native manual inspection', as
 
 it.each([
   ['not_configured', 'Esta instancia todavía no tiene un repositorio Git vinculado por el servidor.'],
-  ['not_published', 'Este gateway todavía no publica la inspección Git.'],
+  ['not_published', 'Este servidor todavía no publica la inspección Git.'],
 ])('keeps %s honest and offers no path or mutation input', async (state, message) => {
   server.use(http.get(BASE, () => state === 'not_published'
     ? HttpResponse.json({ error: 'unavailable' }, { status: 501 })
@@ -44,7 +44,7 @@ it('keeps inaccessible agents distinct from unpublished routes and can retry', a
   server.use(http.get(BASE, () => HttpResponse.json({ error: 'not_found' }, { status: 404 })));
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar');
-  expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Este servidor todavía no publica la inspección Git.')).not.toBeInTheDocument();
   server.use(http.get(BASE, () => HttpResponse.json(CAPABILITY)));
   await userEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
   expect(await screen.findByLabelText('Commit completo')).toBeInTheDocument();
@@ -74,7 +74,7 @@ it.each([
   const user = userEvent.setup();
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
   expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo consultar la vinculación Git');
-  expect(screen.queryByText('Este gateway todavía no publica la inspección Git.')).toBeNull();
+  expect(screen.queryByText('Este servidor todavía no publica la inspección Git.')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Reintentar' }));
   expect(await screen.findByLabelText('Commit completo')).toBeInTheDocument();
   expect(calls).toBe(2);
@@ -90,6 +90,6 @@ it('preserves a non-JSON transport 404 as a retryable failure', async () => {
 it('recognizes explicit HTTP 501 without disguising a failure to find the agent', async () => {
   server.use(http.get(BASE, () => HttpResponse.json({ error: 'unavailable' }, { status: 501 })));
   renderWithApi(<ContextRepositoryPanel tenantId="Steven" alias="helper" />);
-  expect(await screen.findByText('Este gateway todavía no publica la inspección Git.')).toBeInTheDocument();
+  expect(await screen.findByText('Este servidor todavía no publica la inspección Git.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Reintentar' })).toBeNull();
 });

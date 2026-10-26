@@ -124,9 +124,9 @@ export interface TerminalTargetResolution {
 }
 
 export const TERMINAL_ACCESS_LABELS: Readonly<Record<TerminalAccessStatus, string>> = {
-  allowed: 'PTY online',
+  allowed: 'Terminal conectada',
   denied: 'Sin autoridad',
-  offline: 'Agente PTY offline',
+  offline: 'Agente de terminal desconectado',
   unknown: 'Conexión sin comprobar',
 };
 
@@ -145,7 +145,7 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
   }
   const target = terminalTargetForAgent(targets, agent);
   if (!target) {
-    return { status: 'unknown', reason: `El servidor no declaró un target PTY para ${agent.tenantId}:${agent.alias}.` };
+    return { status: 'unknown', reason: `El servidor no declaró un destino de terminal para ${agent.tenantId}:${agent.alias}.` };
   }
   if (!target.authorized) return { status: 'denied', reason: target.reason, target };
   // Rolling upgrades can briefly pair a new console with an old gateway which used `ok` for
@@ -155,7 +155,7 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
   if (target.pty_state === 'not_installed') {
     return {
       status: 'unknown',
-      reason: 'Presencia no observada del agente PTY para este destino; conexión e instalación quedan sin comprobar.',
+      reason: 'Presencia no observada del agente de terminal para este destino; conexión e instalación quedan sin comprobar.',
       target,
     };
   }
@@ -163,7 +163,7 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
     return {
       status: 'unknown',
       reason: placeholderReason
-        ? 'No se observó presencia del agente PTY para este destino; conexión e instalación quedan sin comprobar.'
+        ? 'No se observó presencia del agente de terminal para este destino; conexión e instalación quedan sin comprobar.'
         : `${target.reason} Presencia no observada: conexión e instalación quedan sin comprobar.`,
       target,
     };
@@ -172,7 +172,7 @@ export function resolveTerminalTarget(targets: TerminalTarget[] | null | undefin
     return {
       status: 'offline',
       reason: `${placeholderReason
-        ? 'El agente PTY figura fuera de línea: no está conectado al terminal-relay.'
+        ? 'El agente de terminal figura fuera de línea: no está conectado al servicio de terminales.'
         : target.reason} Última presencia: ${target.last_seen ?? 'nunca se registró una'}.`,
       target,
     };
@@ -257,7 +257,7 @@ export function resolveLiveTui(targets: TerminalTarget[] | null | undefined, age
   }
   return {
     status: 'no_tui',
-    reason: `El agente PTY de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: su arnés puede no ofrecer una TUI o su sesión aún no está preparada. Puedes abrir Shell. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
+    reason: `El agente de terminal de ${agent.alias} no publica el modo ${LIVE_TUI_MODE}: su arnés puede no ofrecer una TUI o su sesión aún no está preparada. Puedes abrir Shell. Modos publicados: ${target.modes.length ? target.modes.join(', ') : 'ninguno'}.`,
     target,
   };
 }

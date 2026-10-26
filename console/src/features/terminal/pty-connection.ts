@@ -271,6 +271,6 @@ export function openSocket(
   socket.onerror = () => {
     if (entry.view.state === 'closed' || entry.view.closeCode !== undefined) return;
     if (resume) return;
-    publish({ state: 'error', message: 'El backend cerró o rechazó el canal PTY.' });
+    publish({ state: 'error', message: 'El servidor cerró o rechazó la terminal.' });
   };
 }

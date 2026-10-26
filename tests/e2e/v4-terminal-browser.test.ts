@@ -57,12 +57,12 @@ async function output(page: V4Page, expected: string): Promise<void> {
 
 async function menu(page: V4Page, action: string): Promise<void> {
   let closedStatus: number | undefined;
-  if (action === 'Cerrar sesión PTY') page.on('response', (response) => {
+  if (action === 'Cerrar sesión de terminal') page.on('response', (response) => {
     if (response.request().method() === 'DELETE' && response.url().includes('/v3/console/terminal/sessions/')) closedStatus = response.status();
   });
   await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
   await page.getByRole('menuitem', { name: action, exact: true }).click();
-  if (action === 'Cerrar sesión PTY') await expect.poll(() => closedStatus).toBe(204);
+  if (action === 'Cerrar sesión de terminal') await expect.poll(() => closedStatus).toBe(204);
 }
 
 async function sessionClosed(id: string): Promise<void> {
@@ -132,14 +132,14 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
         await screenshot(page, `${String(width)}-shell`);
         await menu(page, 'Actualizar flota y permisos');
         expect(await attached(page)).toBe(shell);
-        await menu(page, 'Cerrar sesión PTY');
+        await menu(page, 'Cerrar sesión de terminal');
         await sessionClosed(shell);
         await page.getByRole('button', { name: 'Abrir terminal', exact: true }).waitFor();
         await page.getByRole('group', { name: 'Vista de la sesión', exact: true }).getByRole('button', { name: 'TUI', exact: true }).click();
         const reopened = await attached(page);
         expect(reopened).not.toBe(shell);
         await page.getByRole('button', { name: 'Devolver el control', exact: true }).waitFor({ timeout: 20_000 });
-        await menu(page, 'Cerrar sesión PTY');
+        await menu(page, 'Cerrar sesión de terminal');
         await sessionClosed(reopened);
       } finally { await closePage(page); }
     }, 180_000,
@@ -161,7 +161,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       const audit = await fixture.database.pool.query("SELECT id FROM audit_events WHERE action='terminal.session.extended' AND metadata->>'session_id'=$1", [id]);
       expect(audit.rows).toHaveLength(1);
       await screenshot(page, '1440-prorroga');
-      await menu(page, 'Cerrar sesión PTY');
+      await menu(page, 'Cerrar sesión de terminal');
       await sessionClosed(id);
     } finally { await closePage(page); }
   }, 90_000);
@@ -189,7 +189,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       await output(page, `VIEWER:${barrier}`);
       expect(await fixture.captureTmux()).not.toContain(marker);
       await screenshot(page, `${String(width)}-visor`);
-      await menu(page, 'Cerrar sesión PTY');
+      await menu(page, 'Cerrar sesión de terminal');
       await sessionClosed(id);
     } finally {
       await writeFile(grantsPath, original);
@@ -209,7 +209,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       await menu(page, 'Actualizar flota y permisos');
       expect((await page.locator('.xterm-rows').innerText()).match(/CAUCE-E2E-CODEX-LOGIN/gu)).toHaveLength(1);
       await screenshot(page, `${String(width)}-login-pty`);
-      await menu(page, 'Cerrar sesión PTY');
+      await menu(page, 'Cerrar sesión de terminal');
       await sessionClosed(id);
     } finally { await closePage(page); }
   }, 90_000);
@@ -221,7 +221,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
     try {
       await terminal(page, '?modo=terminal');
       const id = await attached(page);
-      await menu(page, 'Cerrar sesión PTY');
+      await menu(page, 'Cerrar sesión de terminal');
       await sessionClosed(id);
       await writeFile(grantsPath, JSON.stringify({ version: 1, grants: [] }));
       await page.waitForTimeout(1_100);
@@ -279,7 +279,7 @@ describe.sequential('terminal real desde Chromium, gateway, PostgreSQL, relay y 
       await page.getByRole('button', { name: 'Descartar', exact: true }).click();
       await page.getByRole('button', { name: 'Abrir terminal', exact: true }).click();
       const id = await attached(page);
-      await menu(page, 'Cerrar sesión PTY');
+      await menu(page, 'Cerrar sesión de terminal');
       await sessionClosed(id);
     } finally {
       for (const grant of reserved) await fixture.request(`/v3/console/terminal/sessions/${grant.session_id ?? ''}`, {

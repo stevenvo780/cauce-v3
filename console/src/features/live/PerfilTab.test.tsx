@@ -252,7 +252,7 @@ it('un 2xx sin ACK completo conserva el borrador y no dice aplicado', async () =
   await user.type(caja, 'sigue sucio');
   await motivar(user);
   await user.click(screen.getByRole('button', { name: /Guardar y aplicar perfil/i }));
-  expect(await screen.findByText(/devolvió 2xx, pero no acreditó/)).toBeInTheDocument();
+  expect(await screen.findByText(/contestó que sí, pero no acreditó/)).toBeInTheDocument();
   expect(caja).toHaveValue('sigue sucio');
   expect(screen.queryByText(/^Aplicado:/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Guardar y aplicar perfil/i })).toBeEnabled();

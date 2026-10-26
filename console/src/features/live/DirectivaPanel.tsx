@@ -84,7 +84,7 @@ function RoleProjection({ tenantId, alias, configuration }: Pick<DirectivaPanelP
     );
   }
   if (entry.state === 'registry-unavailable') {
-    return <EmptyState>Este gateway no publica el registro de agentes, así que no hay una proyección del rol que mostrar.</EmptyState>;
+    return <EmptyState>Este servidor no publica el registro de agentes, así que no hay una proyección del rol que mostrar.</EmptyState>;
   }
   if (entry.state === 'agent-missing') {
     return <EmptyState>{alias} no está en el registro de agentes de {tenantId}. Un alias sin fila no tiene una proyección declarada que mostrar.</EmptyState>;

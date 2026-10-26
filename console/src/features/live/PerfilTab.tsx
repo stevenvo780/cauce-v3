@@ -249,7 +249,7 @@ export function PerfilTab({
       if (!esPerfilAplicado(result, { tenantId, alias, nombres })) {
         settle({
           tone: 'error',
-          text: 'El servidor devolvió 2xx, pero no acreditó la misma revisión ni un SHA y número '
+          text: 'El servidor contestó que sí, pero no acreditó la misma revisión ni un SHA y número '
             + 'de bytes por cada fichero gobernado. El borrador sigue sucio; no se afirma aplicación.',
         });
         return;
@@ -308,13 +308,13 @@ export function PerfilTab({
       settle({
         tone: 'error',
         text: recarga.error
-          ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}) y tampoco pude `
+          ? `No se aplicó (HTTP ${String(status ?? 'sin dato')}: ${crudo}) y tampoco pude `
             + `releer (${recarga.error.message}). El borrador se conserva; no se infiere si la revisión deseada avanzó.`
           : quedaPendiente
-            ? `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). La relectura `
+            ? `No se aplicó (HTTP ${String(status ?? 'sin dato')}: ${crudo}). La relectura `
               + `muestra la revisión deseada ${String(relectura.revision ?? 'ausente')} pendiente sobre aplicado `
               + `${String(relectura.applied_revision ?? 'ninguno')}; el borrador se conserva y puedes reintentar el lote.`
-            : `No hubo un 2xx aplicado (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí la revisión deseada `
+            : `No se aplicó (HTTP ${String(status ?? 'sin dato')}: ${crudo}). Releí la revisión deseada `
               + `${String(relectura?.revision ?? 'ausente')} / aplicado ${String(relectura?.applied_revision ?? 'ninguno')}; `
               + 'el borrador se conserva.',
       }, { draft: preserved });

@@ -405,7 +405,7 @@ describe.sequential('acciones frecuentes de Agentes con Chromium y persistencia 
           .toBe(`${target.pathname}/${encodeURIComponent(tenantId)}/${encodeURIComponent(alias)}`);
         expect(new URL(page.url()).search).toBe(target.query);
         await page.getByRole('heading', { name: target.heading, exact: true }).waitFor({ timeout: 30_000 });
-        if (target.id === 'Q02') await page.getByText('Canal PTY no disponible en este stack', { exact: true }).waitFor({ timeout: 20_000 });
+        if (target.id === 'Q02') await page.getByText('La terminal no está disponible en este servidor', { exact: true }).waitFor({ timeout: 20_000 });
         if (target.id === 'Q03') await page.getByLabel(`Mensaje para ${alias}`, { exact: true }).waitFor({ timeout: 20_000 });
         if (target.id === 'Q04') {
           await page.getByRole('region', { name: `Perfil y contexto de ${alias}`, exact: true }).waitFor({ timeout: 20_000 });

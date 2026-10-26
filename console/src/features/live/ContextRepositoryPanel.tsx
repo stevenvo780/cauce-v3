@@ -26,7 +26,7 @@ function RepositoryContent({ tenantId, alias }: Props) {
     <p>No se pudo consultar la vinculación Git de este agente.</p>
     <ActionButton size="sm" label="Reintentar" pendingLabel="Reintentando…" done={false} announceError={false} action={() => capability.reload()} />
   </Notice>;
-  if (capability.data?.state === 'not_published') return <p className="m-0 text-muted">Este gateway todavía no publica la inspección Git.</p>;
+  if (capability.data?.state === 'not_published') return <p className="m-0 text-muted">Este servidor todavía no publica la inspección Git.</p>;
   if (capability.data?.state !== 'configured') return <p className="m-0 text-muted">Esta instancia todavía no tiene un repositorio Git vinculado por el servidor.</p>;
 
   return <div className="grid gap-4">

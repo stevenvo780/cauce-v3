@@ -149,7 +149,7 @@ describe('cambiar el agente de la dirección', () => {
     renderAt('/terminal/Steven/zeus');
     await waitForTui();
     await user.click(screen.getByRole('button', { name: 'Más acciones' }));
-    await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión pty/i }));
+    await user.click(await screen.findByRole('menuitem', { name: /cerrar sesión de terminal/i }));
     await waitFor(() => { expect(deletes).toEqual(['sid-zeus']); });
     expect(screen.queryByLabelText('Sesión PTY activa')).not.toBeInTheDocument();
     expect(posts).toEqual(['zeus']);

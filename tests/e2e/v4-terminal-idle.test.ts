@@ -47,7 +47,7 @@ describe.sequential('inactividad real de la TUI', () => {
       const next = await page.locator('[data-session-id]').evaluate((element) => element.getAttribute('data-session-id'));
       expect(next).not.toBe(id);
       await page.getByRole('button', { name: 'Más acciones', exact: true }).click();
-      await page.getByRole('menuitem', { name: 'Cerrar sesión PTY', exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Cerrar sesión de terminal', exact: true }).click();
       await expect.poll(async () => {
         const rows = await fixture.database.pool.query<{ revoked_at: Date | null }>('SELECT revoked_at FROM terminal_sessions WHERE id=$1', [next]);
         return rows.rows[0]?.revoked_at instanceof Date;
