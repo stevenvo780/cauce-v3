@@ -10,18 +10,9 @@ import type { OfficeAgent } from './office-agent';
 import { SpriteCache } from './paint';
 import { QuotaMeter } from './QuotaMeter';
 
-const COLLAPSED_KEY = 'cauce.office.party.collapsed';
 /** The head of the 16×24 sprite: two px trimmed on each side, one blank row on top. */
 const PORTRAIT = 12;
 const ATTENTION: ReadonlySet<LiveState> = new Set(['down', 'blocked']);
-
-function readCollapsed(): boolean {
-  try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
-}
-
-function writeCollapsed(collapsed: boolean): void {
-  try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch { /* blocked storage only forgets the choice */ }
-}
 
 /** Lower is more urgent: an agent in trouble first, then the one with the least quota left; no number goes last. */
 function urgency(agent: OfficeAgent, quota: AgentQuotaBar | undefined): number {
@@ -72,7 +63,7 @@ export function PartyPanel({ agents, quotas, reading, selectedId, narrow, onPick
   onPick: (id: string) => void;
 }) {
   const listId = useId();
-  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
   const members = useMemo(() => agents.filter((agent) => !agent.visitor)
     .map((agent) => ({ agent, quota: quotas.get(agent.id), rank: urgency(agent, quotas.get(agent.id)) }))
@@ -85,7 +76,7 @@ export function PartyPanel({ agents, quotas, reading, selectedId, narrow, onPick
   if (members.length === 0) return null;
   const alerts = members.filter(({ agent }) => ATTENTION.has(agent.state)).length;
   const compact = collapsed && !narrow;
-  const toggle = () => { setCollapsed(!collapsed); writeCollapsed(!collapsed); };
+  const toggle = () => { setCollapsed(!collapsed); };
   const pick = (id: string) => { onPick(id); if (narrow) setOpen(false); };
 
   if (narrow && !open) {

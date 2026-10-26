@@ -1,4 +1,5 @@
-const RELOAD_KEY = 'cauce:module-reload';
+// `window.name` is scoped to this tab and survives a reload; the browser-storage policy forbids Web Storage here.
+const RELOAD_MARK = 'cauce:module-reload';
 const NOTICE_ID = 'module-recovery-notice';
 let reloading = false;
 
@@ -23,17 +24,12 @@ function showNotice(automatic: boolean): void {
 
 export function reloadAfterModuleFailure(): boolean {
   if (reloading) return true;
-  try {
-    // The marker survives reloads; without session storage only a manual retry is safe.
-    if (sessionStorage.getItem(RELOAD_KEY)) {
-      showNotice(false);
-      return false;
-    }
-    sessionStorage.setItem(RELOAD_KEY, '1');
-  } catch {
+  // The marker survives one reload; once it is set only a manual retry is safe.
+  if (window.name === RELOAD_MARK) {
     showNotice(false);
     return false;
   }
+  window.name = RELOAD_MARK;
   reloading = true;
   showNotice(true);
   window.setTimeout(() => { window.location.reload(); }, 800);
