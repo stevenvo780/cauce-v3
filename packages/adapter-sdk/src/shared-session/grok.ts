@@ -502,7 +502,10 @@ function grokChain(entries: readonly GrokUpdateLine[], start: number): GrokChain
       const pending = type === SUBAGENT_FINISHED ? subagents : tasks;
       if (id !== undefined && pending.delete(id)) {
         finished += 1;
-        if (payload?.will_wake === true) wakeDue = true;
+        // Work that finishes while a turn of the chain is still running is answered inside that turn
+        // (hades 26-oct: a 12 s background search, then the reply, then `turn_completed`): no wake follows.
+        const turnRunning = index < first.completionIndex || open !== undefined;
+        if (payload?.will_wake === true && !turnRunning) wakeDue = true;
       }
       continue;
     }

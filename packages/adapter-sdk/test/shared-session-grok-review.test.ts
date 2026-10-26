@@ -144,6 +144,29 @@ test("grok: trabajo en segundo plano que nunca termina no retiene la entrega má
   assert.match(output.reply ?? "", /background_pending/u);
 });
 
+test("grok: trabajo en segundo plano que termina dentro del turno no deja la entrega esperando un despertar", async () => {
+  const { state, grokHome, log } = await grokWorkspace("grok-review-fondo-dentro-del-turno");
+  const tmux = new GrokTmux();
+  tmux.onSubmit = async (text) => {
+    const correlation = correlationIdFromPrompt(text);
+    await log.append(
+      log.user(text),
+      log.tool("p-bus", "call-bg", "run_terminal_cmd", { background: true }),
+      log.backgrounded("call-bg", "busqueda-1"),
+      log.taskCompleted("busqueda-1", true),
+      log.message("p-bus", envelopeText("encontrado", correlation)),
+      log.completed("p-bus"),
+    );
+  };
+
+  const started = Date.now();
+  const output = await execute(await adapterFor(
+    grokRunner({ grokHome, tmux, sleep: delay, backgroundWaitMs: 2_000 }), state, "hades", "grok"));
+
+  assert.equal(output.reply, "encontrado");
+  assert.ok(Date.now() - started < 2_000, "no esperó un despertar que nunca llega");
+});
+
 test("grok: un turno cancelado sin trabajo pendiente y sin depósito sigue siendo un fallo declarado", async () => {
   const { grokHome, log } = await grokWorkspace("grok-review-cancelado-sin-deposito");
   const tmux = new GrokTmux();
