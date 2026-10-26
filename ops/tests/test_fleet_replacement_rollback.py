@@ -626,6 +626,53 @@ class InPlaceRecreationRollbackTest(unittest.TestCase):
         mocks['create'].assert_not_called()
         self.assertNotIn('recreated_original', self.entry)
 
+    def refreshed(self, root, **changes):
+        """Production, 26-oct (Praxis teseo): the update's image refresh recreated the container in place and kept the
+        creator's operation label; only the refresh receipt this operation journaled proves it is the destination."""
+        self.policy['roots'] = {'state': str(root)}
+        self.destination['Config']['Labels'][container.OPERATION_LABEL] = '71000000-0000-4000-8000-000000000001'
+        directory = root / 'operations' / self.OPERATION
+        directory.mkdir(parents=True, mode=0o700)
+        receipt = {'status': 'succeeded', 'container_id': 'f' * 64, 'previous_id': 'a' * 64, 'previous_image': self.IMAGE,
+                   'container_name': 'original', 'runtime_key': 'runtime', 'tenant_id': 'Tenant', 'host_id': 'host', **changes}
+        filename = directory / 'image-refresh-runtime.json'
+        filename.write_text(json.dumps(receipt))
+        filename.chmod(0o600)
+        removed = []
+        def docker(*arguments):
+            if arguments[:2] == ('rm', '-f'):
+                removed.append(arguments[2])
+                self.containers.clear()
+                return b''
+            return self.docker(*arguments)
+        return removed, mock.patch.object(container, 'docker', side_effect=docker)
+
+    def test_an_image_refreshed_destination_is_removed_by_its_receipt_and_the_original_rebuilt(self):
+        import contextlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as root, contextlib.ExitStack() as stack:
+            removed, docker = self.refreshed(pathlib.Path(root))
+            mocks = self.patches(stack, docker=docker)
+            rollback.recreate_original(self.executor, self.entry)
+        self.assertEqual(removed, ['f' * 64])
+        mocks['create'].assert_called_once()
+        self.assertEqual(self.entry['recreated_original']['container_id'], '9' * 64)
+
+    def test_a_refresh_receipt_for_another_container_never_removes_the_destination(self):
+        import contextlib
+        import tempfile
+        for changes in ({'container_id': '8' * 64}, {'previous_id': '8' * 64}, {'status': 'prepared'}, {'tenant_id': 'Other'}):
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as root, contextlib.ExitStack() as stack:
+                self.containers[:] = [self.destination]
+                self.entry.pop('diagnostic', None)
+                removed, docker = self.refreshed(pathlib.Path(root), **changes)
+                mocks = self.patches(stack, docker=docker)
+                with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                    rollback.recreate_original(self.executor, self.entry)
+                self.assertEqual(removed, [])
+                mocks['create'].assert_not_called()
+                self.assertNotIn('recreated_original', self.entry)
+
     def test_the_rebuild_pin_replaces_the_captured_pin_in_original_verification(self):
         observed = {'Id': '9' * 64}
         self.entry['recreated_original'] = dict(self.pins['9' * 64])

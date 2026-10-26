@@ -83,6 +83,21 @@ def original(executor, entry: dict, *, restarting: bool = False) -> tuple[dict, 
         raise SafeFailure('replacement original unverified') from None
 
 
+def refreshed_destination(executor, agent: dict, pin: dict, current: dict) -> bool:
+    """An image refresh recreates the container in place and keeps the creator's operation label, so its destination is
+    proven by the refresh receipt this operation journaled: it replaced the captured original with this very container."""
+    from fleet_executor_pki import checked_file
+    state = executor.policy.get('roots', {}).get('state')
+    filename = state and Path(state) / 'operations' / executor.context['operation_id'] / ('image-refresh-' + agent['runtime_key'] + '.json')
+    if not filename or not filename.exists():
+        return False
+    receipt = json.loads(checked_file(filename, True))
+    return receipt.get('status') == 'succeeded' and receipt.get('container_id') == current['Id'] \
+        and receipt.get('previous_id') == pin['container_id'] and receipt.get('previous_image') == pin['image_id'] \
+        and receipt.get('container_name') == agent['container_name'] and receipt.get('runtime_key') == agent['runtime_key'] \
+        and receipt.get('tenant_id') == agent['tenant_id'] and receipt.get('host_id') == executor.policy['host_id']
+
+
 def recreate_original(executor, entry: dict) -> None:
     """An update that changes extensions or resources recreates the container under its own name, so the captured
     original no longer exists when admission fails. Restoring it rebuilds the captured placement: the approved previous
@@ -132,10 +147,13 @@ def recreate_original(executor, entry: dict) -> None:
             if any(labels.get(key) != value for key, value in expected_labels(executor.policy, agent).items()):
                 raise ValueError
             if labels.get(RESTORED_LABEL) != operation:
-                if labels.get(OPERATION_LABEL) != operation:
+                refreshed = labels.get(OPERATION_LABEL) != operation
+                if refreshed and not refreshed_destination(executor, agent, pin, current):
                     raise ValueError
                 entry['phase'] = 'removing_destination'
                 executor.save()
+                if refreshed:
+                    docker('rm', '-f', current['Id'])
                 discard_operation(executor.policy, desired, operation)
                 if inspect_container(agent['container_name']) is not None:
                     raise ValueError
