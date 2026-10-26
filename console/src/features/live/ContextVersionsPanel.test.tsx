@@ -72,7 +72,7 @@ it('un conflicto de ingesta nativa se explica en español y se resuelve creando 
   expect(screen.getByRole('button', { name: 'Guardar nueva versión' })).toBeEnabled();
 });
 it.each([
-  ['context_runtime_unsupported', /adaptador sin contexto versionado: actualiza su paquete/u, 'Error de aplicación'],
+  ['context_runtime_unsupported', /adaptador antiguo: actualiza su paquete; Muse sin terminal compartida/u, 'Error de aplicación'],
   ['context_runtime_attempts_exhausted', /Se agotaron los reintentos/u, 'Error de aplicación'],
   ['context_version_unreadable', /La versión actual no se puede leer\. Restaura una versión anterior desde el historial\./u, 'Error de aplicación'],
   ['context_runtime_offline', /desconectado: la versión se aplicará cuando vuelva/u, 'Aplicación pendiente'],

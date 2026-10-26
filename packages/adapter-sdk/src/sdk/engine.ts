@@ -51,7 +51,7 @@ import { runSystemGateProbe } from "./engine/system-gate-probe.js";
 import { isConversationStatusRequest, runConversationStatus } from "./engine/conversation-status.js";
 import { PRAXIS_SUPERVISION_NOTICE_MESSAGE_TYPE, runPraxisSupervisionNotice } from "./engine/praxis-supervision-notice.js";
 import { DEFAULT_NO_PROGRESS_TIMEOUT_MS } from "./message-timeout.js";
-import { validateVersionedContext, VersionedContextTurn, versionedContextDelivery, contextSentKey } from './engine/versioned-context.js';
+import { validateVersionedContext, VersionedContextTurn, versionedContextDelivery, contextSentKey, contextHeldByTurn } from './engine/versioned-context.js';
 import { packagedHarnessDescriptor } from '../context/harness-descriptor.js';
 import { defaultContextIngestClient, type NativeContextIngest } from './context-ingest-client.js';
 import type { EmissionRuntime } from "./mcp-emission/runtime.js";
@@ -615,7 +615,7 @@ export class AdapterEngine {
           output,
           ...(profileAdoption === undefined ? {} : { profileAdoption }),
           ...(consumption === undefined || sentContext === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
-            || space.materializedVersion !== sentContext.version || space.materializedDigest !== sentContext.digest
+            || !contextHeldByTurn(space, sentContext, sentDelivery)
             ? {} : { contextAdoption: { version: sentContext.version, digest: sentContext.digest, input_sha256: consumption.input_sha256 } }),
           ...(consumption === undefined || delivery.epoch !== this.store.epoch || this.fenced.has(delivery.delivery_id)
             ? {} : { consumptionWitness: consumption }),

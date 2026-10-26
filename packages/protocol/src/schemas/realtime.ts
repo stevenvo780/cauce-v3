@@ -178,6 +178,11 @@ export const CompanyContextSchema = z.object({
 export type CompanyContext = z.infer<typeof CompanyContextSchema>;
 
 export const VERSIONED_CONTEXT_CAPABILITY = 'versioned_context_v1' as const;
+/**
+ * The adapter's agent turns return a consumption witness bound to the context they carried, so an ACK can accredit the version.
+ * Announced at runtime only when the configured runner witnesses its turns: Muse without a shared TUI, for instance, never does.
+ */
+export const CONTEXT_ADOPTION_CAPABILITY = 'context_adoption_v1' as const;
 export const VersionedContextSchema = z.object({
   company_id: z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u),
   tenant_id: TenantSchema, alias: AliasSchema,

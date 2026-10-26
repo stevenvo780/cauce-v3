@@ -55,6 +55,8 @@ export interface AdapterCapabilities {
   /** Accepts `company_context` in the envelope: director, escalation targets and reserved principals. */
   readonly company_context_v1?: true;
   readonly versioned_context_v1?: true;
+  /** Agent turns return the consumption witness that accredits a versioned context; set at runtime by the runner, never statically. */
+  readonly context_adoption_v1?: true;
   /** Declares the adapter receives `hello_ack.agent_profile` and syncs it into the harness files. */
   readonly agent_profile_v1?: true;
   /** Accepts per-delivery runtime profile contract and emits consumption evidence upon completion. */

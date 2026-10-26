@@ -6,7 +6,7 @@ const UNREADABLE_VERSION_MESSAGE = 'La versión actual no se puede leer. Restaur
 
 /** Server application codes. `pending` = the version will be adopted without operator action. */
 const APPLICATION: Record<string, ApplicationNotice> = {
-  context_runtime_unsupported: { pending: false, message: 'La conexión no anuncia contexto versionado o un arnés con testigo de consumo (adaptador sin contexto versionado: actualiza su paquete; arnés sin testigo: revisa su compatibilidad). Al anunciar ambos, se reevaluará automáticamente y la adopción se comprobará en su próximo turno.' },
+  context_runtime_unsupported: { pending: false, message: 'El agente no puede acreditar que usa esta versión: su adaptador no anuncia contexto versionado con testigo de consumo de sus turnos (adaptador antiguo: actualiza su paquete; Muse sin terminal compartida, Grok en terminal compartida u OpenClaw por API no tienen testigo). Cuando lo anuncie, se reevaluará sola y la adopción se comprobará en su próximo turno.' },
   context_runtime_offline: { pending: true, message: 'El agente está desconectado: la versión se aplicará cuando vuelva.' },
   context_runtime_verification_failed: { pending: true, message: 'Aún no se pudo comprobar que el agente use esta versión: se reintentará y la adoptará en su próximo turno.' },
   context_runtime_attempts_exhausted: { pending: false, message: 'Se agotaron los reintentos sin comprobar que el agente use esta versión: revisa que esté en línea y pulsa «Aplicar al agente».' },

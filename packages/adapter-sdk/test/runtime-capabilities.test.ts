@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runtimeHarnessDefinition } from "../src/bin/shared.js";
+import { runtimeHarnessDefinition, withContextAdoption, type AgentTurnRunner } from "../src/bin/shared.js";
 import { HARNESS_DEFINITIONS, openClawDefinition } from "../src/harnesses/index.js";
 import { helloCapabilityStrings } from "../src/sdk/client.js";
 
@@ -126,4 +126,32 @@ test("client HELLO follows the immutable factory capability for supported and un
       assert.equal(hello.capabilities.includes("human_message_client_delegation_v1"), definition.id !== "fake");
     } finally { stop.abort(); await running; }
   }
+});
+
+test("context adoption is announced only by runners whose agent turns return a consumption witness", () => {
+  const expected: Readonly<Record<AgentTurnRunner, readonly string[]>> = {
+    process: ["claude", "codex", "grok", "openclaw"],
+    shared: ["claude", "codex", "muse"],
+    "openclaw-api": [],
+    "muse-msp": [],
+  };
+  for (const [runner, harnesses] of Object.entries(expected) as [AgentTurnRunner, readonly string[]][]) {
+    for (const definition of Object.values(HARNESS_DEFINITIONS)) {
+      const advertised = helloCapabilityStrings(withContextAdoption(definition, runner).capabilities);
+      assert.equal(advertised.includes("context_adoption_v1"), harnesses.includes(definition.id), `${runner} ${definition.id}`);
+      assert.deepEqual(advertised.filter((capability) => capability !== "context_adoption_v1"),
+        helloCapabilityStrings(definition.capabilities), `${runner} ${definition.id}`);
+    }
+  }
+  // The packaged definitions never claim it: only the runtime that knows its runner may.
+  for (const definition of Object.values(HARNESS_DEFINITIONS)) {
+    assert.equal(definition.capabilities.context_adoption_v1, undefined, definition.id);
+  }
+});
+
+test("an adapter without versioned context never announces context adoption", () => {
+  const { versioned_context_v1: _versioned, ...capabilities } = HARNESS_DEFINITIONS.codex.capabilities;
+  void _versioned;
+  const definition = { ...HARNESS_DEFINITIONS.codex, capabilities };
+  assert.equal(withContextAdoption(definition, "process").capabilities.context_adoption_v1, undefined);
 });

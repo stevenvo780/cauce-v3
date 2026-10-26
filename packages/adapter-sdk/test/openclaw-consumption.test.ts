@@ -29,13 +29,17 @@ async function home(options: { readonly existing?: boolean } = {}) {
       + message("assistant", [{ type: "text", text: "antes" }]), { mode: 0o600 });
     await index();
   } else await writeFile(join(sessions, "sessions.json"), "{}", { mode: 0o600 });
+  return { root, sessions, file, index, ...turnFixture(), clean: () => rm(root, { recursive: true, force: true }) };
+}
+
+function turnFixture() {
   const request: CommandRunRequest = { command: process.execPath, args: ["--session-key", SID], harness: "openclaw",
     env: {}, stdin: `--- BEGIN REQUEST ---\npedido ${randomUUID()}\n--- END REQUEST ---\n`,
     signal: new AbortController().signal, timeoutMs: 2_000, sessionId: SID };
   const result = (stdoutText = ANSWER, session = SID): CommandRunResult => ({
     stdout: JSON.stringify({ result: { payloads: [{ text: stdoutText }] }, session_id: session }),
     stderr: "", exitCode: 0, signal: null, timedOut: false, cancelled: false });
-  return { root, sessions, file, index, request, result, clean: () => rm(root, { recursive: true, force: true }) };
+  return { request, result };
 }
 
 test("OpenClaw atestigua el turno con la clave de sesión de Cauce y el id de la entrada nativa", async () => {
@@ -126,3 +130,58 @@ for (const [name, mutate] of Object.entries(NEGATIVE)) {
     } finally { await context.clean(); }
   });
 }
+
+/** A V4 container: the profile lives under `OPENCLAW_STATE_DIR`, with a named agent and no `~/.openclaw` at all. */
+async function v4Profile(options: { readonly existing?: boolean } = {}) {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "oc-consumption-v4-")));
+  const homeDirectory = join(root, "home"); const state = join(root, "profiles", "operador", "abc");
+  await mkdir(homeDirectory, { recursive: true, mode: 0o700 });
+  const sessions = join(state, "agents", "operador", "sessions");
+  await mkdir(sessions, { recursive: true, mode: 0o700 });
+  const file = join(sessions, `${TRANSCRIPT}.jsonl`);
+  const index = async (): Promise<void> => {
+    await writeFile(join(sessions, "sessions.json"), JSON.stringify({
+      [`agent:operador:${SID}`]: { sessionId: TRANSCRIPT, sessionFile: file } }), { mode: 0o600 });
+  };
+  if (options.existing !== false) {
+    await writeFile(file, line({ type: "session", id: TRANSCRIPT }) + message("user", "turno anterior")
+      + message("assistant", [{ type: "text", text: "antes" }]), { mode: 0o600 });
+    await index();
+  }
+  const environment = { HOME: homeDirectory, OPENCLAW_HOME: state, OPENCLAW_STATE_DIR: state, CAUCE_OPENCLAW_AGENT_ID: "operador" };
+  return { ...turnFixture(), file, index, environment, clean: () => rm(root, { recursive: true, force: true }) };
+}
+
+test("OpenClaw atestigua el turno de un perfil V4 que guarda su estado en OPENCLAW_STATE_DIR", async () => {
+  const context = await v4Profile();
+  try {
+    const snapshot = await prepareOpenClawConsumption(context.request, context.environment);
+    const turn = randomUUID();
+    await appendFile(context.file, message("user", context.request.stdin.trim(), turn)
+      + message("assistant", [{ type: "text", text: ANSWER }]));
+    const witness = await verifyOpenClawConsumption(snapshot, context.request, context.result());
+    assert.equal(witness?.native_turn_id, turn);
+    assert.equal(witness?.input_sha256, inputDigest(context.request.stdin));
+    // Before: only `$HOME/.openclaw` was read, which a V4 container does not have, so no turn was ever witnessed.
+    assert.equal(await verifyOpenClawConsumption(await prepareOpenClawConsumption(context.request, { HOME: context.environment.HOME }),
+      context.request, context.result()), undefined);
+  } finally { await context.clean(); }
+});
+
+test("OpenClaw V4 atestigua el primer turno bajo el agente que nombra el puente, no bajo main", async () => {
+  const context = await v4Profile({ existing: false });
+  try {
+    const snapshot = await prepareOpenClawConsumption(context.request, context.environment);
+    await writeFile(context.file, line({ type: "session", id: TRANSCRIPT }) + message("user", context.request.stdin.trim())
+      + message("assistant", [{ type: "text", text: ANSWER }]), { mode: 0o600 });
+    await context.index();
+    assert.equal((await verifyOpenClawConsumption(snapshot, context.request, context.result()))?.native_session_id, SID);
+  } finally { await context.clean(); }
+});
+
+test("OpenClaw no atestigua con un OPENCLAW_STATE_DIR relativo", async () => {
+  const context = await v4Profile();
+  try {
+    assert.equal(await prepareOpenClawConsumption(context.request, { ...context.environment, OPENCLAW_STATE_DIR: "relative/state" }), undefined);
+  } finally { await context.clean(); }
+});

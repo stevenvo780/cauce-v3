@@ -1,12 +1,19 @@
-import { HarnessConsumptionEvidenceSchema, VERSIONED_CONTEXT_CAPABILITY } from '@cauce/protocol';
+import { CONTEXT_ADOPTION_CAPABILITY, HarnessConsumptionEvidenceSchema, VERSIONED_CONTEXT_CAPABILITY } from '@cauce/protocol';
 import type { DatabaseClient } from './db.js';
 import { lockContextTarget } from './context-version.js';
 
 const WITNESS_HARNESSES = new Set<unknown>(HarnessConsumptionEvidenceSchema.shape.harness_id.options.map(id => `harness.${id}`));
+/**
+ * Claude and Codex witnessed every turn, headless or in a shared TUI, before `versioned_context_v1` existed, so an adapter that
+ * predates `context_adoption_v1` is still trusted for them. Grok, Muse and OpenClaw depend on the runner and the release:
+ * headless Muse never witnesses, Grok only since 25-oct and OpenClaw in a V4 profile only once it read `OPENCLAW_STATE_DIR`.
+ */
+const LEGACY_WITNESS_HARNESSES = new Set<unknown>(['harness.claude', 'harness.codex']);
 
 export function supportsVersionedContextApplication(capabilities: unknown): boolean {
-  return Array.isArray(capabilities) && capabilities.includes(VERSIONED_CONTEXT_CAPABILITY)
-    && capabilities.some(capability => WITNESS_HARNESSES.has(capability));
+  if (!Array.isArray(capabilities) || !capabilities.includes(VERSIONED_CONTEXT_CAPABILITY)) return false;
+  const witnessed = capabilities.includes(CONTEXT_ADOPTION_CAPABILITY) ? WITNESS_HARNESSES : LEGACY_WITNESS_HARNESSES;
+  return capabilities.some(capability => witnessed.has(capability));
 }
 
 /**

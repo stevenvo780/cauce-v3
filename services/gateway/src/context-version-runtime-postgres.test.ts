@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { VERSIONED_CONTEXT_CAPABILITY, type DeliveryEnvelope } from '@cauce/protocol';
+import { CONTEXT_ADOPTION_CAPABILITY, VERSIONED_CONTEXT_CAPABILITY, type DeliveryEnvelope } from '@cauce/protocol';
 import { CauceRepository, ContextRuntimeUnsupportedError, lockCompanyAuthority, processContextOutbox, requestContextApplication,
   settleContextApplications, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { ContextVersionStore, readContextVersion } from '../../../packages/store/src/context-version.js';
@@ -174,6 +174,10 @@ describe('bounded application of versioned context to the live agent', () => {
   it.each([
     ['that does not negotiate versioned context', ['harness.codex']],
     ['whose harness cannot witness its turn', [VERSIONED_CONTEXT_CAPABILITY, 'harness.hermes']],
+    // The Praxis case: headless Muse and a pre-witness Grok adapter announce versioned context but never return a witness.
+    ['whose runner does not accredit adoption (headless Muse)', [VERSIONED_CONTEXT_CAPABILITY, 'harness.muse']],
+    ['whose release predates its witness (Grok)', [VERSIONED_CONTEXT_CAPABILITY, 'harness.grok']],
+    ['whose release cannot read its V4 profile (OpenClaw)', [VERSIONED_CONTEXT_CAPABILITY, 'harness.openclaw']],
   ])('refuses an agent %s without publishing a turn and shows why', async (_case, capabilities) => {
     const version = await context(); await lease(0, capabilities); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
     const refused = { state: 'error', version: 1, error: 'context_runtime_unsupported' };
@@ -188,6 +192,15 @@ describe('bounded application of versioned context to the live agent', () => {
       .toEqual({ state: 'error', last_error: 'context_runtime_unsupported' });
     expect((await pool.query("SELECT decision,metadata->>'error_code' AS code FROM audit_events WHERE action='context.apply'")).rows)
       .toEqual([{ decision: 'deny', code: 'context_runtime_unsupported' }, { decision: 'deny', code: 'context_runtime_unsupported' }]);
+  });
+  it('an adapter that accredits adoption at runtime gets the natural turn and adopts', async () => {
+    await context(); const epoch = await lease(0, [VERSIONED_CONTEXT_CAPABILITY, CONTEXT_ADOPTION_CAPABILITY, 'harness.grok']);
+    const runtime = new DeliveryContextRuntimeSink(pool, 5_000);
+    expect(await processContextOutbox(pool, { git, runtime })).toEqual({ state: 'pending', version: 1 });
+    expect(await outbox()).toMatchObject({ apply_error: null, parked: true });
+    expect(await turns()).toBe(0);
+    await ack(0, epoch, await naturalTurn(0, epoch), true);
+    expect(await applied()).toBe(1);
   });
   it.each(['resume', 'takeover', 'reconnect'] as const)('reevaluates an unsupported version when a capable lease returns by %s', async mode => {
     await context(); await lease(0, ['harness.codex']); const runtime = new DeliveryContextRuntimeSink(pool, 5_000);

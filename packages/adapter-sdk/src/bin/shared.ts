@@ -117,6 +117,24 @@ export function deliveryHarnesses(options: HarnessAdapterOptions, headlessRunner
       : `${options.sessionNamespace ?? options.definition.id}:human-initiator-v1` }) };
 }
 
+/** The runner that executes this adapter's agent turns: the spawned CLI, a shared TUI, OpenClaw's API or Muse MSP. */
+export type AgentTurnRunner = "process" | "shared" | "openclaw-api" | "muse-msp";
+const PROCESS_WITNESSES: ReadonlySet<HarnessId> = new Set<HarnessId>(["claude", "codex", "openclaw", "grok"]);
+const SHARED_WITNESSES: ReadonlySet<HarnessId> = new Set<HarnessId>(["claude", "codex", "muse"]);
+
+/**
+ * Announces `context_adoption_v1` only when the runner of agent turns returns a consumption witness, the evidence an ACK needs
+ * to accredit a versioned context: the spawned CLI of claude, codex, OpenClaw and Grok, and the shared TUI of claude, codex and
+ * Muse. Muse headless (`muse-cauce exec` or MSP), Grok in a TUI and OpenClaw's API never witness, so the gateway tells the
+ * operator so instead of spending dedicated turns that cannot succeed.
+ */
+export function withContextAdoption(definition: HarnessDefinition, runner: AgentTurnRunner): HarnessDefinition {
+  const witnesses = runner === "process" ? PROCESS_WITNESSES.has(definition.id)
+    : runner === "shared" && SHARED_WITNESSES.has(definition.id);
+  if (!witnesses || definition.capabilities.versioned_context_v1 !== true) return definition;
+  return { ...definition, capabilities: { ...definition.capabilities, context_adoption_v1: true } };
+}
+
 /**
  * Narrows the packaged OpenClaw capabilities to the transport that will
  * actually execute this adapter instance. An omitted transport is CLI.
@@ -438,8 +456,10 @@ export async function runCli(harnessId: HarnessId): Promise<void> {
   const runner = shared === undefined
     ? baseRunner
     : await sharedSessionRunner(shared, logger);
+  const agentTurns: AgentTurnRunner = shared !== undefined ? "shared" : museMsp ? "muse-msp"
+    : harnessId === "openclaw" && runtime.openClaw?.transport === "api" ? "openclaw-api" : "process";
   const { harness, humanHarness } = deliveryHarnesses({
-    definition: definitionWithVerifiedBridge(definition, override, logger),
+    definition: definitionWithVerifiedBridge(withContextAdoption(definition, agentTurns), override, logger),
     runner,
     store,
     executionSelection: selected,

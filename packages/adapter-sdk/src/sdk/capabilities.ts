@@ -21,6 +21,7 @@ const CAPABILITY_ENCODERS = {
   agent_identity_v1: (value) => matchesCapability(value.agent_identity_v1, true) ? ["agent_identity_v1"] : [],
   company_context_v1: (value) => matchesCapability(value.company_context_v1, true) ? ["company_context_v1"] : [],
   versioned_context_v1: (value) => matchesCapability(value.versioned_context_v1, true) ? ["versioned_context_v1"] : [],
+  context_adoption_v1: (value) => matchesCapability(value.context_adoption_v1, true) ? ["context_adoption_v1"] : [],
   agent_profile_v1: (value) => matchesCapability(value.agent_profile_v1, true) ? ["agent_profile_v1"] : [],
   agent_profile_adoption_v1: (value) => matchesCapability(value.agent_profile_adoption_v1, true) ? ["agent_profile_adoption_v1"] : [],
   client_mailbox_v1: (value) => matchesCapability(value.client_mailbox_v1, true) ? ["client_mailbox_v1"] : [],

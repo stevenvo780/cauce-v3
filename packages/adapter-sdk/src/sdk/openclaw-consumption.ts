@@ -47,13 +47,31 @@ async function transcriptFile(sessions: string, key: string): Promise<string | u
   return file;
 }
 
+const AGENT_ID = /^[a-z][a-z0-9_-]{0,63}$/u;
+
+/**
+ * OpenClaw's own state root: `OPENCLAW_STATE_DIR`, else `.openclaw` under `OPENCLAW_HOME` or `HOME`. A V4 container keeps its
+ * profile under `OPENCLAW_STATE_DIR`, with no `~/.openclaw`; reading only `HOME` there left every turn without a witness.
+ */
+function openClawStateDirectory(environment: NodeJS.ProcessEnv): string | undefined {
+  const value = (key: string): string | undefined => {
+    const raw = environment[key]?.trim();
+    return raw === undefined || raw.length === 0 ? undefined : raw;
+  };
+  const state = value("OPENCLAW_STATE_DIR");
+  if (state !== undefined) return isAbsolute(state) ? state : undefined;
+  const home = value("OPENCLAW_HOME") ?? value("HOME");
+  return home === undefined || !isAbsolute(home) ? undefined : join(home, ".openclaw");
+}
+
 export async function prepareOpenClawConsumption(
   request: CommandRunRequest, environment: NodeJS.ProcessEnv,
 ): Promise<OpenClawConsumptionSnapshot | undefined> {
   try {
+    const stateDirectory = openClawStateDirectory(environment);
     if (request.harness !== "openclaw" || request.sessionId === undefined || !NATIVE_ID.test(request.sessionId)
-      || environment.HOME === undefined || !isAbsolute(environment.HOME)) return undefined;
-    const agents = join(await realpath(environment.HOME), ".openclaw", "agents");
+      || stateDirectory === undefined) return undefined;
+    const agents = join(await realpath(stateDirectory), "agents");
     const found: OpenClawConsumptionSnapshot[] = [];
     const names = await readdir(agents).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
@@ -67,8 +85,10 @@ export async function prepareOpenClawConsumption(
       const read = await readTranscript(file, MAX_TRANSCRIPT_BYTES);
       found.push({ sessions, key, before: { file, metadata: read.metadata, size: read.bytes.length, digest: digest(read.bytes) } });
     }
-    // A brand-new session has no entry yet: OpenClaw creates it under its default agent.
-    if (found.length === 0) return { sessions: join(agents, "main", "sessions"), key: `agent:main:${request.sessionId}` };
+    // A brand-new session has no entry yet: OpenClaw creates it under the agent the bridge names, else its default one.
+    const configured = environment.CAUCE_OPENCLAW_AGENT_ID;
+    const agent = configured !== undefined && AGENT_ID.test(configured) ? configured : "main";
+    if (found.length === 0) return { sessions: join(agents, agent, "sessions"), key: `agent:${agent}:${request.sessionId}` };
     return found.length === 1 ? found[0] : undefined;
   } catch { return undefined; }
 }

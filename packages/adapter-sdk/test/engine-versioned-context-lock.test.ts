@@ -19,14 +19,15 @@ function context(version: number) {
 function claimed(id: string, version: number, session = 'shared-conversation') {
   return { ...delivery(id), ...conversation({ conversationId: session }), versioned_context: context(version) };
 }
-async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = false) {
+async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = false, withSpace = true) {
   const root = await mkdtemp(join(tmpdir(), 'cauce-space-turn-'));
   const space = join(root, 'space'); const path = join(space, 'context/mission.md');
-  const previous = process.env.CAUCE_SPACE_ROOT; process.env.CAUCE_SPACE_ROOT = space;
-  const reads: string[] = []; const releases: (() => void)[] = []; const executions: Promise<void>[] = [];
+  const previous = process.env.CAUCE_SPACE_ROOT;
+  if (withSpace) process.env.CAUCE_SPACE_ROOT = space; else delete process.env.CAUCE_SPACE_ROOT;
+  const inputs: string[] = []; const reads: string[] = []; const releases: (() => void)[] = []; const executions: Promise<void>[] = [];
   const engines: AdapterEngine[] = []; let releasing = false;
   const runner: CommandRunner = { run: async input => {
-    reads.push(await readFile(path, 'utf8').catch(() => 'absent'));
+    inputs.push(input.stdin); reads.push(await readFile(path, 'utf8').catch(() => 'absent'));
     await new Promise<void>(resolve => {
       if (releasing || input.signal.aborted) resolve();
       else { releases.push(resolve); input.signal.addEventListener('abort', () => { resolve(); }, { once: true }); }
@@ -58,7 +59,7 @@ async function fixture(t: TestContext, queueWaitTimeoutMs = 2000, withWitness = 
   };
   const release = () => { const next = releases.shift(); assert.ok(next); next(); };
   const releaseLast = () => { const next = releases.pop(); assert.ok(next); next(); };
-  return { path, reads, createEngine, start, release, releaseLast };
+  return { path, reads, inputs, createEngine, start, release, releaseLast };
 }
 test('a long versioned turn does not block another session from materializing and executing', { timeout: 6000 }, async t => {
   const f = await fixture(t); const a = await f.createEngine('a'); const b = await f.createEngine('b');
@@ -117,4 +118,29 @@ test('invalid versioned context scope is rejected before any space materializati
   await f.start(a.engine, { ...input, versioned_context: { ...input.versioned_context, tenant_id: 'Foreign' } });
   assert.equal(f.reads.length, 0); await assert.rejects(() => readFile(f.path), { code: 'ENOENT' });
   assert.equal(a.events.at(-1)?.error?.code, 'INVALID_VERSIONED_CONTEXT');
+});
+test('without a space, a witnessed turn that carried the whole context inline accredits its adoption', { timeout: 6000 }, async t => {
+  const f = await fixture(t, 2000, true, false); const a = await f.createEngine('a');
+  const running = f.start(a.engine, claimed('inline-consumed', 2)); await waitFor(() => f.reads.length === 1, 'inline runner');
+  f.release(); await running;
+  assert.deepEqual(f.reads, ['absent']);
+  assert.match(f.inputs[0] ?? '', /Version 2 instructions\./u);
+  const done = a.events.find(event => event.phase === 'done'); assert.ok(done?.harness_consumption_v1);
+  assert.deepEqual(done.context_adoption, { version: 2, digest: context(2).digest, input_sha256: done.harness_consumption_v1.input_sha256 });
+});
+test('without a space, a context too large to travel whole is never accredited', { timeout: 6000 }, async t => {
+  const f = await fixture(t, 2000, true, false); const a = await f.createEngine('a');
+  const files = [{ path: 'context/mission.md', content: 'x'.repeat(70_000) }];
+  const large = { ...context(3), files, digest: createHash('sha256').update(JSON.stringify(files)).digest('hex') };
+  const running = f.start(a.engine, { ...claimed('inline-too-large', 3), versioned_context: large });
+  await waitFor(() => f.reads.length === 1, 'large inline runner'); f.release(); await running;
+  const done = a.events.find(event => event.phase === 'done'); assert.ok(done?.harness_consumption_v1);
+  assert.equal(done.context_adoption, undefined);
+});
+test('without a consumption witness no context is accredited, inline or materialized', { timeout: 6000 }, async t => {
+  const f = await fixture(t, 2000, false, false); const a = await f.createEngine('a');
+  const running = f.start(a.engine, claimed('inline-unwitnessed', 1)); await waitFor(() => f.reads.length === 1, 'unwitnessed runner');
+  f.release(); await running;
+  const done = a.events.find(event => event.phase === 'done'); assert.ok(done);
+  assert.equal(done.harness_consumption_v1, undefined); assert.equal(done.context_adoption, undefined);
 });

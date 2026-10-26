@@ -201,6 +201,20 @@ export function versionedContextDelivery(input: VersionedContextDeliveryInput): 
     ...(input.nativeDocument === 'none' ? {} : { native_document: input.nativeDocument }) };
 }
 
+/**
+ * The witnessed input held this exact version: the space materialized it, or, with no space at all, the prompt carried every
+ * file inline (nothing fitted out). A space that did not materialize it (degraded, superseded) never accredits it inline.
+ */
+export function contextHeldByTurn(
+  space: Pick<VersionedContextTurn, 'root' | 'materializedVersion' | 'materializedDigest'>,
+  context: VersionedContext,
+  delivery: HarnessRequestContext['versioned_context_delivery'],
+): boolean {
+  if (space.root !== undefined) return space.materializedVersion === context.version && space.materializedDigest === context.digest;
+  return delivery !== undefined && delivery.materialized === false
+    && Buffer.byteLength(JSON.stringify(context.files)) <= delivery.max_bytes;
+}
+
 export function contextSentKey(sessionKey: string | undefined, alias: string, context: VersionedContext): string {
   return `${sessionKey ?? ''}|${alias}|${String(context.version)}|${context.digest}`;
 }
