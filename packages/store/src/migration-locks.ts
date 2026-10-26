@@ -89,6 +89,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '092_actor_human_journal.sql': {
     agent_profile_revisions: AE, agent_document_revisions: AE, console_users: SRE,
   },
+  '093_console_session_revocations.sql': {},
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */

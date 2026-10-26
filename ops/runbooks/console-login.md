@@ -60,10 +60,13 @@ Las cuatro decisiones que sostienen la seguridad, y por qué:
   mientras no se defina `CAUCE_CONSOLE_JWT_KEY_PATH`.
 - **El token va en una cookie `__Host-cauce_session; HttpOnly; Secure; SameSite=Strict`**, jamás en
   `localStorage` ni en el cuerpo de la respuesta: un XSS en la consola no tiene qué robarse.
-- **La sesión vence** (`CAUCE_CONSOLE_SESSION_TTL_SECONDS`, 28800 por defecto) y
-  `GET /v3/auth/session` lo comprueba de verdad. Además **relee la fila del usuario en cada
-  request**: `active=false` o un cambio de contraseña cortan las sesiones abiertas sin tabla de
-  revocación.
+- **La sesión es deslizante y tiene tope.** Mientras se usa, cada petición autenticada
+  extiende el vencimiento (`CAUCE_CONSOLE_SESSION_TTL_SECONDS`, 86400 = 24 h de inactividad) hasta un
+  tope absoluto contado desde el login (`CAUCE_CONSOLE_SESSION_MAX_SECONDS`, 2592000 = 30 días);
+  pasado el tope, o tras 24 h sin usarla, hay que volver a entrar. Detalle en
+  [docs/sesiones-consola.md](../../docs/sesiones-consola.md). `GET /v3/auth/session` lo comprueba de
+  verdad y **relee la fila del usuario en cada request**: `active=false` o un cambio de contraseña
+  cortan las sesiones abiertas, y el logout las revoca (`console_session_revocations`).
 
 Roles: **`operator`** (publicar, cancelar, reintentar, terminales) y **`reader`** (sólo leer); el
 `CHECK` de la migración no admite otros. Todo lo demás lo sigue acotando `memberships`/`role_policies`,
@@ -126,7 +129,8 @@ listener aparte para la consola.
    CAUCE_CONSOLE_JWT_KEY_PATH=/etc/cauce-v3/secrets/console_jwt_key
    # opcionales, con estos defaults:
    # CAUCE_CONSOLE_PASSWORD_FALLBACK=mtls      ← los agentes siguen entrando por certificado
-   # CAUCE_CONSOLE_SESSION_TTL_SECONDS=28800
+   # CAUCE_CONSOLE_SESSION_TTL_SECONDS=86400   ← ventana de inactividad
+   # CAUCE_CONSOLE_SESSION_MAX_SECONDS=2592000 ← tope absoluto desde el login
    ```
 
    ⚠️ **`_PATH` y `_FILE` no son la misma variable y las dos hacen falta.** En el env privado va

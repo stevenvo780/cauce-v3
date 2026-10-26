@@ -10,6 +10,7 @@ import { createServer as createTcpServer } from 'node:net';
 import type { FleetCapability } from '@cauce/protocol';
 import { buildGateway } from '../../services/gateway/src/app.js';
 import { MtlsAuthProvider, HashedMtlsIdentityFileProvider } from '../../services/gateway/src/auth.js';
+import { PostgresConsoleSessionRevocations } from '../../services/gateway/src/console-session-revocations.js';
 import { PostgresConsoleUserStore } from '../../services/gateway/src/console-users.js';
 import { PasswordAuthProvider } from '../../services/gateway/src/password-auth.js';
 import { startTestDatabase, type TestDatabase } from '../helpers/postgres.js';
@@ -346,6 +347,7 @@ async function availableLoopbackPort(): Promise<number> {
 
 interface FunctionalFixtureOptions {
   sessionTtlMs?: number;
+  sessionMaxMs?: number;
   browserLifetimeSeconds?: number;
   configureGateway?: (app: Fixture['app'], database: TestDatabase, auth: PasswordAuthProvider) => void;
   /** When set, the gateway advertises this catalog. Omitted keeps the executor unconfigured. */
@@ -391,6 +393,8 @@ export async function startConsoleFunctionalFixture(options: FunctionalFixtureOp
     setupStage = 'build gateway and start HTTPS listener';
     const auth = new PasswordAuthProvider({
       users: new PostgresConsoleUserStore(database.pool), signingKey: randomBytes(32), sessionTtlMs: options.sessionTtlMs ?? 10 * 60_000,
+      ...(options.sessionMaxMs === undefined ? {} : { sessionMaxMs: options.sessionMaxMs }),
+      sessionRevocations: new PostgresConsoleSessionRevocations(database.pool),
       fallback: new MtlsAuthProvider(new HashedMtlsIdentityFileProvider(pki.identityPath)),
     });
     await auth.ready();

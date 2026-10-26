@@ -13,6 +13,7 @@ import {
 } from './password-auth.js';
 import { verifyConsoleCredentialStamp } from './console-credential-stamp.js';
 import { fakePool, fakeRepository, noDeliveryWakes } from './test-support/gateway-doubles.js';
+import { MemoryConsoleSessionRevocations } from './test-support/console-session-revocations.js';
 
 /**
  * Everything asserted here is asserted on the EFFECT: the real `Set-Cookie` header, the real
@@ -155,6 +156,8 @@ async function fixture(options: {
   throttle?: LoginThrottle;
   addressThrottle?: LoginThrottle;
   companyAuthority?: ConsoleCompanyAuthority;
+  sessionMaxMs?: number;
+  revocations?: boolean;
 } = {}) {
   let now = Date.UTC(2026, 7, 6, 12, 0, 0);
   const user = options.user ?? await makeUser();
@@ -163,6 +166,8 @@ async function fixture(options: {
     users,
     signingKey: Buffer.alloc(32, 7),
     sessionTtlMs: 60 * 60 * 1_000,
+    ...(options.sessionMaxMs === undefined ? {} : { sessionMaxMs: options.sessionMaxMs }),
+    ...(options.revocations === true ? { sessionRevocations: new MemoryConsoleSessionRevocations() } : {}),
     companyAuthority: options.companyAuthority ?? {
       resolve: async () => ({ role: 'tenant_operator', scope: 'tenant', home_company: 'humanizar',
         acting_company: 'humanizar', platform_override: false }),
@@ -734,6 +739,159 @@ describe('login por contraseña de la consola', () => {
     } finally {
       await test.app.close();
     }
+  });
+});
+
+describe('sesión deslizante de la consola', () => {
+  const HOUR = 60 * 60 * 1_000;
+  const renewedCookie = (headers: Record<string, unknown>): string | undefined => {
+    const raw = headers['set-cookie'];
+    const values = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : [];
+    return values.find((value) => value.startsWith('__Host-cauce_session='))?.split(';', 1)[0];
+  };
+  const expiryOf = (cookie: string): number => {
+    const token = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1));
+    return (JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { exp: number }).exp * 1_000;
+  };
+  const use = (test: Awaited<ReturnType<typeof fixture>>, cookie: string) =>
+    test.app.inject({ method: 'GET', url: '/v3/status', headers: { cookie } });
+
+  it('una sesión en uso extiende su vencimiento y conserva sid, CSRF y empresa', async () => {
+    const test = await fixture();
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const first = cookieFrom(login.headers);
+      expect(renewedCookie((await use(test, first)).headers)).toBeUndefined();
+
+      test.advance(40 * 60 * 1_000);
+      const slid = await use(test, first);
+      expect(slid.statusCode).toBe(200);
+      const second = renewedCookie(slid.headers);
+      expect(second).toBeDefined();
+      expect(String(slid.headers['set-cookie'])).toMatch(/HttpOnly; Secure; SameSite=Strict; Max-Age=3600/);
+      expect(expiryOf(second as string)).toBe(expiryOf(first) + 40 * 60 * 1_000);
+      const claims = (cookie: string) => JSON.parse(Buffer.from(decodeURIComponent(cookie.split('=')[1] as string).split('.')[1] as string, 'base64url')
+        .toString('utf8')) as Record<string, unknown>;
+      expect({ ...claims(second as string), exp: 0 }).toEqual({ ...claims(first), exp: 0 });
+
+      test.advance(40 * 60 * 1_000);
+      expect((await use(test, first)).statusCode).toBe(401);
+      expect((await use(test, second as string)).statusCode).toBe(200);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el estado de sesión que consulta la consola renueva en segundo plano', async () => {
+    const test = await fixture();
+    try {
+      let cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
+      for (let minute = 0; minute < 5 * 60; minute += 1) {
+        test.advance(60 * 1_000);
+        const poll = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
+        expect(poll.json<{ authenticated: boolean }>().authenticated).toBe(true);
+        cookie = renewedCookie(poll.headers) ?? cookie;
+      }
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el tope absoluto desde el login no se extiende con actividad y luego exige login', async () => {
+    const test = await fixture({ sessionMaxMs: 3 * HOUR });
+    try {
+      const loginAt = Date.UTC(2026, 7, 6, 12, 0, 0);
+      let cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
+      for (let step = 0; step < 4; step += 1) {
+        test.advance(40 * 60 * 1_000);
+        const response = await use(test, cookie);
+        expect(response.statusCode).toBe(200);
+        cookie = renewedCookie(response.headers) ?? cookie;
+        expect(expiryOf(cookie)).toBeLessThanOrEqual(loginAt + 3 * HOUR);
+      }
+      test.advance(40 * 60 * 1_000);
+      expect(expiryOf(cookie)).toBe(loginAt + 3 * HOUR);
+      test.advance(25 * 60 * 1_000);
+      const capped = await use(test, cookie);
+      expect(capped.statusCode).toBe(401);
+      expect(renewedCookie(capped.headers)).toBeUndefined();
+      const state = await test.app.inject({ method: 'GET', url: '/v3/auth/session', headers: { cookie } });
+      const body = state.json<{ authenticated: boolean; reason?: string }>();
+      expect(body.authenticated).toBe(false);
+      expect(body.reason).toMatch(/venció/);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('una sesión caducada nunca se revive: ni responde ni emite cookie, ni siquiera tras usarla', async () => {
+    const test = await fixture();
+    try {
+      const cookie = cookieFrom((await test.login(EMAIL, PASSWORD)).headers);
+      test.advance(61 * 60 * 1_000);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await use(test, cookie);
+        expect(response.statusCode).toBe(401);
+        expect(renewedCookie(response.headers)).toBeUndefined();
+        test.advance(5 * 60 * 1_000);
+      }
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('una respuesta fallida o una cuenta retirada no renuevan nada', async () => {
+    const test = await fixture();
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const cookie = cookieFrom(login.headers);
+      test.advance(40 * 60 * 1_000);
+      const forbidden = await test.app.inject({
+        method: 'POST', url: '/v3/auth/session/company', headers: { cookie, origin: 'http://localhost' }, payload: {},
+      });
+      expect(forbidden.statusCode).toBe(403);
+      expect(renewedCookie(forbidden.headers)).toBeUndefined();
+
+      test.users.put(await makeUser({ active: false }));
+      const retired = await use(test, cookie);
+      expect(retired.statusCode).toBe(401);
+      expect(renewedCookie(retired.headers)).toBeUndefined();
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('el logout revoca la sesión: ni la cookie original ni una renovada vuelven a valer', async () => {
+    const test = await fixture({ revocations: true });
+    try {
+      const login = await test.login(EMAIL, PASSWORD);
+      const first = cookieFrom(login.headers);
+      const csrf = login.json<{ csrf_token: string }>().csrf_token;
+      test.advance(40 * 60 * 1_000);
+      const second = renewedCookie((await use(test, first)).headers) as string;
+      expect((await use(test, second)).statusCode).toBe(200);
+
+      const logout = await test.app.inject({
+        method: 'POST', url: '/v3/auth/logout', headers: { cookie: second, origin: 'http://localhost', 'x-csrf-token': csrf },
+      });
+      expect(logout.statusCode).toBe(204);
+      expect(String(logout.headers['set-cookie'])).toContain('Max-Age=0');
+      for (const cookie of [first, second]) {
+        const response = await use(test, cookie);
+        expect(response.statusCode).toBe(401);
+        expect(renewedCookie(response.headers)).toBeUndefined();
+      }
+      const again = await test.login(EMAIL, PASSWORD);
+      expect((await use(test, cookieFrom(again.headers))).statusCode).toBe(200);
+    } finally {
+      await test.app.close();
+    }
+  });
+
+  it('rechaza un tope absoluto menor que la ventana de inactividad', () => {
+    expect(() => new PasswordAuthProvider({
+      users: new MemoryConsoleUserStore(), signingKey: Buffer.alloc(32, 7), sessionTtlMs: 2 * HOUR, sessionMaxMs: HOUR,
+    })).toThrow(/tope absoluto/);
   });
 });
 

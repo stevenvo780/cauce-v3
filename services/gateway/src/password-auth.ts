@@ -14,6 +14,7 @@ import {
 } from './console-user-authority.js';
 import { DECOY_PASSWORD_HASH_PROMISE, MAX_PASSWORD_LENGTH, verifyPassword } from './password.js';
 import { rateLimitKey } from './client-ip.js';
+import type { ConsoleSessionRevocations } from './console-session-revocations.js';
 
 /**
  * Password authentication provider for console users.
@@ -25,7 +26,12 @@ import { rateLimitKey } from './client-ip.js';
 const JWT_HEADER = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' }), 'utf8').toString('base64url');
 const JWT_ISSUER = 'cauce-v3-gateway';
 const JWT_AUDIENCE = 'cauce-v3-console';
-const DEFAULT_SESSION_TTL_MS = 8 * 60 * 60 * 1_000;
+/** Inactivity window: every authenticated request pushes the expiry this far from now. */
+const DEFAULT_SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
+/** Ceiling counted from the login: no amount of activity extends a session beyond it. */
+const DEFAULT_SESSION_MAX_MS = 30 * 24 * 60 * 60 * 1_000;
+/** A renewal is skipped unless it would extend the expiry by at least this fraction of the inactivity window. */
+const RENEWAL_STEP_DIVISOR = 24;
 const MIN_SIGNING_KEY_BYTES = 32;
 /** Single message for "not found", "wrong password", and "disabled account". See `login()`. */
 const CREDENTIAL_FAILURE_MESSAGE = 'Correo o contraseña incorrectos.';
@@ -254,7 +260,12 @@ export interface PasswordAuthProviderOptions {
   signingKey: Uint8Array;
   /** Provider that handles anything that does NOT carry a session cookie: today, the agents' mTLS. */
   fallback?: AuthProvider;
+  /** Inactivity window; the expiry slides forward by this much while the session is used. */
   sessionTtlMs?: number;
+  /** Absolute lifetime from the login; the expiry never slides past it. */
+  sessionMaxMs?: number;
+  /** Closed sessions; without it logout only clears the cookie. */
+  sessionRevocations?: ConsoleSessionRevocations;
   cookieName?: string;
   now?: () => number;
   throttle?: LoginThrottle;
@@ -307,6 +318,8 @@ export class PasswordAuthProvider implements AuthProvider {
   private readonly users: ConsoleUserStore;
   private readonly signingKey: Buffer;
   private readonly sessionTtlMs: number;
+  private readonly sessionMaxMs: number;
+  private readonly sessionRevocations: ConsoleSessionRevocations | undefined;
   private readonly now: () => number;
   private readonly throttle: LoginThrottle;
   private readonly addressThrottle: LoginThrottle;
@@ -329,6 +342,11 @@ export class PasswordAuthProvider implements AuthProvider {
     if (!Number.isFinite(this.sessionTtlMs) || this.sessionTtlMs <= 0) {
       throw new Error('la vida de la sesión de consola debe ser positiva');
     }
+    this.sessionMaxMs = options.sessionMaxMs ?? Math.max(DEFAULT_SESSION_MAX_MS, this.sessionTtlMs);
+    if (!Number.isFinite(this.sessionMaxMs) || this.sessionMaxMs < this.sessionTtlMs) {
+      throw new Error('el tope absoluto de la sesión de consola no puede ser menor que su ventana de inactividad');
+    }
+    this.sessionRevocations = options.sessionRevocations;
     this.now = options.now ?? Date.now;
     this.throttle = options.throttle ?? new LoginThrottle();
     this.addressThrottle = options.addressThrottle ?? new LoginThrottle(20);
@@ -375,7 +393,11 @@ export class PasswordAuthProvider implements AuthProvider {
     if (cached) return cached;
     const token = this.token(request);
     if (token === undefined) throw new AuthError(SESSION_REQUIRED_MESSAGE);
-    const claims = verifyConsoleSession(this.signingKey, token, this.now());
+    const nowMs = this.now();
+    const claims = verifyConsoleSession(this.signingKey, token, nowMs);
+    // `iat` is the login instant and never moves, so it anchors the ceiling; `exp` is what slides.
+    if (claims.iat * 1_000 + this.sessionMaxMs <= nowMs) throw new SessionExpiredError();
+    if (await this.sessionRevocations?.isRevoked(claims.sid)) throw new SessionExpiredError();
     const user = await this.users.findById(claims.sub);
     // ALWAYS re-read. A signed token is not authority over the current state of the account.
     if (!user?.active) throw new AuthError('la cuenta de consola no está habilitada');
@@ -479,6 +501,25 @@ export class PasswordAuthProvider implements AuthProvider {
         reason: errorLabel(error) }, 'session authority omitted');
       return undefined;
     }
+  }
+
+  /**
+   * Slides the expiry of the session the request authenticated with, as a fresh cookie on the reply.
+   * Same sid, CSRF token and login instant: only `exp` moves, and never past the absolute ceiling.
+   * A request that failed, or that already sets its own session cookie, renews nothing, and a
+   * session that did not load (expired, revoked, disabled) was never cached here, so it cannot revive.
+   */
+  slideSession(request: FastifyRequest, reply: FastifyReply): void {
+    const loaded = this.requestCache.get(request);
+    if (loaded === undefined || reply.statusCode >= 400 || reply.hasHeader('set-cookie')) return;
+    const { claims } = loaded;
+    const nowMs = this.now();
+    const targetMs = Math.min(nowMs + this.sessionTtlMs, claims.iat * 1_000 + this.sessionMaxMs);
+    if (targetMs - claims.exp * 1_000 < this.sessionTtlMs / RENEWAL_STEP_DIVISOR) return;
+    const exp = Math.floor(targetMs / 1_000);
+    const next: ConsoleSessionClaims = { ...claims, exp };
+    void reply.header('Set-Cookie', hostSessionCookie(this.cookieName, signConsoleSession(this.signingKey, next),
+      exp - nowMs / 1_000, 'Strict'));
   }
 
   /** Reissues the same session with the new `cmp` claim: same sid, CSRF token, issue time and expiry. */
@@ -626,12 +667,24 @@ export class PasswordAuthProvider implements AuthProvider {
   }
 
   /**
-   * Logging out means clearing the cookie, and that is all it can be: the token is self-contained.
-   * That is why the session lifetime is short and why `active=false` and a password change really
-   * cut off access — a token stolen BEFORE logout simply expires, or is killed by disabling the
-   * account. Replies 204 even if there was no session: closing something already closed is not an error.
+   * Logging out clears the cookie and, when revocations are configured, records the session id
+   * until the day its absolute ceiling would have ended it: a copy of the cookie stops working
+   * and, because the session slides while used, cannot be kept alive by renewing it.
+   * Replies 204 even if there was no session: closing something already closed is not an error.
    */
-  async logout(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  async logout(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const token = this.token(request);
+    if (token !== undefined && this.sessionRevocations !== undefined) {
+      let claims: ConsoleSessionClaims | undefined;
+      try {
+        claims = verifyConsoleSession(this.signingKey, token, this.now());
+      } catch {
+        claims = undefined;
+      }
+      if (claims !== undefined) {
+        await this.sessionRevocations.revoke(claims.sid, claims.sub, claims.iat * 1_000 + this.sessionMaxMs);
+      }
+    }
     await reply
       .header('Cache-Control', 'no-store')
       .header('Set-Cookie', clearHostSessionCookie(this.cookieName, 'Strict'))
@@ -666,6 +719,11 @@ export function registerPasswordAuth(app: FastifyInstance, provider: PasswordAut
       const message = error instanceof Error ? error.message : 'falló la autenticación del request';
       await reply.code(status).send({ error: status === 403 ? 'forbidden' : 'unauthorized', message });
     }
+  });
+
+  app.addHook('onSend', async (request, reply, payload) => {
+    provider.slideSession(request, reply);
+    return payload;
   });
 
   app.post('/v3/auth/login', async (request, reply) => {

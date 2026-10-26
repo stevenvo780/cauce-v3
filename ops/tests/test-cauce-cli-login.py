@@ -54,7 +54,8 @@ class Handler(BaseHTTPRequestHandler):
         self.server.observed.append((self.command, self.path, self.headers.get('Cookie'), self.headers.get('X-CSRF-Token')))
         if self.server.redirect:
             return self.respond(302, {}, [('Location', self.server.redirect)])
-        self.respond(200, {'authenticated': not self.server.expired, 'login_mode': 'password', 'csrf_token': CSRF})
+        headers = [('Set-Cookie', self.server.slide)] if self.server.slide else []
+        self.respond(200, {'authenticated': not self.server.expired, 'login_mode': 'password', 'csrf_token': CSRF}, headers)
 
 
 class ConsoleLoginTests(unittest.TestCase):
@@ -67,6 +68,7 @@ class ConsoleLoginTests(unittest.TestCase):
         self.server.counter = 0
         self.server.redirect = None
         self.server.expired = False
+        self.server.slide = None
         self.server.missing_csrf = False
         self.server.before_response = None
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
@@ -138,6 +140,31 @@ class ConsoleLoginTests(unittest.TestCase):
         self.assertIn('cauce login', result.stderr)
         self.assertNotIn('Private denial', result.stderr)
         self.assertEqual(self.session.read_bytes(), original)
+
+    def test_status_stores_the_cookie_the_gateway_slides_forward(self):
+        self.authenticate()
+        inode = self.session.stat().st_ino
+        self.server.slide = '__Host-cauce_session=slid-7; HttpOnly; Secure; Path=/; Max-Age=86400'
+        status = self.command('--status')
+        self.assertEqual(status.returncode, 0, status.stderr)
+        document = login_cli.private_session(str(self.session))
+        self.assertEqual(document['cookie'], '__Host-cauce_session=slid-7')
+        self.assertEqual(document['csrf_token'], CSRF)
+        self.assertEqual(stat.S_IMODE(self.session.stat().st_mode), 0o600)
+        self.assertNotEqual(self.session.stat().st_ino, inode)
+        self.assertEqual(list(self.session.parent.glob('*.tmp')), [])
+        self.assertNotIn('slid-7', status.stdout + status.stderr)
+        self.command('--status')
+        self.assertEqual(self.server.observed[-1][2], '__Host-cauce_session=slid-7')
+
+    def test_cleared_or_foreign_cookies_never_replace_the_stored_session(self):
+        self.authenticate()
+        original = self.session.read_bytes()
+        for header in ('__Host-cauce_session=; HttpOnly; Secure; Path=/; Max-Age=0',
+                       'other=value; Path=/; Max-Age=86400'):
+            self.server.slide = header
+            self.assertEqual(self.command('--status').returncode, 0)
+            self.assertEqual(self.session.read_bytes(), original)
 
     def test_status_reports_expired_without_printing_csrf(self):
         self.authenticate()

@@ -19,6 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from http.cookies import CookieError, SimpleCookie
 
 PATH = re.compile(r'(?:context|directives)/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.(?:md|txt|json|yaml|yml)\Z')
 IDENTITY = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,63}\Z')
@@ -209,6 +210,64 @@ def request_json(gateway: str, origin: str, ca_file: str | None, method: str, pa
         raise ContextFailure(unavailable) from None
 
 
+def renewed_cookie(current: str, set_cookies: list[str]) -> str | None:
+    """The stored cookie with the values the gateway re-issued; None when nothing usable came back."""
+    names = {part.split('=', 1)[0].strip() for part in current.split(';') if '=' in part}
+    jar = SimpleCookie()
+    try:
+        for header in set_cookies:
+            jar.load(header)
+    except CookieError:
+        return None
+    updated = {}
+    for key, morsel in jar.items():
+        if key in names and morsel.value and morsel['max-age'] not in ('0', 0):
+            updated[key] = morsel.coded_value
+    if not updated:
+        return None
+    merged = {}
+    for part in current.split(';'):
+        if '=' in part:
+            name, value = part.split('=', 1)
+            merged[name.strip()] = value.strip()
+    merged.update(updated)
+    cookie = '; '.join(name + '=' + value for name, value in merged.items())
+    if len(cookie) > 12000 or any(ord(char) < 32 or ord(char) == 127 for char in cookie) or cookie == current:
+        return None
+    return cookie
+
+
+def store_renewed_cookie(location: str, current: str, set_cookies: list[str]) -> str:
+    """Persists a session cookie the gateway slid forward; best effort, returns the cookie to keep using."""
+    cookie = renewed_cookie(current, set_cookies)
+    if cookie is None:
+        return current
+    path = pathlib.Path(location).absolute()
+    temporary = path.parent / ('.console-session-' + uuid.uuid4().hex + '.tmp')
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            return current
+        raw = json.loads(read_scoped(path.parent, path.name, 16384))
+        if not isinstance(raw, dict) or raw.get('cookie') != current:
+            return current
+        raw['cookie'] = cookie
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            json.dump(raw, stream, separators=(',', ':'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except (OSError, ValueError, ContextFailure):
+        return current
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+    return cookie
+
+
 class ConsoleSessionClient:
     def __init__(self, session_file: str, gateway: str | None = None, origin: str | None = None, ca_file: str | None = None):
         self.session = private_session(session_file)
@@ -221,6 +280,7 @@ class ConsoleSessionClient:
         self.cookie = self.session['cookie']
         self.csrf = self.session.get('csrf_token')
         self.ca_file = ca_file
+        self.session_file = session_file
 
     def request(self, method: str, path: str, body=None):
         method = method.upper()
@@ -229,7 +289,9 @@ class ConsoleSessionClient:
             if not isinstance(self.csrf, str) or not re.fullmatch(r'[A-Za-z0-9_-]{32,128}', self.csrf):
                 raise ContextFailure('console session requires a valid csrf_token for mutations')
             headers['X-CSRF-Token'] = self.csrf
-        return request_json(self.gateway, self.origin, self.ca_file, method, path, body, headers)[0]
+        result, set_cookies = request_json(self.gateway, self.origin, self.ca_file, method, path, body, headers)
+        self.cookie = store_renewed_cookie(self.session_file, self.cookie, set_cookies)
+        return result
 
 
 class ContextClient:
@@ -240,6 +302,7 @@ class ContextClient:
         self.cookie = session.cookie
         self.csrf = session.csrf
         self.ca_file = ca_file
+        self.session_file = session_file
         self.tls = ssl.create_default_context(cafile=ca_file)
 
     def request(self, method: str, tenant: str, alias: str, suffix: str = '', body=None):
@@ -252,8 +315,11 @@ class ContextClient:
                 raise ContextFailure('console session file requires a valid csrf_token for mutations')
             headers['X-CSRF-Token'] = self.csrf
         try:
-            return request_json(self.gateway, self.origin, self.ca_file, method, base + suffix, body, headers, timeout=65,
-                                rejected='context request rejected', unavailable='context gateway is unavailable')[0]
+            result, set_cookies = request_json(self.gateway, self.origin, self.ca_file, method, base + suffix, body, headers,
+                                               timeout=65, rejected='context request rejected',
+                                               unavailable='context gateway is unavailable')
+            self.cookie = store_renewed_cookie(self.session_file, self.cookie, set_cookies)
+            return result
         except ContextFailure as error:
             message = str(error)
             marker = '; redirects are disabled'

@@ -23,6 +23,7 @@ import {
 import { buildLoopbackHealthProbe, probeAckPath } from './health.js';
 import { OidcBffAuthProvider, PostgresOidcSessionStore } from './oidc-bff.js';
 import { PostgresConsoleUserStore } from './console-users.js';
+import { PostgresConsoleSessionRevocations } from './console-session-revocations.js';
 import { PasswordAuthProvider } from './password-auth.js';
 import { loadTerminalConfig, terminalCapabilityAnnouncement } from './terminal/config.js';
 import { AgentRegistry } from './terminal/registry.js';
@@ -117,15 +118,21 @@ async function configuredAuthProvider(pool: DatabasePool): Promise<AuthProvider>
   if (selected === 'password') {
     const keyPath = process.env.CAUCE_CONSOLE_JWT_KEY_FILE;
     if (!keyPath) throw new Error('CAUCE_CONSOLE_JWT_KEY_FILE is required for password auth');
-    const ttlSeconds = Number(process.env.CAUCE_CONSOLE_SESSION_TTL_SECONDS ?? 8 * 60 * 60);
-    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 24 * 60 * 60) {
-      throw new Error('CAUCE_CONSOLE_SESSION_TTL_SECONDS must be between 60 and 86400');
+    const ttlSeconds = Number(process.env.CAUCE_CONSOLE_SESSION_TTL_SECONDS ?? 24 * 60 * 60);
+    if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 60 || ttlSeconds > 7 * 24 * 60 * 60) {
+      throw new Error('CAUCE_CONSOLE_SESSION_TTL_SECONDS must be between 60 and 604800');
+    }
+    const maxSeconds = Number(process.env.CAUCE_CONSOLE_SESSION_MAX_SECONDS ?? 30 * 24 * 60 * 60);
+    if (!Number.isSafeInteger(maxSeconds) || maxSeconds < ttlSeconds || maxSeconds > 90 * 24 * 60 * 60) {
+      throw new Error('CAUCE_CONSOLE_SESSION_MAX_SECONDS must be between CAUCE_CONSOLE_SESSION_TTL_SECONDS and 7776000');
     }
     const fallback = await configuredPasswordFallback();
     const provider = new PasswordAuthProvider({
       users: new PostgresConsoleUserStore(pool),
       signingKey: await readSigningKey(keyPath),
       sessionTtlMs: ttlSeconds * 1_000,
+      sessionMaxMs: maxSeconds * 1_000,
+      sessionRevocations: new PostgresConsoleSessionRevocations(pool),
       ...(fallback === undefined ? {} : { fallback })
     });
     // Fail boot if migration 023 did not run: a console that shows the login and returns 500
