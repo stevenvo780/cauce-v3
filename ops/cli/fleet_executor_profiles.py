@@ -13,7 +13,7 @@ import sys
 from fleet_executor_view import open_directory
 
 
-def ensure_private(parent: int, name: str, uid: int, gid: int, *, initialize_empty: bool = False) -> int:
+def ensure_private(parent: int, name: str, uid: int, gid: int, *, initialize_empty: bool = False, narrow: bool = False) -> int:
     created = False
     try:
         os.mkdir(name, mode=0o700, dir_fd=parent)
@@ -28,6 +28,9 @@ def ensure_private(parent: int, name: str, uid: int, gid: int, *, initialize_emp
                 if os.geteuid() != 0:
                     raise ValueError('profile executor cannot use the exact runtime owner')
                 os.fchown(directory, uid, gid)
+            os.fchmod(directory, 0o700)
+            details = os.fstat(directory)
+        elif narrow and (details.st_uid, details.st_gid) == (uid, gid) and stat.S_IMODE(details.st_mode) & 0o077:
             os.fchmod(directory, 0o700)
             details = os.fstat(directory)
         if details.st_uid != uid or details.st_gid != gid or stat.S_IMODE(details.st_mode) != 0o700:
@@ -59,8 +62,14 @@ def prepare_empty_profile(root: str, profile: str, uid: int, gid: int, *, initia
             os.close(current)
             current = following
         if provider == 'muse':
-            for component in ('config', 'data'):
-                os.close(ensure_private(current, component, uid, gid))
+            os.close(ensure_private(current, 'config', uid, gid))
+            data = ensure_private(current, 'data', uid, gid)
+            try:
+                # Muse creates data/muse with its own umask on first use; the adapter refuses a shared one, so the
+                # executor owns it private (and narrows one the runtime user left open).
+                os.close(ensure_private(data, 'muse', uid, gid, narrow=True))
+            finally:
+                os.close(data)
         os.fsync(current)
     finally:
         os.close(current)
