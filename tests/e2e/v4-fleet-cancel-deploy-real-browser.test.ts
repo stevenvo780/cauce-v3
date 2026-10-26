@@ -5,7 +5,7 @@ import { command } from '../../services/gateway/src/fleet/host-computer.fixtures
 import { cancelOperations } from './v4-fleet-cancel.helpers.js';
 import { bodySnippet } from './v4-console-real-browser.helpers.js';
 import { assertCancelDeployLive } from './v4-fleet-cancel-deploy.delivery.js';
-import { runStopDeployScenario } from './v4-fleet-stop-deploy.flow.js';
+import { runFreshStopDeployScenario, runStopDeployScenario } from './v4-fleet-stop-deploy.flow.js';
 import { cancelDeployTuiRuntime, runSharedPolicyDeployScenario } from './v4-fleet-cancel-deploy.tui.js';
 import { createCancelDeployActor, runCancelDeployScenario } from './v4-fleet-cancel-deploy.flow.js';
 import { cancelDeployCapture, cancelDeployPrefix, cancelDeployReceipts, cancelDeployRun, startCancelDeployFixture,
@@ -130,5 +130,15 @@ describe('cancelación con despliegue aprobado durante una actualización', () =
       });
     });
   }, 900_000);
+
+  it('detiene un agente lanzado con la release anterior y lo arranca con el bundle vigente, dos despliegues seguidos', async () => {
+    await runCase('fresh-stop-deployment', async (fixture, observed) => {
+      await runFreshStopDeployScenario(fixture, observed, async (actor, phase) => {
+        const live: Record<string, unknown> = {};
+        observed[phase] = live;
+        await assertCancelDeployLive(actor, phase, live);
+      });
+    });
+  }, 1_200_000);
 
 });

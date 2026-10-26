@@ -115,6 +115,10 @@ class FakeDocker:
             self.calls[-1] = ('helper', 'observe', source)
             return json.dumps(observation).encode()
         self.calls[-1] = ('helper', action, source)
+        adapter = self.adapters.get(self.containers[name]['Id'])
+        if action == 'check' and adapter is not None \
+                and adapter['metadata']['bundleDigest'] != arguments[arguments.index('--bundle-digest') + 1]:
+            raise SafeFailure('runtime effect or observation failed (exit 78): active bundle digest differs from lifecycle metadata')
         if action == 'stopped' and name in self.live:
             raise SafeFailure('runtime effect or observation failed')
         if action == 'stop' and name not in self.stuck:
@@ -233,9 +237,9 @@ class RebindEffectTests(ReleaseFixture):
         labels = container.expected_labels(self.policy, self.agent)
         self.docker.volumes[self.name + '-state'] = dict(labels)
 
-    def old_container(self, *, running=True, live=False):
+    def old_container(self, *, running=True, live=False, digest=None):
         row = self.docker.add(self.name, container.expected_labels(self.policy, self.agent), self.mounts(self.old), running=running)
-        self.docker.register_adapter(self.agent, row, self.policy['bundles']['codex']['digest'])
+        self.docker.register_adapter(self.agent, row, digest or self.policy['bundles']['codex']['digest'])
         if live:
             self.docker.live.add(self.name)
         return row
@@ -262,6 +266,23 @@ class RebindEffectTests(ReleaseFixture):
                                    ('helper', 'stopped', str(lifecycle.SOURCE_ROOT))])
         self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
         self.assertFalse(any(call[:2] == ('volume', 'create') or call[:2] == ('volume', 'rm') for call in self.docker.calls))
+
+    def test_stop_accepts_an_adapter_launched_with_the_previous_release_bundle(self):
+        (self.old / 'adapter/release').write_text('previous\n')
+        previous = bundle_digest(str(self.old / 'adapter'))
+        self.assertNotEqual(previous, self.policy['bundles']['codex']['digest'])
+        before = self.old_container(live=True, digest=previous)
+        identity = container.identity_for(self.agent, before)
+        bundle = self.policy['bundles']['codex']
+        with self.assertRaisesRegex(SafeFailure, 'active bundle digest differs from lifecycle metadata'):
+            container.helper(self.agent, identity, 'check', *container.lifecycle_arguments(self.agent, identity),
+                             '--bundle', bundle['directory'], '--bundle-digest', bundle['digest'])
+        self.docker.calls.clear()
+        self.assertEqual(container.stop_container(self.policy, self.agent), {'stopped_verified': True})
+        self.assertNotIn(self.name, self.docker.live)
+        self.assertEqual(self.docker.containers[self.name]['Id'], before['Id'])
+        self.assertEqual([call[1] for call in self.docker.calls if call[0] == 'helper'], ['stopped', 'observe', 'stop', 'stopped'])
+        self.assertFalse(any(call[0] in {'create', 'stop', 'start', 'rename', 'rm'} for call in self.docker.calls))
 
     def test_failed_old_helper_stop_preserves_the_original_container(self):
         before = self.old_container(live=True)

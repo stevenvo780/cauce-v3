@@ -28,51 +28,107 @@ def metadata() -> dict:
                            "procInode": None, "cmdlineSha256": None}}
 
 
+def lifecycle(root: pathlib.Path) -> tuple[list[str], dict]:
+    state, control = root / "state", root / "control"
+    common = ["--alias", "physical-one", "--state", str(state), "--control-dir", str(control),
+              "--container-id", "a" * 64, "--generation", "b" * 64,
+              "--term-seconds", "0.2", "--kill-seconds", "1"]
+    environment = {**os.environ, "CAUCE_ALIAS": "shared_alias", "CAUCE_RUNTIME_KEY": "physical-one",
+                   "CAUCE_TENANT_ID": "Equipo_42", "CAUCE_STATE_DIR": str(state),
+                   "CAUCE_CONTROL_DIR": str(control), "CAUCE_CONTAINER_ID": "a" * 64,
+                   "CAUCE_CONTAINER_GENERATION": "b" * 64}
+    return common, environment
+
+
+def launch(root: pathlib.Path, bundle: pathlib.Path) -> tuple[subprocess.Popen, dict | None, str]:
+    common, environment = lifecycle(root)
+    command = [sys.executable, str(HELPER), "run", *common, "--wire-alias", "shared_alias",
+               "--tenant", "Equipo_42", "--runtime-uid", str(os.getuid()), "--runtime-gid", str(os.getgid()),
+               "--bundle", str(bundle), "--bundle-digest", bundle_digest(str(bundle)),
+               str(pathlib.Path(sys.executable).resolve()), "-c", "import time; time.sleep(60)"]
+    controller = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and controller.poll() is None:
+        receipt = root / "control" / "cauce-v3-adapter.json"
+        if receipt.exists():
+            observed = json.loads(receipt.read_bytes())
+            if observed["phase"] == "running":
+                return controller, observed, "running"
+        time.sleep(0.02)
+    return controller, None, controller.communicate(timeout=1)[1].decode() if controller.poll() is not None else "still running"
+
+
+def helper(root: pathlib.Path, action: str, *extra: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(HELPER), action, *lifecycle(root)[0], *extra], capture_output=True,
+                          text=True, timeout=15, check=False)
+
+
+def fixture_root(temporary: str, *bundles: str) -> pathlib.Path:
+    root = pathlib.Path(temporary)
+    for directory in ("state", "control", *bundles):
+        (root / directory).mkdir(mode=0o700)
+    for name in bundles:
+        (root / name / "fixture").write_text(name + "\n")
+    return root
+
+
+def finish(controller: subprocess.Popen) -> None:
+    if controller.poll() is None:
+        controller.terminate()
+    controller.communicate(timeout=10)
+
+
 class ContainerRuntimeIdentityTests(unittest.TestCase):
     @unittest.skipIf(os.geteuid() == 0, "real process fixture requires an unprivileged controller")
     def test_wire_runtime_starts_and_stops_with_physical_metadata_ownership(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cauce-wire-lifecycle-", dir="/var/tmp") as temporary:
-            root = pathlib.Path(temporary)
-            state, control, bundle = root / "state", root / "control", root / "bundle"
-            for directory in (state, control, bundle):
-                directory.mkdir(mode=0o700)
-            (bundle / "fixture").write_text("fixture\n")
-            common = ["--alias", "physical-one", "--state", str(state), "--control-dir", str(control),
-                      "--container-id", "a" * 64, "--generation", "b" * 64,
-                      "--term-seconds", "0.2", "--kill-seconds", "1"]
-            environment = {**os.environ, "CAUCE_ALIAS": "shared_alias", "CAUCE_RUNTIME_KEY": "physical-one",
-                           "CAUCE_TENANT_ID": "Equipo_42", "CAUCE_STATE_DIR": str(state),
-                           "CAUCE_CONTROL_DIR": str(control), "CAUCE_CONTAINER_ID": "a" * 64,
-                           "CAUCE_CONTAINER_GENERATION": "b" * 64}
-            command = [sys.executable, str(HELPER), "run", *common, "--wire-alias", "shared_alias",
-                       "--tenant", "Equipo_42", "--runtime-uid", str(os.getuid()), "--runtime-gid", str(os.getgid()),
-                       "--bundle", str(bundle), "--bundle-digest", bundle_digest(str(bundle)),
-                       str(pathlib.Path(sys.executable).resolve()), "-c", "import time; time.sleep(60)"]
-            controller = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            root = fixture_root(temporary, "bundle")
+            controller, document, diagnostic = launch(root, root / "bundle")
             try:
-                deadline = time.monotonic() + 10
-                document = None
-                while time.monotonic() < deadline and controller.poll() is None:
-                    receipt = control / "cauce-v3-adapter.json"
-                    if receipt.exists():
-                        observed = json.loads(receipt.read_bytes())
-                        if observed["phase"] == "running":
-                            document = observed
-                            break
-                    time.sleep(0.02)
-                diagnostic = controller.communicate(timeout=1)[1].decode() if controller.poll() is not None else "still running"
                 self.assertIsNotNone(document, f"wire runtime never published running metadata: {diagnostic}")
                 self.assertEqual((document["alias"], document["wireAlias"], document["tenantId"]),
                                  ("physical-one", "shared_alias", "Equipo_42"))
-                stopped = subprocess.run([sys.executable, str(HELPER), "stop", *common], capture_output=True,
-                                         text=True, timeout=15, check=False)
+                stopped = helper(root, "stop")
                 self.assertEqual(stopped.returncode, 0, stopped.stderr)
                 controller.wait(timeout=10)
-                self.assertFalse((control / "cauce-v3-adapter.json").exists())
+                self.assertFalse((root / "control" / "cauce-v3-adapter.json").exists())
             finally:
-                if controller.poll() is None:
-                    controller.terminate()
-                controller.communicate(timeout=10)
+                finish(controller)
+
+    @unittest.skipIf(os.geteuid() == 0, "real process fixture requires an unprivileged controller")
+    def test_adapter_from_a_previous_release_stops_by_identity_and_restarts_on_the_current_bundle(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cauce-release-lifecycle-", dir="/var/tmp") as temporary:
+            root = fixture_root(temporary, "previous", "current")
+            previous, current = bundle_digest(str(root / "previous")), bundle_digest(str(root / "current"))
+            self.assertNotEqual(previous, current)
+            controller, document, diagnostic = launch(root, root / "previous")
+            try:
+                self.assertIsNotNone(document, f"previous release never published running metadata: {diagnostic}")
+                self.assertEqual(document["bundleDigest"], previous)
+                checked = helper(root, "check", "--bundle", str(root / "current"), "--bundle-digest", current)
+                self.assertEqual((checked.returncode, checked.stderr.strip()),
+                                 (78, "active bundle digest differs from lifecycle metadata"))
+                self.assertEqual(helper(root, "check", "--bundle", str(root / "previous"), "--bundle-digest", previous).returncode, 0)
+                for drift in (["--generation", "c" * 64], ["--container-id", "c" * 64]):
+                    refused = helper(root, "stop", *drift)
+                    self.assertNotEqual(refused.returncode, 0, drift)
+                    self.assertIsNone(controller.poll(), drift)
+                stopped = helper(root, "stop")
+                self.assertEqual(stopped.returncode, 0, stopped.stderr)
+                controller.wait(timeout=10)
+                self.assertEqual(helper(root, "stopped").returncode, 0)
+            finally:
+                finish(controller)
+            controller, document, diagnostic = launch(root, root / "current")
+            try:
+                self.assertIsNotNone(document, f"current release never published running metadata: {diagnostic}")
+                self.assertEqual(document["bundleDigest"], current)
+                checked = helper(root, "check", "--bundle", str(root / "current"), "--bundle-digest", current)
+                self.assertEqual(checked.returncode, 0, checked.stderr)
+                self.assertEqual(helper(root, "stop").returncode, 0)
+                controller.wait(timeout=10)
+            finally:
+                finish(controller)
 
     def test_legacy_metadata_and_environment_remain_valid(self) -> None:
         document = metadata()
