@@ -27,6 +27,7 @@ Cómo pasar el runtime de producción del rol propietario `cauce` (superusuario,
 | Auditoría | `audit_events` | `SELECT`, `INSERT`, `DELETE` (retención), `UPDATE` solo para bloqueos; reescribir filas lo rechaza `audit_events_platform_rewrite` (42501) |
 | Espacios | `tenants` | `SELECT`, `INSERT`, `DELETE` y `UPDATE` de todas las columnas salvo `id` y `company_id` |
 | Resto de tablas de migración | 74 tablas | `SELECT`, `INSERT`, `UPDATE`, `DELETE` |
+| Tablas posteriores a 052 | según su `cauce_runtime_grants_NNN()` | las que declara cada migración. Si el borrado de configuración de una purga (`PURGE_CONFIGURATION`, `fleet-operation-purge-plan.ts`) toca una tabla, el runtime necesita `DELETE` sobre ella: `terminal_grants` nació en 086 con `SELECT`, `INSERT`, `UPDATE` y la purga de un agente con permisos de terminal fallaba con 42501 hasta que 095 añadió `DELETE`. `terminal-grant-purge-postgres.test.ts` comprueba que `cauce_runtime` borra todas las tablas de `PURGE_CONFIGURATION` |
 
 Además: `CONNECT` a la base y `USAGE` del esquema `public`; `USAGE` y `SELECT` de las 12 secuencias; `EXECUTE` de las funciones DEFINER `cauce_lock_company_link` y `cauce_lock_hub_star_tenant`. Las demás funciones son `INVOKER` y siguen ejecutables por `PUBLIC`: no dan más permisos que los de quien llama. Nadie salvo el dueño crea objetos en `public`.
 

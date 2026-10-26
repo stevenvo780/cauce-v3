@@ -12,11 +12,6 @@ import { preparePostgresSuite } from './postgres-suite.js';
 import { seedCompanyIsolation, type CompanyIsolationFixture } from './companies-postgres.fixtures.js';
 import { provisionTestLogin, startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
 
-function required<T>(value: T | null | undefined): T {
-  if (value === undefined || value === null) throw new Error('expected test value is unavailable');
-  return value;
-}
-
 let database: TestDatabase | undefined;
 let current: EmptyTestDatabase | undefined;
 let admin: DatabasePool;
@@ -218,9 +213,9 @@ describe('device authorization with real PostgreSQL', () => {
       clientName: 'zz-canary-reapplied', maskedIp: '192.0.2.0/24' })).toMatchObject({ interval: 5 });
   });
 
-  it('reverts the session anchor column alone and reapplies it', async () => {
-    const [down] = await downsThrough('094_device_authorization_session_anchor.sql');
-    await withTransaction(admin, client => client.query(required(down)));
+  it('reverts the session anchor column and the later migrations and reapplies them', async () => {
+    const down = (await downsThrough('094_device_authorization_session_anchor.sql')).join('\n');
+    await withTransaction(admin, client => client.query(down));
     expect((await admin.query("SELECT 1 FROM information_schema.columns WHERE table_name='device_authorizations' AND column_name='session_auth_at'")).rowCount).toBe(0);
     expect((await admin.query("SELECT 1 FROM pg_proc WHERE proname IN ('cauce_runtime_grants_094','cauce_device_authorization_session_anchor')")).rowCount).toBe(0);
     await applyMigrations(admin);
