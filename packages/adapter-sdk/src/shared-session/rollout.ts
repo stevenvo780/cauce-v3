@@ -170,18 +170,32 @@ function lastCodexPrompt(entries: readonly RolloutLine[]): string | undefined { 
   return undefined;
 }
 
-export function codexProvesConsumption(
-  entries: readonly RolloutLine[], key: string, text: string, _sessionId: string, promptText: string,
-): boolean {
-  if (text.trim().length === 0 || !entries.some((entry) => {
+function submittedInTurn(entries: readonly RolloutLine[], key: string, promptText: string): boolean {
+  return entries.some((entry) => {
     const payload = messagePayload(entry, "user");
     return payload !== undefined && messageTurnId(payload) === key
       && submitted(messageText(payload)) === submitted(promptText);
-  })) return false;
+  });
+}
+
+export function codexProvesConsumption(
+  entries: readonly RolloutLine[], key: string, text: string, _sessionId: string, promptText: string,
+): boolean {
+  if (text.trim().length === 0 || !submittedInTurn(entries, key, promptText)) return false;
   return entries.some((line) => {
     const payload = eventPayload(line);
     return payload?.turn_id === key && payload.type === "task_complete"
       && (asText(payload.last_agent_message) ?? finalAnswerOf(entries, key)) === text;
+  });
+}
+
+/** codex 0.160 closes a turn whose last action was a tool call with `last_agent_message: null`; a clean close still proves the input was consumed. */
+export function codexProvesSilentClose(
+  entries: readonly RolloutLine[], key: string, _sessionId: string, promptText: string,
+): boolean {
+  return submittedInTurn(entries, key, promptText) && entries.some((line) => {
+    const payload = eventPayload(line);
+    return payload?.turn_id === key && payload.type === "task_complete" && payload.error === undefined;
   });
 }
 
@@ -287,6 +301,7 @@ export function codexTranscript(codexHome: string): TranscriptReader<RolloutLine
     findInjected: findInjectedRolloutTurn,
     findAnswer: findRolloutOutcome,
     provesConsumption: codexProvesConsumption,
+    provesSilentClose: codexProvesSilentClose,
     otherConversationActive: async (changed, own) => {
       for (const file of changed) {
         if (file !== own && await rolloutSource(file) === "cli") return true;
