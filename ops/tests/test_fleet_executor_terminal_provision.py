@@ -183,6 +183,15 @@ class TerminalVerifiedInventoryTest(unittest.TestCase):
 
 
 class TerminalPresenceTest(unittest.TestCase):
+    def test_presence_waits_beyond_the_pty_agents_initial_tui_wait(self):
+        """A headless agent's PTY connects only after waiting 30 s for a TUI; 20 half-second polls never saw its ack."""
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'pty-agent'))
+        try:
+            from cauce_pty_agent.agent import INITIAL_TUI_WAIT
+        finally:
+            del sys.path[0]
+        self.assertGreaterEqual(manager.PRESENCE_ATTEMPTS * 0.5, INITIAL_TUI_WAIT + 15)
+
     def check_presence(self, invocation, *, process_uid=None, wire='logical', record_fields=None,
                        missing_fields=(), environment=None, environments=None, process_starttimes=(77, 77),
                        after_invocation=None, attempts=1, observations=None, modes='shell,harness'):

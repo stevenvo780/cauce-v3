@@ -233,7 +233,12 @@ def process_identity(pid: str, version: str, invocation: str) -> int:
         raise SafeFailure('terminal unit process identity is unavailable') from None
 
 
-def presence(unit: str, wire: str, version: str, *, attempts: int = 20) -> dict:
+# A headless agent's PTY waits up to 30 s for a live TUI before it connects (pty agent INITIAL_TUI_WAIT), so its relay
+# acknowledgement comes after that wait; presence polls every half second well beyond it (Praxis teseo, 26-oct).
+PRESENCE_ATTEMPTS = 100
+
+
+def presence(unit: str, wire: str, version: str, *, attempts: int = PRESENCE_ATTEMPTS) -> dict:
     runtime = pathlib.Path('/run/user') / str(os.geteuid())
     try:
         boot = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip().replace('-', '')
