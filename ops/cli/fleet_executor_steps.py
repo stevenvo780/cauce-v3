@@ -685,6 +685,8 @@ class Executor:
         if self.journal.get('terminal_provision'):
             from fleet_executor_terminal_provision import rollback_terminal
             rollback_terminal(self.policy, self.context, self.agent(), self.journal, self.save)
+        if self.context['request']['kind'] == 'stop' and placement_role(self.context) is None:
+            return self.compensate_stop()
         if placement_role(self.context) == 'source':
             from fleet_executor_authority import call, inventory, scope_for
             for row in rows:
@@ -725,6 +727,20 @@ class Executor:
             remove_runtime_credentials(self.policy, row)
             revoked[key] = True
             self.save()
+        return {'stopped_verified': True, 'revocation_verified': True}
+
+    def compensate_stop(self) -> dict:
+        """A stop (fence, stop, artifacts) never issues, rotates or revokes Cauce credentials, so cancelling it only has to
+        leave the runtime stopped. Revoking here would destroy the agent's installed normal credentials (a later start
+        reuses them) and, for a baseline identity without a legacy inventory, would fail forever. The
+        journal proves the absence of credential effects; anything else is an inconsistent journal, never a retirement."""
+        journal = self.journal
+        if any(step not in {'stop', 'artifacts'} for step in journal.get('attempted', [])) \
+                or any(name in journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime',
+                    'runtime_launch_attempted', 'compensation_credential_effects', 'revocation_complete', 'terminal_provision')) \
+                or any(journal.get(name) for name in ('central_revocations', 'compensated', 'revoked', 'legacy_authority_absence')):
+            raise SafeFailure('stop compensation found credential or runtime effects a stop never makes; inspect its journal')
+        # revocation_verified: no credential issued by this operation remains, because a stop issues none.
         return {'stopped_verified': True, 'revocation_verified': True}
 
     def restore_previous_runtime(self) -> dict:
