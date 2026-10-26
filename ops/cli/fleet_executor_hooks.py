@@ -13,7 +13,7 @@ IDENTITY_FIELDS = {'nonce', 'tenant_id', 'alias', 'runtime_key', 'account_id', '
 PROOF_FIELDS = {'authenticated', 'profile_verified', 'provider_verified', 'bootstrap_verified', 'roundtrip_verified', 'revocation_verified'}
 
 
-def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
+def binding_for(policy: dict, agent: dict, *, previous_release_ok: bool = False) -> tuple[str, dict]:
     from fleet_executor_templates import resolve_profile
     account = agent.get('primary_account_id')
     agent = approve_agent(policy, agent)
@@ -43,7 +43,7 @@ def binding_for(policy: dict, agent: dict) -> tuple[str, dict]:
     if not isinstance(binding['identity'], str) or not binding['identity'] or not isinstance(binding['provider'], str):
         raise SafeFailure('invalid provider profile identity')
     if agent['runtime_mode'] == 'container':
-        container_profile(policy, agent, binding)
+        container_profile(policy, agent, binding, previous_release_ok=previous_release_ok)
         return account, binding
     if 'container_name' in binding:
         raise SafeFailure('native profile cannot bind a container')
@@ -94,9 +94,9 @@ def container_binding(policy: dict, agent: dict, *, previous_release_ok: bool = 
     return agent, identity
 
 
-def container_profile(policy: dict, raw_agent: dict, binding: dict):
+def container_profile(policy: dict, raw_agent: dict, binding: dict, *, previous_release_ok: bool = False):
     from fleet_executor_container import docker
-    agent, identity = container_binding(policy, raw_agent)
+    agent, identity = container_binding(policy, raw_agent, previous_release_ok=previous_release_ok)
     if binding.get('container_name', agent['container_name']) != agent['container_name']:
         raise SafeFailure('provider profile container differs from the agent')
     profile = path(binding['path'])

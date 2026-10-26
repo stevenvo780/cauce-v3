@@ -184,7 +184,7 @@ def perform(policy: dict, document: dict) -> dict:
         if binding.get('provider') != provider or not isinstance(binding.get('path'), str) \
                 or not pathlib.PurePosixPath(binding['path']).is_absolute():
             raise SafeFailure('quota_profile_unsupported')
-        binding_for(policy, agent)
+        binding_for(policy, agent, previous_release_ok=True)
         # A template binding keeps the provider session under the dedicated profile mount, not in $HOME.
         profile = binding['path']
     if provider == 'codex':

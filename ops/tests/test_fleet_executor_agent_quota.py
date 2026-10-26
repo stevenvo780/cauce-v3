@@ -300,6 +300,35 @@ print(json.dumps(document,ensure_ascii=False))
         self.assertEqual((receipt['status'], receipt['identity_hash']), ('measured', IDENTITY_HASH))
         self.assertNotIn(IDENTITY, response.stdout + response.stderr)
 
+    def account_packet(self, packet, account):
+        """The packet the gateway sends for an agent with a primary account: the durable account rides along."""
+        return {**packet, 'trusted_accounts': [{'id': account, 'provider': 'codex', 'external_account_id': 'codex:' + IDENTITY,
+            'payer_tenant_id': self.agent['tenant_id'], 'shared_with_pool': True, 'enabled': True}]}
+
+    def test_agent_with_a_primary_account_on_the_previous_release_is_measured_after_a_deploy(self):
+        """The provider profile check runs before the reader and must accept the same installed sibling release."""
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        from fleet_executor_container import runtime_mounts
+        previous, current, executable = self.staged_releases()
+        binds = runtime_mounts(self.policy, {'harness_id': 'codex'}, previous, current)
+        packet = self.account_packet(self.configure_canary(binds=binds, dynamic_account='account-quota-previous'), 'account-quota-previous')
+        response = self.query(packet, executable)
+        self.assertEqual(response.returncode, 0, response.stderr)
+        receipt = json.loads(response.stdout)
+        self.assertEqual((receipt['status'], receipt['identity_hash']), ('measured', IDENTITY_HASH))
+        self.assertNotIn(IDENTITY, response.stdout + response.stderr)
+
+    def test_agent_with_a_primary_account_on_a_release_that_is_not_an_installed_sibling_is_refused(self):
+        sys.path.insert(0, str(fixtures.OPS / 'cli'))
+        from fleet_executor_container import runtime_mounts
+        previous, current, executable = self.staged_releases(previous_name='not-a-release')
+        binds = runtime_mounts(self.policy, {'harness_id': 'codex'}, previous, current)
+        packet = self.account_packet(self.configure_canary(binds=binds, dynamic_account='account-quota-foreign'), 'account-quota-foreign')
+        response = self.query(packet, executable)
+        self.assertNotEqual(response.returncode, 0)
+        self.assertIn('container runtime mounts differ', response.stderr)
+        self.assertNotIn(IDENTITY, response.stdout + response.stderr)
+
     def test_container_bound_to_a_release_that_is_not_an_installed_sibling_is_refused(self):
         sys.path.insert(0, str(fixtures.OPS / 'cli'))
         from fleet_executor_container import runtime_mounts
