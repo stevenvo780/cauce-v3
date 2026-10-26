@@ -205,6 +205,47 @@ class OpenClawProviderTest(unittest.TestCase):
         written = json.loads((self.profile / 'openclaw.json').read_text())
         self.assertEqual(written['agents']['list'][0]['workspace'], str(state / 'space' / 'projects'))
 
+    def legacy_container_agent(self):
+        state = self.root / 'agent-volume-state'
+        state.mkdir(mode=0o700)
+        agent = {**self.agent, 'runtime_mode': 'container', 'state_directory': str(state)}
+        (self.profile / 'openclaw.json').unlink()
+        driver.prepare(self.binding, agent)
+        config = self.profile / 'openclaw.json'
+        legacy = state / 'workspace'
+        written = json.loads(config.read_text())
+        written['agents']['list'][0]['workspace'] = str(legacy)
+        config.write_text(json.dumps(written))
+        legacy.mkdir(mode=0o700)
+        (legacy / 'memory').mkdir(mode=0o700)
+        (legacy / 'memory' / 'nota.md').write_text('recuerdo')
+        (legacy / 'AGENTS.md').write_text('identidad')
+        return agent, state, legacy, config
+
+    def test_a_container_agent_moved_before_the_projects_layout_keeps_its_workspace_contents(self):
+        """Production, 26-oct (Argos): its config named the sibling state/workspace and every start failed the scope check."""
+        agent, state, legacy, config = self.legacy_container_agent()
+        projects = state / 'space' / 'projects'
+        driver.prepare(self.binding, agent)
+        self.assertFalse(legacy.exists())
+        self.assertEqual((projects / 'AGENTS.md').read_text(), 'identidad')
+        self.assertEqual((projects / 'memory' / 'nota.md').read_text(), 'recuerdo')
+        self.assertEqual(json.loads(config.read_text())['agents']['list'][0]['workspace'], str(projects))
+        self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+        driver.prepare(self.binding, agent)
+        self.assertEqual((projects / 'AGENTS.md').read_text(), 'identidad')
+
+    def test_a_legacy_workspace_that_clashes_with_projects_is_left_untouched(self):
+        agent, state, legacy, config = self.legacy_container_agent()
+        (state / 'space' / 'projects' / 'AGENTS.md').write_text('otro')
+        before = config.read_bytes()
+        with self.assertRaises(ValueError):
+            driver.prepare(self.binding, agent)
+        self.assertEqual((legacy / 'AGENTS.md').read_text(), 'identidad')
+        self.assertEqual((legacy / 'memory' / 'nota.md').read_text(), 'recuerdo')
+        self.assertEqual((state / 'space' / 'projects' / 'AGENTS.md').read_text(), 'otro')
+        self.assertEqual(config.read_bytes(), before)
+
     def test_config_is_idempotent_and_rejects_foreign_changes_without_overwrite(self):
         config = self.profile / 'openclaw.json'
         before = config.read_bytes()

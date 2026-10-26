@@ -264,11 +264,78 @@ def agent_model(agent: dict) -> str | None:
     return canonical_model(agent['model_id'])
 
 
+def migrate_legacy_workspace(binding: dict, agent: dict) -> bool:
+    """Move the sibling `state/workspace` of a container agent into `space/projects` and point its config there.
+
+    Agents moved into a container before 25-oct kept OpenClaw's native sibling workspace; the container layout (and
+    the adapter's CAUCE_OPENCLAW_WORKSPACE) is `space/projects`, so the scope check refused their config and every
+    start failed (Argos, 26-oct). Entries move one by one and never over an existing name: a clash leaves everything
+    in place. A move interrupted halfway resumes, because the config keeps naming the legacy directory until the end.
+    """
+    if agent.get('runtime_mode') != 'container':
+        return False
+    state = pathlib.Path(agent['state_directory'])
+    legacy, target = state / 'workspace', state / 'space' / 'projects'
+    directory = owned_directory(pathlib.Path(binding['path']))
+    try:
+        try:
+            descriptor = os.open('openclaw.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1 or details.st_uid != os.geteuid() or details.st_mode & 0o077:
+                raise ValueError('OpenClaw private configuration identity changed')
+            body = os.read(descriptor, 262145)
+        finally:
+            os.close(descriptor)
+        if len(body) > 262144:
+            raise ValueError('OpenClaw private configuration exceeds bound')
+        config = json.loads(body)
+        rows = config.get('agents', {}).get('list') if isinstance(config, dict) and isinstance(config.get('agents'), dict) else None
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or rows[0].get('workspace') != str(legacy):
+            return False
+        os.close(owned_directory(target.parent, create=True))
+        source, destination = owned_directory(legacy), owned_directory(target, create=True)
+        try:
+            names = os.listdir(source)
+            if any(name in set(os.listdir(destination)) for name in names):
+                raise ValueError('OpenClaw legacy workspace collides with space/projects')
+            for name in names:
+                os.rename(name, name, src_dir_fd=source, dst_dir_fd=destination)
+            os.fsync(destination)
+            os.fsync(source)
+        finally:
+            os.close(source)
+            os.close(destination)
+        rows[0]['workspace'] = str(target)
+        staged = 'openclaw.json.cauce-new'
+        try:
+            os.unlink(staged, dir_fd=directory)
+        except FileNotFoundError:
+            pass
+        output = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        try:
+            encoded = json.dumps(config, sort_keys=True, separators=(',', ':')).encode()
+            if os.write(output, encoded) != len(encoded):
+                raise ValueError('OpenClaw workspace migration write was incomplete')
+            os.fsync(output)
+        finally:
+            os.close(output)
+        os.replace(staged, 'openclaw.json', src_dir_fd=directory, dst_dir_fd=directory)
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    os.rmdir(legacy)
+    return True
+
+
 def prepare(binding: dict, agent: dict) -> None:
     env = environment(binding, agent)
     if agent.get('runtime_mode') == 'container':
         from fleet_provider_identity import prepare_space_turn_tmpdir
         prepare_space_turn_tmpdir(agent['state_directory'])
+        migrate_legacy_workspace(binding, agent)
     root = pathlib.Path(binding['path'])
     prepare_temporary(root)
     for directory in [root / 'agents', root / 'agents' / agent['runtime_key'], pathlib.Path(env['OPENCLAW_AGENT_DIR']),
