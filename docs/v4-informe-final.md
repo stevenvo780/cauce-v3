@@ -1,8 +1,6 @@
 # Informe final de Cauce V4
 
-<!-- ACTUALIZAR: estado, versión publicada (hoy `33b88409`; falta el despliegue 105 y el final), esquema efectivo y ubicación final de cada agente. -->
-
-**Estado: borrador para el cierre. V4 todavía no está terminada.** Este texto solo afirma lo que tienes probado hoy, con su fuente. Lo que falte va en «Qué queda pendiente», no disimulado.
+**Estado: cerrado el 27-oct-2026 por decisión del dueño.** Lo publicado es `e26305dc` (despliegue 139), igual a `dev` y a `main`; después solo hay commits de documentación. Este texto solo afirma lo que tienes probado, con su fuente. Lo que falta va en «Qué queda pendiente», con quién lo cierra: queda para la estrategia siguiente, no disimulado.
 
 Trabajas con tres niveles, y no los mezclo:
 
@@ -65,43 +63,48 @@ Descargas la copia de un espacio con su SHA-256 visible y la restauras siguiendo
 
 Cada despliegue sale de un SHA con recibo de gates ligado (typecheck, lint y empaquetado), backup previo cuando hay migración y humo posterior. La guía de uso y la operación describen solo lo que el sistema hace de verdad.
 
-- Dónde lo ves: `deploy/HISTORIAL.md` (última fila: 25-oct, commit `33b88409`, «smoke OK») y los recibos en `.delegados/v4/recibos/gate/`.
+- Dónde lo ves: `deploy/HISTORIAL.md` (última fila: 26-oct, despliegue 139, commit `e26305dc`) y los recibos en `.delegados/v4/recibos/gate/`.
 
 ## Qué está verificado en producción
 
-<!-- ACTUALIZAR: confirmar contra el sistema vivo tras el despliegue 105 y el final; no heredar estas filas sin re-comprobar. -->
-
 | Qué | Recibo |
 |---|---|
-| «Mis cuotas» de punta a punta en el segundo servidor local | 25-oct 00:35–00:40, GOAL §3 (crear, sesión verificada, consultar, actualizar CLI, eliminar; 0 contenedores y 0 volúmenes) |
+| Los 17 agentes de las dos empresas con arriendo vivo y los 9 servicios healthy | 27-oct 00:15 (latido de 1–9 s; consola 200; ejecutores de server2, Praxis y el VPS activos) |
+| Contexto editado en la consola y aplicado en el turno siguiente | 26-oct: Argos v1, Jarvis v2, Sócrates v2 y Zeus v3 (directiva del dueño; respuesta con adopción y consumo; «Aplicada · Sincronizado»), GOAL §6 |
+| Hades responde sin esperar despertares de fondo | 26-oct 22:50, despliegue 138: nonce en 29 s (bf796b85) |
+| Copia de un espacio: crear, descargar con su SHA y restaurar | 26–27-oct: Jarvis, Sócrates y Zeus; descarga por la consola con el SHA del recibo y restauración aislada `restored`, idéntica al origen (GOAL §5, item de copias) |
+| El VPS como ordenador solo de copias | 26-oct 23:06: enrolado por invitación desde Ajustes → Computadoras, `execution_scope: backups`, sin capacidades de flota |
+| Zeus en el espacio estándar con turno real | 26-oct 23:53: aplicado con recibo, entrega `done` con el nonce exacto (GOAL §6) |
+| Adaptadores V3 de Steven en la release vigente | 27-oct: Jarvis, Sócrates y Zeus en `live-e26305dc09c1`, cada uno con entrega real verificada |
+| «Mis cuotas» de punta a punta en el segundo servidor local | 25-oct 00:35–00:40, GOAL §3 |
 | Agente creado desde la consola que responde en el chat | 25-oct, `zz-canary-144` con login de dispositivo y respuesta exacta, GOAL §6 |
-| Los siete agentes del segundo servidor local responden | 20–21-oct, GOAL §5 y §7 (incluye la confirmación de León del 24-oct para Praxis) |
-| Terminales de Argos y Hegel en el segundo servidor local | 25-oct 00:50, GOAL §5 (relay acredita el contenedor exacto; pestaña Terminal desde la consola) |
-| Límite de registro por IP real tras el proxy | 25-oct 09:35, GOAL §1 (sexto intento: 429; otro origen sigue en 400) |
-| Roles de base de datos sin superusuario en los servicios | 25-oct, GOAL §1 (cuatro logins de runtime; sesiones vivas comprobadas en solo lectura) |
-| Historial de contextos en GitHub al día | 25-oct, GOAL §6 de criterios (17 agentes reales, último commit igual a su última versión, outbox `synced` 23/23) |
-| Recuperación de contextos con la salida a GitHub cortada | 25-oct 08:32, GOAL §6 de criterios (error visible, reapertura y publicación sola; commit exacto en GitHub) |
-| Origen liberado tras migrar, medido | 24-oct, GOAL §5 (−2,18 GB de RAM usada y −8,1 GB de swap tras liberar) |
+| Agentes en servidores locales con terminal desde la consola | 20–25-oct, GOAL §5 (Gaia, Hades, Argos y Hegel en server2; terminales de Argos y Hegel) |
+| Límite de registro por IP real y roles de base de datos sin superusuario | 25-oct, GOAL §1 |
+| Historial de contextos en GitHub y su recuperación sin red | 25-oct, GOAL §6 de criterios |
+| Origen liberado tras migrar, medido | 24-oct, GOAL §5 |
 
 ## Qué queda pendiente
 
-<!-- ACTUALIZAR: tachar aquí con el recibo del despliegue 105/final; hasta entonces, esto manda sobre cualquier casilla suelta. -->
+Cerrado el GOAL, esto pasa a la estrategia siguiente. Nada de lo que sigue impide el uso diario actual.
 
 ### Lo cierras tú, Steven
 
-1. **Relogin de Zeus**: su login de Claude está caducado; hasta que lo renueves no se puede acreditar su entrega en la release vigente.
-2. **Prueba de registro en producción con un usuario nuevo**: el recorrido completo (registrarse, crear empresa y usarla, con ataques cruzados) está en verde en local (365/365). Falta que lo hagas tú una vez en el sistema publicado.
-3. **Panel de GitGuardian**: marcar los falsos positivos históricos. El código ya no contiene secretos de producción ni identificadores de cuentas.
+1. **Praxis**: «Aplicar al agente» del contexto de operador, perseo y teseo, y la actualización en cola de perseo.
+2. **Registro de un usuario nuevo en producción**, una vez, con el recorrido completo (en local está en verde).
+3. **`cauce login`** en tu CLI: la sesión caducó; con ella se prueba `cauce <alias>` de un agente dinámico.
+4. **Disco del VPS al 95 %** (24 GB libres): decidir qué se mueve o se amplía. El crecimiento viene sobre todo de `ws-humanizar`.
+5. **Espacios de Miguel e Isa** (Janus, Iza, Atlas, Kratos y Salva): sus copias y su espacio estándar los hace su dueño, o tú con su permiso.
+6. **Panel de GitGuardian**: marcar los falsos positivos históricos.
 
-### Lo cierra el equipo antes del despliegue final
+### Lo cierra el equipo en la siguiente etapa
 
-1. **Despliegue 105 y final**: recorrer en producción «Reiniciar agente» con el agente canario y, después, integrar en `dev`, avanzar `main` y desplegar el candidato con su gate. Hoy lo publicado es `33b88409` y la rama de cierre va por delante.
-2. **Aplicación de contextos en producción (N+1)**: ningún agente de producción tiene versión aplicada. Hay que aplicar sin hacer retroceder a nadie (hay cambios posteriores a la siembra sin registrar) y acreditarlo con un turno real por arnés.
-3. **«Consultar cuota» desde la ficha de cada agente**: en producción ya mediste algunos, pero el lector dentro del contenedor falló por imagen y por vinculación de cuenta; queda cerrar el recorrido agente por agente.
-4. **TUI del arnés en contenedor y «Detener» entre releases**: la terminal web da shell, no la TUI del arnés; y detener un agente creado con una release anterior puede fallar por digest distinto.
-5. **Terminal por CLI para la flota dinámica y `cauce <alias>`**: el CLI vigente está instalado y `cauce spaces` recorrido en modo registro; faltan el login en el segundo servidor ya hecho, abrir un agente dinámico por CLI y un `create` físico completo por esa vía.
-6. **Adaptadores V3 restantes**: quedan el caso con `KillMode`, la espera cuando la API falla al instante y acreditar la entrega de Salva en su sala.
-7. **Espacio estándar en producción, agente a agente**: aplicado en 5 de 9 agentes V3; quedan los que tienen motivo concreto (login caducado, borrador sin enviar y el supervisor compartido que no se puede reiniciar sin tumbar a otros).
+1. **Espacio estándar en Kant y Astra.** Kant, cuando no lo estés usando, con `sembrar-recibo-contexto.py` antes de aplicar (la lección de Zeus). Astra espera el drop-in `KillMode=process`. Después, sus copias.
+2. **Terminal por CLI para la flota dinámica**: el CLI instalado necesita el checkout para `ws` y `session-limits`; empaquetarlo.
+3. **Mensaje claro cuando la copia de un espacio falla porque aún no tiene estructura estándar**: hoy la consola solo dice «Fallida».
+4. **Adaptadores V3 restantes en la release vigente**: Kant, Astra, Salva y los de Miguel (Atlas y Kratos sin reiniciar el árbol compartido).
+5. **TUI del arnés en contenedor V4 y «Detener» entre releases**; cuota consultada agente por agente desde su ficha.
+6. **Retirar el código legacy** (`fleet_adoption_probe_*`, `fleet_executor_legacy*`): sigue en uso, y la parte de copias legacy es nueva y se queda.
+7. **Rollout del PTY** para que la espera de hechos medidos (8fcb24d1) llegue a las unidades del VPS.
 
 ## Cómo operar
 
@@ -114,4 +117,4 @@ Cada despliegue sale de un SHA con recibo de gates ligado (typecheck, lint y emp
 
 ## Fuentes
 
-Este borrador se apoya en `GOAL.md` (estado verificado a 25-oct), en los informes de la tanda en `.delegados/v4/informes/` — en particular `d3-informe-final-1025.md` (esqueleto anterior), `g1-auditoria-marcas-1025.md` y `g2-cierres-auditoria-1025.md` (auditoría de las marcas y sus cierres) —, en `deploy/HISTORIAL.md` hasta su fila del 25-oct y en los commits citados en el texto. Lo que no tenía fuente no se afirma: está en pendientes.
+Este informe se apoya en `GOAL.md` (estado verificado a 27-oct), en los informes de la tanda en `.delegados/v4/informes/` — en particular `d3-informe-final-1025.md` (esqueleto anterior), `g1-auditoria-marcas-1025.md` y `g2-cierres-auditoria-1025.md` (auditoría de las marcas y sus cierres) —, en `deploy/HISTORIAL.md` hasta su fila del 26-oct (despliegue 139) y en los commits citados en el texto. Lo que no tenía fuente no se afirma: está en pendientes.
