@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useConsoleAccess } from '../../api/console-access';
 import { permissionState } from '../../lib';
 import { CONFIG_SIN_CONTROL_REASON, CONFIG_WRITE_NO_ACREDITADO_REASON } from '../../router';
@@ -20,6 +20,8 @@ import type { ConfigurationSnapshot } from '../../api/types';
 import { useAgentParam } from './use-agent-route';
 import { useFleetHosts } from './use-fleet-hosts';
 import { useAgentLifecycle } from './use-agent-lifecycle';
+import { FleetContext } from '../../shell/fleet-context';
+import { asientosDePersonas } from '../messages/roster';
 
 const PAGE_SIZE = 12;
 
@@ -83,7 +85,8 @@ export function AgentesSection({ snapshot: leido, onReload, tablaCompleta, ctx }
   const capability = useAgentLifecycle(true).capability;
   const retireBlock = capability && !(capability.available && capability.actions.includes('retire'))
     ? 'El ejecutor de flota no acredita el retiro de agentes.' : undefined;
-  const agents = useMemo(() => settingsAgents(snapshot), [snapshot]);
+  const topology = useContext(FleetContext)?.topology.data;
+  const agents = useMemo(() => settingsAgents(snapshot, asientosDePersonas(topology)), [snapshot, topology]);
   const visible = filterSettingsAgents(agents, query);
   const hasMembersOnly = agents.some((agent) => !agent.registered);
   const lastPage = Math.max(0, Math.ceil(visible.length / PAGE_SIZE) - 1);

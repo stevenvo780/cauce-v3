@@ -133,7 +133,7 @@ function esIntermediarioDeContexto(alias: string): boolean {
 }
 
 /** The seats people write from (the company owner): the server marks them, and a person is never drawn as a bot. */
-function asientosDePersonas(topology: TopologySnapshot | undefined): Set<string> {
+export function asientosDePersonas(topology: TopologySnapshot | undefined): Set<string> {
   const ids = new Set<string>();
   for (const tenant of topology?.tenants ?? []) {
     for (const room of tenant.rooms ?? []) {

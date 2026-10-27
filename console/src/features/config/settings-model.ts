@@ -1,4 +1,5 @@
 import type { ConfigurationSnapshot } from '../../api/types';
+import { fleetAgentId } from '../terminal/fleet';
 
 type Row = Record<string, unknown>;
 interface SettingsGroup {
@@ -31,11 +32,12 @@ function identity(row: Row): [string, string] | undefined {
   return tenant && alias ? [tenant, alias] : undefined;
 }
 
-export function settingsAgents(snapshot: ConfigurationSnapshot): SettingsAgent[] {
+/** `personas`: the seats people write from (the topology marks them); a person is never listed as an agent. */
+export function settingsAgents(snapshot: ConfigurationSnapshot, personas: ReadonlySet<string> = new Set()): SettingsAgent[] {
   const identities = new Map<string, [string, string]>();
   for (const row of [...snapshot.agents ?? [], ...snapshot.memberships ?? []]) {
     const pair = identity(row);
-    if (pair) identities.set(JSON.stringify(pair), pair);
+    if (pair && !personas.has(fleetAgentId(pair[0], pair[1]))) identities.set(JSON.stringify(pair), pair);
   }
   // Retired agents live only in the retired section: a historical membership must not relist
   // them here as member-only, or the main count stops matching the registered-not-retired rule.

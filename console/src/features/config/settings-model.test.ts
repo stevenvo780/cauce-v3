@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { filterSettingsAgents, settingsAgents } from './settings-model';
+import type { ConfigurationSnapshot } from '../../api/types';
 
 describe('inventario compacto de configuración', () => {
   it('une registro y membresías sin confundir el mismo alias entre tenants', () => {
@@ -58,5 +59,16 @@ describe('inventario compacto de configuración', () => {
   it('no inventa identidades para filas incompletas y conserva un inventario vacío', () => {
     expect(settingsAgents({ agents: [{ alias: 'one' }, { tenant_id: 'A' }], memberships: [] })).toEqual([]);
     expect(settingsAgents({})).toEqual([]);
+  });
+});
+
+describe('las personas no son agentes en Ajustes', () => {
+  it('el asiento del dueño marcado como persona no se lista', () => {
+    const snapshot = {
+      agents: [{ tenant_id: 'Hospital', alias: 'teseo', harness_id: 'grok' }, { tenant_id: 'hub-x', alias: 'owner' }],
+      memberships: [{ tenant_id: 'hub-x', room_id: 'office', alias: 'owner', enabled: true }],
+    } as unknown as ConfigurationSnapshot;
+    expect(settingsAgents(snapshot, new Set(['hub-x:owner'])).map((agent) => agent.alias)).toEqual(['teseo']);
+    expect(settingsAgents(snapshot).map((agent) => agent.alias)).toEqual(['teseo', 'owner']);
   });
 });
