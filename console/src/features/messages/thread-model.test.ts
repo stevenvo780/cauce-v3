@@ -47,9 +47,15 @@ describe('typingState', () => {
     expect(typingState({ items: [root], reply: reply(root, { alias: 'otro' }) })).toBe('thinking');
   });
 
-  it('un agente caído o trabado nunca aparenta escribir', () => {
+  it('un agente caído nunca aparenta escribir; uno trabado solo si esta entrega no empezó', () => {
     expect(typingState({ items: [input('m1', 'started')], live: 'down' })).toBeUndefined();
     expect(typingState({ items: [input('m1', 'pending')], live: 'blocked' })).toBeUndefined();
+    expect(typingState({ items: [input('m1', 'leased')], live: 'blocked' })).toBeUndefined();
+    expect(typingState({ items: [input('m1', 'accepted')], live: 'blocked' })).toBeUndefined();
+  });
+
+  it('un turno largo que ya empezó sigue escribiendo aunque el agregado diga trabado', () => {
+    expect(typingState({ items: [input('m1', 'started')], live: 'blocked' })).toBe('thinking');
   });
 
   it('sin estado de entrega el estado vivo no prueba procesamiento de este mensaje', () => {

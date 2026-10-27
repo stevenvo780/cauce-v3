@@ -114,9 +114,12 @@ export function typingState({ items, reply, live }: {
   live?: LiveState;
 }): TypingState | undefined {
   const last = items.at(-1);
-  if (last?.direction !== 'input' || !last.delivery || live === 'down' || live === 'blocked') return undefined;
+  if (last?.direction !== 'input' || !last.delivery || live === 'down') return undefined;
   if (visibleReply(last, reply)) return undefined;
   const status = last.delivery.status;
+  // «Trabado» is aggregate: a 5-min turn or a second delivery waiting its turn sets it. This delivery's own
+  // `started` still proves the turn is running (operador on Grok, 27-oct), so only its earlier states are hidden.
+  if (live === 'blocked' && status !== 'started') return undefined;
   if (status === 'leased') return 'receiving';
   return status && CLAIMED.has(status) ? 'thinking' : undefined;
 }
