@@ -195,7 +195,9 @@ def recreate_original(executor, entry: dict) -> None:
         raise SafeFailure('replacement original unverified') from None
 
 
-def capture(executor) -> None:
+def capture(executor, *, late: bool = False) -> None:
+    """Pins the original before the update's first effect. A late capture runs from compensation when the update failed
+    before any effect, its own capture included: the original may then be stopped, and restoring it starts it again."""
     if not restoration(executor.context):
         return
     value = snapshot(executor.context)
@@ -216,9 +218,11 @@ def capture(executor) -> None:
                  'original_container_id': receipt['previous']['container_id'], 'phase': 'capturing'}
         agent, observed = original(executor, entry)
         state = adapter_restart_state(executor.policy, agent, observed)
-        if state.get('adapter_bootstrap') is not False:
+        if state.get('adapter_bootstrap') is not False and not (late and state == {'adapter_running': False}):
             raise SafeFailure('replacement original unverified')
         entry['adapter_state'] = state
+        if late:
+            entry['late_capture'] = True
         entry.update(normal_pins(executor, agent))
         checkpoint = checkpoint_credentials(executor.policy, executor.context, agent, entry)
         entry.update(checkpoint_sha256=checkpoint['checkpoint_sha256'], phase='captured')
@@ -396,6 +400,11 @@ def preserve_container(executor, agent: dict, observed: dict, entry: dict) -> No
     stop_running_adapter(current, observed)
 
 
+UPDATE_EFFECTS = ('bootstrap_credentials', 'normal_credentials', 'runtime', 'runtime_launch_attempted',
+                  'compensation_credential_effects', 'revocation_complete', 'terminal_provision')
+REVOCATION_EFFECTS = ('central_revocations', 'compensated', 'revoked', 'legacy_authority_absence')
+
+
 def compensate(executor) -> dict | None:
     if not restoration(executor.context):
         return None
@@ -406,10 +415,14 @@ def compensate(executor) -> dict | None:
             and 'compensation_snapshot' not in executor.context.get('snapshot', {}) \
             and 'replacement_compensation' not in journal \
             and all(step in {'prepare', 'stop'} for step in journal.get('attempted', [])) \
-            and not any(name in journal for name in ('bootstrap_credentials', 'normal_credentials', 'runtime',
-                'runtime_launch_attempted', 'compensation_credential_effects', 'revocation_complete', 'terminal_provision')) \
-            and not any(journal.get(name) for name in ('central_revocations', 'compensated', 'revoked', 'legacy_authority_absence')):
+            and not any(name in journal for name in UPDATE_EFFECTS) \
+            and not any(journal.get(name) for name in REVOCATION_EFFECTS):
         return None
+    if same_container and 'replacement_compensation' not in journal and not journal.get('attempted') \
+            and not any(name in journal for name in UPDATE_EFFECTS) and not any(journal.get(name) for name in REVOCATION_EFFECTS):
+        # The update failed before its first effect, its own capture included: nothing changed but the original may be
+        # stopped (hades, 27-oct), so the original is pinned now and restored through the same proof as any other.
+        capture(executor, late=True)
     value = snapshot(executor.context)
     entry = executor.journal.get('replacement_compensation')
     if not isinstance(entry, dict) or entry.get('snapshot_sha256') != value['snapshot_sha256']:

@@ -273,6 +273,51 @@ class ReplacementPhysicalRollbackTest(unittest.TestCase):
         self.assertNotIn('replacement_retirement', self.executor.journal)
         self.assertNotIn('attempted', self.executor.journal)
 
+    def test_an_update_that_failed_before_its_capture_restores_the_stopped_original(self):
+        import fleet_executor_replacement as replacement
+        self.context['request']['parameters']['placement']['container_name'] = 'original'
+        self.executor.agent = lambda: self.agent
+        self.executor.journal.clear()
+        self.executor.journal.update(expected_applied='1' * 64, request_sha256='2' * 64)
+        stopped = {'adapter_running': False}
+        with mock.patch.object(replacement, 'capture_previous', return_value={'previous': {'container_id': 'a' * 64}}), \
+                mock.patch.object(container, 'adapter_restart_state', return_value=stopped):
+            with self.assertRaisesRegex(SafeFailure, 'original unverified'):
+                rollback.capture(self.executor)
+        self.assertNotIn('replacement_compensation', self.executor.journal)
+        result = {'checkpoint_sha256': 'b' * 64, 'authority_sha256': 'e' * 64,
+                  'shared_authority_preserved': True, 'created_authority_revoked': True, 'revoked_credentials': []}
+        with mock.patch.object(replacement, 'capture_previous', return_value={'previous': {'container_id': 'a' * 64}}), \
+                mock.patch.object(rollback, 'original', return_value=(self.agent, {'Id': 'a' * 64})), \
+                mock.patch.object(rollback, 'normal_pins', return_value={key: self.entry[key] for key in ('normal_certificate_sha256', 'normal_token_sha256')}), \
+                mock.patch.object(rollback, 'restore_source', return_value={'generation': 'f' * 64}), \
+                mock.patch.object(container, 'adapter_restart_state', return_value=stopped), \
+                mock.patch.object(container, 'stop_running_adapter') as stop, \
+                mock.patch.object(container, 'discard_operation') as discard, \
+                mock.patch.object(container, 'docker', return_value='a' * 64), \
+                mock.patch.object(container, 'restore_existing_adapter', return_value={'runtime_digest': '1' * 64}) as restore, \
+                mock.patch.object(authority, 'checkpoint_credentials', return_value={'checkpoint_sha256': 'b' * 64}), \
+                mock.patch.object(authority, 'rollback_credentials', return_value=result):
+            proof = rollback.compensate(self.executor)
+        entry = self.executor.journal['replacement_compensation']
+        self.assertIs(entry['late_capture'], True)
+        self.assertEqual(entry['phase'], 'restored')
+        self.assertEqual(proof['replacement_restored']['original_container_id'], 'a' * 64)
+        self.assertIs(restore.call_args.kwargs['was_running'], True)
+        self.assertIsNone(restore.call_args.kwargs['operation_id'])
+        discard.assert_not_called()
+        stop.assert_not_called()
+
+    def test_a_late_capture_never_runs_after_any_effect(self):
+        self.context['request']['parameters']['placement']['container_name'] = 'original'
+        for journal in ({'attempted': ['stop']}, {'runtime_launch_attempted': True}, {'compensated': {'runtime': True}}):
+            with self.subTest(journal=journal), mock.patch.object(rollback, 'capture') as capture:
+                self.executor.journal.clear()
+                self.executor.journal.update(journal)
+                with self.assertRaisesRegex(SafeFailure, 'authority unverified'):
+                    rollback.compensate(self.executor)
+                capture.assert_not_called()
+
     def test_same_container_stops_only_the_current_operations_adapter(self):
         state = {'adapter_running': True, 'adapter_bootstrap': True, 'adapter_operation_id': self.context['operation_id']}
         with mock.patch.object(container, 'adapter_restart_state', return_value=state), \

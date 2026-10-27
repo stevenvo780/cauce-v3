@@ -308,7 +308,8 @@ def terminate_from_metadata(
         if legacy_controller_stopped:
             raise PermanentError("RESTART_PARTIAL_LEGACY_CONTROLLER_STOPPED_METADATA_PRESERVED") from error
         if effect_started:
-            raise PermanentError("RESTART_PARTIAL_ADAPTER_TEARDOWN") from error
+            # The cause rides along: callers match the prefix, and only this text says why the teardown stopped (27-oct).
+            raise PermanentError(f"RESTART_PARTIAL_ADAPTER_TEARDOWN: {type(error).__name__}: {error}"[:240]) from error
         raise
     finally:
         if leader_fd is not None:
