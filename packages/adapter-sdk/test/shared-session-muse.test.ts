@@ -88,6 +88,15 @@ test("muse: la línea de trabajo cuenta como turno en vuelo y la caja vacía com
   assert.equal(inputBoxState(IDLE_PANE.replace(/❯\n(─+)\n {2}muse/u, "❯ texto a medio escribir\n$1\n  muse")).kind, "busy");
 });
 
+test("muse: la ayuda gris de la caja vacía no es texto sin enviar; lo escrito sí", () => {
+  // Captured with capture-pane -e on perseo, 27-oct: hint in grey 242, typed text in 252.
+  const hint = "\u001b[0m\u001b[38;5;214m\u001b[49m❯ \u001b[38;5;242m/goal pins a session objective with a progress bar";
+  const typed = "\u001b[0m\u001b[38;5;214m\u001b[49m❯ \u001b[38;5;252mzq\u001b[39m";
+  assert.equal(inputBoxState(hint).kind, "free");
+  assert.equal(inputBoxState(typed).kind, "busy");
+  assert.equal(inputBoxState("\u001b[38;5;214m❯ \u001b[38;5;242mayuda \u001b[39mtexto").kind, "busy");
+});
+
 test("muse: SHARED_SESSION=1 usa un XDG_DATA_HOME propio del alias, esfuerzo max y las flags del puente", () => {
   const config = loadSharedSessionConfig("muse", "hegel", "/state/hegel", {
     CAUCE_SHARED_SESSION: "1", HOME: "/home/dev",

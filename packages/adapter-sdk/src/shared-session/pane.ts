@@ -156,6 +156,20 @@ function stripSgr(value: string): string {
 }
 
 /**
+ * A placeholder colour: Muse 1.4 draws its empty-box hint (`/goal pins…`) in 256-colour grey 242 instead of SGR 2,
+ * and typed text in 252 (measured 27-oct on perseo). Dark greys 232–246 and bright black (90) count as dim.
+ */
+function isPlaceholderColour(codes: readonly string[]): boolean {
+  if (codes.includes("90")) return true;
+  for (let i = 0; i + 2 < codes.length; i += 1) {
+    if (codes[i] !== "38" || codes[i + 1] !== "5") continue;
+    const shade = Number(codes[i + 2]);
+    if (shade >= 232 && shade <= 246) return true;
+  }
+  return false;
+}
+
+/**
  * Checks whether the text after the cursor contains only dim (placeholder) styles.
  */
 function isEntirelyDim(raw: string, mark: string): boolean {
@@ -171,8 +185,9 @@ function isEntirelyDim(raw: string, mark: string): boolean {
     if (seg === undefined) continue;
     if (i % 2 === 1) {
       const codes = seg.split(";").filter((c) => c !== "");
-      if (codes.length === 0 || codes.includes("0")) dim = false;
-      if (codes.includes("2")) dim = true;
+      if (codes.length === 0 || codes.includes("0") || codes.includes("39")) dim = false;
+      if (codes.includes("38")) dim = isPlaceholderColour(codes);
+      if (codes.includes("2") || codes.includes("90")) dim = true;
       continue;
     }
     if (seg.trim() !== "" && !dim) vioTextoNoAtenuado = true;
