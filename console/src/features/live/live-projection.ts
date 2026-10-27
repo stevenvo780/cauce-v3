@@ -54,7 +54,7 @@ export function projectLiveFleet(snapshot: FleetActivitySnapshot | undefined, to
         ...room,
         members: room.members?.filter((member) => {
           const key = `${tenant.id ?? ''}/${member.alias ?? ''}`;
-          if (hidden.has(key)) return false;
+          if (hidden.has(key) || member.person === true) return false;
           return known.has(key) || pending.has(key) || member.registered !== false;
         }),
       })),

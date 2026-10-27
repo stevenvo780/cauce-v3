@@ -14,6 +14,8 @@ interface RoomMember {
   agent_enabled?: boolean | null;
   harness_id?: string | null;
   display_name?: string | null;
+  /** The seat a person writes from (the company owner), never an agent. */
+  person?: boolean | null;
   off_reason?: MemberOffReason | null;
 }
 

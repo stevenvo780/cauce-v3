@@ -46,7 +46,8 @@ export function buildFleetAgents(status?: SystemStatus, topology?: TopologySnaps
       for (const member of room.members ?? []) {
         if (!member.alias) continue;
         const id = fleetAgentId(tenant.id, member.alias);
-        if (member.registered === false) {
+        // A person's seat (the company owner) is never an agent either.
+        if (member.registered === false || member.person === true) {
           explicitlyNotAgents.add(id);
           records.delete(id);
           continue;

@@ -226,6 +226,11 @@ export abstract class ConfigRepository extends OutboxOperatorRepository {
                   'agent_enabled',agent.enabled,
                   'harness_id',agent.harness_id,
                   'display_name',agent.display_name,
+                  -- A person's own seat (the company owner): no configured runtime and a human acts through it.
+                  'person',(NOT (agent.runtime_key IS NOT NULL AND agent.harness_id IS NOT NULL AND agent.container_name IS NOT NULL)
+                    AND (EXISTS (SELECT 1 FROM console_users person WHERE person.tenant_id=m.tenant_id AND person.alias=m.alias)
+                      OR EXISTS (SELECT 1 FROM human_tenant_memberships human
+                        WHERE human.tenant_id=m.tenant_id AND human.actor_alias=m.alias AND human.revoked_at IS NULL))),
                   'off_reason',CASE
                     WHEN agent.tenant_id IS NULL THEN 'not_registered'
                     WHEN NOT agent.enabled AND NOT m.enabled THEN 'agent_and_membership_disabled'

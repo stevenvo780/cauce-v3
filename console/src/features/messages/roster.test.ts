@@ -160,3 +160,26 @@ describe('aliasDeLosMensajes', () => {
     expect(aliasDeLosMensajes(undefined).size).toBe(0);
   });
 });
+
+describe('las personas no son bots', () => {
+  it('el asiento del dueño (persona) no aparece en el roster aunque tenga sala y mensajes', () => {
+    const topology: TopologySnapshot = {
+      tenants: [
+        { id: 'Hospital', rooms: [{ id: 'grp.hospital', members: [{ alias: 'teseo', enabled: true }] }] },
+        { id: 'hub-x', rooms: [{ id: 'office', members: [{ alias: 'owner', enabled: true, person: true }] }] },
+      ],
+    };
+    const messages: MessagePage = {
+      items: [{
+        message_id: 'msg-owner', trace_id: 'trace-owner-0001', tenant_id: 'hub-x', room_id: 'office',
+        actor_alias: 'owner', body_preview: 'hola teseo', lane: 'batch', created_at: enElFuturo,
+        deliveries: [{ delivery_id: 'del-owner', recipient_tenant: 'Hospital', recipient_alias: 'teseo', status: 'done', attempt: 1 }],
+      }],
+    };
+    const roster = construirRosterDeMensajeria({
+      topology, messages, activity: { agents: [{ tenant_id: 'hub-x', alias: 'owner', registered: true, agent_enabled: false }] },
+    });
+
+    expect(roster.map((agente) => agente.alias)).toEqual(['teseo']);
+  });
+});

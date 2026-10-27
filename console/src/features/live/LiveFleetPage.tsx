@@ -119,7 +119,7 @@ export function LiveFleetPage() {
       for (const room of tenant.rooms ?? []) {
         if (!room.id) continue;
         for (const member of room.members ?? []) {
-          if (!member.alias || member.enabled === false) continue;
+          if (!member.alias || member.enabled === false || member.person === true) continue;
           members.set(`${tenant.id}/${member.alias}`, { registered: member.registered ?? null });
         }
       }

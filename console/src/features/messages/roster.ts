@@ -98,7 +98,9 @@ export function construirRosterDeMensajeria(entrada: {
     });
   }
 
-  return [...registros.values()].filter(agente => !esIntermediarioDeContexto(agente.alias)).sort((izquierda, derecha) => {
+  const personas = asientosDePersonas(entrada.topology);
+  return [...registros.values()]
+    .filter(agente => !esIntermediarioDeContexto(agente.alias) && !personas.has(agente.id)).sort((izquierda, derecha) => {
     const rango = { online: 0, unknown: 1, expired: 2 };
     return rango[izquierda.leaseState] - rango[derecha.leaseState]
       || izquierda.tenantId.localeCompare(derecha.tenantId)
@@ -128,6 +130,19 @@ export function motivoDeAgenteSuelto(agente: AgenteDeMensajeria): string | undef
 
 function esIntermediarioDeContexto(alias: string): boolean {
   return /^context-director(?:-\d+)?$/u.test(alias);
+}
+
+/** The seats people write from (the company owner): the server marks them, and a person is never drawn as a bot. */
+function asientosDePersonas(topology: TopologySnapshot | undefined): Set<string> {
+  const ids = new Set<string>();
+  for (const tenant of topology?.tenants ?? []) {
+    for (const room of tenant.rooms ?? []) {
+      for (const member of room.members ?? []) {
+        if (member.person === true && tenant.id && member.alias) ids.add(fleetAgentId(tenant.id, member.alias));
+      }
+    }
+  }
+  return ids;
 }
 
 function sumarOrigen(origenes: OrigenDeAgente[], nuevo: OrigenDeAgente): OrigenDeAgente[] {

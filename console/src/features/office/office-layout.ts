@@ -8,8 +8,8 @@ export function officeRooms(topology?: TopologySnapshot, available?: readonly { 
   return (topology?.tenants ?? []).flatMap(tenant => tenant.id ? (tenant.rooms ?? []).flatMap(room => room.id ? [{
     tenant: tenant.id ?? '', id: room.id, label: (room.label?.trim() ?? '') || room.id,
     // One counting rule everywhere: a member with no agent registry (`registered === false`)
-    // does not count as an agent of the room until it is registered.
-    agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false && member.registered !== false)
+    // does not count as an agent of the room until it is registered, and a person's seat never does.
+    agents: (room.members ?? []).filter(member => member.alias && member.enabled !== false && member.registered !== false && member.person !== true)
       .map(member => `${tenant.id ?? ''}/${member.alias ?? ''}`),
   }] : []) : []).filter(room => !savable || savable.has(officeRoomKey(room.tenant, room.id)));
 }
