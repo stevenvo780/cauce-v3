@@ -52,11 +52,15 @@ if (original.split(ANCHOR).length !== 2) {
  * the file syntactically broken. We search forward from the anchor.
  */
 const start = original.indexOf(ANCHOR);
-const closing = original.indexOf("\n\t\t\t\t});\n", start);
+// The anchor's own indentation closes the call: 2026.6.6 nests it four tabs deep, 2026.7.1 five.
+const indent = original.slice(original.lastIndexOf("\n", start) + 1, start);
+if (!/^\t*$/u.test(indent)) fail(`la llamada no empieza su línea en ${target}`);
+const closer = `\n${indent}});\n`;
+const closing = original.indexOf(closer, start);
 if (closing === -1) fail(`no encuentro el cierre de la llamada en ${target}`);
-const after = closing + "\n\t\t\t\t});\n".length;
+const after = closing + closer.length;
 
-const patched = `${original.slice(0, start)}${GUARDED}${original.slice(start + ANCHOR.length, after)}\t\t\t\t${RESCUE}\n${original.slice(after)}`;
+const patched = `${original.slice(0, start)}${GUARDED}${original.slice(start + ANCHOR.length, after)}${indent}${RESCUE}\n${original.slice(after)}`;
 
 /**
  * We check the EFFECT, not that the replacement "worked": a broken bundle leaves the agent unable

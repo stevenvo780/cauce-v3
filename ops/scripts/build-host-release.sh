@@ -41,13 +41,15 @@ find "$stage/adapter" \( -name .modules.yaml -o -path '*/node_modules/.bin' \) -
 # with a cold cache keeps the portable config digest pinned from docker save; otherwise npm/apt mtimes change every layer.
 # The bridge context holds only the committed bridge: the checkout's ops/container-runtime also carried __pycache__,
 # whose embedded source mtimes changed that layer and the image Id on every build of unchanged sources.
-mkdir "$work/musebridge" "$work/quotareaders"
+mkdir "$work/musebridge" "$work/quotareaders" "$work/patches"
 install -m 0755 "$stage/ops/container-runtime/muse-cauce" "$work/musebridge/muse-cauce"
 git archive HEAD ops/cuotas/leer-cuota.mjs ops/cuotas/leer-cuota-grok.mjs ops/cuotas/codex-http-probe.py \
   | tar -x --strip-components=2 -C "$work/quotareaders"
-image="cauce-agent-runtime:$(cat ops/agent-runtime/Dockerfile "$work/musebridge/muse-cauce" "$work/quotareaders/"* | sha256sum | cut -c1-16)"
+git archive HEAD ops/patches/openclaw-turn-compaction-guard.mjs | tar -x --strip-components=2 -C "$work/patches"
+image="cauce-agent-runtime:$(cat ops/agent-runtime/Dockerfile "$work/musebridge/muse-cauce" "$work/quotareaders/"* "$work/patches/"* | sha256sum | cut -c1-16)"
 docker build -q --provenance=false --build-context "musebridge=$work/musebridge" --build-context "quotareaders=$work/quotareaders" \
-  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile ops/container-runtime/muse-cauce ops/cuotas/leer-cuota.mjs ops/cuotas/leer-cuota-grok.mjs ops/cuotas/codex-http-probe.py)" \
+  --build-context "patches=$work/patches" \
+  --build-arg "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- ops/agent-runtime/Dockerfile ops/container-runtime/muse-cauce ops/cuotas/leer-cuota.mjs ops/cuotas/leer-cuota-grok.mjs ops/cuotas/codex-http-probe.py ops/patches/openclaw-turn-compaction-guard.mjs)" \
   --output "type=docker,rewrite-timestamp=true,name=$image,dest=$work/agent-image.oci.tar" ops/agent-runtime >/dev/null
 # The containerd image store refuses rewrite-timestamp with its default unpack, so export to a tar and load it.
 docker load -q -i "$work/agent-image.oci.tar" >/dev/null && rm -f "$work/agent-image.oci.tar"

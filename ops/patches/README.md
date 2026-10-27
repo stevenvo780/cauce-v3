@@ -36,6 +36,11 @@ node --check ops/patches/*.mjs
 **Objetivo:** cada contenedor cuyo alias corra el arnés `openclaw`, en cualquier host donde exista
 ese contenedor.
 
+**V4:** la imagen de los ordenadores (`ops/agent-runtime/Dockerfile`, openclaw 2026.7.1-2,
+`dist/agent-command-ABV9I5el.js`) lo aplica al construirse, con el contexto `patches` que le pasa
+`ops/scripts/build-host-release.sh`; su raíz es de solo lectura, así que no se parchea en caliente.
+Si el parche no encaja, la construcción falla.
+
 ### Qué falla
 
 Terminado el turno, `agent-command` persiste el transcript y después llama a

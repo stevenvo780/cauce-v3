@@ -22,7 +22,8 @@ export async function realV4Image(context = defaultContext): Promise<V4Image> {
   if (!process.env.HOME?.startsWith('/tmp/cauce-e2e-home-')) throw new Error('use the versioned lab runner');
   await mkdir(evidence, { recursive: true, mode: 0o700 });
   const sources = ['ops/agent-runtime/Dockerfile', 'ops/container-runtime/muse-cauce',
-    'ops/cuotas/codex-http-probe.py', 'ops/cuotas/leer-cuota-grok.mjs', 'ops/cuotas/leer-cuota.mjs'];
+    'ops/cuotas/codex-http-probe.py', 'ops/cuotas/leer-cuota-grok.mjs', 'ops/cuotas/leer-cuota.mjs',
+    'ops/patches/openclaw-turn-compaction-guard.mjs'];
   const bodies = await Promise.all(sources.map(path => readFile(path)));
   const recipe = Object.fromEntries(sources.map((path, index) => [path, digest(bodies[index] ?? '')]));
   const recipeHash = digest(Buffer.concat(bodies));
@@ -61,13 +62,15 @@ export async function realV4Image(context = defaultContext): Promise<V4Image> {
   if (!id) {
     const work = await mkdtemp(join(tmpdir(), `zz-canary-${owner}-image-`));
     try {
-      for (const name of ['musebridge', 'quotareaders']) await mkdir(join(work, name));
+      for (const name of ['musebridge', 'quotareaders', 'patches']) await mkdir(join(work, name));
       await copyFile(sources[1] ?? '', join(work, 'musebridge/muse-cauce'));
       await chmod(join(work, 'musebridge/muse-cauce'), 0o755);
-      for (const path of sources.slice(2)) await copyFile(path, join(work, 'quotareaders', path.split('/').at(-1) ?? ''));
+      for (const path of sources.slice(2, 5)) await copyFile(path, join(work, 'quotareaders', path.split('/').at(-1) ?? ''));
+      await copyFile(sources[5] ?? '', join(work, 'patches/openclaw-turn-compaction-guard.mjs'));
       const archive = join(work, 'agent-image.tar');
       const command = ['build', '-q', '--provenance=false', '--label', `cauce.e2e.owner=${owner}`,
         '--build-context', `musebridge=${work}/musebridge`, '--build-context', `quotareaders=${work}/quotareaders`,
+        '--build-context', `patches=${work}/patches`,
         '--build-arg', `SOURCE_DATE_EPOCH=${sourceDateEpoch}`, '--output',
         `type=docker,rewrite-timestamp=true,name=${tag},dest=${archive}`, 'ops/agent-runtime'];
       process.stdout.write(`v4-image-build ${JSON.stringify({ tag, recipe, source_date_epoch: sourceDateEpoch })}\n`);

@@ -1,6 +1,7 @@
 # The Muse bridge is supplied with --build-context musebridge=<ops/container-runtime>; empty by default.
 FROM scratch AS musebridge
 FROM scratch AS quotareaders
+FROM scratch AS patches
 
 # Agent runtime of enrolled computers. The executor starts it as root with `sleep`, mounts the release read-only and
 # runs the adapter as `node`; ops/scripts/build-host-release.sh pins each provider CLI it measures inside this image.
@@ -59,6 +60,13 @@ RUN if [ ! -f /tmp/muse-bridge/muse-cauce ]; then \
  && rm -rf /tmp/muse-bridge
 
 COPY --from=quotareaders --chmod=0555 /leer-cuota.mjs /leer-cuota-grok.mjs /codex-http-probe.py /usr/local/bin/
+
+# ops/patches/openclaw-turn-compaction-guard.mjs: a post-turn compaction that times out must not throw away the
+# answer already computed (operador on Grok lost two turns on 27-oct). The bundle name is a hash, so it is found by its call.
+COPY --from=patches /openclaw-turn-compaction-guard.mjs /tmp/
+RUN dist=$(grep -l 'runCliTurnCompactionLifecycle({' /usr/local/lib/node_modules/openclaw/dist/agent-command-*.js) \
+ && OPENCLAW_DIST="$dist" node /tmp/openclaw-turn-compaction-guard.mjs | grep -qx aplicado \
+ && rm -f /tmp/openclaw-turn-compaction-guard.mjs "$dist".bak-*
 
 USER node
 WORKDIR /home/node
