@@ -219,6 +219,10 @@
       "dockerHost": "server2",
       "systemdUser": "server"
     },
+    "socrates": {
+      "dockerHost": "server1",
+      "systemdUser": "server"
+    },
     "teseo": {
       "dockerHost": "server2",
       "systemdUser": "server"
