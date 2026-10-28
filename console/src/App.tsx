@@ -64,6 +64,9 @@ const ConfigPage = deferredPage(async () => ({
 const TerminalPage = deferredPage(async () => ({
   default: (await import('./features/terminal/TerminalPage')).TerminalPage,
 }));
+const PlanPage = deferredPage(async () => ({
+  default: (await import('./features/config/PlanPage')).PlanPage,
+}));
 const HelpPage = deferredPage(async () => ({
   default: (await import('./features/help/HelpPage')).HelpPage,
 }));
@@ -88,6 +91,7 @@ const PAGES: Record<string, ComponentType<RoutePageProps>> = {
   observability: ObservabilityPage,
   config: ConfigPage,
   terminal: TerminalPage,
+  plan: PlanPage,
   ayuda: HelpPage,
 };
 

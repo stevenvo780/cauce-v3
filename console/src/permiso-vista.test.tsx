@@ -61,6 +61,7 @@ const GOBIERNO_NAV: Record<string, 'config.write' | 'relay' | null> = {
   observability: null,
   config: null,
   terminal: 'relay',
+  plan: null,
   ayuda: null,
 };
 
@@ -97,7 +98,7 @@ it('terminalNavAvailability: checking y available navegan; unavailable inhabilit
     .toEqual({ hidden: false, disabled: true, reason: 'Sin relay.' });
 });
 
-it('operador pleno: las nueve entradas habilitadas y «Ajustes» navega', async () => {
+it('operador pleno: las diez entradas habilitadas y «Ajustes» navega', async () => {
   servirAcceso(PERMISOS_PLENOS);
   servirRelayDisponible();
   window.history.pushState({}, '', '/live');

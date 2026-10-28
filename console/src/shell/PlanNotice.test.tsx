@@ -31,7 +31,7 @@ it('sin plan activo avisa, enseña los cuatro planes y lleva al elegido', async 
   for (const name of ['Gestionado', 'Hotel 20', 'Hotel 50', 'Por espacio']) expect(within(dialog).getByRole('article', { name })).toBeInTheDocument();
   expect(within(dialog).getByText('Recomendado: 3 agentes')).toBeInTheDocument();
   await user.click(within(dialog).getByRole('button', { name: 'Elegir Hotel 50' }));
-  await waitFor(() => { expect(window.location.pathname + window.location.search).toBe('/config?seccion=plan&plan=hotel_50'); });
+  await waitFor(() => { expect(window.location.pathname + window.location.search).toBe('/plan?plan=hotel_50'); });
 });
 
 it('una empresa exenta o con plan activo no ve el aviso', async () => {

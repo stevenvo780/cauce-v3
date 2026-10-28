@@ -31,7 +31,7 @@ const PITCH: Record<BillingPlanId, { tagline: string; body: string; unit: string
 };
 
 function choose(plan: BillingPlanId): void {
-  navigate(`/config?seccion=plan&plan=${plan}`);
+  navigate(`/plan?plan=${plan}`);
 }
 
 function PlanPitch({ plan, overview, onChoose }: { plan: BillingPlan; overview: BillingOverview; onChoose: () => void }) {
@@ -78,7 +78,7 @@ export function PlanNotice() {
           ? 'Tu pago en Mercado Pago está pendiente. En cuanto se apruebe, tu plan queda activo.'
           : 'Tu empresa aún no tiene un plan activo. Elige uno para seguir creando agentes.'}
       </span>
-      <Button size="sm" variant="primary" onClick={() => { if (pending) choose('gestionado'); else setOpen(true); }}>
+      <Button size="sm" variant="primary" onClick={() => { if (pending) navigate('/plan'); else setOpen(true); }}>
         {pending ? 'Ver mi plan' : 'Ver planes'}
       </Button>
     </div>

@@ -1,5 +1,5 @@
 import {
-  BatteryMedium, BookOpen, Building2, CreditCard, Gauge, ListRestart, MessageSquareText,
+  BatteryMedium, BookOpen, Building2, CreditCard, Gauge, Gem, ListRestart, MessageSquareText,
   Settings2, TerminalSquare,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
@@ -22,7 +22,7 @@ interface NavEntry {
  * Main navigation entries with a visible label. Hidden routes live in `App.tsx`.
  * Each `id` must exist in `PAGES` and cannot be a key of `ROUTE_ALIASES`.
  */
-export const PRIMARY_NAV_IDS: readonly string[] = ['messages', 'live', 'terminal'];
+export const PRIMARY_NAV_IDS: readonly string[] = ['messages', 'live', 'terminal', 'plan'];
 
 export const NAV_ENTRIES: NavEntry[] = [
   { id: 'messages', label: 'Chat', icon: MessageSquareText },
@@ -33,6 +33,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'observability', label: 'Señales y auditoría', icon: Gauge },
   { id: 'config', label: 'Ajustes', icon: Settings2 },
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
+  { id: 'plan', label: 'Plan y pagos', icon: Gem },
   { id: 'ayuda', label: 'Ayuda', icon: BookOpen },
 ];
 

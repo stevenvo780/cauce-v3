@@ -94,7 +94,8 @@ function Current({ subscription, overview, busy, confirming, onAsk, onAbort, onC
   </section>;
 }
 
-export function BillingSection() {
+/** `bare` drops the section header when the plan is its own page. */
+export function BillingSection({ bare = false }: { bare?: boolean } = {}) {
   const api = useApi();
   const search = useRouteSearch();
   const [overview, setOverview] = useState<BillingOverview>();
@@ -121,7 +122,7 @@ export function BillingSection() {
     if (returned.current) return;
     returned.current = true;
     const params = new URLSearchParams(search);
-    if (params.get('seccion') === 'plan' && params.get('pago') === 'vuelta') {
+    if (params.get('pago') === 'vuelta') {
       void (async () => {
         try {
           await api.refreshBilling();
@@ -160,7 +161,7 @@ export function BillingSection() {
     }
   }
 
-  const header = <ConfigSectionHeader seccion="plan" />;
+  const header = bare ? null : <ConfigSectionHeader seccion="plan" />;
   if (loading) return <div className="grid gap-4">{header}<LoadingState label="Leyendo tu plan…" /></div>;
   if (!overview) return <div className="grid gap-4">{header}
     {error === 'Pagos sin configurar' ? <Notice tone="info" role="note">Pagos sin configurar</Notice>
@@ -196,6 +197,7 @@ export function BillingSection() {
           className="min-h-11 text-fg" onChange={(event) => { setPayerEmail(event.target.value); }} />
         <span>Mercado Pago solo acepta el pago desde la cuenta de este correo. Vacío, se usa el correo de tu sesión.</span>
       </label> : null}
+      {!blocked && !overview.exempt ? <p className="m-0 text-xs text-muted">El primer cobro se hace al pagar y después Mercado Pago cobra cada mes el mismo día.</p> : null}
       <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,16rem),1fr))] gap-3 p-0">
         {plans.map((plan) => <PlanCard key={plan.plan} plan={plan} overview={overview} disabled={blocked || overview.exempt} busy={busy}
           chosen={new URLSearchParams(search).get('plan') === plan.plan}

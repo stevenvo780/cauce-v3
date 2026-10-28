@@ -172,7 +172,7 @@ function BottomBar({ routeId, account }: { routeId: string; account: ReactNode }
   return (
     <nav
       aria-label="Navegación principal"
-      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       {PRIMARY_NAV_IDS.map((id) => {
         const entry = NAV_ENTRIES.find((item) => item.id === id);
