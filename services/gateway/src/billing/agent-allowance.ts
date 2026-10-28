@@ -1,6 +1,6 @@
 import type { ConfigMutation, FleetOperationRequest } from '@cauce/protocol';
 import {
-  companyAgentAllowance, PLAN_AGENT_SQL, type CompanyAuthority, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool,
+  companyAgentAllowance, lockCompanyAllowance, PENDING_PLAN_AGENT_SQL, PLAN_AGENT_SQL, type CompanyAuthority, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 
 type Queryable = Pick<DatabaseClient, 'query'>;
@@ -37,12 +37,14 @@ export function createdFleetAgents(request: FleetOperationRequest): AgentTarget[
  */
 export async function assertAgentAllowance(db: Queryable, company: string, targets: readonly AgentTarget[]): Promise<void> {
   if (targets.length === 0) return;
+  await lockCompanyAllowance(db, company);
   const adding = (await db.query<{ adding: number }>(
     `SELECT count(DISTINCT (target.tenant_id,target.alias))::integer AS adding
        FROM unnest($2::text[],$3::text[]) AS target(tenant_id,alias)
        JOIN tenants tenant ON tenant.id=target.tenant_id AND tenant.company_id=$1
        LEFT JOIN agents agent ON agent.tenant_id=target.tenant_id AND agent.alias=target.alias
-      WHERE agent.tenant_id IS NULL OR NOT ${PLAN_AGENT_SQL}`,
+      WHERE (agent.tenant_id IS NULL OR NOT ${PLAN_AGENT_SQL})
+        AND (target.tenant_id,target.alias) NOT IN (${PENDING_PLAN_AGENT_SQL})`,
     [company, targets.map(target => target.tenant_id), targets.map(target => target.alias)])).rows[0]?.adding ?? 0;
   if (adding === 0) return;
   const allowance = await companyAgentAllowance(db, company);

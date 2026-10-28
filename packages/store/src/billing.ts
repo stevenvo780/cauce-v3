@@ -228,12 +228,29 @@ export const PLAN_AGENT_SQL = `((agent.enabled OR agent.lifecycle_state<>'retire
       AND NOT EXISTS (SELECT 1 FROM human_tenant_memberships human
         WHERE human.tenant_id=agent.tenant_id AND human.actor_alias=agent.alias))))`;
 
+/** In-flight fleet creates and restores of agents that do not count yet already hold a plan slot. */
+export const PENDING_PLAN_AGENT_SQL = `SELECT DISTINCT operation.request->'target'->>'tenant_id' AS tenant_id,
+    operation.request->'target'->>'alias' AS alias
+   FROM fleet_operations operation
+   JOIN tenants tenant ON tenant.id=operation.request->'target'->>'tenant_id'
+   LEFT JOIN agents agent ON agent.tenant_id=tenant.id AND agent.alias=operation.request->'target'->>'alias'
+  WHERE tenant.company_id=$1 AND operation.kind IN ('create','restore')
+    AND operation.request->'target'->>'resource'='agent' AND operation.status IN ('queued','running')
+    AND operation.request->'target'->>'alias' IS NOT NULL
+    AND (agent.tenant_id IS NULL OR NOT ${PLAN_AGENT_SQL})`;
+
+/** Serializes allowance checks of one company until the caller's transaction ends. */
+export async function lockCompanyAllowance(db: Queryable, companyId: string): Promise<void> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext('cauce:billing-allowance'),hashtext($1))`, [companyId]);
+}
+
 export async function companyAgentAllowance(db: Queryable, companyId: string): Promise<CompanyAgentAllowance> {
   const result = await db.query<{ exempt: boolean; limit: number | null; used: number }>(
     `SELECT company.billing_exempt AS exempt,
         (SELECT subscription.agent_limit FROM billing_subscriptions subscription
           WHERE subscription.company_id=company.id AND subscription.status='authorized') AS "limit",
-        (SELECT count(*)::integer FROM agents agent WHERE agent.company_id=company.id AND ${PLAN_AGENT_SQL}) AS used
+        (SELECT count(*)::integer FROM agents agent WHERE agent.company_id=company.id AND ${PLAN_AGENT_SQL})
+          + (SELECT count(*)::integer FROM (${PENDING_PLAN_AGENT_SQL}) pending) AS used
        FROM companies company WHERE company.id=$1`, [companyId]);
   const row = result.rows[0];
   if (!row) throw new StoreError('not_found', 'company does not exist');

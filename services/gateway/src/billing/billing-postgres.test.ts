@@ -1,7 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CauceRepository, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
+import { CauceRepository, companyAgentAllowance, FleetOperationsRepository, type DatabasePool } from '@cauce/store';
 import { preparePostgresSuite } from '../../../../packages/store/test/postgres-suite.js';
 import { seedCompanyIsolation } from '../../../../packages/store/test/companies-postgres.fixtures.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../../tests/helpers/postgres.js';
@@ -239,6 +239,20 @@ describe('billing through the gateway on PostgreSQL', () => {
       idempotency_key: 'billing-restore-team', parameters: {} });
     expect(restored.json()).toMatchObject({ error: 'plan_limit_reached' });
     expect(restored.statusCode).toBe(402);
+  });
+
+  it('holds a plan slot for a queued fleet create until it runs', async () => {
+    const before = await companyAgentAllowance(pool, 'praxis');
+    const target = { resource: 'agent', tenant_id: 'PraxisHub', alias: 'queued_one' };
+    await admin.query(`INSERT INTO fleet_operations(id,actor_tenant,actor_alias,target,target_key,cohort_key,executor_host,kind,request,request_hash,
+      idempotency_key,expected_revision,status,steps) VALUES($1,'PraxisHub','leon',$2::jsonb,'agent:PraxisHub/queued_one','billing-cohort','praxis-host',
+      'create',$3::jsonb,$4,'billing-queued',0,'queued','[]'::jsonb)`,
+    [randomUUID(), JSON.stringify(target), JSON.stringify({ kind: 'create', target, parameters: {} }), 'b'.repeat(64)]);
+    const after = await companyAgentAllowance(pool, 'praxis');
+    expect(after.used).toBe(before.used + 1);
+    await admin.query("UPDATE billing_subscriptions SET agent_limit=$1 WHERE company_id='praxis' AND status='authorized'", [after.used]);
+    await expect(assertAgentAllowance(pool, 'praxis', [{ tenant_id: 'PraxisHub', alias: 'queued_one' }])).resolves.toBeUndefined();
+    await expect(assertAgentAllowance(pool, 'praxis', [{ tenant_id: 'PraxisHub', alias: 'another_one' }])).rejects.toBeInstanceOf(PlanLimitError);
   });
 
   it('applies no plan limit while billing is unconfigured', async () => {
