@@ -6,7 +6,7 @@ import { server } from '../../mocks/server';
 import { renderWithApi } from '../../test/render';
 import type { BillingOverview, BillingSubscription } from '../../api/client/billing-client';
 import { BillingSection } from './BillingSection';
-import { clampQuantity, formatLocal, totalUsd } from './billing-model';
+import { chargedLocal, clampQuantity, formatLocal, totalUsd } from './billing-model';
 
 const PLANS: BillingOverview['plans'] = [
   { plan: 'gestionado', price_usd: 100, unit: 'agent', agent_limit_per_unit: 1, recommended_quantity: 3 },
@@ -186,4 +186,5 @@ it('el modelo de precios acota cantidades y calcula totales y equivalente local'
   expect(totalUsd(PLANS[1], 9)).toBe(150);
   expect(formatLocal(300, 'USD', 1)).toBeUndefined();
   expect(formatLocal(300, 'COP', 4000)).toMatch(/1\.200\.000/);
+  expect(chargedLocal(300, 3200, { percent: 3.29, fixed: 800, vat: 19 })).toBe(1000108);
 });

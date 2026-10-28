@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { validProcessingFee, type ProcessingFee } from '@cauce/store';
 import { MercadoPagoClient, type MercadoPagoClientOptions } from './mercadopago-client.js';
 import { verifyWebhookSignature, type WebhookSignatureInput } from './webhook-signature.js';
 
@@ -7,7 +8,7 @@ export const DEFAULT_BILLING_PUBLIC_URL = 'https://consola.humanizar.tech';
 
 export type BillingDisabledReason =
   | 'missing_access_token' | 'missing_webhook_secret' | 'unreadable_secret' | 'invalid_currency' | 'missing_usd_rate' | 'invalid_usd_rate'
-  | 'invalid_public_url';
+  | 'invalid_public_url' | 'invalid_fee';
 
 export interface BillingSettingsInput {
   readonly accessToken: string;
@@ -15,6 +16,7 @@ export interface BillingSettingsInput {
   readonly currency: string;
   readonly usdRate: number;
   readonly publicUrl: string;
+  readonly fee?: ProcessingFee | undefined;
   readonly client?: MercadoPagoClientOptions;
 }
 
@@ -23,6 +25,7 @@ export class BillingSettings {
   readonly currency: string;
   readonly usdRate: number;
   readonly publicUrl: string;
+  readonly fee: ProcessingFee | undefined;
   readonly provider: MercadoPagoClient;
   readonly #webhookSecret: string;
 
@@ -30,6 +33,7 @@ export class BillingSettings {
     if (input.webhookSecret.length === 0) throw new Error('Mercado Pago webhook secret is empty');
     this.currency = input.currency;
     this.usdRate = input.usdRate;
+    this.fee = input.fee;
     this.publicUrl = input.publicUrl.replace(/\/+$/u, '');
     this.provider = new MercadoPagoClient(input.accessToken, input.client);
     this.#webhookSecret = input.webhookSecret;
@@ -43,7 +47,7 @@ export class BillingSettings {
   }
 
   toJSON(): Record<string, unknown> {
-    return { currency: this.currency, usd_rate: this.usdRate, public_url: this.publicUrl };
+    return { currency: this.currency, usd_rate: this.usdRate, fee: this.fee ?? null, public_url: this.publicUrl };
   }
 }
 
@@ -86,5 +90,17 @@ export async function configuredBilling(
   let parsed: URL;
   try { parsed = new URL(publicUrl); } catch { return { reason: 'invalid_public_url' }; }
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) return { reason: 'invalid_public_url' };
-  return { settings: new BillingSettings({ accessToken, webhookSecret, currency, usdRate, publicUrl: parsed.origin + parsed.pathname }) };
+  const fee = processingFee(environment);
+  if (fee === null) return { reason: 'invalid_fee' };
+  return { settings: new BillingSettings({ accessToken, webhookSecret, currency, usdRate, fee, publicUrl: parsed.origin + parsed.pathname }) };
+}
+
+/** BILLING_FEE_PERCENT, BILLING_FEE_FIXED and BILLING_FEE_VAT; all unset means prices are charged without a fee surcharge. */
+function processingFee(environment: NodeJS.ProcessEnv): ProcessingFee | undefined | null {
+  const raw = [environment.BILLING_FEE_PERCENT, environment.BILLING_FEE_FIXED, environment.BILLING_FEE_VAT].map(value => value?.trim() ?? '');
+  if (raw.every(value => value === '')) return undefined;
+  if (raw.some(value => !/^[0-9]{1,7}(?:\.[0-9]{1,4})?$/u.test(value === '' ? '0' : value))) return null;
+  const [percent, fixed, vat] = raw.map(value => Number(value === '' ? '0' : value));
+  const fee = { percent: percent ?? 0, fixed: fixed ?? 0, vat: vat ?? 0 };
+  return validProcessingFee(fee) ? fee : null;
 }

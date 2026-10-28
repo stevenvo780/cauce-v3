@@ -23,12 +23,20 @@ export interface BillingSubscription {
   checkout_url?: string | null;
 }
 
+export interface BillingFee {
+  percent: number;
+  fixed: number;
+  vat: number;
+}
+
 export interface BillingOverview {
   configured: boolean;
   exempt: boolean;
   plans: BillingPlan[];
   currency: string;
   usd_rate: number;
+  /** Mercado Pago's charge that the local price includes, so the plan price arrives whole; null without a surcharge. */
+  fee?: BillingFee | null;
   subscription: BillingSubscription | null;
   /** `limit` is null for an exempt company and 0 without an authorized subscription. */
   allowance: { limit: number | null; used: number };

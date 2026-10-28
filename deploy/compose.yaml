@@ -127,6 +127,10 @@ services:
       BILLING_CURRENCY: ${BILLING_CURRENCY:-COP}
       BILLING_USD_RATE: ${BILLING_USD_RATE:-}
       BILLING_PUBLIC_URL: ${BILLING_PUBLIC_URL:-https://consola.humanizar.tech}
+      # Mercado Pago's fee, added on top of the price so the plan amount arrives whole; all empty = no surcharge.
+      BILLING_FEE_PERCENT: ${BILLING_FEE_PERCENT:-}
+      BILLING_FEE_FIXED: ${BILLING_FEE_FIXED:-}
+      BILLING_FEE_VAT: ${BILLING_FEE_VAT:-}
     secrets:
       - source: database_url_gateway
         target: database_url

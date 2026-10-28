@@ -94,4 +94,14 @@ describe('billing configuration', () => {
     const usd = await configuredBilling({ ...secrets, BILLING_CURRENCY: 'usd' }, read);
     expect('settings' in usd && usd.settings.usdRate).toBe(1);
   });
+
+  it('reads the Mercado Pago fee only when it is a sane surcharge', async () => {
+    const base = { ...secrets, BILLING_USD_RATE: '3200' };
+    const plain = await configuredBilling(base, read);
+    expect('settings' in plain && plain.settings.fee).toBeUndefined();
+    const charged = await configuredBilling({ ...base, BILLING_FEE_PERCENT: '3.29', BILLING_FEE_FIXED: '800', BILLING_FEE_VAT: '19' }, read);
+    expect('settings' in charged && charged.settings.fee).toEqual({ percent: 3.29, fixed: 800, vat: 19 });
+    expect(await configuredBilling({ ...base, BILLING_FEE_PERCENT: 'tres' }, read)).toEqual({ reason: 'invalid_fee' });
+    expect(await configuredBilling({ ...base, BILLING_FEE_PERCENT: '60' }, read)).toEqual({ reason: 'invalid_fee' });
+  });
 });

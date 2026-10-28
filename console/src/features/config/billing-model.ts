@@ -1,4 +1,4 @@
-import type { BillingPlan, BillingPlanId, BillingStatus, BillingSubscription } from '../../api/client/billing-client';
+import type { BillingFee, BillingPlan, BillingPlanId, BillingStatus, BillingSubscription } from '../../api/client/billing-client';
 
 export const QUANTITY_RANGE: Partial<Record<BillingPlanId, { min: number; max: number; initial: number }>> = {
   gestionado: { min: 1, max: 50, initial: 3 },
@@ -51,12 +51,21 @@ export function formatUsd(value: number): string {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'USD', minimumFractionDigits: Number.isInteger(value) ? 0 : 2 }).format(value);
 }
 
-export function formatLocal(usd: number, currency: string, rate: number): string | undefined {
+/** Same rule as the gateway's checkout: the fee is added on top so the plan price arrives whole. */
+export function chargedLocal(usd: number, rate: number, fee?: BillingFee | null): number {
+  const net = usd * rate;
+  if (!fee) return Math.round(net);
+  const taxed = 1 + fee.vat / 100;
+  return Math.ceil((net + fee.fixed * taxed) / (1 - (fee.percent / 100) * taxed));
+}
+
+export function formatLocal(usd: number, currency: string, rate: number, fee?: BillingFee | null): string | undefined {
   if (currency === 'USD' || !(rate > 0)) return undefined;
+  const amount = chargedLocal(usd, rate, fee);
   try {
-    return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(Math.round(usd * rate));
+    return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount);
   } catch {
-    return `${String(Math.round(usd * rate))} ${currency}`;
+    return `${String(amount)} ${currency}`;
   }
 }
 

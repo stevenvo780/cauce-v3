@@ -113,13 +113,14 @@ export function registerBillingRoutes(
   consoleRoute('GET', '/v3/console/billing', async (request, reply, billing) => withAdministrator(request, reply, async (client, admin) => {
     const allowance = await companyAgentAllowance(client, admin.company);
     return { configured: true, exempt: allowance.exempt, plans: billingPlans(), currency: billing.currency, usd_rate: billing.usdRate,
+      fee: billing.fee ?? null,
       subscription: publicSubscription(await currentSubscription(client, admin.company)), allowance: { limit: allowance.limit, used: allowance.used } };
   }));
 
   consoleRoute('POST', '/v3/console/billing/checkout', async (request, reply, billing) => {
     const input = CheckoutInput.parse(request.body);
     const quote = planQuote(input.plan, input.quantity);
-    const amount = localAmount(quote.amount_usd, billing.usdRate);
+    const amount = localAmount(quote.amount_usd, billing.usdRate, billing.fee);
     return withAdministrator(request, reply, async (client, admin) => {
       if ((await companyAgentAllowance(client, admin.company)).exempt) {
         throw new BillingRequestError(409, 'billing_exempt', 'Esta empresa no paga plan.');

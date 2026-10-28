@@ -27,10 +27,10 @@ function isSecureUrl(value: string): boolean {
 }
 
 function Price({ usd, overview }: { usd: number; overview: BillingOverview }) {
-  const local = formatLocal(usd, overview.currency, overview.usd_rate);
+  const local = formatLocal(usd, overview.currency, overview.usd_rate, overview.fee);
   return <p className="m-0 grid">
     <strong className="text-xl font-semibold tabular-nums">{formatUsd(usd)}<span className="text-xs font-normal text-muted"> /mes</span></strong>
-    {local ? <span className="text-xs text-muted tabular-nums">≈ {local} /mes</span> : null}
+    {local ? <span className="text-xs text-muted tabular-nums">{overview.fee ? `${local} /mes con la comisión de Mercado Pago` : `≈ ${local} /mes`}</span> : null}
   </p>;
 }
 

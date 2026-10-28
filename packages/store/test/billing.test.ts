@@ -40,6 +40,13 @@ describe('localAmount', () => {
     expect(localAmount(40, 3921.456)).toBe(156_858);
     expect(localAmount(100, 1)).toBe(100);
   });
+  it('adds the provider fee on top so the plan price arrives whole', () => {
+    const fee = { percent: 3.29, fixed: 800, vat: 19 };
+    const gross = localAmount(300, 3200, fee);
+    expect(gross).toBe(1_000_108);
+    expect(gross - (0.0329 * gross + 800) * 1.19).toBeGreaterThanOrEqual(960_000);
+    expect(() => localAmount(300, 3200, { percent: 60, fixed: 0, vat: 0 })).toThrow(StoreError);
+  });
   it('rejects non-positive inputs', () => {
     for (const [usd, rate] of [[0, 1], [-1, 1], [1, 0], [1, Number.NaN]] as const) {
       expect(() => localAmount(usd, rate)).toThrow(StoreError);

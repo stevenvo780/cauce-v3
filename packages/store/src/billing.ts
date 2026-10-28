@@ -42,11 +42,28 @@ export function planQuote(plan: BillingPlan, quantity: number): PlanQuote {
   return { amount_usd: definition.unitUsd * quantity, agent_limit: definition.agentsPerUnit * quantity };
 }
 
-export function localAmount(amountUsd: number, usdRate: number): number {
+/** Provider charge on each payment: `percent` of the gross plus `fixed`, both taxed at `vat` percent. */
+export interface ProcessingFee {
+  readonly percent: number;
+  readonly fixed: number;
+  readonly vat: number;
+}
+
+export function validProcessingFee(fee: ProcessingFee): boolean {
+  return [fee.percent, fee.fixed, fee.vat].every(value => Number.isFinite(value) && value >= 0)
+    && fee.percent * (1 + fee.vat / 100) < 50;
+}
+
+/** Local amount to charge so that, after the provider's fee, the plan price in USD is what arrives. */
+export function localAmount(amountUsd: number, usdRate: number, fee?: ProcessingFee): number {
   if (!Number.isFinite(amountUsd) || amountUsd <= 0 || !Number.isFinite(usdRate) || usdRate <= 0) {
     throw new StoreError('invalid_input', 'amount and rate must be positive numbers');
   }
-  return Math.round(amountUsd * usdRate);
+  const net = amountUsd * usdRate;
+  if (fee === undefined) return Math.round(net);
+  if (!validProcessingFee(fee)) throw new StoreError('invalid_input', 'processing fee is out of range');
+  const taxed = 1 + fee.vat / 100;
+  return Math.ceil((net + fee.fixed * taxed) / (1 - (fee.percent / 100) * taxed));
 }
 
 export function mapProviderStatus(status: string): BillingStatus | null {
