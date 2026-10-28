@@ -71,15 +71,17 @@ export function groupDirectory(topology: TopologySnapshot | undefined): GroupDir
 
 /**
  * The primary group is the first enabled membership in topology order, preferring `grp.*` rooms over
- * operational ones; every other enabled membership is a secondary group.
+ * operational ones; every other enabled membership is a secondary group. An agent whose memberships are all
+ * switched off (a stopped agent, an update in progress) still lives in its own `grp.*` building; «Sin grupo»
+ * is only for an agent that belongs to no group at all.
  */
 export function membershipOf(agent: RosterAgent, directory: GroupDirectory): Membership {
   const keyOf = (id: string) => officeRoomKey(agent.tenantId, id);
   const rank = (id: string) => directory.order.get(keyOf(id)) ?? Number.MAX_SAFE_INTEGER;
-  const enabled = agent.roomIds
-    .filter((id) => agent.roomMembership[id] !== false && directory.order.has(keyOf(id)))
-    .sort((a, b) => rank(a) - rank(b));
-  const primary = enabled.find((id) => id.startsWith(PRIMARY_PREFIX)) ?? enabled.at(0);
+  const known = agent.roomIds.filter((id) => directory.order.has(keyOf(id))).sort((a, b) => rank(a) - rank(b));
+  const enabled = known.filter((id) => agent.roomMembership[id] !== false);
+  const primary = enabled.find((id) => id.startsWith(PRIMARY_PREFIX)) ?? enabled.at(0)
+    ?? known.find((id) => id.startsWith(PRIMARY_PREFIX));
   if (!primary) return { team: NO_TEAM, groups: [], groupLabels: [] };
   const key = keyOf(primary);
   const others = enabled.filter((id) => id !== primary);

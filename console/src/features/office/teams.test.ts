@@ -35,9 +35,11 @@ describe('team derivation', () => {
     expect(membershipOf(agent(['grp.miguel', 'ops.miguel'], ['grp.miguel']), directory).team.id).toBe(officeRoomKey('Miguel', 'ops.miguel'));
   });
 
-  it('puts agents without an enabled group in «Sin grupo»', () => {
+  it('keeps an agent whose group is switched off in its own building and saves «Sin grupo» for no group at all', () => {
     expect(membershipOf(agent([]), directory)).toEqual({ team: NO_TEAM, groups: [], groupLabels: [] });
-    expect(membershipOf(agent(['grp.miguel'], ['grp.miguel']), directory).team).toEqual(NO_TEAM);
+    expect(membershipOf(agent(['grp.miguel', 'ops.miguel'], ['grp.miguel', 'ops.miguel']), directory))
+      .toMatchObject({ team: { id: officeRoomKey('Miguel', 'grp.miguel'), label: 'Miguel' }, groups: [] });
+    expect(membershipOf(agent(['ops.miguel'], ['ops.miguel']), directory).team).toEqual(NO_TEAM);
   });
   it('keeps same room names in different tenants as separate buildings', () => {
     const homonymous = groupDirectory({ tenants: [{ id: 'One', rooms: [{ id: 'general', label: 'One room' }] },
