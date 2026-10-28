@@ -1,7 +1,7 @@
 import { Building2, Check, MessageSquareText, Minus, Network, Plus, TerminalSquare } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api/client/core';
-import type { BillingOverview, BillingPlan, BillingPlanId, BillingSubscription } from '../../api/client/billing-client';
+import type { BillingCoupon, BillingOverview, BillingPlan, BillingPlanId, BillingSubscription } from '../../api/client/billing-client';
 import { useApi } from '../../api/context';
 import { cn } from '../../cn';
 import { FormDialog } from '../../components/dialogs';
@@ -11,7 +11,7 @@ import { useRouteSearch } from '../../router';
 import { ConfigSectionHeader } from './ConfigSectionHeader';
 import {
   PLAN_ORDER, PLAN_TITLE, QUANTITY_RANGE, STATUS_LABEL,
-  agentLimit, clampQuantity, formatLocal, formatUsd, holdsPlan, quantityOf, totalUsd,
+  agentLimit, clampQuantity, discounted, formatLocal, formatUsd, holdsPlan, quantityOf, totalUsd,
 } from './billing-model';
 import { BILLING_FAQ, EVERY_PLAN, PLAN_PROMISE } from './plan-copy';
 
@@ -21,6 +21,7 @@ const EVERY_PLAN_ICON = [MessageSquareText, Building2, TerminalSquare, Network];
 function failure(cause: unknown, fallback: string): string {
   if (cause instanceof ApiError) {
     if (cause.code === 'billing_unconfigured') return 'Pagos sin configurar';
+    if (cause.code === 'invalid_coupon') return 'Ese cupón no existe, venció o ya se usó.';
     if (cause.status === 409) return 'Esta empresa ya tiene una suscripción activa o pendiente. Cancélala antes de contratar otra.';
     if (cause.status === 403) return 'Tu autoridad de empresa no permite gestionar el plan.';
   }
@@ -185,6 +186,8 @@ function Current({ subscription, overview, busy, confirming, onAsk, onAbort, onC
           <Pill tone={subscription.status === 'authorized' ? 'ok' : subscription.status === 'cancelled' ? 'neutral' : 'warn'}>{STATUS_LABEL[subscription.status]}</Pill>
         </div>
         <p className="m-0 text-xs text-muted">{unit}</p>
+        {subscription.coupon_code && subscription.percent_off ? <p className="m-0 text-xs text-muted">
+          Cupón {subscription.coupon_code}: {String(subscription.percent_off)}% menos cada mes</p> : null}
         <Usage overview={overview} />
       </div>
       <p className="m-0 grid text-right">
@@ -207,14 +210,50 @@ function Current({ subscription, overview, busy, confirming, onAsk, onAbort, onC
   </section>;
 }
 
-function CheckoutDialog({ choice, overview, busy, error, onClose, onPay }: {
+function CouponField({ coupon, busy, onCheck, onClear }: {
+  coupon: BillingCoupon | undefined; busy: boolean; onCheck: (code: string) => Promise<BillingCoupon>; onClear: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [problem, setProblem] = useState<string>();
+  if (coupon) return <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line px-3 py-2 text-sm">
+    <span>Cupón <strong>{coupon.code}</strong>: {String(coupon.percent_off)}% menos cada mes</span>
+    <Button size="sm" disabled={busy} onClick={onClear}>Quitar</Button>
+  </div>;
+  async function apply() {
+    if (!code.trim()) return;
+    setChecking(true); setProblem(undefined);
+    try {
+      await onCheck(code.trim());
+      setCode('');
+    } catch (cause) {
+      setProblem(cause instanceof ApiError && cause.status === 404 ? 'Ese cupón no existe, venció o ya se usó.' : 'No se pudo revisar el cupón. Reintenta.');
+    } finally {
+      setChecking(false);
+    }
+  }
+  return <div className="grid gap-1 text-xs font-medium text-fg-2">
+    <label htmlFor="cupon-plan">¿Tienes un cupón?</label>
+    <div className="flex gap-2">
+      <input id="cupon-plan" value={code} disabled={busy || checking} autoComplete="off" spellCheck={false}
+        className="min-h-10 min-w-0 flex-1 uppercase text-fg" onChange={(event) => { setCode(event.target.value); }}
+        onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void apply(); } }} />
+      <Button disabled={busy || checking || !code.trim()} onClick={() => { void apply(); }}>{checking ? 'Revisando…' : 'Aplicar'}</Button>
+    </div>
+    {problem ? <span role="alert" className="font-normal text-danger">{problem}</span> : null}
+  </div>;
+}
+
+function CheckoutDialog({ choice, overview, busy, error, onClose, onPay, onCheckCoupon }: {
   choice: Choice | undefined; overview: BillingOverview; busy: boolean; error?: string;
-  onClose: () => void; onPay: (payerEmail: string) => void;
+  onClose: () => void; onPay: (payerEmail: string, coupon?: string) => void; onCheckCoupon: (code: string) => Promise<BillingCoupon>;
 }) {
   const [payerEmail, setPayerEmail] = useState('');
+  const [coupon, setCoupon] = useState<BillingCoupon>();
   if (!choice) return null;
   const { plan, quantity } = choice;
-  const total = totalUsd(plan, quantity);
+  const list = totalUsd(plan, quantity);
+  const total = discounted(list, coupon?.percent_off);
   const local = localOf(total, overview);
   const size = plan.plan === 'gestionado' ? `${String(quantity)} ${quantity === 1 ? 'agente' : 'agentes'}`
     : plan.plan === 'espacio' ? `${String(quantity)} ${quantity === 1 ? 'espacio' : 'espacios'}, hasta ${String(agentLimit(plan, quantity))} agentes`
@@ -226,15 +265,17 @@ function CheckoutDialog({ choice, overview, busy, error, onClose, onPay }: {
     description="Te llevamos a Mercado Pago para pagar de forma segura."
     footer={<div className="flex flex-wrap justify-end gap-2">
       <Button disabled={busy} onClick={onClose}>Volver</Button>
-      <Button variant="primary" disabled={busy} onClick={() => { onPay(payerEmail.trim()); }}>
+      <Button variant="primary" disabled={busy} onClick={() => { onPay(payerEmail.trim(), coupon?.code); }}>
         {busy ? 'Abriendo Mercado Pago…' : 'Pagar con Mercado Pago'}
       </Button>
     </div>}>
     <div className="grid divide-y divide-line">
       {row('Plan', PLAN_TITLE[plan.plan])}
       {row('Incluye', size)}
-      {row('Precio', `${formatUsd(total)} al mes`)}
+      {row('Precio', coupon ? <><s className="font-normal text-muted">{formatUsd(list)}</s> {formatUsd(total)} al mes</> : `${formatUsd(total)} al mes`)}
     </div>
+    <CouponField coupon={coupon} busy={busy} onClear={() => { setCoupon(undefined); }}
+      onCheck={async (code) => { const found = await onCheckCoupon(code); setCoupon(found); return found; }} />
     {local ? <div className="grid gap-0.5 rounded-xl bg-brand-soft p-4">
       <span className="text-xs font-medium text-brand-ink">Pagas hoy</span>
       <strong className="text-3xl font-semibold tracking-tight tabular-nums">{local}</strong>
@@ -333,12 +374,12 @@ export function BillingSection({ bare = false }: { bare?: boolean } = {}) {
     }
   }
 
-  async function pay(payer: string) {
+  async function pay(payer: string, coupon?: string) {
     if (!choice) return;
     setBusy(true); setCheckoutError(undefined);
     try {
       const { plan, quantity } = choice;
-      const { checkout_url } = await api.startBillingCheckout(payer ? { plan: plan.plan, quantity, payer_email: payer } : { plan: plan.plan, quantity });
+      const { checkout_url } = await api.startBillingCheckout({ plan: plan.plan, quantity, ...(payer ? { payer_email: payer } : {}), ...(coupon ? { coupon } : {}) });
       if (!isSecureUrl(checkout_url)) throw new Error('insecure checkout url');
       window.location.assign(checkout_url);
     } catch (cause) {
@@ -398,6 +439,7 @@ export function BillingSection({ bare = false }: { bare?: boolean } = {}) {
     {overview.configured ? <EveryPlan /> : null}
     {overview.configured ? <Faq /> : null}
     <CheckoutDialog key={choice ? `${choice.plan.plan}:${String(choice.quantity)}` : 'cerrado'} choice={choice} overview={overview}
-      busy={busy} error={checkoutError} onClose={() => { setChoice(undefined); }} onPay={(payer) => { void pay(payer); }} />
+      busy={busy} error={checkoutError} onClose={() => { setChoice(undefined); }} onPay={(payer, coupon) => { void pay(payer, coupon); }}
+      onCheckCoupon={(code) => api.checkBillingCoupon(code)} />
   </div>;
 }

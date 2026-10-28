@@ -20,7 +20,15 @@ export interface BillingSubscription {
   currency: string;
   amount_local: number;
   status: BillingStatus;
+  /** The coupon that takes `percent_off` off every monthly charge; `amount_usd` is already discounted. */
+  coupon_code?: string | null;
+  percent_off?: number | null;
   checkout_url?: string | null;
+}
+
+export interface BillingCoupon {
+  code: string;
+  percent_off: number;
 }
 
 export interface BillingFee {
@@ -44,7 +52,9 @@ export interface BillingOverview {
 
 export interface BillingClient {
   getBilling(): Promise<BillingOverview>;
-  startBillingCheckout(input: { plan: BillingPlanId; quantity: number; payer_email?: string }): Promise<{ checkout_url: string }>;
+  startBillingCheckout(input: { plan: BillingPlanId; quantity: number; payer_email?: string; coupon?: string }): Promise<{ checkout_url: string }>;
+  /** The coupon behind a code, without using it up; 404 when it does not exist, expired or ran out. */
+  checkBillingCoupon(code: string): Promise<BillingCoupon>;
   cancelBilling(): Promise<unknown>;
   refreshBilling(): Promise<unknown>;
 }
@@ -58,6 +68,7 @@ export function billingClient(request: RequestFn): BillingClient {
   return {
     getBilling: () => request<BillingOverview>(base, { cache: 'no-store' }),
     startBillingCheckout: (input) => post(`${base}/checkout`, input),
+    checkBillingCoupon: (code) => post(`${base}/coupon`, { code }),
     cancelBilling: () => post(`${base}/cancel`),
     refreshBilling: () => post(`${base}/refresh`),
   };

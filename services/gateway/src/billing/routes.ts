@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   applyProviderStatus, attachProviderSubscription, BILLING_PLAN_DEFINITIONS, BILLING_PLANS, companyAgentAllowance, createPendingSubscription, currentSubscription,
-  localAmount, planQuote, readSubscription, recordBillingEvent, StoreError, withTransaction,
+  discountedUsd, findCoupon, localAmount, planQuote, readSubscription, recordBillingEvent, redeemCoupon, StoreError, withTransaction,
   type BillingPlan, type BillingSubscription, type CompanyAuthority, type DatabaseClient, type DatabasePool,
 } from '@cauce/store';
 import { AuthError, AuthorizationError, type AuthProvider } from '../auth.js';
@@ -24,7 +24,11 @@ const PLAN_NAME: Readonly<Record<BillingPlan, string>> = {
 };
 
 /** `payer_email` is the payer's Mercado Pago account, which may differ from the console login. */
-const CheckoutInput = z.object({ plan: z.enum(BILLING_PLANS), quantity: z.number().int(), payer_email: z.email().max(254).optional() }).strict();
+const CouponCode = z.string().max(64);
+const CheckoutInput = z.object({ plan: z.enum(BILLING_PLANS), quantity: z.number().int(), payer_email: z.email().max(254).optional(),
+  coupon: CouponCode.optional() }).strict();
+const CouponInput = z.object({ code: CouponCode }).strict();
+const INVALID_COUPON = 'El cupón no existe, venció o ya se usó.';
 
 class BillingRequestError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -46,8 +50,8 @@ function billingPlans() {
 /** What the console sees: no company id, creator identity or provider id. */
 function publicSubscription(subscription: BillingSubscription | null) {
   if (subscription === null) return null;
-  const { id, plan, quantity, agent_limit, amount_usd, currency, amount_local, status, checkout_url, created_at, updated_at } = subscription;
-  return { id, plan, quantity, agent_limit, amount_usd, currency, amount_local, status, checkout_url, created_at, updated_at };
+  const { id, plan, quantity, agent_limit, amount_usd, currency, amount_local, status, coupon_code, percent_off, checkout_url, created_at, updated_at } = subscription;
+  return { id, plan, quantity, agent_limit, amount_usd, currency, amount_local, status, coupon_code, percent_off, checkout_url, created_at, updated_at };
 }
 
 function administrator(authority: CompanyAuthority): BillingAdministrator {
@@ -121,15 +125,18 @@ export function registerBillingRoutes(
   consoleRoute('POST', '/v3/console/billing/checkout', async (request, reply, billing) => {
     const input = CheckoutInput.parse(request.body);
     const quote = planQuote(input.plan, input.quantity);
-    const amount = localAmount(quote.amount_usd, billing.usdRate, billing.fee);
     return withAdministrator(request, reply, async (client, admin) => {
       if ((await companyAgentAllowance(client, admin.company)).exempt) {
         throw new BillingRequestError(409, 'billing_exempt', 'Esta empresa no paga plan.');
       }
+      const code = input.coupon?.trim();
+      const coupon = code ? await redeemCoupon(client, code) : undefined;
+      if (coupon === null) throw new BillingRequestError(400, 'invalid_coupon', INVALID_COUPON);
+      const amount = localAmount(discountedUsd(quote.amount_usd, coupon?.percent_off), billing.usdRate, billing.fee);
       const email = (await client.query<{ email: string }>('SELECT email FROM console_users WHERE id=$1', [admin.humanId])).rows[0]?.email;
       if (email === undefined) throw new AuthorizationError();
       const pending = await createPendingSubscription(client, { company_id: admin.company, plan: input.plan, quantity: input.quantity,
-        currency: billing.currency, amount_local: amount, created_by: `console:${admin.humanId}` });
+        currency: billing.currency, amount_local: amount, created_by: `console:${admin.humanId}`, ...(coupon ? { coupon } : {}) });
       // The pending row holds the company's single live slot; a provider failure rolls it back with the transaction.
       const created = await billing.provider.createPreapproval({ id: pending.id, payerEmail: input.payer_email ?? email, backUrl: billing.backUrl,
         reason: `Cauce ${PLAN_NAME[input.plan]}${input.quantity > 1 ? ` x${String(input.quantity)}` : ''}`, amount, currency: billing.currency });
@@ -138,10 +145,18 @@ export function registerBillingRoutes(
       }
       const url = checkoutUrl(created.init_point);
       await attachProviderSubscription(client, pending.id, { provider_subscription_id: created.id, checkout_url: url });
-      request.log.info({ event: 'billing_checkout_created', company_id: admin.company, plan: input.plan, quantity: input.quantity },
+      request.log.info({ event: 'billing_checkout_created', company_id: admin.company, plan: input.plan, quantity: input.quantity,
+        coupon: coupon?.code ?? null },
         'billing checkout created');
       return { checkout_url: url };
     });
+  });
+
+  consoleRoute('POST', '/v3/console/billing/coupon', async (request, reply) => {
+    const input = CouponInput.parse(request.body);
+    const coupon = await withAdministrator(request, reply, async client => findCoupon(client, input.code));
+    if (coupon === null) throw new BillingRequestError(404, 'invalid_coupon', INVALID_COUPON);
+    return coupon;
   });
 
   for (const action of ['cancel', 'refresh'] as const) {

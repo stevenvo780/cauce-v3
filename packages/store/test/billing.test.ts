@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allowanceAdmitsAgent, localAmount, mapProviderStatus, planQuote, StoreError, type BillingPlan,
+  allowanceAdmitsAgent, discountedUsd, localAmount, mapProviderStatus, planQuote, StoreError, type BillingPlan,
 } from '../src/index.js';
 
 describe('planQuote', () => {
@@ -71,5 +71,18 @@ describe('allowanceAdmitsAgent', () => {
     expect(allowanceAdmitsAgent({ exempt: false, limit: 3, used: 2 })).toBe(true);
     expect(allowanceAdmitsAgent({ exempt: false, limit: 3, used: 3 })).toBe(false);
     expect(allowanceAdmitsAgent({ exempt: false, limit: 0, used: 0 })).toBe(false);
+  });
+});
+
+describe('discountedUsd', () => {
+  it('takes the coupon percentage off and keeps cents', () => {
+    expect(discountedUsd(40, undefined)).toBe(40);
+    expect(discountedUsd(40, 75)).toBe(10);
+    expect(discountedUsd(300, 33)).toBe(201);
+    expect(discountedUsd(150, 15)).toBe(127.5);
+  });
+
+  it.each([0, 91, 12.5])('rejects %s percent', (percent) => {
+    expect(() => discountedUsd(40, percent)).toThrow(StoreError);
   });
 });

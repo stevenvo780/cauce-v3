@@ -43,6 +43,11 @@ export function totalUsd(plan: BillingPlan, quantity: number): number {
   return Math.round(plan.price_usd * quantityOf(plan, quantity) * 100) / 100;
 }
 
+/** Same rule as the gateway: the coupon comes off the plan price, kept to cents. */
+export function discounted(usd: number, percentOff: number | undefined): number {
+  return percentOff === undefined ? usd : Math.round(usd * (100 - percentOff)) / 100;
+}
+
 export function agentLimit(plan: BillingPlan, quantity: number): number {
   return plan.agent_limit_per_unit * quantityOf(plan, quantity);
 }

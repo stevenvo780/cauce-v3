@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyProviderStatus, attachProviderSubscription, companyAgentAllowance, createPendingSubscription,
-  currentSubscription, readSubscription, recordBillingEvent, StoreError, withTransaction, type DatabasePool,
+  currentSubscription, findCoupon, readSubscription, recordBillingEvent, redeemCoupon, StoreError, withTransaction, type DatabasePool,
 } from '../src/index.js';
 import { preparePostgresSuite } from './postgres-suite.js';
 import { startTestCaseDatabase, startTestDatabase, type EmptyTestDatabase, type TestDatabase } from '../../../tests/helpers/postgres.js';
@@ -119,6 +119,32 @@ describe('billing on PostgreSQL', () => {
     expect((await companyAgentAllowance(pool, 'praxis')).used).toBe(2);
     await admin.query("INSERT INTO agents(tenant_id,alias,display_name,enabled) VALUES('PraxisHub','draft_agent','Draft',false)");
     expect((await companyAgentAllowance(pool, 'praxis')).used).toBe(3);
+  });
+
+  it('redeems a live coupon until it runs out or expires and records it on the subscription', async () => {
+    await admin.query(`INSERT INTO billing_coupons(code,percent_off,max_redemptions,expires_at) VALUES
+      ('UNO-SOLO',75,1,NULL),('VENCIDO',50,NULL,now()-interval '1 day'),('LIBRE',20,NULL,NULL)`);
+    expect(await findCoupon(pool, 'uno-solo')).toEqual({ code: 'UNO-SOLO', percent_off: 75 });
+    expect(await findCoupon(pool, 'vencido')).toBeNull();
+    expect(await findCoupon(pool, 'x')).toBeNull();
+    const coupon = await redeemCoupon(pool, ' Uno-Solo ');
+    expect(coupon).toEqual({ code: 'UNO-SOLO', percent_off: 75 });
+    expect(await redeemCoupon(pool, 'UNO-SOLO')).toBeNull();
+    expect(await redeemCoupon(pool, 'VENCIDO')).toBeNull();
+    expect(await redeemCoupon(pool, 'LIBRE')).toEqual({ code: 'LIBRE', percent_off: 20 });
+    expect(await redeemCoupon(pool, 'LIBRE')).toEqual({ code: 'LIBRE', percent_off: 20 });
+    const created = await createPendingSubscription(pool, { company_id: 'praxis', plan: 'espacio', quantity: 1, currency: 'COP',
+      amount_local: 40_000, ...(coupon ? { coupon } : {}) });
+    expect(created).toMatchObject({ amount_usd: 10, coupon_code: 'UNO-SOLO', percent_off: 75 });
+    await expect(pool.query("UPDATE billing_coupons SET redemptions=redemptions+1 WHERE code='UNO-SOLO'")).rejects.toThrow();
+  });
+
+  it('reverts the coupons with down/097 while no discounted subscription is live', async () => {
+    await admin.query("INSERT INTO billing_coupons(code,percent_off) VALUES('LIBRE',20)");
+    const down = (await downsThrough('097_billing_coupons.sql')).join('\n');
+    await withTransaction(admin, client => client.query(down));
+    expect((await admin.query("SELECT 1 FROM information_schema.tables WHERE table_name='billing_coupons'")).rowCount).toBe(0);
+    expect((await admin.query("SELECT 1 FROM information_schema.columns WHERE table_name='billing_subscriptions' AND column_name IN ('coupon_code','percent_off')")).rowCount).toBe(0);
   });
 
   it('marks existing companies exempt and later ones not, and reverts with down/096', async () => {

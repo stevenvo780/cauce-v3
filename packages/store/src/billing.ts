@@ -29,6 +29,18 @@ export const BILLING_PLAN_DEFINITIONS: Readonly<Record<BillingPlan, PlanDefiniti
 
 export interface PlanQuote { amount_usd: number; agent_limit: number }
 
+export const COUPON_CODE_PATTERN = /^[A-Z0-9][A-Z0-9-]{2,31}$/u;
+
+/** A coupon as a buyer sees it: the code and the percentage it takes off every monthly charge. */
+export interface BillingCoupon { code: string; percent_off: number }
+
+/** The plan price after a coupon, in USD cents precision. */
+export function discountedUsd(amountUsd: number, percentOff: number | undefined): number {
+  if (percentOff === undefined) return amountUsd;
+  if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 90) throw new StoreError('invalid_input', 'coupon percentage is out of range');
+  return Math.round(amountUsd * (100 - percentOff)) / 100;
+}
+
 export function isBillingPlan(value: unknown): value is BillingPlan {
   return typeof value === 'string' && (BILLING_PLANS as readonly string[]).includes(value);
 }
@@ -86,6 +98,8 @@ export interface BillingSubscription {
   currency: string;
   amount_local: number;
   status: BillingStatus;
+  coupon_code: string | null;
+  percent_off: number | null;
   provider: string;
   provider_subscription_id: string | null;
   checkout_url: string | null;
@@ -104,7 +118,7 @@ interface SubscriptionRow extends Omit<BillingSubscription, 'amount_usd' | 'amou
 }
 
 const SUBSCRIPTION_COLUMNS = `id::text,company_id,plan,quantity,agent_limit,amount_usd::text,currency,amount_local::text,status,
-  provider,provider_subscription_id,checkout_url,created_by,created_at,updated_at,last_event_at`;
+  coupon_code,percent_off,provider,provider_subscription_id,checkout_url,created_by,created_at,updated_at,last_event_at`;
 
 function toSubscription(row: SubscriptionRow): BillingSubscription {
   return {
@@ -130,18 +144,20 @@ export interface PendingSubscriptionInput {
   currency: string;
   amount_local: number;
   created_by?: string | null;
+  coupon?: BillingCoupon;
 }
 
 export async function createPendingSubscription(db: Queryable, input: PendingSubscriptionInput): Promise<BillingSubscription> {
   const quote = planQuote(input.plan, input.quantity);
+  const amountUsd = discountedUsd(quote.amount_usd, input.coupon?.percent_off);
   if (!/^[A-Z]{3}$/u.test(input.currency)) throw new StoreError('invalid_input', 'currency must be a three-letter code');
   if (!Number.isFinite(input.amount_local) || input.amount_local <= 0) throw new StoreError('invalid_input', 'local amount must be positive');
   try {
     const result = await db.query<SubscriptionRow>(
-      `INSERT INTO billing_subscriptions(company_id,plan,quantity,agent_limit,amount_usd,currency,amount_local,created_by)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${SUBSCRIPTION_COLUMNS}`,
-      [input.company_id, input.plan, input.quantity, quote.agent_limit, quote.amount_usd, input.currency,
-        input.amount_local, input.created_by ?? null]);
+      `INSERT INTO billing_subscriptions(company_id,plan,quantity,agent_limit,amount_usd,currency,amount_local,created_by,coupon_code,percent_off)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ${SUBSCRIPTION_COLUMNS}`,
+      [input.company_id, input.plan, input.quantity, quote.agent_limit, amountUsd, input.currency,
+        input.amount_local, input.created_by ?? null, input.coupon?.code ?? null, input.coupon?.percent_off ?? null]);
     const [row] = result.rows;
     if (!row) throw new StoreError('conflict', 'subscription insert returned no row');
     return toSubscription(row);
@@ -149,6 +165,26 @@ export async function createPendingSubscription(db: Queryable, input: PendingSub
     if (isUniqueViolation(error)) throw new StoreError('conflict', 'the company already has a pending or authorized subscription');
     throw error;
   }
+}
+
+const LIVE_COUPON_SQL = `(expires_at IS NULL OR expires_at>now()) AND (max_redemptions IS NULL OR redemptions<max_redemptions)`;
+
+/** The coupon behind a code when it can still be redeemed, else null. Codes are case-insensitive. */
+export async function findCoupon(db: Queryable, code: string): Promise<BillingCoupon | null> {
+  const normalized = code.trim().toUpperCase();
+  if (!COUPON_CODE_PATTERN.test(normalized)) return null;
+  const result = await db.query<BillingCoupon>(
+    `SELECT code,percent_off FROM billing_coupons WHERE code=$1 AND ${LIVE_COUPON_SQL}`, [normalized]);
+  return result.rows[0] ?? null;
+}
+
+/** Counts one use of a live coupon in the caller's transaction, so a failed checkout gives it back. */
+export async function redeemCoupon(db: Queryable, code: string): Promise<BillingCoupon | null> {
+  const normalized = code.trim().toUpperCase();
+  if (!COUPON_CODE_PATTERN.test(normalized)) return null;
+  const result = await db.query<BillingCoupon>(
+    `UPDATE billing_coupons SET redemptions=redemptions+1 WHERE code=$1 AND ${LIVE_COUPON_SQL} RETURNING code,percent_off`, [normalized]);
+  return result.rows[0] ?? null;
 }
 
 export async function attachProviderSubscription(

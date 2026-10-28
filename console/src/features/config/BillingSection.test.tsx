@@ -230,3 +230,30 @@ it('el modelo de precios acota cantidades y calcula totales y equivalente local'
   expect(formatLocal(300, 'COP', 4000)).toMatch(/1\.200\.000/);
   expect(chargedLocal(300, 3200, { percent: 3.29, fixed: 800, vat: 19 })).toBe(1000108);
 });
+
+it('un cupón válido baja el precio del diálogo y viaja con el pago; uno inválido se explica', async () => {
+  const user = userEvent.setup();
+  const assign = stubAssign();
+  const calls = billing(() => overview());
+  server.use(http.post('*/v3/console/billing/coupon', async ({ request }) => {
+    const { code } = await request.json() as { code: string };
+    return code.toUpperCase() === 'PRUEBA75' ? HttpResponse.json({ code: 'PRUEBA75', percent_off: 75 })
+      : HttpResponse.json({ error: 'invalid_coupon', message: 'x' }, { status: 404 });
+  }));
+  renderWithApi(<BillingSection />);
+  await user.click(await screen.findByRole('button', { name: 'Contratar Por espacio' }));
+  const dialog = await screen.findByRole('dialog');
+  const field = within(dialog).getByLabelText('¿Tienes un cupón?');
+  await user.type(field, 'nada');
+  await user.click(within(dialog).getByRole('button', { name: 'Aplicar' }));
+  expect(await within(dialog).findByText('Ese cupón no existe, venció o ya se usó.')).toBeInTheDocument();
+  await user.clear(field);
+  await user.type(field, 'prueba75');
+  await user.click(within(dialog).getByRole('button', { name: 'Aplicar' }));
+  expect(await within(dialog).findByText(/75% menos cada mes/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/US\$\s?10 al mes/)).toBeInTheDocument();
+  expect(within(dialog).getByText(/40\.000/)).toBeInTheDocument();
+  await user.click(within(dialog).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await waitFor(() => { expect(assign).toHaveBeenCalledWith('https://mp.test/pay/1'); });
+  expect(calls).toContainEqual({ method: 'POST', path: 'checkout', body: { plan: 'espacio', quantity: 1, coupon: 'PRUEBA75' } });
+});

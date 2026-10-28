@@ -166,6 +166,23 @@ describe('billing through the gateway on PostgreSQL', () => {
     await checkout(leon, 1);
   });
 
+  it('takes a coupon off every monthly charge and counts it only when the checkout commits', async () => {
+    await admin.query("INSERT INTO billing_coupons(code,percent_off,max_redemptions) VALUES('PRUEBA75',75,1)");
+    const leon = await login('leon@example.test');
+    expect((await post(leon, '/v3/console/billing/coupon', { code: 'nada' })).statusCode).toBe(404);
+    expect((await post(leon, '/v3/console/billing/coupon', { code: ' prueba75 ' })).json()).toEqual({ code: 'PRUEBA75', percent_off: 75 });
+    expect((await post(leon, '/v3/console/billing/checkout', { plan: 'espacio', quantity: 1, coupon: 'NOEXISTE' })).statusCode).toBe(400);
+    fetchMock.mockImplementationOnce(async () => new Response('{}', { status: 500 }));
+    expect((await post(leon, '/v3/console/billing/checkout', { plan: 'espacio', quantity: 1, coupon: 'prueba75' })).statusCode).toBe(502);
+    expect((await admin.query('SELECT redemptions FROM billing_coupons')).rows).toEqual([{ redemptions: 0 }]);
+    expect((await post(leon, '/v3/console/billing/checkout', { plan: 'espacio', quantity: 1, coupon: 'prueba75' })).statusCode).toBe(200);
+    const request = JSON.parse(text(fetchMock.mock.calls.at(-1)?.[1]?.body)) as { auto_recurring: { transaction_amount: number } };
+    expect(request.auto_recurring.transaction_amount).toBe(40_000);
+    expect((await overview(leon)).json()).toMatchObject({ subscription: { amount_usd: 10, coupon_code: 'PRUEBA75', percent_off: 75 } });
+    expect((await admin.query('SELECT redemptions FROM billing_coupons')).rows).toEqual([{ redemptions: 1 }]);
+    expect((await post(leon, '/v3/console/billing/coupon', { code: 'PRUEBA75' })).statusCode).toBe(404);
+  });
+
   it('applies only the status re-read from Mercado Pago, once per event', async () => {
     const created = await checkout(await login('leon@example.test'));
     const claimed = await webhook(created.id, { id: 9001, type: 'subscription_preapproval', action: 'updated', data: { id: created.id },

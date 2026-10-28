@@ -24,7 +24,7 @@ export const migrationLockOrder: readonly string[] = [
   'blob_delivery_grants', 'companies', 'company_links', 'platform_admins', 'quota_collections', 'secret_handoffs',
   'harness_definitions', 'role_policies', 'agent_role_templates', 'egress_destinations', 'company_admins',
   'company_system_principals', 'agent_chain_policies', 'agent_context_versions', 'agent_quota_operations', 'quota_environments', 'space_backups',
-  'agent_profile_revisions', 'agent_document_revisions', 'device_authorizations',
+  'agent_profile_revisions', 'agent_document_revisions', 'device_authorizations', 'billing_subscriptions',
 ];
 
 const AE = 'ACCESS EXCLUSIVE';
@@ -93,6 +93,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '094_device_authorization_session_anchor.sql': { device_authorizations: AE },
   '095_terminal_grants_runtime_delete.sql': {},
   '096_billing.sql': { companies: AE },
+  '097_billing_coupons.sql': { billing_subscriptions: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */
