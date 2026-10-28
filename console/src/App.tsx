@@ -16,6 +16,7 @@ import { NAV_ENTRIES } from './nav';
 import { onNavClick, redirect, useRouteSearch, useRouteSegments } from './router';
 import { AppShell } from './shell/AppShell';
 import { ReconnectNotice } from './shell/ReconnectNotice';
+import { PlanNotice } from './shell/PlanNotice';
 import { FleetProvider } from './shell/fleet';
 import { CompanySessionProvider } from './features/auth/company-session';
 import { fleetAgentId } from './features/terminal/fleet';
@@ -251,7 +252,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
           </div>
         )}
-        notices={<><ReconnectNotice />{gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}</>}
+        notices={<><ReconnectNotice />{gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}{gate.status === 'unmanaged' ? null : <PlanNotice />}</>}
       >
         <main
           id="main-content"

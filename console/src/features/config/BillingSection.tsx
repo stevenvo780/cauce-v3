@@ -34,9 +34,11 @@ function Price({ usd, overview }: { usd: number; overview: BillingOverview }) {
   </p>;
 }
 
-function PlanCard({ plan, overview, disabled, busy, onPay }: {
-  plan: BillingPlan; overview: BillingOverview; disabled: boolean; busy: boolean; onPay: (quantity: number) => void;
+function PlanCard({ plan, overview, disabled, busy, chosen, onPay }: {
+  plan: BillingPlan; overview: BillingOverview; disabled: boolean; busy: boolean; chosen: boolean; onPay: (quantity: number) => void;
 }) {
+  const card = useRef<HTMLElement>(null);
+  useEffect(() => { if (chosen && typeof card.current?.scrollIntoView === 'function') card.current.scrollIntoView({ block: 'center' }); }, [chosen]);
   const range = QUANTITY_RANGE[plan.plan];
   const [typed, setTyped] = useState(String(range?.initial ?? 1));
   const quantity = clampQuantity(plan.plan, Number(typed));
@@ -45,7 +47,9 @@ function PlanCard({ plan, overview, disabled, busy, onPay }: {
   const total = totalUsd(plan, quantity);
   const recommended = plan.plan === 'gestionado' && quantity === (plan.recommended_quantity ?? RECOMMENDED_AT);
   return <li>
-    <article aria-label={title} className="grid h-full content-start gap-3 rounded-xl border border-line bg-surface p-4">
+    <article ref={card} aria-label={title} aria-current={chosen ? 'true' : undefined}
+      className={chosen ? 'grid h-full content-start gap-3 rounded-xl border-2 border-brand bg-brand-soft p-4'
+        : 'grid h-full content-start gap-3 rounded-xl border border-line bg-surface p-4'}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0 text-sm font-semibold">{title}</h3>
         {recommended ? <Pill tone="ok">Recomendado</Pill> : null}
@@ -194,6 +198,7 @@ export function BillingSection() {
       </label> : null}
       <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,16rem),1fr))] gap-3 p-0">
         {plans.map((plan) => <PlanCard key={plan.plan} plan={plan} overview={overview} disabled={blocked || overview.exempt} busy={busy}
+          chosen={new URLSearchParams(search).get('plan') === plan.plan}
           onPay={(quantity) => { void pay(plan, quantity); }} />)}
       </ul>
     </section> : null}

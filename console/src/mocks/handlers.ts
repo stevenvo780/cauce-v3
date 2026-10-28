@@ -63,6 +63,8 @@ export const handlers = [
     permissions: ['message.publish', 'delivery.replay', 'delivery.cancel', 'job.create', 'config.write', 'config.rollback', 'dlq.resolve', 'ultimate-terminal.connect'],
   })),
   http.get('*/v3/console/topology', () => HttpResponse.json(topology)),
+  http.get('*/v3/console/billing', () => HttpResponse.json({ configured: true, exempt: true, plans: [], currency: 'COP', usd_rate: 3200,
+    fee: null, subscription: null, allowance: { limit: null, used: 0 } })),
   http.get('*/v3/console/activity', () => HttpResponse.json(mockActivity())),
   http.get('*/v3/console/fleet/capability', () => HttpResponse.json({ available: false, actions: [], placements: [], reason: 'executor_unconfigured' })),
   http.get('*/v3/console/fleet/operations/recent', () => HttpResponse.json({ operations: mockFleetOperations() })),
