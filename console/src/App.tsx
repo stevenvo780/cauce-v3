@@ -256,7 +256,7 @@ function ConsoleShell({ gate }: { gate: AuthGateState }) {
             <AccountMenu routeKey={`${routeId}/${params.join('/')}`} gate={gate} />
           </div>
         )}
-        notices={<><ReconnectNotice />{gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}{gate.status === 'unmanaged' ? null : <PlanNotice />}</>}
+        notices={<><ReconnectNotice />{gate.status === 'unmanaged' ? <UnmanagedAuthBanner /> : null}{gate.status === 'unmanaged' || routeId === 'plan' ? null : <PlanNotice />}</>}
       >
         <main
           id="main-content"

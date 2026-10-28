@@ -88,7 +88,12 @@ it('paga con Mercado Pago: pide el checkout y redirige', async () => {
   const cantidad = within(espacio).getByRole('spinbutton');
   await user.clear(cantidad);
   await user.type(cantidad, '2');
-  await user.click(within(espacio).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await user.click(within(espacio).getByRole('button', { name: 'Contratar Por espacio' }));
+  const dialogo = await screen.findByRole('dialog', { name: 'Confirma tu plan' });
+  expect(dialogo).toHaveTextContent(/2 espacios, hasta 10 agentes/);
+  expect(dialogo).toHaveTextContent(/Pagas hoy/);
+  expect(calls).toEqual([]);
+  await user.click(within(dialogo).getByRole('button', { name: 'Pagar con Mercado Pago' }));
   await waitFor(() => { expect(assign).toHaveBeenCalledWith('https://mp.test/pay/1'); });
   expect(calls).toEqual([{ method: 'POST', path: 'checkout', body: { plan: 'espacio', quantity: 2 } }]);
 });
@@ -98,8 +103,10 @@ it('envía el correo de la cuenta de Mercado Pago cuando se escribe', async () =
   stubAssign();
   const calls = billing(() => overview());
   renderWithApi(<BillingSection />);
-  await user.type(await screen.findByLabelText(/Correo de tu cuenta de Mercado Pago/), 'pagador@correo.test');
-  await user.click(within(await screen.findByRole('article', { name: 'Hotel 50' })).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await user.click(within(await screen.findByRole('article', { name: 'Hotel 50' })).getByRole('button', { name: 'Contratar Hotel 50' }));
+  const dialogo = await screen.findByRole('dialog', { name: 'Confirma tu plan' });
+  await user.type(within(dialogo).getByLabelText(/Correo de tu cuenta de Mercado Pago/), 'pagador@correo.test');
+  await user.click(within(dialogo).getByRole('button', { name: 'Pagar con Mercado Pago' }));
   await waitFor(() => { expect(calls).toEqual([{ method: 'POST', path: 'checkout', body: { plan: 'hotel_50', quantity: 1, payer_email: 'pagador@correo.test' } }]); });
 });
 
@@ -108,7 +115,8 @@ it('un plan de hotel envía cantidad 1', async () => {
   stubAssign();
   const calls = billing(() => overview());
   renderWithApi(<BillingSection />);
-  await user.click(within(await screen.findByRole('article', { name: 'Hotel 50' })).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await user.click(within(await screen.findByRole('article', { name: 'Hotel 50' })).getByRole('button', { name: 'Contratar Hotel 50' }));
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Pagar con Mercado Pago' }));
   await waitFor(() => { expect(calls).toHaveLength(1); });
   expect(calls[0].body).toEqual({ plan: 'hotel_50', quantity: 1 });
 });
@@ -119,7 +127,7 @@ it('muestra el plan vigente con agentes usados y límite, y bloquea comprar otro
   const actual = await screen.findByRole('region', { name: 'Plan actual' });
   expect(within(actual).getByText('Activo')).toBeInTheDocument();
   expect(screen.getByLabelText('Agentes usados')).toHaveTextContent('Agentes: 2 de 3');
-  for (const boton of screen.getAllByRole('button', { name: 'Pagar con Mercado Pago' })) expect(boton).toBeDisabled();
+  for (const boton of screen.getAllByRole('button', { name: /^Contratar / })) expect(boton).toBeDisabled();
 });
 
 it('cancela con confirmación en la página, sin window.confirm', async () => {
@@ -151,6 +159,25 @@ it('al volver del pago relee el estado con refresh', async () => {
   expect(screen.getByRole('status')).toHaveTextContent(/Pago recibido/);
 });
 
+it('sin plan activo dice cuántos agentes usa sin inventar un límite', async () => {
+  billing(() => overview({ allowance: { limit: 0, used: 3 } }));
+  renderWithApi(<BillingSection />);
+  expect(await screen.findByLabelText('Agentes usados')).toHaveTextContent('Agentes: 3 en uso, sin plan activo');
+});
+
+it('los botones − y + cambian los agentes dentro del rango', async () => {
+  const user = userEvent.setup();
+  billing(() => overview());
+  renderWithApi(<BillingSection />);
+  const gestionado = await screen.findByRole('article', { name: 'Gestionado' });
+  await user.click(within(gestionado).getByRole('button', { name: 'Más agentes' }));
+  expect(within(gestionado).getByRole('spinbutton')).toHaveValue(4);
+  expect(within(gestionado).getByText(/US\$\s?400/)).toBeInTheDocument();
+  for (let vez = 0; vez < 5; vez += 1) await user.click(within(gestionado).getByRole('button', { name: 'Menos agentes' }));
+  expect(within(gestionado).getByRole('spinbutton')).toHaveValue(1);
+  expect(within(gestionado).getByRole('button', { name: 'Menos agentes' })).toBeDisabled();
+});
+
 it('sin la marca de vuelta no llama a refresh', async () => {
   const calls = billing(() => overview());
   renderWithApi(<BillingSection />);
@@ -163,7 +190,9 @@ it('una empresa exenta lo dice y enseña los planes sin dejar pagar', async () =
   renderWithApi(<BillingSection />);
   expect(await screen.findByText('Esta empresa no paga plan')).toBeInTheDocument();
   expect(await screen.findByRole('article', { name: 'Hotel 50' })).toBeInTheDocument();
-  for (const boton of screen.getAllByRole('button', { name: 'Pagar con Mercado Pago' })) expect(boton).toBeDisabled();
+  const botones = screen.getAllByRole('button', { name: /^Contratar / });
+  expect(botones).toHaveLength(4);
+  for (const boton of botones) expect(boton).toBeDisabled();
   expect(screen.queryByLabelText(/Correo de tu cuenta de Mercado Pago/)).not.toBeInTheDocument();
 });
 
@@ -171,7 +200,7 @@ it('sin configurar lo dice y no ofrece pagar', async () => {
   billing(() => overview({ configured: false }));
   renderWithApi(<BillingSection />);
   expect(await screen.findByText('Pagos sin configurar')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Pagar con Mercado Pago' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /^Contratar / })).not.toBeInTheDocument();
 });
 
 it('un 503 billing_unconfigured se muestra como pagos sin configurar', async () => {
@@ -186,7 +215,8 @@ it('un 409 en el checkout explica que ya hay una suscripción', async () => {
   billing(() => overview());
   server.use(http.post('*/v3/console/billing/checkout', () => HttpResponse.json({ error: 'subscription_exists' }, { status: 409 })));
   renderWithApi(<BillingSection />);
-  await user.click(within(await screen.findByRole('article', { name: 'Hotel 20' })).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await user.click(within(await screen.findByRole('article', { name: 'Hotel 20' })).getByRole('button', { name: 'Contratar Hotel 20' }));
+  await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Pagar con Mercado Pago' }));
   expect(await screen.findByRole('alert')).toHaveTextContent(/ya tiene una suscripción/);
 });
 
