@@ -21,6 +21,7 @@ import { peopleAdminClient, type PeopleAdminClient } from './client/people-admin
 import { fleetOperationsClient, type FleetOperationsClient } from './client/fleet-operations-client';
 import { fleetHostsClient, type FleetHostsClient } from './client/fleet-hosts-client';
 import { clientDelegationsClient, type ClientDelegationsClient } from './client/client-delegations-client';
+import { billingClient, type BillingClient } from './client/billing-client';
 import { agentPreferencesClient, type AgentPreferencesClient } from './client/agent-preferences-client';
 import { companyClient, type CompanyClient, type RegistrationInput, type RegistrationResult } from './client/company-client';
 import { contextVersionsClient, type ContextVersionsClient } from './client/context-versions-client';
@@ -61,7 +62,7 @@ function isTimeout(cause: unknown): boolean {
 const AUTH_PATH = '/v3/auth/';
 
 /* eslint-disable @typescript-eslint/no-unsafe-declaration-merging -- the merge IS the surface; client.test.ts asserts every merged method at runtime. */
-export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient, CompanyClient, ContextVersionsClient, MyQuotasClient, HostEnrollmentClient, SpaceBackupsClient, TerminalGrantsClient {}
+export interface CauceApi extends SystemClient, MessagingClient, AgentClient, ContextRepositoryClient, NativeContextRepositoryClient, ClientDelegationsClient, FleetOperationsClient, FleetHostsClient, ProviderAuthClient, PeopleAdminClient, NativeAdminClient, AgentPreferencesClient, CompanyClient, ContextVersionsClient, MyQuotasClient, BillingClient, HostEnrollmentClient, SpaceBackupsClient, TerminalGrantsClient {}
 
 export class CauceApi {
   private readonly baseUrl: string;
@@ -102,7 +103,7 @@ export class CauceApi {
     Object.assign(this, systemClient(request), messagingClient(request), agentClient(request), contextRepositoryClient(request), nativeContextRepositoryClient(request));
     Object.assign(this, nativeAdminClient(request, () => this.authGeneration));
     Object.assign(this, clientDelegationsClient(request), fleetOperationsClient(request, () => this.authGeneration), fleetHostsClient(request), providerAuthClient(request), peopleAdminClient(request), agentPreferencesClient(request));
-    Object.assign(this, companyClient(request), contextVersionsClient(request), myQuotasClient(request));
+    Object.assign(this, companyClient(request), contextVersionsClient(request), myQuotasClient(request), billingClient(request));
     Object.assign(this, hostEnrollmentClient(request), spaceBackupsClient(request, this.baseUrl), terminalGrantsClient(request));
   }
 

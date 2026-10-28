@@ -6,7 +6,7 @@ import type { ConfigCollection } from './collections';
  * "Avanzado", shown raw, instead of staying invisible behind an allowlist.
  */
 
-export type ConfigSectionId = 'general' | 'espacios' | 'agentes' | 'computadoras' | 'arneses' | 'acceso' | 'avanzado';
+export type ConfigSectionId = 'general' | 'espacios' | 'agentes' | 'computadoras' | 'arneses' | 'acceso' | 'plan' | 'avanzado';
 
 interface ConfigSection {
   id: ConfigSectionId;
@@ -66,6 +66,14 @@ export const CONFIG_SECTIONS: readonly ConfigSection[] = [
     detalle: 'Si no hay un permiso entre dos espacios, entre ellos no pasa nada. El rol se asigna en la membresía: '
       + 'operador administra, agente conversa, adaptador entrega, y el bróker de contexto solo publica. Cada destino '
       + 'de aviso declara a qué conversación va, cada cuánto y cuántas veces por día.',
+  },
+  {
+    id: 'plan',
+    label: 'Plan y pagos',
+    proposito: 'Tu plan, cuántos agentes puedes tener y cómo pagarlo con Mercado Pago.',
+    detalle: 'El plan fija el límite de agentes de la empresa: sin un plan activo no se crean agentes nuevos. El pago '
+      + 'lo gestiona Mercado Pago y el estado se confirma siempre con ellos al volver. Cambiar de plan es cancelar '
+      + 'la suscripción y contratar otra.',
   },
   {
     id: 'avanzado',

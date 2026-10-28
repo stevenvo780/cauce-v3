@@ -26,6 +26,7 @@ import { COMPANY_ROLE_LABEL } from '../auth/company-authority';
 const GeneralSection = lazy(async () => ({ default: (await import('./GeneralSection')).GeneralSection }));
 const EspaciosSection = lazy(async () => ({ default: (await import('./EspaciosSection')).EspaciosSection }));
 const AgentesSection = lazy(async () => ({ default: (await import('./AgentesSection')).AgentesSection }));
+const BillingSection = lazy(async () => ({ default: (await import('./BillingSection')).BillingSection }));
 const ComputadorasSection = lazy(async () => ({ default: (await import('./ComputadorasSection')).ComputadorasSection }));
 const ArnesesSection = lazy(async () => ({ default: (await import('./ArnesesSection')).ArnesesSection }));
 const AccesoSection = lazy(async () => ({ default: (await import('./AccesoSection')).AccesoSection }));
@@ -98,6 +99,7 @@ function ConfigPageContent() {
     computadoras: <ComputadorasSection snapshot={config.data} soloLectura={ctx.soloLectura} onReloaded={() => { void config.reload(); }} />,
     arneses: <ArnesesSection ctx={ctx} />,
     acceso: <AccesoSection ctx={ctx} />,
+    plan: <BillingSection />,
     avanzado: <AvanzadoSection ctx={ctx} />,
   };
 
