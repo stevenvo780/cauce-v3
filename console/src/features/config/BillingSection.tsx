@@ -182,17 +182,18 @@ export function BillingSection() {
     {subscription && !overview.exempt ? <Current subscription={subscription} overview={overview} busy={busy} confirming={confirming}
       onAsk={() => { setConfirming(true); }} onAbort={() => { setConfirming(false); }}
       onCancel={() => { setConfirming(false); void act(() => api.cancelBilling(), 'No se pudo cancelar la suscripción. Reintenta.', 'Suscripción cancelada.'); }} /> : null}
-    {overview.configured && !overview.exempt ? <section aria-labelledby="planes-disponibles" className="grid gap-3">
+    {overview.configured ? <section aria-labelledby="planes-disponibles" className="grid gap-3">
       <h3 id="planes-disponibles" className="m-0 text-sm font-semibold">Planes</h3>
-      {blocked ? <p className="m-0 text-xs text-muted">Para cambiar de plan, cancela primero la suscripción actual.</p> : null}
-      {!blocked ? <label className="grid max-w-md gap-1 text-xs text-muted">
+      {overview.exempt ? <p className="m-0 text-xs text-muted">Se muestran como referencia: esta empresa no paga.</p> : null}
+      {blocked && !overview.exempt ? <p className="m-0 text-xs text-muted">Para cambiar de plan, cancela primero la suscripción actual.</p> : null}
+      {!blocked && !overview.exempt ? <label className="grid max-w-md gap-1 text-xs text-muted">
         Correo de tu cuenta de Mercado Pago
         <input type="email" autoComplete="email" value={payerEmail} disabled={busy} placeholder="el correo con el que entras a Mercado Pago"
           className="min-h-11 text-fg" onChange={(event) => { setPayerEmail(event.target.value); }} />
         <span>Mercado Pago solo acepta el pago desde la cuenta de este correo. Vacío, se usa el correo de tu sesión.</span>
       </label> : null}
       <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,16rem),1fr))] gap-3 p-0">
-        {plans.map((plan) => <PlanCard key={plan.plan} plan={plan} overview={overview} disabled={blocked} busy={busy}
+        {plans.map((plan) => <PlanCard key={plan.plan} plan={plan} overview={overview} disabled={blocked || overview.exempt} busy={busy}
           onPay={(quantity) => { void pay(plan, quantity); }} />)}
       </ul>
     </section> : null}

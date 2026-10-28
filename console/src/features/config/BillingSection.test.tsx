@@ -158,11 +158,13 @@ it('sin la marca de vuelta no llama a refresh', async () => {
   expect(calls).toEqual([]);
 });
 
-it('una empresa exenta lo dice y no ofrece pagar', async () => {
+it('una empresa exenta lo dice y enseña los planes sin dejar pagar', async () => {
   billing(() => overview({ exempt: true, allowance: { limit: 0, used: 8 } }));
   renderWithApi(<BillingSection />);
   expect(await screen.findByText('Esta empresa no paga plan')).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Pagar con Mercado Pago' })).not.toBeInTheDocument();
+  expect(await screen.findByRole('article', { name: 'Hotel 50' })).toBeInTheDocument();
+  for (const boton of screen.getAllByRole('button', { name: 'Pagar con Mercado Pago' })) expect(boton).toBeDisabled();
+  expect(screen.queryByLabelText(/Correo de tu cuenta de Mercado Pago/)).not.toBeInTheDocument();
 });
 
 it('sin configurar lo dice y no ofrece pagar', async () => {
