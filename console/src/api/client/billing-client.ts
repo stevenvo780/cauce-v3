@@ -44,7 +44,7 @@ export interface BillingOverview {
 
 export interface BillingClient {
   getBilling(): Promise<BillingOverview>;
-  startBillingCheckout(input: { plan: BillingPlanId; quantity: number }): Promise<{ checkout_url: string }>;
+  startBillingCheckout(input: { plan: BillingPlanId; quantity: number; payer_email?: string }): Promise<{ checkout_url: string }>;
   cancelBilling(): Promise<unknown>;
   refreshBilling(): Promise<unknown>;
 }

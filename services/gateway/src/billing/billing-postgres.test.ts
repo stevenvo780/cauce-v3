@@ -147,6 +147,15 @@ describe('billing through the gateway on PostgreSQL', () => {
       .toBe(409);
   });
 
+  it('charges the Mercado Pago account the administrator names, never an invalid address', async () => {
+    const leon = await login('leon@example.test');
+    expect((await post(leon, '/v3/console/billing/checkout', { plan: 'hotel_50', quantity: 1, payer_email: 'no-es-correo' })).statusCode).toBe(400);
+    expect((await post(leon, '/v3/console/billing/checkout', { plan: 'hotel_50', quantity: 1, payer_email: 'leon.pagos@correo.test' })).statusCode)
+      .toBe(200);
+    const request = JSON.parse(text(fetchMock.mock.calls.at(-1)?.[1]?.body)) as Record<string, unknown>;
+    expect(request).toMatchObject({ payer_email: 'leon.pagos@correo.test' });
+  });
+
   it('rolls the pending subscription back when Mercado Pago fails', async () => {
     const leon = await login('leon@example.test');
     fetchMock.mockImplementationOnce(async () => new Response('{}', { status: 500 }));

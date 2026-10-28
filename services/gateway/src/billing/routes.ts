@@ -23,7 +23,8 @@ const PLAN_NAME: Readonly<Record<BillingPlan, string>> = {
   gestionado: 'Gestionado', hotel_20: 'Hotel 20', hotel_50: 'Hotel 50', espacio: 'Espacio',
 };
 
-const CheckoutInput = z.object({ plan: z.enum(BILLING_PLANS), quantity: z.number().int() }).strict();
+/** `payer_email` is the payer's Mercado Pago account, which may differ from the console login. */
+const CheckoutInput = z.object({ plan: z.enum(BILLING_PLANS), quantity: z.number().int(), payer_email: z.email().max(254).optional() }).strict();
 
 class BillingRequestError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -130,7 +131,7 @@ export function registerBillingRoutes(
       const pending = await createPendingSubscription(client, { company_id: admin.company, plan: input.plan, quantity: input.quantity,
         currency: billing.currency, amount_local: amount, created_by: `console:${admin.humanId}` });
       // The pending row holds the company's single live slot; a provider failure rolls it back with the transaction.
-      const created = await billing.provider.createPreapproval({ id: pending.id, payerEmail: email, backUrl: billing.backUrl,
+      const created = await billing.provider.createPreapproval({ id: pending.id, payerEmail: input.payer_email ?? email, backUrl: billing.backUrl,
         reason: `Cauce ${PLAN_NAME[input.plan]}${input.quantity > 1 ? ` x${String(input.quantity)}` : ''}`, amount, currency: billing.currency });
       if (created.external_reference !== null && created.external_reference !== pending.id) {
         throw new MercadoPagoError(undefined, 'Mercado Pago returned another external reference');

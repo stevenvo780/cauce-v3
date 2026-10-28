@@ -93,6 +93,16 @@ it('paga con Mercado Pago: pide el checkout y redirige', async () => {
   expect(calls).toEqual([{ method: 'POST', path: 'checkout', body: { plan: 'espacio', quantity: 2 } }]);
 });
 
+it('envía el correo de la cuenta de Mercado Pago cuando se escribe', async () => {
+  const user = userEvent.setup();
+  stubAssign();
+  const calls = billing(() => overview());
+  renderWithApi(<BillingSection />);
+  await user.type(await screen.findByLabelText(/Correo de tu cuenta de Mercado Pago/), 'pagador@correo.test');
+  await user.click(within(await screen.findByRole('article', { name: 'Hotel 50' })).getByRole('button', { name: 'Pagar con Mercado Pago' }));
+  await waitFor(() => { expect(calls).toEqual([{ method: 'POST', path: 'checkout', body: { plan: 'hotel_50', quantity: 1, payer_email: 'pagador@correo.test' } }]); });
+});
+
 it('un plan de hotel envía cantidad 1', async () => {
   const user = userEvent.setup();
   stubAssign();

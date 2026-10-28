@@ -98,6 +98,7 @@ export function BillingSection() {
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [payerEmail, setPayerEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const returned = useRef(false);
 
@@ -145,7 +146,8 @@ export function BillingSection() {
   async function pay(plan: BillingPlan, quantity: number) {
     setBusy(true); setError(undefined); setNotice(undefined);
     try {
-      const { checkout_url } = await api.startBillingCheckout({ plan: plan.plan, quantity });
+      const payer = payerEmail.trim();
+      const { checkout_url } = await api.startBillingCheckout(payer ? { plan: plan.plan, quantity, payer_email: payer } : { plan: plan.plan, quantity });
       if (!isSecureUrl(checkout_url)) throw new Error('insecure checkout url');
       window.location.assign(checkout_url);
     } catch (cause) {
@@ -183,6 +185,12 @@ export function BillingSection() {
     {overview.configured && !overview.exempt ? <section aria-labelledby="planes-disponibles" className="grid gap-3">
       <h3 id="planes-disponibles" className="m-0 text-sm font-semibold">Planes</h3>
       {blocked ? <p className="m-0 text-xs text-muted">Para cambiar de plan, cancela primero la suscripción actual.</p> : null}
+      {!blocked ? <label className="grid max-w-md gap-1 text-xs text-muted">
+        Correo de tu cuenta de Mercado Pago
+        <input type="email" autoComplete="email" value={payerEmail} disabled={busy} placeholder="el correo con el que entras a Mercado Pago"
+          className="min-h-11 text-fg" onChange={(event) => { setPayerEmail(event.target.value); }} />
+        <span>Mercado Pago solo acepta el pago desde la cuenta de este correo. Vacío, se usa el correo de tu sesión.</span>
+      </label> : null}
       <ul className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(100%,16rem),1fr))] gap-3 p-0">
         {plans.map((plan) => <PlanCard key={plan.plan} plan={plan} overview={overview} disabled={blocked} busy={busy}
           onPay={(quantity) => { void pay(plan, quantity); }} />)}
