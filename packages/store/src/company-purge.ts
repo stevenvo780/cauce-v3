@@ -60,7 +60,11 @@ export async function purgeCompany(
       'SELECT snapshot,snapshot::text AS snapshot_json,snapshot_hash,blockers FROM cauce_prepare_company_purge($1,$2)', [company, authority.humanId],
     )).rows[0];
     if (!prepared) throw new StoreError('not_found', 'company is unavailable');
-    if (prepared.blockers.length > 0) throw new CompanyPurgeBlockedError(prepared.blockers);
+    const billing = (await client.query<{ id: string; status: string }>(
+      `SELECT id::text AS id,status FROM billing_subscriptions WHERE company_id=$1 AND status IN ('authorized','pending','paused') ORDER BY created_at`,
+      [company],
+    )).rows.map(row => ({ kind: 'billing_subscription', id: row.id, status: row.status }));
+    if (prepared.blockers.length > 0 || billing.length > 0) throw new CompanyPurgeBlockedError([...prepared.blockers, ...billing]);
     const backupPath = await saveBackup(prepared.snapshot, prepared.snapshot_json);
     if (backupPath.trim().length === 0) throw new StoreError('invalid_input', 'a durable company backup is required');
     const row = (await client.query<{ deleted_rows: Record<string, number> }>(

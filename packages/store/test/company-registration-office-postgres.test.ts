@@ -218,6 +218,10 @@ describe('public registration with durable owner and isolated office', () => {
     await admin.query("INSERT INTO company_office_layouts(company_id,updated_by) VALUES('south',$1)", [first.user.id]);
     await blockedBy('foreign_reference');
     await admin.query('UPDATE company_office_layouts SET updated_by=$1 WHERE company_id=$2', [second.user.id, 'south']);
+    await admin.query(`INSERT INTO billing_subscriptions(id,company_id,plan,quantity,agent_limit,amount_usd,currency,amount_local,status)
+      VALUES($1,'north','hotel_20',1,20,150,'COP',600000,'authorized')`, [randomUUID()]);
+    await blockedBy('billing_subscription');
+    await admin.query("UPDATE billing_subscriptions SET status='cancelled' WHERE company_id='north'");
     await expect(purge('north', async () => { throw new Error('backup unavailable'); })).rejects.toThrow('backup unavailable');
     expect((await admin.query("SELECT id FROM companies WHERE id='north'")).rowCount).toBe(1);
     expect(await purge()).toMatchObject({ company_id: 'north', deletion: 'purged', backup_path: '/backups/north.json' });

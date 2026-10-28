@@ -92,6 +92,7 @@ export const migrationLockFootprints: Readonly<Record<string, Readonly<Record<st
   '093_console_session_revocations.sql': {},
   '094_device_authorization_session_anchor.sql': { device_authorizations: AE },
   '095_terminal_grants_runtime_delete.sql': {},
+  '096_billing.sql': { companies: AE },
 };
 
 /** The first migration with a footprint; every bundled migration from it on must have one. */
