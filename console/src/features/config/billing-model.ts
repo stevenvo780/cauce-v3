@@ -1,4 +1,4 @@
-import type { BillingFee, BillingPlan, BillingPlanId, BillingStatus, BillingSubscription } from '../../api/client/billing-client';
+import type { BillingFee, BillingOverview, BillingPlan, BillingPlanId, BillingStatus, BillingSubscription } from '../../api/client/billing-client';
 
 export const QUANTITY_RANGE: Partial<Record<BillingPlanId, { min: number; max: number; initial: number }>> = {
   gestionado: { min: 1, max: 50, initial: 3 },
@@ -72,4 +72,9 @@ export function formatLocal(usd: number, currency: string, rate: number, fee?: B
 /** A subscription that blocks buying another: it is live or waiting for the payment. */
 export function holdsPlan(subscription: BillingSubscription | null): boolean {
   return subscription?.status === 'authorized' || subscription?.status === 'pending';
+}
+
+/** The company still has to choose a plan: not exempt and without an authorized subscription. */
+export function needsPlan(overview: BillingOverview | undefined): boolean {
+  return overview !== undefined && overview.configured && !overview.exempt && overview.subscription?.status !== 'authorized';
 }

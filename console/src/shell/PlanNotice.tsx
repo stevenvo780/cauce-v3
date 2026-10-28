@@ -3,7 +3,7 @@ import { useApi } from '../api/context';
 import type { BillingOverview, BillingPlan, BillingPlanId } from '../api/client/billing-client';
 import { Button, Pill } from '../components/kit';
 import { FormDialog } from '../components/dialogs';
-import { formatLocal, formatUsd, PLAN_ORDER, PLAN_TITLE } from '../features/config/billing-model';
+import { formatLocal, formatUsd, needsPlan, PLAN_ORDER, PLAN_TITLE } from '../features/config/billing-model';
 import { navigate } from '../router';
 
 const PITCH: Record<BillingPlanId, { tagline: string; body: string; unit: string; highlight?: string }> = {
@@ -29,11 +29,6 @@ const PITCH: Record<BillingPlanId, { tagline: string; body: string; unit: string
     unit: 'por espacio al mes',
   },
 };
-
-/** The company still has to choose a plan: not exempt and without an authorized subscription. */
-export function needsPlan(overview: BillingOverview | undefined): boolean {
-  return overview !== undefined && overview.configured && !overview.exempt && overview.subscription?.status !== 'authorized';
-}
 
 function choose(plan: BillingPlanId): void {
   navigate(`/config?seccion=plan&plan=${plan}`);
