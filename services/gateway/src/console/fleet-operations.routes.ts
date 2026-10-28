@@ -5,15 +5,16 @@ import {
   FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, RESERVED_ALIAS_MESSAGE, sha256Hex,
   type ConsoleFleetOperation, type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
-import { FleetOperationError, StoreError, type CompanyAuthoritySource, type DatabasePool } from '@cauce/store';
+import { FleetOperationError, StoreError, type CompanyAuthoritySource, type DatabaseClient, type DatabasePool } from '@cauce/store';
 import { FleetHostUnavailableError } from '../fleet/gateway-config.js';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider, type Principal } from '../auth.js';
 import { principal, replyError } from '../routes/shared.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
-import { admittingAuthority, assertActorAgentAllowance, createdFleetAgents, PlanLimitError, type AgentTarget } from '../billing/agent-allowance.js';
+import { admittingAuthority, assertActorAgentAllowance, assertAgentAllowance, createdFleetAgents, PlanLimitError, type AgentTarget } from '../billing/agent-allowance.js';
 
 export interface FleetOperationsRepositoryBinding {
   forAuthority?(source: CompanyAuthoritySource): FleetOperationsRepositoryBinding;
+  withAdmission?(admission: (client: DatabaseClient, company: string, request: FleetOperationRequest) => Promise<void>): FleetOperationsRepositoryBinding;
   display?(operation: FleetOperation): Promise<ConsoleFleetOperation>;
   list?(actorTenant: Tenant, actorAlias: string, target: FleetTarget, actorSubject?: string): Promise<unknown>;
   listRecent?(actorTenant: Tenant, actorAlias: string, limit: number, actorSubject?: string): Promise<unknown>;
@@ -120,10 +121,14 @@ export function registerFleetOperationRoutes(
     const access = await consoleHumanAccess(authProvider, request, reply, 'read');
     try {
       const forAuthority = repository.forAuthority?.bind(repository);
-      if (billingPool !== undefined && (access === undefined || forAuthority === undefined)) {
+      const actorPath = access === undefined || forAuthority === undefined;
+      const withAdmission = repository.withAdmission?.bind(repository);
+      if (billingPool !== undefined && actorPath && withAdmission === undefined) {
         await assertActorAgentAllowance(billingPool, actor.tenant_id, created);
       }
-      const active = access === undefined || forAuthority === undefined ? repository
+      const charged = billingPool !== undefined && actorPath && withAdmission !== undefined && created.length > 0
+        ? withAdmission(async (client, company) => { await assertAgentAllowance(client, company, created); }) : repository;
+      const active = actorPath ? charged
         : forAuthority(admittingAuthority(access.companyAuthority.bind(access), billingPool === undefined ? [] : created));
       return await action(active, actor);
     } finally { access?.close(); }

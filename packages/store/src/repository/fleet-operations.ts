@@ -12,12 +12,15 @@ import { fleetCompensationExhausted, fleetRollbackCompleted, fleetRollbackIntent
 import { fleetReplacementCommit } from './fleet-operation-retirement.js';
 import { preemptUnpreparedMaintenance } from './fleet-operation-maintenance.js';
 
+/** Runs inside the enqueue transaction, under the fleet lock, before the operation row exists. */
+export type FleetEnqueueAdmission = (client: DatabaseClient, company: string, request: FleetOperationRequest) => Promise<void>;
+
 export class FleetOperationsRepository extends FleetOperationExecution {
   protected readonly controllerHost: string | undefined;
   protected readonly coordinatorEnabled: boolean;
   protected readonly coordinatorHosts: readonly string[] | undefined;
   constructor(pool: DatabasePool, private readonly options: { controllerHost?: string; coordinatorEnabled?: boolean; coordinatorHosts?: readonly string[];
-    transactionClient?: DatabaseClient; authorityScope?: FleetAuthorityScope; stepMaxMs?: number } = {}) {
+    transactionClient?: DatabaseClient; authorityScope?: FleetAuthorityScope; stepMaxMs?: number; admission?: FleetEnqueueAdmission } = {}) {
     super(pool, options.transactionClient, options.stepMaxMs); this.controllerHost = options.controllerHost; this.coordinatorEnabled = options.coordinatorEnabled === true;
     this.coordinatorHosts = options.coordinatorHosts === undefined ? undefined : Object.freeze([...options.coordinatorHosts]);
   }
@@ -29,6 +32,9 @@ export class FleetOperationsRepository extends FleetOperationExecution {
   }
   forAuthority(authority: CompanyAuthoritySource): FleetOperationsRepository {
     return new FleetOperationsRepository(this.pool, { ...this.options, authorityScope: authority });
+  }
+  withAdmission(admission: FleetEnqueueAdmission): FleetOperationsRepository {
+    return new FleetOperationsRepository(this.pool, { ...this.options, admission });
   }
   async preview(tenant: string, alias: string, input: FleetOperationRequest, actorSubject?: string): Promise<FleetOperationPreview> {
     const request = fleetRequest(input);
@@ -62,6 +68,7 @@ export class FleetOperationsRepository extends FleetOperationExecution {
         await lockFleetRevision(client, request.expected_revision, authority.actingCompany);
         const { host, preview } = await validateFleetTarget(client, request, this.options.controllerHost, false, this.coordinatorEnabled, this.coordinatorHosts);
         if (!preview.can_apply) throw new FleetOperationError('conflict', 'target has durable dependencies; retire it instead');
+        await this.options.admission?.(client, authority.actingCompany, request);
         if (actorSubject !== undefined) await preemptUnpreparedMaintenance(client, authority.actingCompany, request.target,
           { tenant_id: tenant, alias, actor_subject: actorSubject, request_sha256: hash });
         const inserted = (await client.query<FleetOperationRow>(
