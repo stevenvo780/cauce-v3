@@ -16,6 +16,8 @@ export interface ConsoleRouteOptions {
   /** Enrolment the PTY plane resolves people with; absent, only a server-verified operator_id attributes. */
   readonly operatorResolution?: OperatorResolution;
   readonly agentPreferences?: AgentPreferencesRepository;
+  /** Charges agent creations against the company plan; true only while billing is configured. */
+  readonly planLimits?: boolean;
 }
 
 export type ConsoleRouteRepository = Pick<GatewayRepository,

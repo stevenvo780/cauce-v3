@@ -9,6 +9,7 @@ import { consoleHumanAccess } from '../../console-human-authority.js';
 import { principal, replyError } from '../shared.js';
 import type { ConsoleRoutes } from './contracts.js';
 import { validatedConfigurationReceipt } from './helpers.js';
+import { admittingAuthority, assertActorAgentAllowance, createdConfigurationAgents } from '../../billing/agent-allowance.js';
 
 const ConfigurationDependenciesRequestSchema = z.object({
   mutation: ConfigLeafMutationSchema,
@@ -53,10 +54,12 @@ export function registerConsoleOperationsRoutes(
       const actor = await principal(request, options.authProvider);
       requireOperatorPermission(actor, 'control');
       const change = ConfigChangeRequestSchema.parse(request.body);
-      const result = await withConfigurationAuthority(options.authProvider, request, reply,
-        authority => repository.applyConfigurationChange(
-          actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision, authority,
-        ));
+      const created = options.planLimits === true ? createdConfigurationAgents(change.mutation) : [];
+      const result = await withConfigurationAuthority(options.authProvider, request, reply, async (authority) => {
+        if (authority === undefined) await assertActorAgentAllowance(options.pool, actor.tenant_id, created);
+        return repository.applyConfigurationChange(actor.tenant_id, actor.alias, change.mutation, change.dry_run, change.expected_revision,
+          authority === undefined ? undefined : admittingAuthority(authority, created));
+      });
       return await reply.code(change.dry_run ? 200 : 201).send(validatedConfigurationReceipt(
         result, change.dry_run, null, change.mutation,
       ));

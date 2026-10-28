@@ -5,11 +5,12 @@ import {
   FleetOperationRecentQuerySchema, FleetOperationRequestSchema, FleetOperationSubmissionSchema, FleetOperationSchema, RESERVED_ALIAS_MESSAGE, sha256Hex,
   type ConsoleFleetOperation, type FleetCapability, type FleetOperation, type FleetOperationRequest, type FleetTarget, type Tenant,
 } from '@cauce/protocol';
-import { FleetOperationError, StoreError, type CompanyAuthoritySource } from '@cauce/store';
+import { FleetOperationError, StoreError, type CompanyAuthoritySource, type DatabasePool } from '@cauce/store';
 import { FleetHostUnavailableError } from '../fleet/gateway-config.js';
 import { AuthError, AuthorizationError, requireOperatorPermission, type AuthProvider, type Principal } from '../auth.js';
 import { principal, replyError } from '../routes/shared.js';
 import { consoleHumanAccess } from '../console-human-authority.js';
+import { admittingAuthority, assertActorAgentAllowance, createdFleetAgents, PlanLimitError, type AgentTarget } from '../billing/agent-allowance.js';
 
 export interface FleetOperationsRepositoryBinding {
   forAuthority?(source: CompanyAuthoritySource): FleetOperationsRepositoryBinding;
@@ -78,6 +79,10 @@ function fleetError(reply: FastifyReply, error: unknown): void {
     void reply.code(ERROR_STATUS[error.code]).send({ error: error.code, message: error.message });
     return;
   }
+  if (error instanceof PlanLimitError) {
+    replyError(reply, error);
+    return;
+  }
   if (error instanceof FleetHostUnavailableError) {
     void reply.code(error.statusCode).send({ error: error.code, message: error.message });
     return;
@@ -103,17 +108,23 @@ export function registerFleetCapabilityRoute(app: FastifyInstance, authProvider:
 export function registerFleetOperationRoutes(
   app: FastifyInstance, authProvider: AuthProvider, repository: FleetOperationsRepositoryBinding,
   capability: FleetCapability|FleetCapabilitySource = { available: false, actions: [], placements: [], reason: 'executor_unconfigured' },
+  /** Charges agent creations against the company plan; omitted, no plan limit applies. */
+  billingPool?: DatabasePool,
 ): void {
   const path = '/v3/console/fleet/operations';
   registerFleetCapabilityRoute(app, authProvider, capability);
   const withAccess = async <T>(request: FastifyRequest, reply: FastifyReply,
-    action: (active: FleetOperationsRepositoryBinding, actor: Principal) => Promise<T>): Promise<T> => {
+    action: (active: FleetOperationsRepositoryBinding, actor: Principal) => Promise<T>, created: readonly AgentTarget[] = []): Promise<T> => {
     const actor = await principal(request, authProvider);
     requireOperatorPermission(actor, 'control');
     const access = await consoleHumanAccess(authProvider, request, reply, 'read');
     try {
-      const active = access === undefined || repository.forAuthority === undefined ? repository
-        : repository.forAuthority(access.companyAuthority.bind(access));
+      const forAuthority = repository.forAuthority?.bind(repository);
+      if (billingPool !== undefined && (access === undefined || forAuthority === undefined)) {
+        await assertActorAgentAllowance(billingPool, actor.tenant_id, created);
+      }
+      const active = access === undefined || forAuthority === undefined ? repository
+        : forAuthority(admittingAuthority(access.companyAuthority.bind(access), billingPool === undefined ? [] : created));
       return await action(active, actor);
     } finally { access?.close(); }
   };
@@ -153,12 +164,13 @@ export function registerFleetOperationRoutes(
 
   app.post(path, async (request, reply) => {
     try {
+      const submitted = FleetOperationSubmissionSchema.safeParse(request.body);
       return await withAccess(request, reply, async (active, actor) => {
         const input = FleetOperationSubmissionSchema.parse(request.body);
         const canonical = enqueueReceipt(await active.enqueue(actor.tenant_id, actor.alias, input, humanSubject(actor)), actor, input);
         const operation = await displayReceipt(active, canonical);
         return await reply.code(202).send({ operation_id: operation.id, status: operation.status, operation });
-      });
+      }, submitted.success ? createdFleetAgents(submitted.data) : []);
     } catch (error) { fleetError(reply, error); }
   });
 

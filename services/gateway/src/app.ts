@@ -52,6 +52,8 @@ import { registerQuotaEnvironmentRoutes } from './routes/console/quota-environme
 import { registerAgentQuotaRoutes } from './routes/console/agent-quota.js';
 import { registerCompanyRoutes } from './routes/console/companies.js';
 import { registerDiagnoseRoute } from './routes/console/diagnose.js';
+import { configuredBilling, type BillingSettings } from './billing/config.js';
+import { registerBillingRoutes } from './billing/routes.js';
 import { WakePumpTelemetry } from './wake-pump-telemetry.js';
 import {
   type TrustedPublishCommand, type TrustedPublishIntentCommand,
@@ -248,6 +250,8 @@ export interface GatewayOptions {
   exposeHealthRoutes?: boolean;
   logger?: FastifyServerOptions['logger'];
   blobs?: BlobStoreOptions;
+  /** `null` disables billing; omitted, it is read from the environment. */
+  billing?: BillingSettings | null;
 }
 
 // Matches the historical QueryDeliveriesSchema default while keeping the claim limit local.
@@ -373,6 +377,8 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
   const backupDirectory = options.spaceBackups?.directory ?? process.env.CAUCE_SPACE_BACKUP_DIRECTORY;
   const backupStorage = backupDirectory === undefined ? undefined : options.spaceBackups ?? { directory: backupDirectory,
     projectRoot: process.env.CAUCE_PROJECT_ROOT ?? process.cwd(), python: process.env.CAUCE_SPACE_BACKUP_PYTHON ?? '/usr/bin/python3' };
+  // Plan limits apply only while billing is configured: with billing off a new company could neither pay nor create agents.
+  let billingSettings: BillingSettings | undefined;
   if (options.authProvider instanceof PasswordAuthProvider) {
     options.authProvider.useCompanyAuthority(new PostgresConsoleCompanyAuthority(options.pool));
     registerPasswordAuth(app, options.authProvider);
@@ -401,6 +407,11 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
     registerCompanyAdminRoutes(app, options.authProvider, options.pool);
     registerQuotaEnvironmentRoutes(app, options.authProvider, options.pool, options.quotaEnvironments);
     registerAgentQuotaRoutes(app, options.authProvider, options.pool);
+    const billing = options.billing === undefined ? await configuredBilling()
+      : options.billing === null ? { reason: 'disabled' } : { settings: options.billing };
+    if ('reason' in billing) app.log.info({ event: 'billing_unconfigured', reason: billing.reason }, 'billing is disabled');
+    billingSettings = 'settings' in billing ? billing.settings : undefined;
+    registerBillingRoutes(app, options.authProvider, options.pool, billingSettings);
   }
   if (providerAuthentication !== undefined) {
     if (!(options.authProvider instanceof PasswordAuthProvider)) throw new Error('provider authentication requires password authority');
@@ -420,11 +431,11 @@ export async function buildGateway(options: GatewayOptions): Promise<FastifyInst
 
   const publishHandler = coreRoutes.registerPublishRoutes();
 
-  const agentProfiles = registerConsoleRoutes(app, { ...consoleRoutes, options: { ...consoleRoutes.options,
+  const agentProfiles = registerConsoleRoutes(app, { ...consoleRoutes, options: { ...consoleRoutes.options, planLimits: billingSettings !== undefined,
     ...(agentAuthentication === undefined ? {} : { recoveryPreflight: agentAuthentication.recoveryPreflight }) } }, publishHandler);
 
   if (fleetBinding !== undefined) {
-    registerFleetOperationRoutes(app, options.authProvider, fleetBinding, fleetCapability);
+    registerFleetOperationRoutes(app, options.authProvider, fleetBinding, fleetCapability, billingSettings === undefined ? undefined : options.pool);
   } else {
     registerFleetCapabilityRoute(app, options.authProvider, { available: false, actions: [], placements: [], reason: 'executor_unconfigured' });
   }

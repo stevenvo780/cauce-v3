@@ -15,6 +15,7 @@ import {
   type AuthProvider, type Principal,
 } from '../auth.js';
 import { publishPriorityDecision } from '../publish-priority-policy.js';
+import { PlanLimitError } from '../billing/agent-allowance.js';
 
 export type TrustedPublishCommand = PublishMessage & {
   authenticated_context: NonNullable<PublishMessage['authenticated_context']>;
@@ -53,6 +54,10 @@ export function replyError(reply: FastifyReply, error: unknown): void {
   }
   if (error instanceof AuthorizationError) {
     void reply.code(403).send({ error: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof PlanLimitError) {
+    void reply.code(402).send({ error: error.code, message: error.message, limit: error.limit, used: error.used });
     return;
   }
   if (error instanceof AgentRootLimitError) {

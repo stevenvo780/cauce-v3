@@ -121,6 +121,12 @@ services:
       CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS: ${CAUCE_TERMINAL_SESSION_MAX_TOTAL_SECONDS:-3600}
       NODE_EXTRA_CA_CERTS: /run/secrets/gateway_tls_ca
       PORT: "8443"
+      # Billing stays off (503 billing_unconfigured) while either Mercado Pago secret is empty.
+      MERCADOPAGO_ACCESS_TOKEN_FILE: /run/secrets/mercadopago_access_token
+      MERCADOPAGO_WEBHOOK_SECRET_FILE: /run/secrets/mercadopago_webhook_secret
+      BILLING_CURRENCY: ${BILLING_CURRENCY:-COP}
+      BILLING_USD_RATE: ${BILLING_USD_RATE:-}
+      BILLING_PUBLIC_URL: ${BILLING_PUBLIC_URL:-https://consola.humanizar.tech}
     secrets:
       - source: database_url_gateway
         target: database_url
@@ -159,6 +165,16 @@ services:
         mode: 0400
       - source: console_jwt_key
         target: console_jwt_key
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: mercadopago_access_token
+        target: mercadopago_access_token
+        uid: "1000"
+        gid: "1000"
+        mode: 0400
+      - source: mercadopago_webhook_secret
+        target: mercadopago_webhook_secret
         uid: "1000"
         gid: "1000"
         mode: 0400
@@ -627,6 +643,10 @@ secrets:
     file: ${CAUCE_CONSOLE_JWT_KEY_PATH:-/dev/null}
   gateway_oidc_client_secret:
     file: ${CAUCE_GATEWAY_OIDC_CLIENT_SECRET_PATH:-/dev/null}
+  mercadopago_access_token:
+    file: ${CAUCE_MERCADOPAGO_ACCESS_TOKEN_PATH:-/dev/null}
+  mercadopago_webhook_secret:
+    file: ${CAUCE_MERCADOPAGO_WEBHOOK_SECRET_PATH:-/dev/null}
   console_tls_cert:
     file: ${CAUCE_CONSOLE_TLS_CERT_PATH:?set CAUCE_CONSOLE_TLS_CERT_PATH}
   console_tls_key:
