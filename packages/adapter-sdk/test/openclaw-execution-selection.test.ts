@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,4 +108,56 @@ test('OpenClaw loopback API rejects unsupported explicit selection before readin
   await assert.rejects(runner.run({ command: 'unused', args: [], harness: 'openclaw', stdin: 'private prompt', timeoutMs: 5000,
     signal: new AbortController().signal, executionSelection: { modelId: 'test/model', reasoningEffort: 'high' } }),
   { code: 'OPENCLAW_API_SELECTION_UNSUPPORTED' });
+});
+async function blockingModules(directory: string, withReset: boolean): Promise<void> {
+  await writeFile(join(directory, 'runtime-fixture.js'), 'export const defaultRuntime={};\n');
+  await writeFile(join(directory, 'agent-via-gateway-fixture.js'), `
+import { appendFileSync } from 'node:fs';
+const advice = 'Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model.';
+export async function agentCliCommand(options) {
+  appendFileSync(${JSON.stringify(join(directory, 'calls.jsonl'))}, JSON.stringify({ message: options.message, sessionKey: options.sessionKey }) + '\\n');
+  if (!options.message.startsWith('[Cauce]')) {
+    return { payloads: [{ text: advice, isError: true }], meta: { livenessState: 'blocked', error: { kind: 'compaction_failure', message: 'timed out' } } };
+  }
+  return { payloads: [{ text: JSON.stringify({ reply: 'recuperado', messages: [], status: 'done', retryable: false, artifacts: [] }) }] };
+}\n`);
+  if (withReset) await writeFile(join(directory, 'sessions.runtime-fixture.js'), `
+import { writeFileSync } from 'node:fs';
+export async function performGatewaySessionReset(params) {
+  writeFileSync(${JSON.stringify(join(directory, 'reset.json'))}, JSON.stringify(params));
+  return { ok: true, key: params.key, entry: { sessionId: 'fresh' } };
+}\n`);
+}
+async function runBlocked(directory: string) {
+  return new SpawnCommandRunner().run({ command: process.execPath, args: [bridge, '--session-key', 'room-7'],
+    harness: 'openclaw', stdin: 'despliega Praxis Pro', timeoutMs: 5000, signal: new AbortController().signal,
+    env: { CAUCE_OPENCLAW_DIST_DIR: directory, CAUCE_OPENCLAW_AGENT_ID: 'operador', CAUCE_OPENCLAW_LOCAL: '1' } });
+}
+test('a session OpenClaw gave up on for its context is reset once and the same message retried in a fresh one', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openclaw-context-reset-'));
+  try {
+    await blockingModules(directory, true);
+    const result = await runBlocked(directory);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.deepEqual(JSON.parse(await readFile(join(directory, 'reset.json'), 'utf8')),
+      { key: 'agent:operador:room-7', agentId: 'operador', reason: 'new', commandSource: 'cauce:context-overflow' });
+    const calls = (await readFile(join(directory, 'calls.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line) as { message: string; sessionKey: string });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0]?.message, 'despliega Praxis Pro');
+    assert.match(calls[1]?.message ?? '', /^\[Cauce\] Tu sesión anterior se llenó[\s\S]*\n\ndespliega Praxis Pro$/u);
+    assert.equal(calls[1]?.sessionKey, 'room-7');
+    const envelope = JSON.parse(result.stdout) as { result: { payloads: { text: string }[] } };
+    assert.equal((JSON.parse(envelope.result.payloads[0]?.text ?? '{}') as { reply: string }).reply, 'recuperado');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+test('without OpenClaw reset service a context-blocked turn is reported once, never looped', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'openclaw-context-noreset-'));
+  try {
+    await blockingModules(directory, false);
+    const result = await runBlocked(directory);
+    assert.equal(result.exitCode, 0, result.stderr);
+    assert.equal((await readFile(join(directory, 'calls.jsonl'), 'utf8')).trim().split('\n').length, 1);
+    const envelope = JSON.parse(result.stdout) as { result: { meta: { error: { kind: string } } } };
+    assert.equal(envelope.result.meta.error.kind, 'compaction_failure');
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

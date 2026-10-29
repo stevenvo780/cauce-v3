@@ -201,6 +201,24 @@ function isOpenClawIncompleteTurn(value: unknown): boolean {
   return typeof value === "string" && OPENCLAW_INCOMPLETE_TURN_NOTICE.test(value.trim());
 }
 
+/** OpenClaw gave up on a session it could not fit; its English «try /reset» advice is not an answer for the human. */
+function isOpenClawContextBlocked(value: JsonObject): boolean {
+  const kind = isObject(value.meta) && isObject(value.meta.error) ? value.meta.error.kind : undefined;
+  return kind === "context_overflow" || kind === "compaction_failure";
+}
+
+function contextBlockedOpenClawTurn(): StructuredOutput {
+  return {
+    reply: "Mi conversación se llenó y no pude terminar este turno. Puede que parte del trabajo ya esté hecha;"
+      + " vuelve a escribirme y retomo desde el estado real. [Cauce] context_overflow",
+    messages: [],
+    notify: [],
+    status: "failed",
+    retryable: false,
+    artifacts: [],
+  };
+}
+
 function incompleteOpenClawTurn(): StructuredOutput {
   return {
     reply: "OpenClaw cerró el turno sin respuesta final. Algunas herramientas podrían haberse ejecutado; verifica los cambios antes de reintentar. [Cauce] non_deliverable_terminal_turn",
@@ -230,6 +248,8 @@ export function parseOpenClawOutput(stdout: string): ParsedHarnessOutput {
     /** Last openclaw notice when NO payload carried a real answer. */
     let avisoDeCola: string | undefined;
     let incompleteTurn = false;
+
+    if (isOpenClawContextBlocked(current)) return sessionResult(contextBlockedOpenClawTurn(), sessionId);
 
     // BEFORE payloads or visible text: a run the native runtime declared failed still leaves text behind, which was wrongly treated as the turn's successful result.
     const failure = nativeFailureDetail(current);

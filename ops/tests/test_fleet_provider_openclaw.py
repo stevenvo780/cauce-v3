@@ -265,7 +265,7 @@ class OpenClawProviderTest(unittest.TestCase):
     def test_openclaw_never_bootstraps_the_cauce_workspace_and_older_configs_converge(self):
         config = self.profile / 'openclaw.json'
         written = json.loads(config.read_bytes())
-        self.assertEqual(written['agents']['defaults'], {'skipBootstrap': True})
+        self.assertEqual(written['agents']['defaults'], {'skipBootstrap': True, **driver.CONTEXT_GUARD})
         self.assertEqual(driver.read_config(self.binding, self.agent), written)
         older = json.loads(json.dumps(written))
         del older['agents']['defaults']
@@ -339,7 +339,7 @@ class OpenClawProviderTest(unittest.TestCase):
         written = json.loads(config.read_bytes())
         self.assertNotIn('model', written['agents']['list'][0])
         self.assertEqual(written['agents']['defaults'], {
-            'skipBootstrap': True, 'model': {'primary': 'openai/gpt-5.5', 'fallbacks': ['muse-cli/muse-spark-1.3']},
+            'skipBootstrap': True, **driver.CONTEXT_GUARD, 'model': {'primary': 'openai/gpt-5.5', 'fallbacks': ['muse-cli/muse-spark-1.3']},
             'cliBackends': {'muse-cli': {'command': '/usr/bin/python3', 'output': 'jsonl', 'input': 'stdin',
                 'args': ['-I', '-B', '/cauce/executor/model_fallback.py', 'client', '--socket', '/cauce/model-fallback/muse.sock',
                          '--reasoning-effort', 'high'],
@@ -359,7 +359,7 @@ class OpenClawProviderTest(unittest.TestCase):
         driver.prepare(self.binding, self.agent)
         restored = json.loads(config.read_bytes())
         self.assertEqual(restored['agents']['list'][0]['model'], 'openai/gpt-5.5')
-        self.assertEqual(restored['agents']['defaults'], {'skipBootstrap': True})
+        self.assertEqual(restored['agents']['defaults'], {'skipBootstrap': True, **driver.CONTEXT_GUARD})
         with self.assertRaises(ValueError):
             driver.prepare(self.binding, {**paired, 'extensions': [{**paired['extensions'][0], 'agent': 'operador'}]})
 
@@ -441,7 +441,7 @@ class OpenClawProviderTest(unittest.TestCase):
         self.claude_cli()
         config = json.loads((self.profile / 'openclaw.json').read_bytes())
         self.assertEqual(config['agents']['defaults'], {
-            'skipBootstrap': True, 'models': {'anthropic/claude-opus-5': {'agentRuntime': {'id': 'claude-cli'}}},
+            'skipBootstrap': True, **driver.CONTEXT_GUARD, 'models': {'anthropic/claude-opus-5': {'agentRuntime': {'id': 'claude-cli'}}},
             'cliBackends': {'claude-cli': {'command': self.binding['openclaw']['claude_command'],
                                            'env': {'CLAUDE_CONFIG_DIR': str(self.profile / 'claude')}}}})
         self.assertEqual(oct((self.profile / 'claude').stat().st_mode & 0o777), '0o700')
@@ -464,7 +464,7 @@ class OpenClawProviderTest(unittest.TestCase):
         self.binding['openclaw']['method_id'] = 'setup-token'
         driver.prepare(self.binding, self.agent)
         config = json.loads((self.profile / 'openclaw.json').read_bytes())
-        self.assertEqual(config['agents']['defaults'], {'skipBootstrap': True})
+        self.assertEqual(config['agents']['defaults'], {'skipBootstrap': True, **driver.CONTEXT_GUARD})
         self.assertEqual(config['auth']['order'], {'anthropic': ['cauce:account-one']})
         self.assertFalse((self.profile / 'openclaw.json.cauce-new').exists())
 

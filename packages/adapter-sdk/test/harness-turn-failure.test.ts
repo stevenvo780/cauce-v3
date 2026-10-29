@@ -247,3 +247,20 @@ test("un turno fallido nunca arrastra delegaciones que no se van a materializar"
   assert.equal(parsed.output.status, "failed");
   assert.deepEqual(parsed.output.messages, []);
 });
+
+test("OpenClaw context overflow it gave up on is a failed turn, not its English advice as the answer", () => {
+  const advice = "Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model.";
+  for (const kind of ["context_overflow", "compaction_failure"]) {
+    const blocked = { payloads: [{ text: advice, isError: true }],
+      meta: { finalAssistantVisibleText: advice, livenessState: "blocked", error: { kind, message: "prompt too long" } } };
+    for (const raw of [blocked, { result: blocked }, { result: { result: blocked }, session_id: "agent:operador:room" }]) {
+      const salida = validateDeliveryOutput(parseOpenClawOutput(JSON.stringify(raw)).output);
+      assert.equal(salida.status, "failed");
+      assert.equal(salida.retryable, false);
+      assert.match(salida.reply ?? "", /Mi conversación se llenó/u);
+      assert.doesNotMatch(salida.reply ?? "", /Try \/reset/u);
+    }
+  }
+  const unrelated = parseOpenClawOutput(JSON.stringify({ payloads: [{ text: JSON.stringify(SUCCESS) }], meta: { error: { kind: "other" } } }));
+  assert.equal(unrelated.output.status, "done");
+});

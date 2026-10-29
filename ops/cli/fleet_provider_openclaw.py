@@ -235,6 +235,20 @@ def restore_after_login(binding: dict, agent: dict) -> bool:
     return True
 
 
+# Context guard, measured on operador (Grok 4.7, 256k window) on 29-oct: a turn appended two 64 KB tool results to a
+# 182k session; the overflow compaction then took more than the 180 s default and the human got OpenClaw's raw «Context
+# overflow» as the answer, with the session left wedged. Per OpenClaw 2026.7.1-2: the mid-turn precheck catches a tool
+# result that no longer fits before the model call; a 16k cap gives overflow recovery oversized results to truncate
+# (the 200k+ auto cap is 64k, so it found none); a larger reserve compacts earlier, on less history, so it finishes;
+# pruning trims old tool results from what is sent; truncateAfterCompaction keeps the active transcript small.
+CONTEXT_GUARD = {
+    'compaction': {'reserveTokens': 64000, 'timeoutSeconds': 420, 'midTurnPrecheck': {'enabled': True},
+                   'truncateAfterCompaction': True},
+    'contextLimits': {'toolResultMaxChars': 16000},
+    'contextPruning': {'mode': 'cache-ttl', 'ttl': '5m', 'keepLastAssistants': 3, 'minPrunableToolChars': 8000},
+}
+
+
 def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict:
     from fleet_model_fallback import BACKEND, openclaw_backend, pairing
     driver = binding['openclaw']
@@ -242,7 +256,7 @@ def runtime_defaults(binding: dict, agent: dict, env: dict) -> dict:
     # ones). Without skipBootstrap the first `openclaw agent` —the identity probe itself— seeds OpenClaw's
     # templates and BOOTSTRAP.md into an empty workspace, and the model answers with its first-run onboarding
     # instead of the nonce (Argos, 21-oct).
-    defaults = {'skipBootstrap': True}
+    defaults = {'skipBootstrap': True, **json.loads(json.dumps(CONTEXT_GUARD))}
     if claude_cli(driver):
         defaults.update({'models': {canonical_model(agent.get('model_id')): {'agentRuntime': {'id': 'claude-cli'}}},
                          'cliBackends': {'claude-cli': {'command': driver['claude_command'],

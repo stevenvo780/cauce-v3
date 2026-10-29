@@ -292,7 +292,11 @@ async function loadOpenClaw() {
     const runtimes = await compatibleModules(directory, /^runtime-[^.]+\.js$/u, "defaultRuntime");
     if (agents.length === 1 && typeof agents[0].agentCliCommand === "function"
       && runtimes.length === 1 && runtimes[0].defaultRuntime !== undefined) {
-      installations.push({ agentCliCommand: agents[0].agentCliCommand, defaultRuntime: runtimes[0].defaultRuntime });
+      // Optional: without OpenClaw's own reset service a context-blocked session is reported, not recovered.
+      const resets = await compatibleModules(directory, /^sessions\.runtime-[^.]+\.js$/u, "performGatewaySessionReset");
+      const resetSession = resets.length === 1 && typeof resets[0].performGatewaySessionReset === "function"
+        ? resets[0].performGatewaySessionReset : undefined;
+      installations.push({ agentCliCommand: agents[0].agentCliCommand, defaultRuntime: runtimes[0].defaultRuntime, resetSession });
     } else if (agents.length > 1 || runtimes.length > 1) {
       throw new Error("ambiguous OpenClaw modules");
     }
@@ -300,6 +304,27 @@ async function loadOpenClaw() {
   if (installations.length !== 1) throw new Error("OpenClaw modules were absent or ambiguous");
   return installations[0];
 }
+
+// OpenClaw gives up on a session it can no longer fit (overflow, or the compaction that should have made room
+// failed) and keeps the session mapped, so every later message to it fails the same way (operador, 29-oct).
+const CONTEXT_BLOCKED_KINDS = new Set(["context_overflow", "compaction_failure"]);
+
+function contextBlocked(value, depth = 0) {
+  if (depth > 6 || value === null || typeof value !== "object") return false;
+  const kind = value.meta?.error?.kind;
+  if (typeof kind === "string" && CONTEXT_BLOCKED_KINDS.has(kind)) return true;
+  return Object.values(value).some((child) => contextBlocked(child, depth + 1));
+}
+
+function storeSessionKey(nativeSessionKey, agent) {
+  if (nativeSessionKey.startsWith("agent:")) return nativeSessionKey;
+  return agent === undefined ? undefined : `agent:${agent}:${nativeSessionKey}`;
+}
+
+const CONTEXT_RESET_NOTICE = "[Cauce] Tu sesión anterior se llenó (desbordamiento de contexto) mientras atendías este mismo mensaje"
+  + " y Cauce la reinició: el historial anterior ya no está en tu contexto. Puede que parte del trabajo ya esté hecha;"
+  + " comprueba el estado real (git log, archivos, servicios) antes de repetir nada y no dupliques acciones con efectos."
+  + " Mantén cortas las salidas de las herramientas (tail, head, grep -c).\n\n";
 
 function decodeFinal(captured, returned) {
   const stripped = captured.trim();
@@ -353,7 +378,7 @@ async function main() {
     setTimeout(() => { process.exit(codigo); }, 2000);
   };
   try {
-    const { agentCliCommand, defaultRuntime } = await loadOpenClaw();
+    const { agentCliCommand, defaultRuntime, resetSession } = await loadOpenClaw();
     phase("modules_loaded");
     // From here the turn MAY have side effects: before would lie, after would hide a half-finished
     // turn and retry work already paid for. Via stderr; stdout is the contract.
@@ -387,9 +412,29 @@ async function main() {
         const refusal = await embeddedFallbackRefusal(error);
         if (refusal !== undefined) throw new Error(`${refusal}: ${error.message}`);
         process.stderr.write(`openclaw stdin bridge: gateway is down, running the turn embedded: ${error.message}\n`);
+        request.local = true;
         phase("agent_cli_started");
-        returned = await agentCliCommand({ ...request, local: true }, defaultRuntime);
+        returned = await agentCliCommand(request, defaultRuntime);
         phase("agent_cli_resolved");
+      }
+      const key = nativeSessionKey === undefined ? undefined : storeSessionKey(nativeSessionKey, selected.agent);
+      let first;
+      try { first = decodeFinal(Buffer.concat(chunks).toString("utf8"), returned); } catch { first = undefined; }
+      if (resetSession !== undefined && key !== undefined && contextBlocked(first)) {
+        // One fresh session per turn, never a loop: a second blocked result is reported as it is.
+        phase("context_reset");
+        const reset = await resetSession({ key, ...(selected.agent === undefined ? {} : { agentId: selected.agent }),
+          reason: "new", commandSource: "cauce:context-overflow" });
+        if (reset?.ok === true) {
+          process.stderr.write(`openclaw stdin bridge: session ${key} was blocked by its context; reset and retrying once\n`);
+          chunks.length = 0;
+          phase("agent_cli_started");
+          returned = await agentCliCommand({ ...request, message: CONTEXT_RESET_NOTICE + message },
+            request.local === true ? defaultRuntime : interceptingRuntime(defaultRuntime));
+          phase("agent_cli_resolved");
+        } else {
+          process.stderr.write(`openclaw stdin bridge: session ${key} is blocked by its context and could not be reset\n`);
+        }
       }
     } finally {
       clearTimeout(timer);
