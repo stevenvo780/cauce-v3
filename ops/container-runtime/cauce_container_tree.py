@@ -282,11 +282,15 @@ def terminate_from_metadata(
             if pidfd_running(controller_fd):
                 raise PermanentError("lifecycle controller did not exit after adapter teardown; metadata was preserved")
 
+        # Once its leader exits, the controller still signals and reaps the leader's surviving descendants (SIGTERM,
+        # term_seconds, SIGKILL, kill_seconds) before it exits. A background command the agent left running made that
+        # outlast a kill_seconds wait, and every update of that agent failed at «stop» (operador, 29-oct).
+        controller_grace = term_seconds + kill_seconds + 2.0
         assert_no_environment_only_matches()
         stop_signal_gate()
         if not legacy and not pidfd_running(leader_fd):
             before_signal()
-            wait_controller_exit(kill_seconds)
+            wait_controller_exit(controller_grace)
             return
         with restart_fence(document):
             if legacy:
@@ -303,7 +307,7 @@ def terminate_from_metadata(
                 signal_leader(signal.SIGKILL)
                 if not wait_leader_exit(kill_seconds):
                     raise PermanentError("adapter leader is still live after SIGKILL; metadata was preserved")
-            wait_controller_exit(kill_seconds)
+            wait_controller_exit(kill_seconds if legacy else controller_grace)
     except BaseException as error:
         if legacy_controller_stopped:
             raise PermanentError("RESTART_PARTIAL_LEGACY_CONTROLLER_STOPPED_METADATA_PRESERVED") from error

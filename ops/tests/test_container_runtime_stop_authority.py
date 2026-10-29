@@ -85,6 +85,30 @@ class StopAuthorityTests(unittest.TestCase):
             signals.assert_called_once_with(31, signal.SIGTERM)
             self.assertEqual(events, ["guard", "cas", (31, signal.SIGTERM), "release"])
 
+    def controller_lingering(self, events, seconds):
+        signalled = {}
+
+        def running(fd):
+            if not any(isinstance(event, tuple) for event in events):
+                return True
+            if fd == 31:
+                return False
+            start = signalled.setdefault("at", time.monotonic())
+            return time.monotonic() - start < seconds
+        return mock.patch.object(TREE, "pidfd_running", side_effect=running)
+
+    def test_new_controller_gets_the_time_to_reap_descendants_the_leader_left_behind(self):
+        with external_stop() as (document, _node, _controller, _guard, cas, _signals, events):
+            # Longer than kill_seconds (0.1), within the controller's own SIGTERM + SIGKILL cleanup.
+            with self.controller_lingering(events, 0.3):
+                self.terminate(document, cas)
+            self.assertEqual(events, ["guard", "cas", (31, signal.SIGTERM), "release"])
+
+    def test_new_controller_that_never_exits_still_fails_bounded(self):
+        with external_stop() as (document, _node, _controller, _guard, cas, _signals, events):
+            with self.controller_lingering(events, 60), self.assertRaisesRegex(PermanentError, "did not exit"):
+                self.terminate(document, cas)
+
     def test_legacy_controller_is_killed_before_adapter_term(self):
         with external_stop(legacy=True) as (document, node, _controller, _guard, cas, _signals, events):
             self.terminate(document, cas)
