@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {DurableStore} from '../src/sdk/durable-store.js';
-import type {AdapterLog, DeliveryEvent} from '../src/sdk/types.js';
-import {CountingRunner, FakeConnection, RejectingConnection, ScriptedConnector, SequenceConnector, claimDeadline, escala, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
+import type {AdapterLog, ClientFrame, DeliveryEvent} from '../src/sdk/types.js';
+import {CountingRunner, FakeConnection, LEASE_MS, RejectingConnection, ScriptedConnector, SequenceConnector, claimDeadline, escala, makeClient, renewableDelivery, waitUntil} from './client-fixtures.js';
 test("pending durable outbox is replayed after hello_ack", async () => {
   const connection = new FakeConnection(1);
   const connector = new ScriptedConnector(connection);
@@ -363,6 +363,62 @@ test("un marco que el transporte rechaza en local se pone en cuarentena y no tir
       (frame) => frame.type === "ack" && frame.event_id === healthy.event_id,
     ), "the healthy ACK replayed on the reconnected socket");
     assert.deepEqual(second.refused, [], "la entrada en cuarentena se reenvió al reconectar");
+  } finally {
+    stop.abort();
+    await running;
+  }
+});
+
+class HeartbeatAckingConnection extends FakeConnection {
+  override async send(frame: ClientFrame): Promise<void> {
+    await super.send(frame);
+    if (frame.type === "heartbeat") {
+      this.push({ type: "heartbeat_ack", lease_expires_at: new Date(Date.now() + LEASE_MS).toISOString() });
+    }
+  }
+}
+
+test("un ACK final sin recibo se reenvía en la conexión viva y el error del gateway queda en el log", async () => {
+  // Argos 29-oct: the gateway refused a finished turn's ACK with an `error` frame nobody logged, and
+  // the result waited in the outbox for a reconnect while the delivery died at its ACK deadline.
+  const connection = new HeartbeatAckingConnection(1);
+  const logs: AdapterLog[] = [];
+  const context = await makeClient("terminal-resend", new ScriptedConnector(connection), {
+    heartbeatMs: 20, logger: (entry) => { logs.push(entry); },
+  });
+  const event: DeliveryEvent = {
+    event_id: "50000000-0000-4000-8000-0000000000a1",
+    delivery_id: "20000000-0000-4000-8000-0000000000a1",
+    attempt: 1,
+    claim_token: "20000000-0000-4000-8000-0000000000a1",
+    epoch: 1,
+    phase: "done",
+    occurred_at: new Date(0).toISOString(),
+    output: { reply: "listo", notify: [], status: "done", messages: [], artifacts: [], retryable: false },
+  };
+  await context.store.enqueue(event);
+  const stop = new AbortController();
+  const running = context.client.run(stop.signal);
+  try {
+    const acksFor = (): ClientFrame[] => connection.sent.filter((frame) => (
+      frame.type === "ack" && frame.event_id === event.event_id));
+    await waitUntil(() => acksFor().length >= 1, "the ACK replayed after hello_ack");
+    connection.push({ type: "error", code: "invalid_frame", message: "fan-in body exceeds the configured size limit" });
+    await waitUntil(() => acksFor().length >= 2, "the terminal ACK resent on the live socket");
+    assert.ok(logs.some((entry) => entry.event === "terminal_ack_resent" && entry.delivery_id === event.delivery_id));
+    await waitUntil(() => logs.some((entry) => entry.event === "gateway_error_frame"), "the gateway error frame in the log");
+    const logged = logs.find((entry) => entry.event === "gateway_error_frame");
+    assert.equal(logged?.error_code, "invalid_frame");
+    assert.match(logged?.error_message ?? "", /fan-in body/u);
+    // A conclusive receipt clears the outbox and stops the resends.
+    connection.push({
+      type: "ack_result", event_id: event.event_id, delivery_id: event.delivery_id, attempt: 1,
+      claim_token: event.claim_token, status: "done", applied: true, receipt: "applied",
+    });
+    await waitUntil(() => context.store.pendingEvents().length === 0, "the outbox cleared by the receipt");
+    const sentBefore = acksFor().length;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    assert.equal(acksFor().length, sentBefore, "no resend after the receipt");
   } finally {
     stop.abort();
     await running;

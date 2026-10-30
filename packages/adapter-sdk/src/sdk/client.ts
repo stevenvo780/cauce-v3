@@ -102,6 +102,7 @@ export class AdapterClient {
   private readonly failedConnections = new WeakSet<ConsumerConnection>();
   private readonly executionIntentWaiters = new Map<string, ExecutionIntentWaiter>();
   private readonly quarantinedEvents = new Set<string>();
+  private readonly terminalResentAt = new Map<string, number>();
   private running = false;
   private perfilAdoptado = true; // False once a hello profile could not be written.
   private readonly onError: (code: string) => void;
@@ -325,7 +326,17 @@ export class AdapterClient {
     switch (frame.type) {
       case 'delivery':
         void this.engine.handleDelivery(frame).catch((error: unknown) => {
-          this.onError(error instanceof AdapterError ? error.code : 'DELIVERY_FAILED');
+          const code = error instanceof AdapterError ? error.code : 'DELIVERY_FAILED';
+          this.onError(code);
+          this.logger({
+            event: 'delivery_unhandled_error',
+            timestamp: this.clock.now().toISOString(),
+            alias: this.config.alias,
+            delivery_id: frame.delivery_id,
+            attempt: frame.attempt,
+            error_code: code,
+            error_message: (error instanceof Error ? error.message : String(error)).slice(0, MAX_REJECTION_DETAIL),
+          });
         });
         return;
       case 'ack_result': {
@@ -396,6 +407,15 @@ export class AdapterClient {
           for (const waiter of this.executionIntentWaiters.values()) waiter.reject(error);
           throw error;
         }
+        // The gateway answers a refused ACK only with this frame. Dropping it silently left a
+        // finished turn's result in the outbox while the delivery died at its ACK deadline.
+        this.logger({
+          event: 'gateway_error_frame',
+          timestamp: this.clock.now().toISOString(),
+          alias: this.config.alias,
+          error_code: frame.code,
+          error_message: frame.message.slice(0, MAX_REJECTION_DETAIL),
+        });
         return;
       case 'heartbeat_ack':
         if (this.activeGeneration === generation
@@ -704,6 +724,42 @@ export class AdapterClient {
       };
       liveness.heartbeatStarted();
       await this.send(heartbeat, undefined, signal);
+      await this.resendStaleTerminalEvents();
+    }
+  }
+
+  /**
+   * A done/failed ACK that got no conclusive receipt used to wait for the next reconnect, and by
+   * then the delivery had died at its ACK deadline with the finished turn still in the outbox.
+   * The gateway answers an exact repeat with `duplicate`, so resending is idempotent.
+   */
+  private async resendStaleTerminalEvents(): Promise<void> {
+    const now = this.clock.now().getTime();
+    const pending = this.store.pendingEvents()
+      .filter((event) => event.phase === 'done' || event.phase === 'failed');
+    const pendingIds = new Set(pending.map((event) => event.event_id));
+    for (const eventId of this.terminalResentAt.keys()) {
+      if (!pendingIds.has(eventId)) this.terminalResentAt.delete(eventId);
+    }
+    for (const event of pending) {
+      if (this.quarantinedEvents.has(event.event_id)) continue;
+      const last = this.terminalResentAt.get(event.event_id) ?? Date.parse(event.occurred_at);
+      if (!(now - last >= TERMINAL_RESEND_MS)) continue;
+      this.terminalResentAt.set(event.event_id, now);
+      this.logger({
+        event: 'terminal_ack_resent',
+        timestamp: new Date(now).toISOString(),
+        alias: this.config.alias,
+        delivery_id: event.delivery_id,
+        attempt: event.attempt,
+        phase: event.phase,
+      });
+      try {
+        await this.sendEvent(event);
+      } catch (error) {
+        if (!localFrameRejection(error)) throw error;
+        this.quarantineOutboxEntry(event, error);
+      }
     }
   }
 
@@ -771,6 +827,8 @@ function clampAckDetail(detail: string | undefined): string | undefined {
 }
 
 const MAX_REJECTION_DETAIL = 200;
+/** How long a terminal ACK may wait for its receipt before it is sent again on the live socket. */
+const TERMINAL_RESEND_MS = 60_000;
 
 /** Structural check instead of importing the validator: a refused frame never left the process. */
 function localFrameRejection(error: unknown): boolean {

@@ -394,6 +394,12 @@ export interface AdapterLog {
     | 'versioned_context_ignored'
     /** The model fallback bridge server this Muse adapter supervises exited and will be restarted. */
     | 'model_fallback_server_exited'
+    /** Non-fenced `error` frame from the gateway (for example a refused ACK). */
+    | 'gateway_error_frame'
+    /** A delivery handler threw after the engine stopped tracking it. */
+    | 'delivery_unhandled_error'
+    /** A terminal ACK without receipt was sent again on the live connection. */
+    | 'terminal_ack_resent'
     | 'internal_error'; // real cause of an INTERNAL
   phase_name?: OpenClawPhase;
   transport?: OpenClawPhaseObservation["transport"];

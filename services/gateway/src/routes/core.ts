@@ -380,8 +380,12 @@ export function createCoreRoutePhases(
         const text = rawDataText(data);
         frameQueue = frameQueue.then(async () => {
           if (closed) return;
+          let decodedFrame: Record<string, unknown> | undefined;
           try {
             const decoded: unknown = JSON.parse(text);
+            if (decoded !== null && typeof decoded === 'object' && !Array.isArray(decoded)) {
+              decodedFrame = decoded as Record<string, unknown>;
+            }
             if (!current) {
               const hello: Hello = HelloSchema.parse(decoded);
               const actor = validatePrincipal(await options.authProvider.authenticateHello(request, hello));
@@ -630,6 +634,13 @@ export function createCoreRoutePhases(
             await handleAckFrame(current, frame);
           } catch (error) {
             const code = error instanceof StoreError ? error.code : 'invalid_frame';
+            // The consumer only gets this frame back; without a log line a refused ACK left no trace anywhere.
+            app.log.warn({
+              tenant_id: current?.tenantId, alias: current?.alias, code,
+              delivery_id: typeof decodedFrame?.delivery_id === 'string' ? decodedFrame.delivery_id : undefined,
+              frame_type: typeof decodedFrame?.type === 'string' ? decodedFrame.type : undefined,
+              err: error instanceof Error ? { name: error.name, message: error.message.slice(0, 500) } : String(error),
+            }, 'consumer frame rejected');
             send(socket, { type: 'error', code: error instanceof StoreError && error.recoveryReason === 'consumer_placement_mismatch'
               ? error.recoveryReason : code, message: error instanceof Error ? error.message : 'unknown frame error' });
             if (error instanceof StoreError && error.recoveryReason === 'consumer_placement_mismatch') socket.close(4403, 'consumer placement mismatch');
