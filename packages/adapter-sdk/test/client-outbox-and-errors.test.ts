@@ -379,8 +379,7 @@ class HeartbeatAckingConnection extends FakeConnection {
 }
 
 test("un ACK final sin recibo se reenvía en la conexión viva y el error del gateway queda en el log", async () => {
-  // Argos 29-oct: the gateway refused a finished turn's ACK with an `error` frame nobody logged, and
-  // the result waited in the outbox for a reconnect while the delivery died at its ACK deadline.
+  // Argos 29-oct: a refused done ACK waited for a reconnect while the delivery died at its deadline.
   const connection = new HeartbeatAckingConnection(1);
   const logs: AdapterLog[] = [];
   const context = await makeClient("terminal-resend", new ScriptedConnector(connection), {
@@ -408,9 +407,9 @@ test("un ACK final sin recibo se reenvía en la conexión viva y el error del ga
     assert.ok(logs.some((entry) => entry.event === "terminal_ack_resent" && entry.delivery_id === event.delivery_id));
     await waitUntil(() => logs.some((entry) => entry.event === "gateway_error_frame"), "the gateway error frame in the log");
     const logged = logs.find((entry) => entry.event === "gateway_error_frame");
-    assert.equal(logged?.error_code, "invalid_frame");
-    assert.match(logged?.error_message ?? "", /fan-in body/u);
-    // A conclusive receipt clears the outbox and stops the resends.
+    assert.ok(logged, "no gateway_error_frame entry");
+    assert.equal(logged.error_code, "invalid_frame");
+    assert.match(logged.error_message ?? "", /fan-in body/u);
     connection.push({
       type: "ack_result", event_id: event.event_id, delivery_id: event.delivery_id, attempt: 1,
       claim_token: event.claim_token, status: "done", applied: true, receipt: "applied",
