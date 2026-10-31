@@ -19,6 +19,10 @@
       "dockerHost": "server2",
       "systemdUser": "server"
     },
+    "iza": {
+      "dockerHost": "server5",
+      "systemdUser": "server"
+    },
     "kant": {
       "systemdUser": "server"
     },
