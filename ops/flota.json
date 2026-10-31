@@ -212,6 +212,10 @@
       "dockerHost": "server5",
       "systemdUser": "server"
     },
+    "janus": {
+      "dockerHost": "server5",
+      "systemdUser": "server"
+    },
     "kant": {
       "systemdUser": "server"
     },
