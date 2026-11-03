@@ -7,6 +7,8 @@ export const museDefinition: HarnessDefinition = {
   id: "muse",
   command: "muse-cauce",
   baseArgs: ["exec", "--json", "--yolo", "--trust-workspace"],
+  // A logged verify conversation is unpointed history: a fresh alias's shared TUI then refuses to start.
+  bootstrapArgs: ["--no-session-log"],
   capabilities: capabilities("muse", true),
   sessionStrategy: { kind: "observed" },
   startWitness: { kind: "stdout-first-byte" },

@@ -115,18 +115,21 @@ test('only a Muse verify turn gets 240 s, and no turn outlives its probe deadlin
   try {
     for (const [definition, deadlineMs, expected] of cases) {
       const timeouts: number[] = [];
+      const argv: (readonly string[])[] = [];
       const profile = { ...f.profile, harness_id: definition.id };
       const descriptor = { ...f.descriptor('verify'), harness_id: definition.id, deadline: new Date(Date.now() + deadlineMs).toISOString() };
       const client: BootstrapTransport = { state: async () => ({ operation_id: operationId, phase: 'bootstrap', status: 'running', enabled: false,
         lifecycle_state: 'verifying', runtime_key: 'boot-agent', profile_revision: 1, account_id: 'boot-account', normal_admitted: false }),
         profile: async () => profile, claim: async () => descriptor, ack: async () => undefined };
       // The turn is only observed: it fails right away, so the bootstrap rejects before any ack.
-      const runner: CommandRunner = { run: async request => { timeouts.push(request.timeoutMs);
+      const runner: CommandRunner = { run: async request => { timeouts.push(request.timeoutMs); argv.push(request.args);
         return { stdout: '', stderr: '', exitCode: 1, signal: null, timedOut: false, cancelled: false }; } };
       await assert.rejects(runBootstrap({ operation_id: operationId, phase: 'bootstrap', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
         client, definition, runner, profile: () => f.documents }, new AbortController().signal), /bootstrap harness failed/);
       assert.equal(timeouts.length, 1);
       assert.ok(expected(timeouts[0] ?? 0), `${definition.id} ${String(deadlineMs)}: ${String(timeouts[0])}`);
+      // Only Muse logs a conversation on a verify turn, which would block a fresh alias's shared TUI.
+      assert.equal(argv[0]?.includes('--no-session-log'), definition.id === 'muse');
     }
   } finally { await f.close(); }
 });

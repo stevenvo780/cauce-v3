@@ -60,7 +60,8 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
       const override = options.commandOverride;
       const invocation = {
         command: override?.command ?? definition.command,
-        args: [...(override?.prefixArgs ?? []), ...projectSelectionArguments(definition.id, override?.baseArgs ?? definition.baseArgs, selection), ...definition.sessionArgs({ resume: false,
+        args: [...(override?.prefixArgs ?? []), ...projectSelectionArguments(definition.id, override?.baseArgs ?? definition.baseArgs, selection),
+          ...(definition.bootstrapArgs ?? []), ...definition.sessionArgs({ resume: false,
           ...(sessionId === undefined ? {} : { sessionId }) })],
         harness: definition.id,
       };

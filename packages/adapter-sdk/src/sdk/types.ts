@@ -457,6 +457,8 @@ export interface HarnessDefinition {
   /** Witness for attesting that the process has started execution. */
   readonly startWitness?: HarnessStartWitness;
   readonly stdinSource?: HarnessStdinSource; // absent = 'pipe'
+  /** Appended to a bootstrap or verify turn so the proof leaves no conversation behind for the shared TUI to trip on. */
+  readonly bootstrapArgs?: readonly string[];
   sessionArgs(context: HarnessExecutionContext): readonly string[];
   parse(stdout: string): ParsedHarnessOutput;
 }
