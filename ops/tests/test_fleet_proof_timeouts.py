@@ -80,6 +80,9 @@ class ProofTimeoutContractTests(unittest.TestCase):
         self.assertEqual(default, {'turnMs': 100_000, 'claimMs': 50_000, 'deadlineMs': 120_000, 'hostStepMs': 150_000})
         self.assertEqual(widened['hostStepMs'], MUSE['host_step'] * 1000)
         self.assertEqual(widened['turnMs'], MUSE['roundtrip'] * 1000)
+        runner = (ROOT / 'packages/adapter-sdk/src/sdk/bootstrap-runner.ts').read_text()
+        turns = {name: int(value.replace('_', '')) for name, value in re.findall(r'const (\w*VERIFY_TURN_MS) = ([0-9_]+);', runner)}
+        self.assertEqual(turns, {'VERIFY_TURN_MS': default['turnMs'], 'MUSE_VERIFY_TURN_MS': widened['turnMs']})
         # The adapter turn must ack inside the claim, the claim inside the probe deadline, and the hook poll must
         # outlast the turn while ending before the probe expires.
         self.assertLess(widened['turnMs'], widened['claimMs'])

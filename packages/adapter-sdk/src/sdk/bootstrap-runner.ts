@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
-import { providerProofWindow } from '@cauce/protocol';
 import type { BootstrapDescriptor, BootstrapProfile, BootstrapProof, BootstrapTransport } from './bootstrap-client.js';
 import { measureBootstrapProfile } from './bootstrap-profile.js';
 import { sanitizeProcessOutput } from '../harnesses/shared/errors.js';
 import type { CommandRunner, HarnessCommandOverride, HarnessDefinition } from './types.js';
 import type { CommandPins } from './command-pins.js';
 import { invocationDigest, projectSelectionArguments, selectionForProfile, type ExecutionSelection } from './execution-selection.js';
+
+// Verify turn cap: MUSE_PROVIDER_PROOF_WINDOW.turnMs and the default window in @cauce/protocol provider-proof-window.ts,
+// kept here because this package resolves protocol through its built .d.ts; test_fleet_proof_timeouts.py pins the two.
+const VERIFY_TURN_MS = 100_000;
+const MUSE_VERIFY_TURN_MS = 240_000;
 
 export interface BootstrapRunnerOptions {
   operation_id: string; phase: 'bootstrap' | 'normal'; runtime_key: string; tenant_id: string; alias: string;
@@ -60,8 +64,8 @@ export async function runBootstrap(options: BootstrapRunnerOptions, signal: Abor
           ...(sessionId === undefined ? {} : { sessionId }) })],
         harness: definition.id,
       };
-      // 100 s, or 240 s for a Muse turn, which the gateway's 255 s Muse claim outlasts (provider-proof-window.ts).
-      const turnMs = Math.min(providerProofWindow(definition.id).turnMs, Date.parse(probe.deadline) - Date.now());
+      // A Muse turn gets 240 s, which the gateway's 255 s Muse claim outlasts.
+      const turnMs = Math.min(definition.id === 'muse' ? MUSE_VERIFY_TURN_MS : VERIFY_TURN_MS, Date.parse(probe.deadline) - Date.now());
       const result = await options.runner.run({ ...invocation, executionSelection: selection,
         ...(options.commandPins === undefined ? {} : { commandPins: options.commandPins }),
         stdin: probe.prompt, timeoutMs: Math.max(1, turnMs), signal,
