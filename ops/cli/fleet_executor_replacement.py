@@ -283,7 +283,11 @@ def relaunch_committed(executor, commit: dict, replacement: dict) -> dict | None
     )
     from fleet_executor_runtime import approved_bundle
     operation = replacement['operation_id']
-    agent = approve_agent(executor.policy, replacement['agent'])
+    # The context's agent, as admission launched it: the receipt's copy drops the trusted accounts the profile binding
+    # needs, and without them the start refuses ("provider account has no current authorized durable binding").
+    agent = executor.agent()
+    if agent.get('container_name') != replacement['agent'].get('container_name'):
+        raise SafeFailure('replacement relaunch differs from its committed runtime')
     observed = inspect_container(agent['container_name'])
     if observed is None or not observed['State']['Running'] or container_pin(observed) != replacement['pin']:
         return None

@@ -239,6 +239,7 @@ class ReplacementRetirementTest(unittest.TestCase):
 
         def launch(policy, agent, observed, bundle, *, bootstrap, operation_id=None):
             self.assertFalse(self.adapter.get('adapter_running'))
+            self.assertEqual(agent.get('_trusted_accounts'), [{'id': 'trusted'}])
             self.launches.append({'container': observed['Id'], 'bootstrap': bootstrap, 'operation_id': operation_id})
             self.adapter = {'adapter_running': True, 'adapter_bootstrap': bootstrap, 'adapter_operation_id': operation_id}
             self.live = format(len(self.launches), 'x') * 64
@@ -267,6 +268,8 @@ class ReplacementRetirementTest(unittest.TestCase):
         executor.journal['replacement_retirement']['replacement'].update(
             agent={**{key: value for key, value in self.agent.items() if not key.startswith('_')}, 'container_name': 'new-agent'},
             pin=replacement.container_pin(self.replacement_observed))
+        desired = {**executor.agent(), '_trusted_accounts': [{'id': 'trusted'}], '_trusted_accounts_present': True}
+        executor.agent = lambda: desired
         return executor
 
     def test_admitted_adapter_retires_the_original_without_a_relaunch(self):
