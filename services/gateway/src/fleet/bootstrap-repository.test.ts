@@ -130,6 +130,9 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
     expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
     await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'conflict' });
+    // An operation that settled under a later claim than its normal verification still admits its relaunched runtime.
+    await pool.query('UPDATE fleet_operations SET epoch=epoch+1 WHERE id=$1', [operationId]);
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(true);
   });
   it('lets the replacement runtime read its admission while the committed operation retires the original', async () => {
     await remoteOperation();
@@ -168,6 +171,17 @@ describe('bootstrap durable control on disposable PostgreSQL', () => {
     expect(await repository.state(identity, operationId, 'bootstrap')).toMatchObject({ status: 'running', normal_admitted: false });
     // Effects other than those reads stay bound to the sealed host scope.
     await expect(repository.create(identity, input('verify', 'normal'))).rejects.toMatchObject({ code: 'forbidden' });
+    // Every retirement retry re-claims the operation: a runtime relaunched under that later epoch still reads its admission.
+    await pool.query('UPDATE fleet_operations SET epoch=epoch+2,claim_token=$2 WHERE id=$1', [operationId, randomUUID()]);
+    expect(await repository.state(identity, operationId, 'normal')).toMatchObject({ status: 'succeeded', enabled: true, normal_admitted: true });
+    expect(await repository.profile(identity, operationId, 'normal')).toMatchObject({ runtime_key: identity.alias, profile_revision: 1 });
+    expect(await repository.claim(identity, operationId, 'normal', identity.alias)).toBeNull();
+    // That verification accredits only its own configuration, and a cancelling operation is no commit.
+    await pool.query("UPDATE agents SET model_id='other-model' WHERE alias='boot-agent'");
+    expect((await repository.state(identity, operationId, 'normal')).normal_admitted).toBe(false);
+    await pool.query("UPDATE agents SET model_id='test-model' WHERE alias='boot-agent'");
+    await pool.query('UPDATE fleet_operations SET cancel_requested=true WHERE id=$1', [operationId]);
+    await expect(repository.state(identity, operationId, 'normal')).rejects.toMatchObject({ code: 'forbidden' });
   });
   it('keeps the admitted normal runtime alive when settle commits between its state read and its claim', async () => {
     await remoteOperation();

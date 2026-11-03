@@ -51,14 +51,15 @@ class ReplacementRetirementTest(unittest.TestCase):
             self.fail('unexpected Docker mutation: ' + json.dumps(arguments))
         return b''
 
-    def authorized(self):
+    def authorized(self, *, patched=True):
         receipt = replacement.capture_previous(self.policy, self.agent)
         receipt['replacement'] = {'agent': {'container_name': 'new-agent'}, 'pin': {'container_id': 'd' * 64, 'started_at': 'new-started'},
                                   'normal_verified': True, 'operation_id': '00000000-0000-4000-8000-000000000001',
                                   'runtime_digest': 'f' * 64}
         receipt['confirmed_operation'] = {'operation_id': receipt['replacement']['operation_id'], 'status': 'succeeded',
             'runtime_digest': receipt['replacement']['runtime_digest'], 'container_id': 'd' * 64, 'started_at': 'new-started'}
-        self.stack.enter_context(mock.patch.object(replacement, 'authorize_replacement', side_effect=lambda policy, agent, receipt, proof: copy.deepcopy(receipt)))
+        if patched:
+            self.stack.enter_context(mock.patch.object(replacement, 'authorize_replacement', side_effect=lambda policy, agent, receipt, proof: copy.deepcopy(receipt)))
         return receipt
 
     def test_preflight_is_read_only_and_preserves_persistent_volumes(self):
@@ -132,8 +133,8 @@ class ReplacementRetirementTest(unittest.TestCase):
         self.assertIs(completed['complete'], True)
         self.assertEqual(container.retire_replaced_container(self.policy, self.agent, completed, apply=True), completed)
 
-    def committed_executor(self):
-        receipt = self.authorized()
+    def committed_executor(self, *, patched=True):
+        receipt = self.authorized(patched=patched)
         body = {'version': 1, 'decision': 'configuration_committed',
                 'operation_id': receipt['replacement']['operation_id'], 'company_id': 'company', 'host_id': 'host',
                 'snapshot_sha256': '1' * 64, 'original_container_id': 'a' * 64, 'replacement_container_id': 'd' * 64,
@@ -216,6 +217,172 @@ class ReplacementRetirementTest(unittest.TestCase):
         with self.assertRaisesRegex(SafeFailure, 'confirmed operation'):
             replacement.retire_replaced(self.policy, self.agent, receipt, apply=True)
         self.assertEqual(self.calls, [])
+
+    def relaunchable(self, adapter: dict):
+        """The committed replacement checked by the real authorization: only Docker and the adapter process are faked."""
+        operation = '00000000-0000-4000-8000-000000000001'
+        self.replacement_observed = {**copy.deepcopy(self.observed), 'Id': 'd' * 64, 'Name': '/new-agent',
+                                     'State': {'Running': True, 'Pid': 77, 'StartedAt': 'new-started'}}
+        self.adapter, self.live, self.launches, self.stops, self.dies_after, self.clock = adapter, 'f' * 64, [], [], None, [0.0]
+        if adapter.get('adapter_running') is not True:
+            self.live = None
+
+        def proof(policy, agent, identity, bundle, *, bootstrap=None, operation_id=None):
+            self.assertEqual((bootstrap, operation_id, bundle), (False, operation, {'digest': 'bundle'}))
+            if self.dies_after is not None:
+                self.dies_after -= 1
+                if self.dies_after < 0:
+                    self.adapter, self.live = {'adapter_running': False}, None
+            if self.live is None:
+                raise SafeFailure('container adapter identity was not observed')
+            return {'runtime_digest': self.live}
+
+        def launch(policy, agent, observed, bundle, *, bootstrap, operation_id=None):
+            self.assertFalse(self.adapter.get('adapter_running'))
+            self.launches.append({'container': observed['Id'], 'bootstrap': bootstrap, 'operation_id': operation_id})
+            self.adapter = {'adapter_running': True, 'adapter_bootstrap': bootstrap, 'adapter_operation_id': operation_id}
+            self.live = format(len(self.launches), 'x') * 64
+            return {'runtime_digest': self.live}
+
+        def stop(agent, observed):
+            self.stops.append(observed['Id'])
+            self.adapter, self.live = {'adapter_running': False}, None
+            return {'stopped_verified': True}
+
+        def sleep(seconds):
+            self.clock[0] += seconds
+
+        import fleet_executor_runtime as runtime
+        self.stack.enter_context(mock.patch.object(replacement, 'approve_agent', side_effect=lambda policy, agent: {'_placement': {}, **agent}))
+        self.stack.enter_context(mock.patch.object(container, 'inspect_container',
+            side_effect=lambda name: self.replacement_observed if name == 'new-agent' else self.observed))
+        self.stack.enter_context(mock.patch.object(container, 'adapter_restart_state', side_effect=lambda policy, agent, observed: dict(self.adapter)))
+        self.stack.enter_context(mock.patch.object(container, 'identity_for', side_effect=lambda agent, observed: {'container_id': observed['Id']}))
+        self.stack.enter_context(mock.patch.object(container, 'process_proof', side_effect=proof))
+        self.stack.enter_context(mock.patch.object(container, 'start_existing_adapter', side_effect=launch))
+        self.stack.enter_context(mock.patch.object(container, 'stop_running_adapter', side_effect=stop))
+        self.stack.enter_context(mock.patch.object(runtime, 'approved_bundle', side_effect=lambda policy, agent: {'digest': 'bundle'}))
+        self.stack.enter_context(mock.patch.object(replacement, 'time', SimpleNamespace(monotonic=lambda: self.clock[0], sleep=sleep)))
+        executor = self.committed_executor(patched=False)
+        executor.journal['replacement_retirement']['replacement'].update(
+            agent={**{key: value for key, value in self.agent.items() if not key.startswith('_')}, 'container_name': 'new-agent'},
+            pin=replacement.container_pin(self.replacement_observed))
+        return executor
+
+    def test_admitted_adapter_retires_the_original_without_a_relaunch(self):
+        executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False,
+                                      'adapter_operation_id': '00000000-0000-4000-8000-000000000001'})
+        evidence = replacement.retire_committed(executor)
+        self.assertEqual((self.launches, self.stops), ([], []))
+        self.assertNotIn('replacement_relaunch', executor.journal)
+        self.assertNotIn('relaunched', executor.journal['replacement_retirement_commit']['receipt'])
+        self.assertEqual(evidence['replacement_retired']['runtime_digest'], 'f' * 64)
+        self.assertIsNone(self.observed)
+
+    def test_replacement_adapter_gone_after_the_commit_is_relaunched_for_its_operation(self):
+        operation = '00000000-0000-4000-8000-000000000001'
+        for adapter in ({'adapter_running': False},
+                        # Relaunched by hand without the operation, as the stuck operation 3b7d01a9 was found.
+                        {'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': None},
+                        {'adapter_running': True, 'adapter_bootstrap': True, 'adapter_operation_id': operation},
+                        {'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': '00000000-0000-4000-8000-000000000002'}):
+            with self.subTest(adapter=adapter):
+                original = copy.deepcopy(self.observed)
+                executor = self.relaunchable(adapter)
+                evidence = replacement.retire_committed(executor)
+                self.assertEqual(self.launches, [{'container': 'd' * 64, 'bootstrap': False, 'operation_id': operation}])
+                self.assertEqual(self.stops, ['d' * 64] if adapter['adapter_running'] else [])
+                relaunched = {'commit_sha256': executor.context['snapshot']['replacement_commit']['commit_sha256'],
+                              'pin': replacement.container_pin(self.replacement_observed), 'runtime_digest': '1' * 64, 'admitted': True}
+                self.assertEqual(executor.journal['replacement_relaunch'], relaunched)
+                self.assertEqual(executor.journal['replacement_retirement_commit']['receipt']['relaunched'], relaunched)
+                # The gateway still receives the committed identity; only the live process pin moved.
+                self.assertEqual(evidence['replacement_retired']['runtime_digest'], 'f' * 64)
+                self.assertGreaterEqual(self.clock[0], replacement.RELAUNCH_ADMISSION_S)
+                self.assertIsNone(self.observed)
+                self.observed = original
+
+    def test_unknown_normal_adapter_of_the_operation_is_relaunched(self):
+        executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False,
+                                      'adapter_operation_id': '00000000-0000-4000-8000-000000000001'})
+        self.live = '7' * 64
+        replacement.retire_committed(executor)
+        self.assertEqual((len(self.launches), self.stops), (1, ['d' * 64]))
+        self.assertIsNone(self.observed)
+
+    def test_unproven_live_adapter_holds_the_retirement_without_being_stopped(self):
+        executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False,
+                                      'adapter_operation_id': '00000000-0000-4000-8000-000000000001'})
+        self.live = None
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified: container adapter identity'):
+            replacement.retire_committed(executor)
+        self.assertEqual((self.launches, self.stops, self.calls), ([], [], []))
+        self.assertTrue(self.observed['State']['Running'])
+
+    def test_relaunch_that_exits_before_its_admission_keeps_the_original_and_relaunches_again(self):
+        executor = self.relaunchable({'adapter_running': False})
+        self.dies_after = 3
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified: relaunched replacement adapter exited before its admission'):
+            replacement.retire_committed(executor)
+        self.assertEqual(self.calls, [])
+        self.assertTrue(self.observed['State']['Running'])
+        self.assertEqual(executor.journal['replacement_relaunch']['admitted'], False)
+        self.dies_after = None
+        replacement.retire_committed(executor)
+        self.assertEqual([launch['operation_id'] for launch in self.launches], ['00000000-0000-4000-8000-000000000001'] * 2)
+        self.assertEqual(executor.journal['replacement_relaunch']['runtime_digest'], '2' * 64)
+        self.assertIsNone(self.observed)
+
+    def test_retry_keeps_the_relaunched_adapter_and_finishes_its_admission_window(self):
+        executor = self.relaunchable({'adapter_running': False})
+        commit = executor.context['snapshot']['replacement_commit']
+        pin = executor.journal['replacement_retirement']['replacement']['pin']
+        # A host command killed inside the window left the relaunch unconfirmed; its process is still the live one.
+        self.adapter = {'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': '00000000-0000-4000-8000-000000000001'}
+        self.live = '9' * 64
+        executor.journal['replacement_relaunch'] = {'commit_sha256': commit['commit_sha256'], 'pin': pin, 'runtime_digest': '9' * 64, 'admitted': False}
+        replacement.retire_committed(executor)
+        self.assertEqual((self.launches, self.stops), ([], []))
+        self.assertGreaterEqual(self.clock[0], replacement.RELAUNCH_ADMISSION_S)
+        self.assertEqual(executor.journal['replacement_retirement_commit']['receipt']['relaunched']['runtime_digest'], '9' * 64)
+        self.assertIsNone(self.observed)
+
+    def test_relaunch_of_another_commit_or_container_is_never_accepted(self):
+        executor = self.relaunchable({'adapter_running': False})
+        pin = executor.journal['replacement_retirement']['replacement']['pin']
+        executor.journal['replacement_relaunch'] = {'commit_sha256': 'e' * 64, 'pin': pin, 'runtime_digest': '9' * 64, 'admitted': True}
+        self.adapter = {'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': '00000000-0000-4000-8000-000000000001'}
+        self.live = '9' * 64
+        replacement.retire_committed(executor)
+        self.assertEqual((len(self.launches), self.stops), (1, ['d' * 64]))
+        receipt = copy.deepcopy(executor.journal['replacement_retirement_commit']['receipt'])
+        receipt.pop('removed')
+        receipt.pop('complete')
+        for change in ('commit', 'pin', 'admitted', 'uncommitted'):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(receipt)
+                if change == 'commit':
+                    changed['relaunched']['commit_sha256'] = 'e' * 64
+                elif change == 'pin':
+                    changed['relaunched']['pin'] = {**pin, 'started_at': 'restarted'}
+                elif change == 'admitted':
+                    changed['relaunched']['admitted'] = False
+                else:
+                    changed.pop('configuration_commit')
+                with self.assertRaisesRegex(SafeFailure, 'outside its configuration commitment'):
+                    replacement.retire_replaced(self.policy, self.agent, changed, apply=True)
+        self.live = '7' * 64
+        with self.assertRaisesRegex(SafeFailure, 'differs from its normal verification'):
+            replacement.retire_replaced(self.policy, self.agent, receipt, apply=True)
+
+    def test_restarted_replacement_container_is_not_relaunched(self):
+        executor = self.relaunchable({'adapter_running': False})
+        self.replacement_observed['State']['StartedAt'] = 'restarted'
+        with self.assertRaisesRegex(SafeFailure, 'replacement original unverified: replacement has no live normal adapter'):
+            replacement.retire_committed(executor)
+        self.assertEqual((self.launches, self.calls), ([], []))
+        self.assertNotIn('replacement_relaunch', executor.journal)
+        self.assertTrue(self.observed['State']['Running'])
 
 
 if __name__ == '__main__':

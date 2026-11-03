@@ -119,10 +119,15 @@ export class BootstrapRepository {
   }
   private assertRecord(record: BootstrapRecord, context: Context, phase: BootstrapPhase, active = true): void {
     const probe = record.probe;
+    // A settled admission keeps the verification an earlier claim of the same operation recorded: a committed replacement
+    // re-claims (and bumps the epoch) on every retirement retry, and its runtime relaunched after that must still read its
+    // admission. A probe in flight stays bound to the current claim.
+    const settled = !active && (context.operation.status === 'succeeded' || context.committed);
     if (probe.phase !== phase || probe.account_id !== context.agent.primary_account_id || probe.runtime_key !== context.agent.runtime_key
         || probe.harness_id !== context.agent.harness_id || probe.model_id !== context.agent.model_id
         || (probe.reasoning_effort ?? null) !== (context.agent.reasoning_effort ?? null)
-        || probe.profile_revision !== context.profile.revision || record.epoch !== context.operation.epoch
+        || probe.profile_revision !== context.profile.revision
+        || (settled ? record.epoch > context.operation.epoch : record.epoch !== context.operation.epoch)
         || !same(probe.documents, bootstrapProfileDocuments(context.profile.contexto, probe.profile_revision))) throw conflict();
     if (active && (Date.parse(probe.deadline) <= Date.now() || record.worker_id !== context.operation.worker_id
         || record.worker_claim_hash !== digest(context.operation.claim_token ?? ''))) throw conflict();

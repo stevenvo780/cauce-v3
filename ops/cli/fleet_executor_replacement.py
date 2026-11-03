@@ -4,12 +4,15 @@ import copy
 import hashlib
 import json
 import re
+import time
 import uuid
 
 from fleet_executor_policy import SafeFailure, approve_agent
 
 RETENTION = 'retain-until-verified-copy'
 REQUIRED_PROOF = ('provider_verified', 'profile_verified', 'bootstrap_verified', 'roundtrip_verified')
+# Outlasts the relaunched adapter's bootstrap gate: its state and profile reads, 10 s transport timeout each.
+RELAUNCH_ADMISSION_S = 30
 
 
 def fingerprint(value) -> str:
@@ -140,10 +143,11 @@ def retire_replaced(policy: dict, previous: dict, receipt: dict | None = None, *
         if apply:
             raise SafeFailure('replacement retirement lacks normal runtime verification')
         return copy.deepcopy(receipt)
+    live = relaunched_digest(receipt, replacement)
     proof = {**{field: True for field in REQUIRED_PROOF}, 'operation_id': replacement.get('operation_id'),
-             'runtime_digest': replacement.get('runtime_digest')}
+             'runtime_digest': live}
     renewed = authorize_replacement(policy, replacement['agent'], receipt, proof)
-    if renewed['replacement'] != replacement:
+    if renewed['replacement'] != {**replacement, 'runtime_digest': live}:
         raise SafeFailure('replacement runtime changed after normal verification')
     if not apply:
         return renewed
@@ -242,6 +246,96 @@ def configuration_commit(commit: dict) -> dict:
     return commit
 
 
+def relaunched_digest(receipt: dict, replacement: dict):
+    """The runtime the retirement accepts: the admitted adapter, or the one it relaunched in place for the same commit."""
+    relaunched = receipt.get('relaunched')
+    if relaunched is None:
+        return replacement.get('runtime_digest')
+    try:
+        commit = configuration_commit(receipt['configuration_commit'])
+    except (KeyError, TypeError, ValueError):
+        raise SafeFailure('replacement relaunch is outside its configuration commitment') from None
+    if not isinstance(relaunched, dict) or set(relaunched) != {'commit_sha256', 'pin', 'runtime_digest', 'admitted'} \
+            or relaunched['commit_sha256'] != commit['commit_sha256'] or commit['operation_id'] != replacement.get('operation_id') \
+            or relaunched['pin'] != replacement.get('pin') or relaunched['admitted'] is not True \
+            or not isinstance(relaunched['runtime_digest'], str) or re.fullmatch(r'[a-f0-9]{64}', relaunched['runtime_digest']) is None:
+        raise SafeFailure('replacement relaunch is outside its configuration commitment')
+    return relaunched['runtime_digest']
+
+
+def relaunch_committed(executor, commit: dict, replacement: dict) -> dict | None:
+    """Relaunches the committed replacement's normal adapter when it is no longer the live runtime of this operation.
+
+    Cancel and compensation refuse a committed replacement, so an adapter that exits after the commit (or one an operator
+    restarted without this operation) would hold the retirement, and the target, forever. Its runtime digest pins a
+    process instance (PIDs, start times, executable inode), so no relaunch reproduces it: the journal pins the relaunched
+    process instead, in the same container generation the commit names, once it outlived its bootstrap gate. Nothing is
+    relaunched when the container itself changed: that is not the replacement the commit verified.
+    """
+    from fleet_executor_container import (
+        adapter_restart_state,
+        identity_for,
+        inspect_container,
+        process_proof,
+        start_existing_adapter,
+        stop_running_adapter,
+        validate_container,
+    )
+    from fleet_executor_runtime import approved_bundle
+    operation = replacement['operation_id']
+    agent = approve_agent(executor.policy, replacement['agent'])
+    observed = inspect_container(agent['container_name'])
+    if observed is None or not observed['State']['Running'] or container_pin(observed) != replacement['pin']:
+        return None
+    validate_container(executor.policy, agent, observed)
+    bundle = approved_bundle(executor.policy, agent)
+    record = executor.journal.get('replacement_relaunch')
+    if not isinstance(record, dict) or record.get('commit_sha256') != commit['commit_sha256'] or record.get('pin') != replacement['pin']:
+        record = None
+    state = adapter_restart_state(executor.policy, agent, observed)
+    live = None
+    if state.get('adapter_running') is True and state.get('adapter_bootstrap') is False \
+            and state.get('adapter_operation_id') == operation:
+        # An unproven process may still be the admitted one: its failure holds the retirement instead of stopping it.
+        live = process_proof(executor.policy, agent, identity_for(agent, observed), bundle, bootstrap=False,
+                             operation_id=operation)['runtime_digest']
+        if live == replacement['runtime_digest']:
+            return None
+    if record is None or live != record['runtime_digest']:
+        if state.get('adapter_running') is True:
+            stop_running_adapter(agent, observed)
+        digest = start_existing_adapter(executor.policy, agent, observed, bundle, bootstrap=False,
+                                        operation_id=operation)['runtime_digest']
+        record = {'commit_sha256': commit['commit_sha256'], 'pin': replacement['pin'], 'runtime_digest': digest, 'admitted': False}
+        executor.journal['replacement_relaunch'] = record
+        executor.save()
+    if record['admitted'] is not True:
+        await_relaunch_admission(executor.policy, agent, bundle, operation, record)
+        record = {**record, 'admitted': True}
+        executor.journal['replacement_relaunch'] = record
+        executor.save()
+    return record
+
+
+def await_relaunch_admission(policy: dict, agent: dict, bundle: dict, operation: str, record: dict) -> None:
+    """A committed replacement's agent is enabled, so its relaunched adapter either reads its normal admission or exits
+    (runBootstrap refuses an enabled agent without it): the same process still live past that gate was admitted."""
+    from fleet_executor_container import identity_for, inspect_container, process_proof
+    deadline = time.monotonic() + RELAUNCH_ADMISSION_S
+    while True:
+        observed = inspect_container(agent['container_name'])
+        try:
+            if observed is None or not observed['State']['Running'] or container_pin(observed) != record['pin'] \
+                    or process_proof(policy, agent, identity_for(agent, observed), bundle, bootstrap=False,
+                                     operation_id=operation)['runtime_digest'] != record['runtime_digest']:
+                raise SafeFailure('relaunched replacement adapter changed')
+        except SafeFailure:
+            raise SafeFailure('relaunched replacement adapter exited before its admission') from None
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(1)
+
+
 def retire_committed(executor) -> dict:
     try:
         commit = configuration_commit(executor.context['snapshot']['replacement_commit'])
@@ -273,6 +367,9 @@ def retire_committed(executor) -> dict:
             'started_at': commit['replacement_started_at']}
         executor.journal['replacement_retirement_commit'] = {'commit_sha256': commit['commit_sha256'], 'phase': 'retiring'}
         executor.save()
+        relaunched = relaunch_committed(executor, commit, replacement)
+        if relaunched is not None:
+            receipt['relaunched'] = relaunched
         completed = retire_replaced(executor.policy, previous[0], receipt, apply=True)
         proof = {'commit_sha256': commit['commit_sha256'], 'original_container_id': commit['original_container_id'],
                  'replacement_container_id': commit['replacement_container_id'], 'runtime_digest': commit['runtime_digest'],
@@ -280,5 +377,8 @@ def retire_committed(executor) -> dict:
         executor.journal['replacement_retirement_commit'].update(phase='complete', receipt=completed, evidence=proof)
         executor.save()
         return {'stopped_verified': True, 'removed': completed['removed'], 'replacement_retired': proof}
-    except (KeyError, TypeError, ValueError, OSError, SafeFailure):
+    except SafeFailure as error:
+        # The retirement retries without end: its reason is all a held operation tells whoever has to unblock it.
+        raise SafeFailure(f'replacement original unverified: {error}') from None
+    except (KeyError, TypeError, ValueError, OSError):
         raise SafeFailure('replacement original unverified') from None
