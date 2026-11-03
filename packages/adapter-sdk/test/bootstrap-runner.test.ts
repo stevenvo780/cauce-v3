@@ -6,10 +6,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { bloqueDePerfil, conBloqueDePerfil, emptyAgentProfile, ficherosDelArnes, revisionDelPerfil } from '@cauce/protocol';
 import { codexDefinition } from '../src/harnesses/codex.js';
+import { museDefinition } from '../src/harnesses/muse.js';
 import { SpawnCommandRunner } from '../src/sdk/process-runner.js';
 import { runBootstrap } from '../src/sdk/bootstrap-runner.js';
 import { measureBootstrapProfile } from '../src/sdk/bootstrap-profile.js';
 import { parseBootstrapDescriptor, type BootstrapDescriptor, type BootstrapProfile, type BootstrapProof, type BootstrapTransport } from '../src/sdk/bootstrap-client.js';
+import type { CommandRunner, HarnessDefinition } from '../src/sdk/types.js';
 
 const operationId = '00000000-0000-4000-8000-000000000011';
 async function fixture(phase: 'bootstrap' | 'normal' = 'bootstrap') {
@@ -101,6 +103,31 @@ test('only normal phase exits after succeeded, enabled ready and explicit normal
       client, definition: codexDefinition, runner: new SpawnCommandRunner(), profile: f.measure }, new AbortController().signal), /not converged/);
     await assert.rejects(runBootstrap({ operation_id: operationId, phase: 'bootstrap', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
       client, definition: codexDefinition, runner: new SpawnCommandRunner() }, new AbortController().signal));
+  } finally { await f.close(); }
+});
+test('only a Muse verify turn gets 240 s, and no turn outlives its probe deadline', async () => {
+  const f = await fixture();
+  const cases: [HarnessDefinition, number, (timeoutMs: number) => boolean][] = [
+    [codexDefinition, 260_000, timeoutMs => timeoutMs === 100_000],
+    [museDefinition, 260_000, timeoutMs => timeoutMs === 240_000],
+    [museDefinition, 120_000, timeoutMs => timeoutMs > 110_000 && timeoutMs <= 120_000],
+  ];
+  try {
+    for (const [definition, deadlineMs, expected] of cases) {
+      const timeouts: number[] = [];
+      const profile = { ...f.profile, harness_id: definition.id };
+      const descriptor = { ...f.descriptor('verify'), harness_id: definition.id, deadline: new Date(Date.now() + deadlineMs).toISOString() };
+      const client: BootstrapTransport = { state: async () => ({ operation_id: operationId, phase: 'bootstrap', status: 'running', enabled: false,
+        lifecycle_state: 'verifying', runtime_key: 'boot-agent', profile_revision: 1, account_id: 'boot-account', normal_admitted: false }),
+        profile: async () => profile, claim: async () => descriptor, ack: async () => undefined };
+      // The turn is only observed: it fails right away, so the bootstrap rejects before any ack.
+      const runner: CommandRunner = { run: async request => { timeouts.push(request.timeoutMs);
+        return { stdout: '', stderr: '', exitCode: 1, signal: null, timedOut: false, cancelled: false }; } };
+      await assert.rejects(runBootstrap({ operation_id: operationId, phase: 'bootstrap', runtime_key: 'boot-agent', tenant_id: 'Steven', alias: 'boot-agent',
+        client, definition, runner, profile: () => f.documents }, new AbortController().signal), /bootstrap harness failed/);
+      assert.equal(timeouts.length, 1);
+      assert.ok(expected(timeouts[0] ?? 0), `${definition.id} ${String(deadlineMs)}: ${String(timeouts[0])}`);
+    }
   } finally { await f.close(); }
 });
 test('descriptor rejects arbitrary prompt, extra secrets and duplicate document proofs', async () => {

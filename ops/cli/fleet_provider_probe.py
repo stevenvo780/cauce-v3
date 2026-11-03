@@ -81,8 +81,10 @@ def probe(packet: dict) -> dict:
         descriptor.get(key) != value for key, value in {**expected, **create}.items()
     ):
         raise ProbeError("probe identity changed")
-    # A real provider round trip at maximum reasoning effort takes ~30-40 s; the probe itself allows 120 s.
-    deadline = time.monotonic() + 105
+    # A real provider round trip at maximum reasoning effort takes ~30-40 s; the probe itself allows 120 s. A harness whose
+    # verify turn needs longer (Muse Wonder Full) widens this poll with its gateway probe window (fleet_provider_muse).
+    from fleet_provider_identity import packet_proof_timeouts
+    deadline = time.monotonic() + packet_proof_timeouts(packet)["verify_poll"]
     endpoint = "/v3/bootstrap/probes/" + descriptor["probe_id"]
     while receipt.get("state") != "succeeded" and time.monotonic() < deadline:
         time.sleep(0.2)

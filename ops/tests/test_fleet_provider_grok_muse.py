@@ -216,7 +216,10 @@ else:
                 self.assertEqual(identity.last_probe_failure(), 'probe_exit_3')
             with self.subTest(provider=provider, case='timeout'):
                 started = time.monotonic()
-                with mock.patch.object(identity, 'ROUNDTRIP_TIMEOUT', 1):
+                # Muse carries its own 240 s window (fleet_provider_muse.PROOF_TIMEOUTS); grok keeps the shared 90 s.
+                narrowed = mock.patch.dict(importlib.import_module('fleet_provider_muse').PROOF_TIMEOUTS, {'roundtrip': 1}) \
+                    if provider == 'muse' else mock.patch.object(identity, 'ROUNDTRIP_TIMEOUT', 1)
+                with narrowed:
                     self.assertFalse(identity.authenticated_provider(self.install_fake_cli(provider, 'hang')))
                 self.assertLess(time.monotonic() - started, 8)
                 self.assertEqual(identity.last_probe_failure(), 'probe_timeout after 1s')

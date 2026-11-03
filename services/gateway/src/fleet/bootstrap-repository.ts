@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { bootstrapProbeWindow } from '@cauce/protocol';
 import { AgentProfileRepository, FleetOperationError, assertFleetOperationAuthority, assertFleetRelocationSourceBarrier, describesFleetCompensationTarget, fleetReplacementCommit, loadFleetHostScope, planFleetHostSlices, preparedState, selectFleetHostSlices,
   providerAccountConsentSql, withTransaction, isMaintenanceOperation, type DatabaseClient, type DatabasePool, type FleetOperationRow, type StoredAgentContext } from '@cauce/store';
 import {
@@ -148,7 +149,9 @@ export class BootstrapRepository {
       const probe: BootstrapDescriptor = { ...input, probe_id: randomUUID(), tenant_id: identity.tenant_id, alias: identity.alias,
         runtime_key: context.agent.runtime_key, harness_id: context.agent.harness_id, model_id: context.agent.model_id,
         ...(context.agent.reasoning_effort == null ? {} : { reasoning_effort: context.agent.reasoning_effort }),
-        deadline: new Date(Date.now() + 120_000).toISOString(), prompt: bootstrapPrompt(input.nonce),
+        // A Muse verify turn needs up to 240 s; every other harness and the profile probe keep 120 s (provider-proof-window.ts).
+        deadline: new Date(Date.now() + bootstrapProbeWindow(context.agent.harness_id, input.action).deadlineMs).toISOString(),
+        prompt: bootstrapPrompt(input.nonce),
         documents: bootstrapProfileDocuments(context.profile.contexto, input.profile_revision) };
       const record: BootstrapRecord = { probe, state: 'pending', proof: null, epoch: context.operation.epoch,
         worker_id: context.operation.worker_id ?? '', worker_claim_hash: digest(context.operation.claim_token ?? '') };
@@ -186,7 +189,9 @@ export class BootstrapRepository {
       this.assertRecord(record, context, phase);
       if (record.state === 'claimed' || !context.operation.steps.some(step => step.name === (phase === 'normal' ? 'admission' : record.probe.action) && step.status === 'running')) throw conflict();
       const token = randomBytes(32).toString('hex');
-      record.state = 'claimed'; record.claim_hash = digest(token); record.claim_expires_at = new Date(Date.now() + 50_000).toISOString();
+      // The ack must land inside the claim, so the claim outlasts the adapter's harness turn of a widened harness (Muse).
+      const claimMs = bootstrapProbeWindow(record.probe.harness_id, record.probe.action).claimMs;
+      record.state = 'claimed'; record.claim_hash = digest(token); record.claim_expires_at = new Date(Date.now() + claimMs).toISOString();
       await this.event(client, context, record); return { ...record.probe, claim_token: token };
     });
   }

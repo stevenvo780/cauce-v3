@@ -34,6 +34,13 @@ SHA256_DIGEST_INFO = bytes.fromhex('3031300d060960864801650304020105000420')
 EFFORTS = frozenset({'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'})
 VERSION = '1.4.10-R6427.1'
 BRIDGE = '/usr/local/bin/muse-cauce'
+# Muse Wonder Full (muse-wonder-full-1.0) answered the one-step nonce turn in 5-46 s at high effort and 34 s at max, and once
+# took over 60 s (measured 2026-11-03); muse-spark-1.3 answers in 2-5 s. The 90 s round trip and the 50 s bootstrap claim
+# rejected valid Wonder Full logins, so every Muse provider turn keeps a 240 s window, nested end to end: round trip 240 s
+# (authenticate) and verify poll 250 s < container exec 270 s < executor hook 280 s < host step 300 s, the gateway limit.
+# The TypeScript side mirrors this in packages/protocol/src/provider-proof-window.ts (adapter turn 240 s < bootstrap claim
+# 255 s < probe deadline 260 s; host step 300 s).
+PROOF_TIMEOUTS = {'roundtrip': 240, 'verify_poll': 250, 'container_exec': 270, 'executor_hook': 280, 'host_step': 300}
 
 
 def validate_definition(value: dict, provider: str) -> None:

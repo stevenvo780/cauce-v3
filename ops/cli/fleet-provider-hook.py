@@ -59,9 +59,10 @@ def container(packet: dict) -> dict:
     if generation != binding["generation"]:
         raise ValueError("container identity changed")
     script = "/cauce/executor/fleet-provider-hook.py"
-    from fleet_provider_identity import probe_failure_line, probe_timeout, report_probe_failure
+    from fleet_provider_identity import packet_proof_timeouts, probe_failure_line, probe_timeout, report_probe_failure
+    timeout = packet_proof_timeouts(packet)["container_exec"]
     try:
-        result = _exec_inside(packet, binding, agent, interpreter, script)
+        result = _exec_inside(packet, binding, agent, interpreter, script, timeout)
     except subprocess.TimeoutExpired as error:
         if packet["step"] == "authenticate":
             report_probe_failure(probe_timeout(error.timeout).reason)
@@ -77,7 +78,8 @@ def container(packet: dict) -> dict:
     return json.loads(result.stdout)
 
 
-def _exec_inside(packet: dict, binding: dict, agent: dict, interpreter: str, script: str) -> subprocess.CompletedProcess:
+def _exec_inside(packet: dict, binding: dict, agent: dict, interpreter: str, script: str,
+                 timeout: int) -> subprocess.CompletedProcess:
     from fleet_executor_container import isolated_python
     return subprocess.run(
         [
@@ -95,7 +97,7 @@ def _exec_inside(packet: dict, binding: dict, agent: dict, interpreter: str, scr
         ],
         input=json.dumps(packet).encode(),
         capture_output=True,
-        timeout=132,
+        timeout=timeout,
     )
 
 

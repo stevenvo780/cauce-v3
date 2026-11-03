@@ -117,6 +117,17 @@ describe('host effect transport', () => {
       await expect(performHostCommand(config, 'stop', execution, new AbortController().signal)).rejects.toThrow(/^Host effect could not be verified$/u);
     }
   });
+  it('gives only a step that runs a Muse provider proof the Muse host step budget', async () => {
+    // The helper outlives the configured 1 s budget: only the widened Muse proof steps may wait for it.
+    const config = await helper("import json,sys,time\nsys.stdin.read()\ntime.sleep(1.5)\nprint(json.dumps({'evidence':{'provider_verified':True}}))");
+    const signal = new AbortController().signal;
+    const agent = (harness: string) => ({ ...execution, snapshot: { agents: [{ tenant_id: 'Steven', alias: 'one', harness_id: harness }] } }) as unknown as FleetExecution;
+    await expect(performHostCommand(config, 'authenticate', agent('muse'), signal)).resolves.toEqual({ evidence: { provider_verified: true } });
+    await expect(performHostCommand(config, 'verify', agent('muse'), signal)).resolves.toEqual({ evidence: { provider_verified: true } });
+    await expect(performHostCommand(config, 'authenticate', agent('codex'), signal)).rejects.toThrow('Host effect could not be verified');
+    await expect(performHostCommand(config, 'verify', agent('openclaw'), signal)).rejects.toThrow('Host effect could not be verified');
+    await expect(performHostCommand(config, 'stop', agent('muse'), signal)).rejects.toThrow('Host effect could not be verified');
+  });
   it('terminates an expired effect without starting later steps', async () => {
     const config = await helper('import time; time.sleep(60)');
     const abort = new AbortController();

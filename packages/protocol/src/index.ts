@@ -35,3 +35,4 @@ export * from './configuration-receipt.js';
 export * from './native-admin.js';
 export * from './agent-quota.js';
 export * from './agent-extensions.js';
+export * from './provider-proof-window.js';

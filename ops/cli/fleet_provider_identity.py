@@ -117,6 +117,53 @@ def report_probe_failure(reason: str | None) -> None:
 # Grok spends ~10 s starting (memory_init) before it reasons. The in-container hook's docker exec waits 110 s
 # and grok adds up to 10 s of userinfo after the round trip.
 ROUNDTRIP_TIMEOUT = 90
+# The proof chain of a step that runs a real provider turn, inner to outer: the nonce round trip of the identity probe
+# (authenticate) or the bootstrap probe poll (verify, fleet_provider_probe), the hook's docker exec into the container
+# (fleet-provider-hook.py), the executor's hook subprocess (fleet_executor_hooks.py) and the gateway's host step
+# (services/gateway/src/fleet/host-command.ts, which refuses more than 300 s). A fleet provider module widens the chain
+# for its harness with PROOF_TIMEOUTS (fleet_provider_muse); every other harness and step keeps these values.
+VERIFY_POLL_TIMEOUT = 105
+CONTAINER_EXEC_TIMEOUT = 132
+EXECUTOR_HOOK_TIMEOUT = 140
+HOST_STEP_TIMEOUT = 150
+HOST_STEP_LIMIT = 300
+PROOF_TIMEOUT_KEYS = ('roundtrip', 'verify_poll', 'container_exec', 'executor_hook', 'host_step')
+PROVIDER_TURN_STEPS = frozenset({'authenticate', 'verify'})
+
+
+def default_proof_timeouts() -> dict:
+    # Read at call time: a test may narrow ROUNDTRIP_TIMEOUT.
+    return dict(zip(PROOF_TIMEOUT_KEYS, (ROUNDTRIP_TIMEOUT, VERIFY_POLL_TIMEOUT, CONTAINER_EXEC_TIMEOUT,
+                                         EXECUTOR_HOOK_TIMEOUT, HOST_STEP_TIMEOUT), strict=True))
+
+
+def validate_proof_timeouts(values) -> dict:
+    """Whole seconds, nested inner < outer at every level and inside the gateway's host step limit."""
+    if not isinstance(values, dict) or set(values) != set(PROOF_TIMEOUT_KEYS) \
+            or any(type(values[key]) is not int for key in PROOF_TIMEOUT_KEYS):
+        raise ProviderProofError('provider proof timeouts are outside the contract')
+    inner = (values['roundtrip'], values['verify_poll'])
+    if min(inner) <= 0 or not max(inner) < values['container_exec'] < values['executor_hook'] < values['host_step'] <= HOST_STEP_LIMIT:
+        raise ProviderProofError('provider proof timeouts are not nested')
+    return dict(values)
+
+
+def proof_timeouts(module_name: str | None, step: str | None = None) -> dict:
+    """The nested proof timeouts of one hook step. Only a step that runs a provider turn takes the harness window."""
+    defaults = validate_proof_timeouts(default_proof_timeouts())
+    if not module_name or step not in PROVIDER_TURN_STEPS:
+        return defaults
+    from importlib import import_module
+    try:
+        module = import_module(module_name)
+    except ImportError:
+        raise ProviderProofError('fleet provider module is unavailable') from None
+    widened = getattr(module, 'PROOF_TIMEOUTS', None)
+    return defaults if widened is None else validate_proof_timeouts(widened)
+
+
+def packet_proof_timeouts(packet: dict) -> dict:
+    return proof_timeouts(packet_fleet_module(packet), packet.get('step'))
 
 
 NON_HARNESS_MODULES = frozenset({'identity', 'probe', 'revoke'})
@@ -208,7 +255,8 @@ def nonce_roundtrip(packet: dict, arguments, extract) -> bool:
     try:
         with os.fdopen(descriptor, 'w') as stream:
             stream.write(f'Responde únicamente {expected}.')
-        output = command_output([provider_command(packet), *arguments(str(prompt))], packet, ROUNDTRIP_TIMEOUT)
+        timeout = proof_timeouts(packet_fleet_module(packet), 'authenticate')['roundtrip']
+        output = command_output([provider_command(packet), *arguments(str(prompt))], packet, timeout)
         if extract(output) != expected:
             probe_failed('probe_nonce_mismatch')
             return False

@@ -137,9 +137,11 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
         raise SafeFailure('functional hook argument file is not pinned')
     nonce = secrets.token_hex(32)
     identity = {field: agent[field] for field in ('tenant_id', 'alias', 'runtime_key')}
-    from fleet_provider_identity import resolve_fleet_module
+    from fleet_provider_identity import proof_timeouts, resolve_fleet_module
     try:
         fleet_module_name = resolve_fleet_module(policy, agent['harness_id'])
+        # A step that runs a provider turn takes its harness window (fleet_provider_muse.PROOF_TIMEOUTS), nested under the host step.
+        hook_timeout = proof_timeouts(fleet_module_name, step)['executor_hook']
     except ValueError:
         raise SafeFailure('fleet descriptor is unavailable') from None
     packet = {'operation_id': context['operation_id'], 'step': step, 'agent': {key: value for key, value in agent.items() if not key.startswith('_')},
@@ -170,7 +172,7 @@ def invoke_bound(policy: dict, context: dict, agent: dict, step: str, account, p
         command = ['/usr/sbin/runuser', '-u', hook['user'], '--', *command]
     from fleet_provider_identity import probe_failure_line, probe_timeout, report_probe_failure
     try:
-        result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=140,
+        result = subprocess.run(command, input=json.dumps(packet).encode(), capture_output=True, timeout=hook_timeout,
                                 env={'PATH': '/usr/bin:/bin', 'HOME': agent['home_directory'], 'PYTHONDONTWRITEBYTECODE': '1'}, check=False)
     except subprocess.TimeoutExpired as error:
         if step == 'authenticate':

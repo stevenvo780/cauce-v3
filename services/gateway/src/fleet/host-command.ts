@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, FleetReplacementCommitSchema, type FleetStepName, type FleetEvidence } from '@cauce/protocol';
+import { FleetEvidenceSchema, FleetOperationRequestSchema, FleetStepNameSchema, FleetReplacementCommitSchema, providerProofHostStepMs, type FleetStepName, type FleetEvidence } from '@cauce/protocol';
 import { canRestoreFleetUpdate } from '@cauce/store';
 import { ProviderAuthError } from '../console/provider-auth.contracts.js';
 import type { FleetExecution, FleetEffectResult } from './executor.js';
@@ -30,6 +30,7 @@ export async function performHostMaintenanceCheckpoint(config: HostCommandConfig
   return runHostReceipt(config, 'maintenance-checkpoint', execution, signal, output => MaintenanceCheckpoint.parse(output), requireExisting);
 }
 const MAX_RECEIPT_BYTES = 8192;
+const DEFAULT_HOST_COMMAND_TIMEOUT_MS = 150_000;
 function unverified(): Error { return new Error('Host effect could not be verified'); }
 function absolute(value: string): boolean { return value.startsWith('/') && !/[\p{Cc}]/u.test(value) && !value.split('/').includes('..'); }
 
@@ -65,10 +66,29 @@ export async function performHostLoginStop(config: HostCommandConfig, execution:
   }
 }
 
+/** The harness whose provider an agent step proves: the target's agent row in the sealed snapshot, else the desired harness. */
+function targetHarness(execution: FleetExecution): string | undefined {
+  const parsed = FleetOperationRequestSchema.safeParse(execution.request);
+  if (!parsed.success) return undefined;
+  const request = parsed.data;
+  if (request.target.resource !== 'agent') return undefined;
+  const { tenant_id: tenant, alias } = request.target;
+  const agents = z.array(z.record(z.string(), z.unknown())).safeParse(execution.snapshot?.agents ?? []);
+  const row = agents.success ? agents.data.find(agent => agent.tenant_id === tenant && agent.alias === alias) : undefined;
+  const harness = row?.harness_id ?? (request.kind === 'create' || request.kind === 'update' ? request.parameters.harness_id : undefined);
+  return typeof harness === 'string' ? harness : undefined;
+}
+/** A step whose hook runs a Muse provider turn gets the Muse host step (provider-proof-window.ts); everything else keeps its budget. */
+function proofStepConfig(config: HostCommandConfig, step: string, execution: FleetExecution): HostCommandConfig {
+  const configured = config.timeoutMs ?? DEFAULT_HOST_COMMAND_TIMEOUT_MS;
+  const timeoutMs = providerProofHostStepMs(targetHarness(execution), step, configured);
+  return timeoutMs === configured ? config : { ...config, timeoutMs };
+}
+
 async function runHostCommand(
   config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop' | 'retire-replacement', execution: FleetExecution, signal: AbortSignal,
 ): Promise<FleetEffectResult> {
-  return runHostReceipt(config, step, execution, signal, (output, runtimeStderr) => {
+  return runHostReceipt(proofStepConfig(config, step, execution), step, execution, signal, (output, runtimeStderr) => {
     const receipt = ReceiptSchema.parse(output);
     const probe = step === 'authenticate' ? providerProbeFailure(runtimeStderr) : undefined;
     return { evidence: receipt.evidence,
@@ -81,7 +101,7 @@ async function runHostReceipt<T>(
   config: HostCommandConfig, step: FleetStepName | 'compensate' | 'login-stop' | 'retire-replacement' | 'maintenance-checkpoint',
   execution: FleetExecution, signal: AbortSignal, parse: (output: unknown, runtimeStderr: string) => T, requireExistingCheckpoint = false,
 ): Promise<T> {
-  const timeoutMs = config.timeoutMs ?? 150_000;
+  const timeoutMs = config.timeoutMs ?? DEFAULT_HOST_COMMAND_TIMEOUT_MS;
   const isAborted = () => signal.aborted;
   if (![config.python, config.executable, config.policyFile].every(absolute)
       || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000 || signal.aborted) throw unverified();
