@@ -224,11 +224,12 @@ class ReplacementRetirementTest(unittest.TestCase):
         self.replacement_observed = {**copy.deepcopy(self.observed), 'Id': 'd' * 64, 'Name': '/new-agent',
                                      'State': {'Running': True, 'Pid': 77, 'StartedAt': 'new-started'}}
         self.adapter, self.live, self.launches, self.stops, self.dies_after, self.clock = adapter, 'f' * 64, [], [], None, [0.0]
+        self.bundle = {'digest': 'bundle'}
         if adapter.get('adapter_running') is not True:
             self.live = None
 
         def proof(policy, agent, identity, bundle, *, bootstrap=None, operation_id=None):
-            self.assertEqual((bootstrap, operation_id, bundle), (False, operation, {'digest': 'bundle'}))
+            self.assertEqual((bootstrap, operation_id, bundle), (False, operation, self.bundle))
             if self.dies_after is not None:
                 self.dies_after -= 1
                 if self.dies_after < 0:
@@ -271,6 +272,42 @@ class ReplacementRetirementTest(unittest.TestCase):
         desired = {**executor.agent(), '_trusted_accounts': [{'id': 'trusted'}], '_trusted_accounts_present': True}
         executor.agent = lambda: desired
         return executor
+
+    def test_deploy_after_the_admission_relaunches_from_the_sibling_release_the_container_binds(self):
+        import fleet_executor_rebind as rebind
+        executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': None})
+        validate = container.validate_container
+
+        def moved(policy, agent, observed, *rest, **options):
+            if observed['Id'] == 'd' * 64 and not rest:
+                raise SafeFailure('container runtime mounts differ')
+            return validate(policy, agent, observed, *rest, **options)
+
+        self.stack.enter_context(mock.patch.object(container, 'validate_container', side_effect=moved))
+        sibling = self.stack.enter_context(mock.patch.object(rebind, 'sibling_bundle', return_value={'digest': 'sibling'}))
+        self.bundle = {'digest': 'sibling'}
+        evidence = replacement.retire_committed(executor)
+        self.assertEqual(len(self.launches), 1)
+        self.assertTrue(sibling.called)
+        self.assertIs(evidence['replacement_retired']['volumes_retained'], True)
+        self.assertIsNone(self.observed)
+
+    def test_deploy_after_the_admission_without_its_sibling_release_holds_the_retirement(self):
+        import fleet_executor_rebind as rebind
+        executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False, 'adapter_operation_id': None})
+        validate = container.validate_container
+
+        def moved(policy, agent, observed, *rest, **options):
+            if observed['Id'] == 'd' * 64 and not rest:
+                raise SafeFailure('container runtime mounts differ')
+            return validate(policy, agent, observed, *rest, **options)
+
+        self.stack.enter_context(mock.patch.object(container, 'validate_container', side_effect=moved))
+        self.stack.enter_context(mock.patch.object(rebind, 'sibling_bundle', return_value=None))
+        with self.assertRaisesRegex(SafeFailure, 'runtime mounts differ'):
+            replacement.retire_committed(executor)
+        self.assertEqual((self.launches, self.stops), ([], []))
+        self.assertTrue(self.observed['State']['Running'])
 
     def test_admitted_adapter_retires_the_original_without_a_relaunch(self):
         executor = self.relaunchable({'adapter_running': True, 'adapter_bootstrap': False,

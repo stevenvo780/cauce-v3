@@ -89,15 +89,31 @@ def assert_previous(policy: dict, previous: dict, receipt: dict) -> tuple[dict, 
     return agent, observed
 
 
+def bound_bundle(policy: dict, agent: dict, observed: dict) -> dict:
+    """The approved bundle the replacement container binds: the current release's, or, when a deploy landed between its
+    admission and its retirement, the sibling release it was created from (the container cannot be recreated without
+    leaving the commit's pin). sibling_bundle re-validates every other part of the container against that release."""
+    from fleet_executor_container import RELEASE_ROOT, validate_container
+    from fleet_executor_rebind import sibling_bundle
+    from fleet_executor_runtime import approved_bundle
+    bundle = approved_bundle(policy, agent)
+    try:
+        validate_container(policy, agent, observed)
+        return bundle
+    except SafeFailure:
+        sibling = sibling_bundle(policy, agent, observed, bundle, RELEASE_ROOT)
+        if sibling is None:
+            raise
+        return sibling
+
+
 def authorize_replacement(policy: dict, desired: dict, receipt: dict, proof: dict) -> dict:
     from fleet_executor_container import (
         adapter_restart_state,
         identity_for,
         inspect_container,
         process_proof,
-        validate_container,
     )
-    from fleet_executor_runtime import approved_bundle
     if not isinstance(proof, dict) or any(proof.get(field) is not True for field in REQUIRED_PROOF):
         raise SafeFailure('replacement retirement requires a verified normal nonce roundtrip')
     operation = proof.get('operation_id')
@@ -114,13 +130,13 @@ def authorize_replacement(policy: dict, desired: dict, receipt: dict, proof: dic
     observed = inspect_container(agent['container_name'])
     if observed is None or not observed['State']['Running']:
         raise SafeFailure('replacement normal runtime is unavailable')
-    validate_container(policy, agent, observed)
+    bundle = bound_bundle(policy, agent, observed)
     state = adapter_restart_state(policy, agent, observed)
     if state.get('adapter_running') is not True or state.get('adapter_bootstrap') is not False:
         raise SafeFailure('replacement has no live normal adapter')
     if state.get('adapter_operation_id') != operation:
         raise SafeFailure('replacement adapter belongs to another verified operation')
-    runtime = process_proof(policy, agent, identity_for(agent, observed), approved_bundle(policy, agent), bootstrap=False,
+    runtime = process_proof(policy, agent, identity_for(agent, observed), bundle, bootstrap=False,
                             operation_id=operation)['runtime_digest']
     if 'runtime_digest' in proof and proof['runtime_digest'] != runtime:
         raise SafeFailure('replacement runtime differs from its normal verification')
@@ -279,9 +295,7 @@ def relaunch_committed(executor, commit: dict, replacement: dict) -> dict | None
         process_proof,
         start_existing_adapter,
         stop_running_adapter,
-        validate_container,
     )
-    from fleet_executor_runtime import approved_bundle
     operation = replacement['operation_id']
     # The context's agent, as admission launched it: the receipt's copy drops the trusted accounts the profile binding
     # needs, and without them the start refuses ("provider account has no current authorized durable binding").
@@ -291,8 +305,7 @@ def relaunch_committed(executor, commit: dict, replacement: dict) -> dict | None
     observed = inspect_container(agent['container_name'])
     if observed is None or not observed['State']['Running'] or container_pin(observed) != replacement['pin']:
         return None
-    validate_container(executor.policy, agent, observed)
-    bundle = approved_bundle(executor.policy, agent)
+    bundle = bound_bundle(executor.policy, agent, observed)
     record = executor.journal.get('replacement_relaunch')
     if not isinstance(record, dict) or record.get('commit_sha256') != commit['commit_sha256'] or record.get('pin') != replacement['pin']:
         record = None
