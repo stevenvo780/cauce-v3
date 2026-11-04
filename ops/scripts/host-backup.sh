@@ -587,12 +587,20 @@ if [ -r "$OFFSITE_KEY" ]; then
     log "[offsite] syncing $DB_BACKUP_DIR -> $OFFSITE_USER@$OFFSITE_HOST:$OFFSITE_DB_PATH"
     off_log="$STATUS_DIR/last-offsite-db.log"
     verify_log="$STATUS_DIR/last-offsite-db-verify.log"
+    # The checksum verification covers THIS run's dump and its sidecars. Older files were verified
+    # when they were new and --ignore-existing never rewrites them; re-reading the whole remote
+    # history each run outgrew the unit timeout once the mirror moved to a slower disk (2026-11-04).
+    verify_list=$(mktemp)
+    for suffix in '' .sha256 .restore.json .blobs.tar .blobs.tar.sha256 .blobs.tsv; do
+      [ -e "$db_file$suffix" ] && basename "$db_file$suffix" >>"$verify_list"
+    done
     if (cd "$DB_BACKUP_DIR" && sha256sum -c "$(basename "$db_file").sha256") >>"$off_log" 2>&1 \
        && rsync -a --ignore-existing -e "$ssh_cmd" "$DB_BACKUP_DIR/" "$OFFSITE_USER@$OFFSITE_HOST:$OFFSITE_DB_PATH" >>"$off_log" 2>&1 \
-       && rsync -a --checksum --dry-run --itemize-changes -e "$ssh_cmd" \
+       && rsync -a --checksum --dry-run --itemize-changes --files-from="$verify_list" -e "$ssh_cmd" \
             "$DB_BACKUP_DIR/" "$OFFSITE_USER@$OFFSITE_HOST:$OFFSITE_DB_PATH" >"$verify_log" 2>&1 \
        && [ ! -s "$verify_log" ]
     then
+      rm -f "$verify_list"
       offsite_db_status=ok
       log "[offsite] db append-only mirror OK (no remote deletion/overwrite, checksum dry-run clean)"
       # Retention runs only after the new dump exists off-host. It is local-only: remote history is
@@ -610,6 +618,7 @@ if [ -r "$OFFSITE_KEY" ]; then
         [ -n "$pruned" ] && log "[db] local retention pruned after offsite verification: $(printf '%s' "$pruned" | tr '\n' ' ')"
       fi
     else
+      rm -f "$verify_list"
       offsite_db_status=failed
       offsite_db_detail=$(tail -c 1000 "$off_log" | tr '\n' ' ')
       err "[offsite] db mirror FAILED: $offsite_db_detail"
