@@ -8,6 +8,7 @@ import { COMPANY_ID_PATTERN, lockCompanyAuthority } from '../company-authority.j
 import { withAbortableTransaction, withTransaction } from '../db.js';
 import { postgresBigintString } from '../runtime-values.js';
 import type { CompanyAuthoritySource } from './fleet-hosts.js';
+import { isPlatformActor } from './outbox/platform-reach.js';
 import { StoreError } from './errors.js';
 import type {
   OperationalDlqPage, OperationalDlqResolutionRequest, OperationalDlqResolutionResult
@@ -302,12 +303,17 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
    * cursor from another scope fails closed. It is not a signature: an authorized actor can only
    * alter navigation within its scope. The keyset order is stable across reopens because it
    * uses the letter's immutable `created_at`, plus target and id as tiebreakers.
+   *
+   * `platform` adds the acting company of a verified platform administrator (098), the same reach
+   * replay and cancel give it. A source that cannot vouch for a person (`not_found`/`forbidden`)
+   * leaves the tenant scope exactly as before; the two lists never share a cursor.
    */
   async listOperationalDlq(
     actorTenant: Tenant,
     actorAlias: string,
     limit = 200,
-    cursor: string | null = null
+    cursor: string | null = null,
+    platform?: CompanyAuthoritySource
   ): Promise<OperationalDlqPage> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new StoreError('invalid_input', 'DLQ list limit must be between 1 and 500');
@@ -316,20 +322,37 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
       || cursor.length % 2 !== 0 || !/^[a-f0-9]+$/.test(cursor))) {
       throw new StoreError('invalid_input', 'DLQ list cursor is invalid');
     }
-    const result = await this.pool.query<{ value: OperationalDlqPage }>(
-      `SELECT cauce_list_dlq_030($1,$2,$3,$4) AS value`,
-      [actorTenant, actorAlias, limit, cursor]
-    );
+    const result = await withTransaction(this.pool, async (client) => {
+      const authority = platform === undefined ? undefined : await platform(client).catch((error: unknown) => {
+        if (error instanceof StoreError && (error.code === 'not_found' || error.code === 'forbidden')) return undefined;
+        throw error;
+      });
+      return authority !== undefined && isPlatformActor(authority, actorTenant, actorAlias)
+        ? client.query<{ value: OperationalDlqPage }>(
+          `SELECT cauce_list_dlq_platform_098($1,$2,$3,$4::uuid,$5,$6) AS value`,
+          [actorTenant, actorAlias, authority.actingCompany, authority.humanId, limit, cursor]
+        )
+        : client.query<{ value: OperationalDlqPage }>(
+          `SELECT cauce_list_dlq_030($1,$2,$3,$4) AS value`,
+          [actorTenant, actorAlias, limit, cursor]
+        );
+    });
     const value = result.rows[0]?.value;
     if (!value) throw new StoreError('conflict', 'DLQ list did not return a page');
     return value;
   }
 
-  /** Exact, audited closure without replay; an incident outside control scope is absent, whatever its state. */
+  /**
+   * Exact, audited closure without replay; an incident outside control scope is absent, whatever its
+   * state. `platform` is consulted only when the control scope does not see the incident: a verified
+   * platform administrator then reaches the letters of its acting company (098), including one still
+   * unclassified, which is classified exactly as the 030 reconciler would before it is closed.
+   */
   async resolveOperationalDlqWithoutReplay(
     actorTenant: Tenant,
     actorAlias: string,
-    request: OperationalDlqResolutionRequest
+    request: OperationalDlqResolutionRequest,
+    platform?: CompanyAuthoritySource
   ): Promise<OperationalDlqResolutionResult> {
     const reason = request.reason.trim();
     if ((request.target !== 'delivery' && request.target !== 'outbox') // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- Runtime callers can violate the target union.
@@ -352,16 +375,39 @@ export abstract class ObservabilityRepository extends ObservabilityChainSweepRep
           WHERE letter.id=$1::uuid AND cauce_dlq_can_control_tenant_030($2,letter.tenant_id)`,
         [request.id, actorTenant]
       );
-      if (visible.rowCount !== 1) throw new StoreError('not_found', 'DLQ incident was not found');
-      const result = await client.query<{ value: OperationalDlqResolutionResult }>(
-        `SELECT cauce_resolve_dlq_without_replay_030(
-           $1,$2::uuid,$3,$4,$5,$6,$7,$8
-         ) AS value`,
-        [
-          request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
-          request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
-        ]
-      );
+      let result: { rows: { value: OperationalDlqResolutionResult }[] };
+      if (visible.rowCount === 1) {
+        result = await client.query<{ value: OperationalDlqResolutionResult }>(
+          `SELECT cauce_resolve_dlq_without_replay_030(
+             $1,$2::uuid,$3,$4,$5,$6,$7,$8
+           ) AS value`,
+          [
+            request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
+            request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
+          ]
+        );
+      } else {
+        const authority = platform === undefined ? undefined : await platform(client);
+        if (authority === undefined || !isPlatformActor(authority, actorTenant, actorAlias)) {
+          throw new StoreError('not_found', 'DLQ incident was not found');
+        }
+        const reached = await client.query(
+          `SELECT 1 FROM ${letters} letter
+            WHERE letter.id=$1::uuid AND cauce_dlq_platform_reach_098($2,letter.tenant_id)`,
+          [request.id, authority.actingCompany]
+        );
+        if (reached.rowCount !== 1) throw new StoreError('not_found', 'DLQ incident was not found');
+        result = await client.query<{ value: OperationalDlqResolutionResult }>(
+          `SELECT cauce_resolve_dlq_without_replay_platform_098(
+             $1,$2::uuid,$3,$4,$5,$6,$7,$8::uuid,$9,$10,$11
+           ) AS value`,
+          [
+            request.target, request.id, request.evidenceSha256, reason, actorTenant, actorAlias,
+            authority.actingCompany, authority.humanId, authority.homeCompany,
+            request.possibleDuplicateAcknowledged, request.possibleNoDeliveryAcknowledged,
+          ]
+        );
+      }
       const value = result.rows[0]?.value;
       if (!value) throw new StoreError('conflict', 'DLQ no-replay resolution returned no receipt');
       return value;

@@ -149,9 +149,10 @@ function registerConsoleAgentRoutes(
 ): AgentProfileRepository {
   const { allowedJobKinds, options, repository } = context;
 
-  // The store consults this only after the tenant scope denies a delivery. It reaches a platform
-  // administrator's acting company through the verified console person, exactly as fleet operations
-  // do; any other principal, or a person the session cannot vouch for, stays denied as not found.
+  // The store consults this only after the tenant scope denies a delivery or a dead letter (the DLQ
+  // list consults it to add the acting company). It reaches a platform administrator's acting
+  // company through the verified console person, exactly as fleet operations do; any other
+  // principal, or a person the session cannot vouch for, stays denied as not found.
   const withPlatformReach = async <T>(request: FastifyRequest, reply: FastifyReply,
     work: (platform: CompanyAuthoritySource) => Promise<T>): Promise<T> => {
     let access: ConsoleHumanAccess | undefined;
@@ -209,12 +210,15 @@ function registerConsoleAgentRoutes(
         requireOperatorPermission(actor, 'control');
         const limit = parseDlqLimit(request.query.limit);
         const cursor = parseDlqCursor(request.query.cursor);
-        return safeDlqPage(await repository.listOperationalDlq(
+        // A verified platform administrator also sees its acting company's letters; any other
+        // principal, or a session that cannot vouch for a person, keeps the tenant list.
+        return safeDlqPage(await withPlatformReach(request, reply, (platform) => repository.listOperationalDlq(
           actor.tenant_id,
           actor.alias,
           limit,
           cursor,
-        ));
+          platform,
+        )));
       } catch (error) { replyError(reply, error); }
     },
   );
@@ -232,11 +236,13 @@ function registerConsoleAgentRoutes(
         const actor = await principal(request, options.authProvider);
         requireOperatorPermission(actor, 'control');
         const resolution = parseDlqResolution(request.params.target, request.params.id, request.body);
-        return validatedDlqResolutionReceipt(await repository.resolveOperationalDlqWithoutReplay(
-          actor.tenant_id,
-          actor.alias,
-          resolution,
-        ), resolution);
+        return validatedDlqResolutionReceipt(await withPlatformReach(request, reply, (platform) =>
+          repository.resolveOperationalDlqWithoutReplay(
+            actor.tenant_id,
+            actor.alias,
+            resolution,
+            platform,
+          )), resolution);
       } catch (error) { replyError(reply, error); }
     },
   );

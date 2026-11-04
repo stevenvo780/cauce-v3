@@ -128,7 +128,7 @@ describe('operational DLQ console boundary', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(store.listOperationalDlq).toHaveBeenCalledWith('Steven', 'kant', 17, 'ab12');
+    expect(store.listOperationalDlq).toHaveBeenCalledWith('Steven', 'kant', 17, 'ab12', expect.any(Function));
     expect(response.json()).toEqual(page);
     expect(response.body).not.toContain('DO_NOT_EXPOSE');
   });
@@ -181,7 +181,7 @@ describe('operational DLQ console boundary', () => {
       reason: 'Evidencia causal comprobada',
       possibleDuplicateAcknowledged: true,
       possibleNoDeliveryAcknowledged: true,
-    });
+    }, expect.any(Function));
     expect(response.json()).toEqual(resolution);
     expect(response.body).not.toContain('DO_NOT_EXPOSE');
   });
@@ -327,5 +327,48 @@ describe('operator replay and cancel reach', () => {
     expect([replay.statusCode, cancel.statusCode]).toEqual([404, 404]);
     expect(replay.json()).toMatchObject({ error: 'not_found' });
     expect(cancel.json()).toMatchObject({ error: 'not_found' });
+  });
+});
+
+describe('operational DLQ platform reach', () => {
+  const INCIDENT = '3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99';
+  const decision = {
+    evidence_sha256: 'a'.repeat(64),
+    reason: 'Nunca llegó al agente; el dueño ya lo retomó',
+    possible_duplicate_acknowledged: true,
+    possible_no_delivery_acknowledged: true,
+  };
+
+  it('lets the store fall back to the tenant list when no console person backs the session', async () => {
+    const store = repository();
+    let consulted: unknown;
+    vi.mocked(store.listOperationalDlq).mockImplementationOnce(async (_tenant, _alias, _limit, _cursor, platform) => {
+      if (platform === undefined) throw new Error('the route did not offer a platform reach');
+      consulted = await platform({} as DatabaseClient).then(() => 'granted', (error: unknown) => error);
+      return { schemaVersion: 1, items: [], total: 0, truncated: false, nextCursor: null };
+    });
+    const { app } = await gateway({ repository: store });
+    const response = await app.inject({ method: 'GET', url: '/v3/console/dlq', headers: headers() });
+
+    expect(response.statusCode).toBe(200);
+    // The store treats not_found from the source as "no platform reach" and keeps the 030 list.
+    expect(consulted).toBeInstanceOf(StoreError);
+    expect((consulted as StoreError).code).toBe('not_found');
+  });
+
+  it('keeps a letter outside the control scope invisible when no console person backs the session', async () => {
+    const store = repository();
+    vi.mocked(store.resolveOperationalDlqWithoutReplay).mockImplementationOnce(async (_tenant, _alias, _request, platform) => {
+      if (platform === undefined) throw new Error('the route did not offer a platform reach');
+      await platform({} as DatabaseClient);
+      throw new Error('a platform reach without a console person must not resolve');
+    });
+    const { app } = await gateway({ repository: store });
+    const response = await app.inject({
+      method: 'POST', url: `/v3/console/dlq/delivery/${INCIDENT}/resolve-without-replay`, headers: headers(), payload: decision,
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: 'not_found' });
   });
 });
