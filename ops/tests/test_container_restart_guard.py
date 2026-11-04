@@ -367,6 +367,18 @@ class RestartGuardTests(unittest.TestCase):
         assert_empty_composer("› \x1b[2mTry an owned prompt\x1b[22m\n", 2, 0)
         assert_empty_composer("──────\n❯ \n──────\nbypass permissions on\n", 2, 1, "claude")
 
+    def test_muse_gray_tip_is_its_empty_composer(self):
+        # Captured from Muse Code 1.4.10 (operador, server2, 2026-11-04): six hours of composer_busy on an idle TUI.
+        top = "◆ Worked for 1m 17s\n\x1b[2m\x1b[38;2;103;108;116m──────────────\n\x1b[0m\x1b[38;5;214m\x1b[49m❯ "
+        bottom = "\n\x1b[2m──────────────\n\x1b[0m  muse-wonder-full-1.0 · max · YOLO\n"
+        assert_empty_composer(top + "\x1b[38;5;242m/goal pins a session objective with a progress bar" + bottom, 2, 2, "muse")
+        for draft in ("\x1b[39mowned draft", "\x1b[38;5;242mtip\x1b[39m owned draft", "\x1b[38;5;243mowned draft",
+                      "\x1b[1m\x1b[38;5;242mowned draft"):
+            with self.subTest(draft=draft), self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_NOT_EMPTY$"):
+                assert_empty_composer(top + draft + bottom, 2, 2, "muse")
+        with self.assertRaisesRegex(PermanentError, "^RESTART_HOLD_COMPOSER_NOT_EMPTY$"):
+            assert_empty_composer(top + "\x1b[38;5;242mowned draft" + bottom, 2, 2, "claude")
+
     def test_truecolor_and_indexed_input_are_not_dim_placeholders(self):
         for color in ("38;2;225;225;225", "38;2;2;22;0", "48;2;225;225;225", "58;5;2",
                       "38:2::225:225:225", "38:5:2"):

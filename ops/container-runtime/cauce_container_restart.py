@@ -89,6 +89,34 @@ def dim_text(raw: str, start: int = 0) -> bool:
     return visible
 
 
+# Muse Code 1.4 draws its rotating composer tips in indexed gray 242, not with the dim attribute; typed text is not gray.
+MUSE_TIP_FOREGROUND = ("5", "242")
+
+
+def muse_tip_text(raw: str, start: int = 0) -> bool:
+    """Every visible cell from start on is in Muse's tip gray, with no other attribute: an empty composer's tip."""
+    foreground: tuple[str, ...] | None = None
+    visible = False
+    offset = 0
+    for match in [*SGR.finditer(raw), None]:
+        end = len(raw) if match is None else match.start()
+        text = raw[offset:end]
+        if offset + len(text) > start and text[max(0, start - offset):].strip(" │"):
+            visible = True
+            if foreground != MUSE_TIP_FOREGROUND:
+                return False
+        if match is None:
+            break
+        codes = (match.group(1) or "0").split(";")
+        tip = codes[0] == "38" and tuple(codes[1:]) == MUSE_TIP_FOREGROUND
+        # Before the prompt mark any style may paint the mark itself; after it only the tip gray or a reset is allowed.
+        if match.start() >= start and not tip and codes not in (["0"], ["39"], ["49"], [""]):
+            return False
+        foreground = MUSE_TIP_FOREGROUND if tip else None if codes != ["49"] else foreground
+        offset = match.end()
+    return visible
+
+
 def codex_status_line(raw: str) -> bool:
     foreground: tuple[int, ...] | None = None
     cells: list[tuple[str, tuple[int, ...] | None]] = []
@@ -186,7 +214,7 @@ def assert_empty_composer(pane: str, cursor_x: int, cursor_y: int, harness: str 
         hold("COMPOSER_ATTACHMENT_PENDING")
     raw = lines[cursor_y]
     mark_at = raw.find(prompt.group(1))
-    placeholder = bool(content) and dim_text(raw, mark_at + 1)
+    placeholder = bool(content) and (dim_text(raw, mark_at + 1) or harness == "muse" and muse_tip_text(raw, mark_at + 1))
     if content and not placeholder:
         hold("COMPOSER_NOT_EMPTY")
     if harness == "codex" and not placeholder:
