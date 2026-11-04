@@ -216,6 +216,7 @@ export function grokRunner(options: {
   turnTimeoutMs?: number;
   workspace?: string;
   dispatchGraceMs?: number;
+  livenessGraceMs?: number;
 }): PasteSessionRunner<GrokUpdateLine> {
   const alias = options.alias ?? "hades";
   options.tmux.sessionName = `cauce-${alias}`;
@@ -226,6 +227,7 @@ export function grokRunner(options: {
     workspace: options.workspace ?? "/workspace",
     transcript: grokTranscript(options.grokHome),
     ...(options.dispatchGraceMs === undefined ? {} : { dispatchGraceMs: options.dispatchGraceMs }),
+    ...(options.livenessGraceMs === undefined ? {} : { livenessGraceMs: options.livenessGraceMs }),
     tmux: options.tmux,
     sleep: options.sleep ?? immediate,
     acquireTimeoutMs: options.acquireTimeoutMs ?? 30,

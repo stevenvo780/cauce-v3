@@ -11,6 +11,14 @@ export const SETTLE_MS = 250;
 export const DEFAULT_INJECT_TIMEOUT_MS = 30_000;
 export const DEFAULT_DISPATCH_GRACE_MS = 60_000; // grok drains an accepted paste in milliseconds; a minute idle and still queued is not a turn.
 export const LIVENESS_EVERY = 8;
+/**
+ * How long the in-turn liveness probe may keep failing to READ the pane before the turn is fenced as
+ * ambiguous. Each probe has a 2 s tmux budget; on a host saturated by I/O (perseo/teseo 2026-11-04,
+ * world-backup verification plus a fleet setup) one probe missed it while the TUI kept working and
+ * the same generation was still there half an hour later. Absence or a replaced process still ends
+ * the turn at once; only an unreadable answer waits, re-probing every poll.
+ */
+export const LIVENESS_UNREADABLE_GRACE_MS = 90_000;
 /** Un dialogo no se destraba esperando: rendirse pronto es lo que hace seguro el plazo largo. */
 export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;
 export const DEFAULT_CORRELATION_TIMEOUT_MS = 120 * 60_000;

@@ -27,6 +27,7 @@ import {
   DEFAULT_QUIET_MS,
   fileSize,
   LIVENESS_EVERY,
+  LIVENESS_UNREADABLE_GRACE_MS,
   postEnterCancelled,
   result,
   turnBudgetMs,
@@ -75,6 +76,9 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
     // Long-conversation transcripts weigh megabytes and a turn may run for an hour, so we only re-read the whole file on growth — re-reading every poll would cost more than the turn itself.
     let lastSize = -1;
     let probe = 0;
+    // First of the current run of unreadable liveness probes; undefined while tmux answers.
+    let unreadableSince: number | undefined;
+    const livenessGraceMs = Math.max(0, this.options.livenessGraceMs ?? LIVENESS_UNREADABLE_GRACE_MS);
     // Timestamp is fixed by the EVENT, not by the next poll, so a slow transcript read cannot start counting the deadline only when it finishes.
     let lingering: { readonly outcome: TurnOutcome; readonly progress: string } | undefined; // No silence cut then.
     let pendingWake: string | undefined;
@@ -103,7 +107,7 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
             pending,
           );
         }
-        if (probe % LIVENESS_EVERY === 0) {
+        if (probe % LIVENESS_EVERY === 0 || unreadableSince !== undefined) {
           const observed = await inspectExactPane(
             this.options.tmux,
             activeIdentity.paneId,
@@ -111,29 +115,36 @@ export abstract class PasteSessionHarvestRunner<E> extends PasteSessionLivenessR
           );
           if (signalAborted(request.signal)) continue;
           if (observed.state === "unreadable") {
-            return {
-              result: await this.ambiguousCommittedState(
-                activeIdentity,
-                "tmux dejó de acreditar la generación mientras el turno estaba en marcha",
-                false,
-                pending,
-              ),
-              terminalBoundary: false,
-            };
+            unreadableSince ??= Date.now();
+            // One missed read is not a lost generation: keep harvesting the transcript (file reads,
+            // not tmux) and re-probe on the next poll. Only a sustained loss fences the turn.
+            if (Date.now() - unreadableSince >= livenessGraceMs) {
+              return {
+                result: await this.ambiguousCommittedState(
+                  activeIdentity,
+                  "tmux dejó de acreditar la generación mientras el turno estaba en marcha",
+                  false,
+                  pending,
+                ),
+                terminalBoundary: false,
+              };
+            }
+          } else {
+            unreadableSince = undefined;
+            if (observed.state === "absent"
+              || !samePaneProcess(observed.identity, activeIdentity)) {
+              return {
+                result: result({
+                  exitCode: 1,
+                  stderr: "la generación exacta desapareció o cambió mientras el turno estaba en"
+                    + " marcha; el estado de finalización es desconocido",
+                }),
+                terminalBoundary: true,
+              };
+            }
+            // A rename does not replace the conversation nor the process; the next preflight will re-demand the canonical names before injecting a new turn.
+            activeIdentity = observed.identity;
           }
-          if (observed.state === "absent"
-            || !samePaneProcess(observed.identity, activeIdentity)) {
-            return {
-              result: result({
-                exitCode: 1,
-                stderr: "la generación exacta desapareció o cambió mientras el turno estaba en"
-                  + " marcha; el estado de finalización es desconocido",
-              }),
-              terminalBoundary: true,
-            };
-          }
-          // A rename does not replace the conversation nor the process; the next preflight will re-demand the canonical names before injecting a new turn.
-          activeIdentity = observed.identity;
         }
         probe += 1;
 
