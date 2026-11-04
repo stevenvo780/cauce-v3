@@ -435,6 +435,14 @@ describe('durable host maintenance', () => {
       .rejects.toMatchObject({ code: 'conflict', message: 'recipient runtime maintenance is prepared; retry after admission' });
     expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(0);
   });
+  it('stops holding the recipient once its prepared maintenance failed', async () => {
+    const messageId = await messageWithoutDelivery(); await enqueue(); const operation = await claim(); await repository.prepare(operation);
+    await pool.query("UPDATE fleet_operations SET status='failed',worker_id=NULL,claim_token=NULL,lease_expires_at=NULL WHERE id=$1",
+      [operation.operation.id]);
+    await withTransaction(pool, client => insertDelivery(client,
+      { messageId, recipientTenant: 'Steven', recipientAlias: 'maintenance_agent' }));
+    expect((await pool.query('SELECT id FROM deliveries')).rowCount).toBe(1);
+  });
   it.each([false, true])('defers a consumed live relay claim even with an expired ticket and revoked=%s', async revoked => {
     await enqueue(); const operation = await claim(); const session = await terminalSession(pool, revoked);
     await expect(repository.prepare(operation)).rejects.toMatchObject({ reason: 'preflight_unavailable' });

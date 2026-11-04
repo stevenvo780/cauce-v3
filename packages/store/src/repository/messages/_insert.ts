@@ -53,8 +53,10 @@ export async function insertDelivery(client: DatabaseClient, delivery: DeliveryI
     [agentContextReconcileLockKey(delivery.recipientTenant, delivery.recipientAlias)],
   )).rows[0];
   if (lock?.acquired !== true) throw new StoreError('conflict', 'recipient context is being reconciled; retry the delivery');
+  // A failed maintenance is terminal and already restored its runtime: holding the inbox past it refused every sender's
+  // terminal acknowledgement until its delivery died (Hospital/teseo and Steven/hades, 2026-11-03, after an executor restart).
   const maintenance = await client.query(`SELECT 1 FROM fleet_operations operation WHERE operation.target_key=$1
-    AND operation.desired_revision IS NOT NULL AND operation.status NOT IN ('cancelled','succeeded')
+    AND operation.desired_revision IS NOT NULL AND operation.status NOT IN ('cancelled','succeeded','failed')
     AND EXISTS (SELECT 1 FROM fleet_operation_events origin WHERE origin.operation_id=operation.id
       AND origin.event='queued' AND origin.metadata ? 'maintenance') LIMIT 1`,
   [sha256Hex({ resource: 'agent', tenant_id: delivery.recipientTenant, alias: delivery.recipientAlias })]);
