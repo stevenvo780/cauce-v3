@@ -1,16 +1,16 @@
 import { AgentContextWriteCoordinator } from '../console/agent-context-write-coordinator.js';
 import { registerContextWriteRecoveryRoutes } from '../console/agent-context-write-recovery.js';
-import type { DatabasePool } from '@cauce/store';
+import type { CompanyAuthoritySource, DatabasePool } from '@cauce/store';
 import { registerNativeContextRepositoryRoutes } from '../console/context-repository/native-routes.js';
 import { registerContextRepositoryRoutes } from '../console/context-repository/routes.js';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   AliasSchema, CreateJobSchema, DeliveryIdSchema, ProfileRuntimeContractSchema, TenantSchema,
   type Tenant,
 } from '@cauce/protocol';
 import { AgentContextRevisionsStore, AgentProfileRepository, CauceRepository, StoreError,
   recordNativeContextVersionInTransaction, withTransaction } from '@cauce/store';
-import { messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
+import { AuthorizationError, messageReader, requireOperatorPermission, requirePermission } from '../auth.js';
 import { registerAgentContextHistoryRoutes } from '../console/agent-context-history.routes.js';
 import {
   DELIVERY_IN_FLIGHT_LISTED, medirContextoDeGobierno, registerAgentContextReloadRoutes,
@@ -148,6 +148,27 @@ function registerConsoleAgentRoutes(
   publishHandler: PublishHandler,
 ): AgentProfileRepository {
   const { allowedJobKinds, options, repository } = context;
+
+  // The store consults this only after the tenant scope denies a delivery. It reaches a platform
+  // administrator's acting company through the verified console person, exactly as fleet operations
+  // do; any other principal, or a person the session cannot vouch for, stays denied as not found.
+  const withPlatformReach = async <T>(request: FastifyRequest, reply: FastifyReply,
+    work: (platform: CompanyAuthoritySource) => Promise<T>): Promise<T> => {
+    let access: ConsoleHumanAccess | undefined;
+    let opened = false;
+    const invisible = (): never => { throw new StoreError('not_found', 'delivery not found or not visible'); };
+    try {
+      return await work(async (client) => {
+        try {
+          if (!opened) { opened = true; access = await consoleHumanAccess(options.authProvider, request, reply, 'read'); }
+          return access === undefined ? invisible() : await access.companyAuthority(client);
+        } catch (error) {
+          if (error instanceof AuthorizationError || (error instanceof StoreError && error.code === 'forbidden')) invisible();
+          throw error;
+        }
+      });
+    } finally { access?.close(); }
+  };
   app.post('/v3/console/messages', publishRouteOptions, publishHandler);
 
   app.get<{ Params: { messageId: string } }>('/v3/console/messages/:messageId', async (request, reply) => {
@@ -226,7 +247,8 @@ function registerConsoleAgentRoutes(
       requireOperatorPermission(actor, 'control');
       const deliveryId = DeliveryIdSchema.parse(request.params.deliveryId);
       return validatedReplayReceipt(
-        await repository.replayDelivery(deliveryId, actor.tenant_id, actor.alias),
+        await withPlatformReach(request, reply, (platform) =>
+          repository.replayDelivery(deliveryId, actor.tenant_id, actor.alias, platform)),
         deliveryId,
       );
     } catch (error) { replyError(reply, error); }
@@ -242,9 +264,9 @@ function registerConsoleAgentRoutes(
       const body = request.body as { reason?: unknown } | undefined;
       const reason = typeof body?.reason === 'string' ? body.reason : undefined;
       const deliveryId = DeliveryIdSchema.parse(request.params.deliveryId);
-      return validatedCancelReceipt(await repository.cancelDelivery(
-        deliveryId, actor.tenant_id, actor.alias, reason
-      ), deliveryId);
+      return validatedCancelReceipt(await withPlatformReach(request, reply, (platform) => repository.cancelDelivery(
+        deliveryId, actor.tenant_id, actor.alias, reason, platform
+      )), deliveryId);
     } catch (error) { replyError(reply, error); }
   });
 

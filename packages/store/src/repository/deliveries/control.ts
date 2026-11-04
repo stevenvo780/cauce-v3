@@ -4,10 +4,12 @@ import { withTransaction } from '../../db.js';
 import { AgentNotificationsRepository } from '../agents/notifications.js';
 import { postgresTextSafe } from '../deliveries.js';
 import { StoreError } from '../errors.js';
+import type { CompanyAuthoritySource } from '../fleet-hosts.js';
 import { terminal } from '../messages.js';
 import type { DeliveryRow } from '../observability.js';
 import { deadLetterBodySql } from '../observability/message-body-retention.js';
 import { visibleText } from '../outbox.js';
+import { platformAudit } from '../outbox/platform-reach.js';
 
 
 /** Stable prefix of a cancellation reason: what allows counting them without heuristics. */
@@ -50,7 +52,8 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
     deliveryId: string,
     actorTenant: Tenant,
     actorAlias: string,
-    reason?: string
+    reason?: string,
+    platform?: CompanyAuthoritySource
   ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, 'control');
     const cancelReason = cancellationReason(actorTenant, actorAlias, reason);
@@ -72,7 +75,7 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
       );
       const row = selected.rows[0];
       if (!row) throw new StoreError('not_found', 'delivery not found or not visible');
-      await this.assertReplayAuthorization(client, actorTenant, actorAlias, row);
+      const audit = platformAudit(await this.assertReplayAuthorization(client, actorTenant, actorAlias, row, false, platform));
       // A delivery already in a terminal state is not cancelled: it is replayed or left alone.
       // Returning `conflict` instead of "ok" is the honest move, because a second cancel that
       // said yes would make the operator believe they interrupted something that had actually
@@ -128,8 +131,8 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
 
       await client.query(
         `INSERT INTO audit_events(
-           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-         ) VALUES($1,$2,'delivery.cancel','allow',$3,$4,$5,$6,$7::jsonb)`,
+           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata,company_id,actor_human_id
+         ) VALUES($1,$2,'delivery.cancel','allow',$3,$4,$5,$6,$7::jsonb,$8,$9::uuid)`,
         [actorTenant, actorAlias, row.request_id, row.message_id, row.id, row.trace_id,
           JSON.stringify({
             cancelled_from_status: row.status,
@@ -138,8 +141,9 @@ export abstract class DeliveryControlRepository extends AgentNotificationsReposi
             recipient_tenant: row.recipient_tenant,
             recipient_alias: row.recipient_alias,
             parent_notice: responseDisposition,
-            origin_relayed: relayed
-          })]
+            origin_relayed: relayed,
+            ...audit.metadata
+          }), audit.company, audit.human]
       );
       return {
         delivery_id: row.id,

@@ -194,7 +194,7 @@ describe('gateway hardening facades and RBAC', () => {
     expect(cancelled.statusCode).toBe(200);
     expect(cancelled.json()).toMatchObject({ cancelled: true, replayable: true });
     expect(repository.cancelDelivery).toHaveBeenCalledWith(
-      ids.delivery, 'Pablo', 'midas', 'duplicado del árbol roto'
+      ids.delivery, 'Pablo', 'midas', 'duplicado del árbol roto', expect.any(Function)
     );
 
     // A reason that is not text is ignored instead of breaking the cancel: the field is
@@ -207,7 +207,7 @@ describe('gateway hardening facades and RBAC', () => {
     });
     expect(forged.statusCode).toBe(200);
     expect(repository.cancelDelivery).toHaveBeenLastCalledWith(
-      ids.delivery, 'Pablo', 'midas', undefined
+      ids.delivery, 'Pablo', 'midas', undefined, expect.any(Function)
     );
   });
 

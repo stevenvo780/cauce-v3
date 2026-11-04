@@ -1,18 +1,23 @@
 import type { Tenant } from '@cauce/protocol';
+import type { CompanyAuthority } from '../../company-authority.js';
 import type { DatabaseClient } from '../../db.js';
 import { withTransaction } from '../../db.js';
 import { hubEdgeExistsSql } from '../acl-edges.js';
 import { fleetReadableSql } from '../../fleet-activity.js';
 import { StoreError } from '../errors.js';
+import type { CompanyAuthoritySource } from '../fleet-hosts.js';
 import { loadDeliveryHumanLineage, preserveHumanMessageLineage } from '../human-message-lineage.js';
 import { insertDelivery, MESSAGE_INSERT_COLUMNS } from '../messages/_insert.js';
 import { agentRootActorNode, assertAgentRootSlot, lockAgentRootActor } from '../messages/agent-roots.js';
+import { platformAudit, platformCompanyReach } from './platform-reach.js';
 import { OutboxSettlementRepository } from './settlement.js';
 
 export abstract class OutboxOperatorRepository extends OutboxSettlementRepository {
   /**
    * Replay and cancel share authorization; denial stays not_found to avoid exposing
-   * deliveries outside the actor's scope.
+   * deliveries outside the actor's scope. `platform` is consulted only after the tenant scope
+   * denies, so it can widen the reach to a platform administrator's acting company but never
+   * narrows what the tenant scope already allows; the returned authority marks that widening.
    */
   protected async assertReplayAuthorization(
     client: DatabaseClient,
@@ -23,7 +28,8 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       tenant_id: Tenant; room_id: string; actor_alias: string;
     },
     own = false,
-  ): Promise<void> {
+    platform?: CompanyAuthoritySource,
+  ): Promise<CompanyAuthority | undefined> {
     const denied = (): never => {
       throw new StoreError('not_found', 'delivery not found or not visible');
     };
@@ -75,7 +81,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       if (route.rowCount === 0) denied();
     }
 
-    if (own || row.recipient_tenant === actorTenant) return;
+    if (own || row.recipient_tenant === actorTenant) return undefined;
     if (row.tenant_id === actorTenant) {
       const sourceVisibility = await client.query(
         `SELECT 1 FROM memberships membership
@@ -86,14 +92,16 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
          FOR SHARE OF membership,tenant,room`,
         [actorTenant, row.room_id, actorAlias]
       );
-      if (sourceVisibility.rowCount !== 0) return;
+      if (sourceVisibility.rowCount !== 0) return undefined;
     }
 
     const controlEdge = await client.query(
       hubEdgeExistsSql('allow_control', 1, 2),
       [actorTenant, row.recipient_tenant]
     );
-    if (controlEdge.rowCount === 0) denied();
+    if (controlEdge.rowCount !== 0) return undefined;
+    const reach = platform === undefined ? undefined : await platformCompanyReach(client, actorTenant, actorAlias, row, platform);
+    return reach ?? denied();
   }
 
   /**
@@ -102,8 +110,10 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
    * making it the idempotency lock. Migration 018 backfills terminal deliveries
    * that lacked it.
    */
-  async replayDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
-    return this.replayAuthorizedDelivery(deliveryId, actorTenant, actorAlias, false);
+  async replayDelivery(
+    deliveryId: string, actorTenant: Tenant, actorAlias: string, platform?: CompanyAuthoritySource,
+  ): Promise<Record<string, unknown>> {
+    return this.replayAuthorizedDelivery(deliveryId, actorTenant, actorAlias, false, platform);
   }
 
   async retryOwnDelivery(deliveryId: string, actorTenant: Tenant, actorAlias: string): Promise<Record<string, unknown>> {
@@ -111,7 +121,7 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
   }
 
   private async replayAuthorizedDelivery(
-    deliveryId: string, actorTenant: Tenant, actorAlias: string, own: boolean,
+    deliveryId: string, actorTenant: Tenant, actorAlias: string, own: boolean, platform?: CompanyAuthoritySource,
   ): Promise<Record<string, unknown>> {
     await this.assertPermission(actorTenant, actorAlias, own ? 'route' : 'control');
     return withTransaction(this.pool, async (client) => {
@@ -133,7 +143,8 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       );
       const row = selected.rows[0];
       if (!row) throw new StoreError('not_found', 'terminal delivery not found or not visible');
-      await this.assertReplayAuthorization(client, actorTenant, actorAlias, row, own);
+      const audit = platformAudit(await this.assertReplayAuthorization(client, actorTenant, actorAlias, row, own,
+        own ? undefined : platform));
 
       const existingReplay = await client.query<{
         delivery_id: string; state: string; message_id: string;
@@ -237,8 +248,8 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
       );
       await client.query(
         `INSERT INTO audit_events(
-           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata
-         ) VALUES($1,$2,'delivery.replay','allow',$3,$4,$5,$6,$7::jsonb)`,
+           tenant_id,actor_alias,action,decision,request_id,message_id,delivery_id,trace_id,metadata,company_id,actor_human_id
+         ) VALUES($1,$2,'delivery.replay','allow',$3,$4,$5,$6,$7::jsonb,$8,$9::uuid)`,
         [
           actorTenant, actorAlias, replayedMessage.request_id, replayedMessage.id, replayedDeliveryId, row.trace_id,
           JSON.stringify({
@@ -248,8 +259,10 @@ export abstract class OutboxOperatorRepository extends OutboxSettlementRepositor
             ...(own ? { initiated_by_agent: true } : {}),
             ...(agentRoot ? { agent_root: true } : {}),
             recipient_tenant: row.recipient_tenant,
-            recipient_alias: row.recipient_alias
-          })
+            recipient_alias: row.recipient_alias,
+            ...audit.metadata
+          }),
+          audit.company, audit.human
         ]
       );
       await client.query('SELECT pg_notify($1,$2)', [

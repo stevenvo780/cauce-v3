@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Permission } from '@cauce/protocol';
-import type { OperationalDlqPage, OperationalDlqResolutionResult } from '@cauce/store';
+import type { CompanyAuthoritySource, DatabaseClient, OperationalDlqPage, OperationalDlqResolutionResult } from '@cauce/store';
 import { StoreError } from '@cauce/store';
 import type { buildGateway } from './app.js';
 import { DevOnlyAuthProvider } from './auth.js';
@@ -294,5 +294,38 @@ describe('operational DLQ console boundary', () => {
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: 'conflict' });
     expect(response.body).not.toContain('schemaVersion');
+  });
+});
+
+describe('operator replay and cancel reach', () => {
+  const DELIVERY_ID = '5b0f2c4e-7f0a-4c1e-9d55-0d6b8f3a2e11';
+  const consult = async (platform: CompanyAuthoritySource | undefined) => {
+    if (platform === undefined) throw new Error('the route did not offer a platform reach');
+    await platform({} as DatabaseClient);
+    throw new Error('a platform reach without a console person must not resolve');
+  };
+
+  it('offers the store a lazy platform reach without changing the tenant scope', async () => {
+    const { app, store } = await gateway();
+    const replay = await app.inject({ method: 'POST', url: `/v3/console/deliveries/${DELIVERY_ID}/replay`, headers: headers(), payload: {} });
+    const cancel = await app.inject({ method: 'POST', url: `/v3/console/deliveries/${DELIVERY_ID}/cancel`, headers: headers(),
+      payload: { reason: 'probado' } });
+
+    expect([replay.statusCode, cancel.statusCode]).toEqual([200, 200]);
+    expect(store.replayDelivery).toHaveBeenCalledWith(DELIVERY_ID, 'Steven', 'kant', expect.any(Function));
+    expect(store.cancelDelivery).toHaveBeenCalledWith(DELIVERY_ID, 'Steven', 'kant', 'probado', expect.any(Function));
+  });
+
+  it('keeps a delivery outside the tenant scope invisible when no console person backs the session', async () => {
+    const store = repository();
+    vi.mocked(store.replayDelivery).mockImplementationOnce(async (_id, _tenant, _alias, platform) => consult(platform));
+    vi.mocked(store.cancelDelivery).mockImplementationOnce(async (_id, _tenant, _alias, _reason, platform) => consult(platform));
+    const { app } = await gateway({ repository: store });
+    const replay = await app.inject({ method: 'POST', url: `/v3/console/deliveries/${DELIVERY_ID}/replay`, headers: headers(), payload: {} });
+    const cancel = await app.inject({ method: 'POST', url: `/v3/console/deliveries/${DELIVERY_ID}/cancel`, headers: headers(), payload: {} });
+
+    expect([replay.statusCode, cancel.statusCode]).toEqual([404, 404]);
+    expect(replay.json()).toMatchObject({ error: 'not_found' });
+    expect(cancel.json()).toMatchObject({ error: 'not_found' });
   });
 });
