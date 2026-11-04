@@ -88,7 +88,9 @@ export function planCampus(memory: PlanMemory, agents: readonly PlanAgent[], dir
     list.push(agent.id);
     members.set(team.id, list);
   }
-  const live = [...named.values()];
+  // Nobody works in a group without fleet agents, so it gets no house: a company hub's own room (its owner and context
+  // director are not fleet agents) stood as an empty building on every campus.
+  const live = [...named.values()].filter((group) => (members.get(group.id)?.length ?? 0) > 0);
   const liveIds = new Set(live.map((group) => group.id));
   const fresh = !memory.populated;
   for (const [id, group] of memory.present) {
