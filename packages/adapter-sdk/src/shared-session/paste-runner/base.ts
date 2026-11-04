@@ -20,6 +20,7 @@ import {
   capturePane,
   clearCurrentPaneQuarantine,
   clearPaneQuarantine,
+  inspectExactPane,
   killPaneGeneration,
   markPaneQuarantined,
   paneGenerationKey,
@@ -430,6 +431,75 @@ export abstract class PasteSessionRunnerBase<E> {
       ...(cancelled ? { cancelled: true } : { exitCode: 1 }),
       stderr: `${detail}; el estado de ejecución es ambiguo; ${quarantineDetail}`,
     });
+  }
+
+  /**
+   * Whether a paste that never reached Enter can be proven to have reached no model.
+   *
+   * Two facts, both required: the exact generation is gone (tmux lists every pane without it, or
+   * its server no longer exists), so nobody can press Enter on what may sit in its box; and no
+   * transcript file recorded this prompt or any turn start since the pre-paste baseline. Anything
+   * unreadable, truncated or vanished is not proof, and the delivery stays ambiguous.
+   */
+  protected async promptNeverSubmitted(
+    identity: PaneIdentity,
+    baseline: ReadonlyMap<string, number>,
+    promptText: string,
+    correlationId: string,
+  ): Promise<boolean> {
+    if (!await this.generationUnreachable(identity)) return false;
+    let files: readonly string[];
+    try {
+      files = await this.options.transcript.files();
+    } catch {
+      return false;
+    }
+    if ([...baseline.keys()].some((file) => !files.includes(file))) return false;
+    for (const file of files) {
+      const offset = baseline.get(file) ?? 0;
+      const size = await fileSize(file);
+      if (size < offset) return false; // -1 = unreadable; smaller = rewritten: nothing to compare with.
+      if (size === offset) continue;
+      try {
+        const slice = await this.options.transcript.read(file, offset);
+        if (this.options.transcript.findInjected(file, slice.entries, promptText, correlationId) !== undefined
+          || this.options.transcript.startedTurn?.(slice.appended) === true) return false;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async generationUnreachable(identity: PaneIdentity): Promise<boolean> {
+    const pane = await inspectExactPane(this.options.tmux, identity.paneId, this.tmuxControl());
+    if (pane.state !== "unreadable") return pane.state === "absent";
+    try {
+      const listed = await this.options.tmux.run(["list-sessions", "-F", "#{session_id}"], undefined, this.tmuxControl());
+      return listed.exitCode === 1
+        && /no server running on |error connecting to .*\(No such file or directory\)/u.test(listed.stderr);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Proven unsubmitted: nothing is left to rescue from that generation, and the store retries the
+   * delivery. Recorded without `degrade`: its notice would go to a session id that, with the tmux
+   * server gone, a new server may already have reused.
+   */
+  protected async unsubmittedAfterAmbiguousPaste(
+    pending: PendingQuarantine,
+    detail: string,
+    request: CommandRunRequest,
+  ): Promise<CommandRunResult> {
+    await this.disarmPendingQuarantine(pending);
+    if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+    const reason = "prompt_not_submitted";
+    const why = `${detail}, pero Enter nunca se envió, esa generación de la terminal ya no existe y su`
+      + " registro no tiene el pedido: ningún modelo lo recibió";
+    this.record({ reason, detail: why, occurredAt: new Date().toISOString(), fellBack: false, executionPrevented: true });
+    return result({ exitCode: 1, harnessStarted: false, stderr: `${reason}: ${why}` });
   }
 
   /**

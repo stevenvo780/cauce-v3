@@ -37,6 +37,7 @@ type DegradationReason =
   /** The paste could not be sent or the TUI did not register the turn. */
   | "handshake_failed"
   | "prompt_not_dispatched" // The TUI queued the pasted prompt and never handed it to the model: nothing ran.
+  | "prompt_not_submitted" // tmux lost the paste's result, but Enter never went out and that generation is gone: retried.
   /** The TUI restarted between turns and the conversation started blank. */
   | "context_reset"
   /** There was no prior shared session and a new one was created for this turn. */

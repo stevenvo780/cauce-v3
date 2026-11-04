@@ -457,7 +457,8 @@ export class HarnessAdapter {
     phase("runner_resolved");
     if (degradation?.executionPrevented === true) {
       const shared = this.sharedSession;
-      const code = degradation.reason === "prompt_not_dispatched" ? "PROMPT_NOT_DISPATCHED" : "SHARED_TUI_UNAVAILABLE";
+      const code = degradation.reason === "prompt_not_dispatched" ? "PROMPT_NOT_DISPATCHED"
+        : degradation.reason === "prompt_not_submitted" ? "PROMPT_NOT_SUBMITTED" : "SHARED_TUI_UNAVAILABLE";
       if (shared !== undefined) {
         await recordDegradation(shared.stateDirectory, {
           ...degradation, alias: shared.alias, harness: shared.harness,
@@ -466,7 +467,8 @@ export class HarnessAdapter {
       throw new ProcessExecutionError(code,
         shared === undefined ? "The canonical terminal is unavailable; no model received this turn"
           : degradationNotice(shared.alias, shared.harness, degradation),
-        degradation.reason === "tui_generating"); // Busy with ANOTHER turn: transient. A queued prompt may still run: not retried.
+        // Busy with ANOTHER turn, or a paste proven never submitted: transient. A queued prompt may still run: not retried.
+        degradation.reason === "tui_generating" || degradation.reason === "prompt_not_submitted");
     }
 
     if (result.timedOut) {

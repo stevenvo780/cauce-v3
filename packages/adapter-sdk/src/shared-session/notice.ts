@@ -27,6 +27,7 @@ const REASON_TEXT: Readonly<Record<SharedSessionDegradation["reason"], string>> 
   modal_blocking: "la TUI está esperando que el dueño conteste un diálogo",
   handshake_failed: "el mecanismo de sesión compartida no respondió",
   prompt_not_dispatched: "la terminal encoló el pedido y no se lo pasó al modelo; puede seguir en su cola y correr más tarde",
+  prompt_not_submitted: "tmux perdió la confirmación del pegado, pero el pedido nunca se envió al modelo",
   context_reset: "la TUI se reinició y la conversación empezó de cero",
   session_created: "no había terminal abierta y se creó una nueva, vacía, para este turno",
   context_cleared: "el dueño vació el contexto de la terminal (/clear en claude o muse, /new en codex o grok)",
@@ -101,6 +102,9 @@ export function degradationNotice(
     : degradation.reason === "tui_generating"
       ? `No hay nada roto: la terminal de \`cauce ${alias}\` seguía ocupada con otro turno; el pedido`
         + ` se reintenta solo cuando se libere (mecanismo: ${mecanismo}).`
+    : degradation.reason === "prompt_not_submitted"
+      ? `No hay que reenviarlo: el pedido se reintenta solo en una terminal nueva de \`cauce ${alias}\``
+        + ` (mecanismo: ${mecanismo}).`
     : identityFailure
       ? `Para restablecerlo: revisa y drena/archiva la sesión incompatible de \`cauce ${alias}\``
         + ` antes de crear la correcta; el adaptador la conservó intacta (mecanismo: ${mecanismo}).`
@@ -111,7 +115,7 @@ export function degradationNotice(
       + ` (${degradation.reason}). Detalle: ${degradation.detail}`,
     degradation.executionPrevented === true
       ? "El modelo no recibió este pedido y no se usó ningún ejecutor ni conversación alternativa."
-        + (degradation.reason === "tui_generating"
+        + (degradation.reason === "tui_generating" || degradation.reason === "prompt_not_submitted"
           ? " No hay que restablecer nada."
           : " Restablece la terminal canónica antes de volver a enviarlo.")
       : "Se respondió por el camino de siempre, así que este intercambio NO aparece en el panel"

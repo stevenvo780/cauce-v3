@@ -41,6 +41,8 @@ type PromptCommitOutcome =
     readonly state: "ambiguous";
     readonly detail: string;
     readonly forceTerminate: boolean;
+    /** Enter may have reached the TUI. While false the paste can at most sit unsent in the box. */
+    readonly enterAttempted: boolean;
   };
 
 /**
@@ -249,13 +251,19 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         }
         if (committed.state === "ambiguous") {
           stagedFile = undefined; // Ambiguous: the pasted pointer may still be read.
-          return await this.ambiguousCommittedState(
+          const ambiguous = await this.ambiguousCommittedState(
             identity,
             committed.detail,
             request.signal.aborted,
             pending,
             committed.forceTerminate,
           );
+          // Without Enter the prompt can only have sat in the box of a generation that is now
+          // gone: if the transcript also lacks it, no model received the turn and it is retried.
+          if (committed.enterAttempted || signalAborted(request.signal)
+            || !await this.promptNeverSubmitted(identity, baseline, promptText, correlationId)) return ambiguous;
+          if (promptFile !== undefined) await rm(promptFile, { force: true }).catch(() => undefined);
+          return await this.unsubmittedAfterAmbiguousPaste(pending, committed.detail, request);
         }
         if (committed.state === "not_pasted") {
           const { paste } = committed;
@@ -400,6 +408,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
     const identity = barrier.identity;
     const profile = tuiProfile(this.options.harness);
     let outcome: PromptCommitOutcome | undefined;
+    let enterAttempted = false; // Set BEFORE sendEnter: from then on the prompt may have been submitted.
     try {
       const paste = await pastePrompt(
         this.options.tmux,
@@ -421,12 +430,14 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           state: "ambiguous",
           detail: "tmux no acreditó el borrado ni el scrub del buffer nombrado",
           forceTerminate: paste.state !== "not_pasted",
+          enterAttempted,
         };
       } else if (paste.state === "ambiguous") {
         outcome = {
           state: "ambiguous",
           detail: "tmux perdió el resultado de la mutación que pegaba el prompt",
           forceTerminate: true,
+          enterAttempted,
         };
       } else if (paste.state === "not_pasted") {
         outcome = { state: "not_pasted", paste };
@@ -441,11 +452,13 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
             state: "ambiguous",
             detail: "wait between paste and Enter did not reach a postcondition",
             forceTerminate: true,
+            enterAttempted,
           };
         } else if (await this.providerLoginBlocked(identity)) {
           outcome = { state: 'login_required' };
         } else {
           // Delivery cancellation does not cancel the commit; the client has deadline and real reap.
+          enterAttempted = true;
           const entered = await sendEnter(
             this.options.tmux,
             identity,
@@ -460,6 +473,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
                 ? "la generación cambió después del paste antes de que Enter pudiera aplicarse"
                 : "el resultado de Enter es ambiguo después del paste",
               forceTerminate: true,
+              enterAttempted,
             };
         }
       }
@@ -468,6 +482,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
         state: "ambiguous",
         detail: "falló el commit paste+Enter bajo la exclusión de input",
         forceTerminate: true,
+        enterAttempted,
       };
     } finally {
       const released = await releasePaneInputBarrier(
@@ -484,6 +499,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
             ? "la generación cambió antes de restaurar su flag exacto de input"
             : "tmux no acreditó la restauración exacta del flag/token de input",
           forceTerminate: !loginBlocked,
+          enterAttempted,
         };
       }
     }
@@ -491,6 +507,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       state: "ambiguous",
       detail: "el commit de input terminó sin postcondición",
       forceTerminate: true,
+      enterAttempted,
     };
   }
 
