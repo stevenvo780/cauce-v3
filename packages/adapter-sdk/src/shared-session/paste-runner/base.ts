@@ -54,6 +54,9 @@ export interface AcquireWait {
   focusSpent?: true; // The one focus key of this delivery went out: from then on an unfocused box is occupied.
 }
 
+/** How much of a transcript's end the late-envelope rescue reads before falling back to the whole file. */
+export const ENVELOPE_TAIL_BYTES = 4 * 1024 * 1024;
+
 export abstract class PasteSessionRunnerBase<E> {
   protected pending: SharedSessionDegradation | undefined;
   /** Pane PID from the previous turn, to detect that the TUI restarted on its own. */
@@ -218,20 +221,26 @@ export abstract class PasteSessionRunnerBase<E> {
     // Latest transcript/rollout files sort last. Finding the active one first avoids re-reading
     // years of history during exceptional recovery.
     for (const file of [...filesRead.value].reverse()) {
-      const sliceRead = await beforeDeadline(
-        this.options.transcript.read(file, 0),
-        this.quarantineDeadline(),
-      );
-      if (!sliceRead.completed || sliceRead.value === undefined) return undefined;
-      const outcome = findEnvelope(sliceRead.value.entries, correlationId);
-      if (outcome === undefined) continue;
-      if (outcome.kind !== "answer"
-        || !envelopeHasCorrelation(outcome.text, correlationId)) return undefined;
-      try {
-        validateStructuredOutput(JSON.parse(stripJsonFence(outcome.text)) as unknown);
-        return outcome.text;
-      } catch {
-        return undefined;
+      // The terminal envelope closes its log, so its tail is read first: a whole Muse session.jsonl
+      // (23 MB measured on operador, 2026-11-05) did not fit the quarantine deadline on a busy disk
+      // and kept a finished turn quarantined. Only if the tail lacks it is the whole file read.
+      const size = await fileSize(file);
+      for (const offset of size > ENVELOPE_TAIL_BYTES ? [size - ENVELOPE_TAIL_BYTES, 0] : [0]) {
+        const sliceRead = await beforeDeadline(
+          this.options.transcript.read(file, offset),
+          this.quarantineDeadline(),
+        );
+        if (!sliceRead.completed || sliceRead.value === undefined) return undefined;
+        const outcome = findEnvelope(sliceRead.value.entries, correlationId);
+        if (outcome === undefined) continue;
+        if (outcome.kind !== "answer"
+          || !envelopeHasCorrelation(outcome.text, correlationId)) return undefined;
+        try {
+          validateStructuredOutput(JSON.parse(stripJsonFence(outcome.text)) as unknown);
+          return outcome.text;
+        } catch {
+          return undefined;
+        }
       }
     }
     return undefined;
