@@ -19,6 +19,18 @@ export const LIVENESS_EVERY = 8;
  * the turn at once; only an unreadable answer waits, re-probing every poll.
  */
 export const LIVENESS_UNREADABLE_GRACE_MS = 90_000;
+/**
+ * How long an input-barrier acquisition whose result tmux lost is re-probed before the generation
+ * is quarantined. perseo 13:09Z / operador 16:52Z (9-nov): the hourly backup verification
+ * saturated server2's disk, tmux answered late, and each alias was quarantined until an operator
+ * removed the pending by hand although its composer was empty and no model had seen the prompt.
+ */
+export const BARRIER_RESOLUTION_BUDGET_MS = 75_000;
+/** tmux deadline of each re-probe in that budget; the ordinary 2 s is what the starved host missed. */
+export const BARRIER_RESOLUTION_PROBE_TIMEOUT_MS = 10_000;
+export const BARRIER_RESOLUTION_INTERVAL_MS = 2_500;
+/** Acquisitions recovered in-process per delivery before handing the retry to the store. */
+export const MAX_RECOVERED_BARRIER_ACQUISITIONS = 2;
 /** Un dialogo no se destraba esperando: rendirse pronto es lo que hace seguro el plazo largo. */
 export const ACQUIRE_MODAL_TIMEOUT_MS = 15_000;
 export const DEFAULT_CORRELATION_TIMEOUT_MS = 120 * 60_000;
@@ -126,6 +138,19 @@ export function postEnterCancelled(detail?: string): CommandRunResult {
   return result({
     cancelled: true,
     ...(detail === undefined ? {} : { stderr: detail }),
+  });
+}
+
+/**
+ * Same contract as `replacedBeforeSubmission`: `harnessStarted: false` with no output is what the
+ * adapter turns into the retryable PROCESS_EXIT_PREFLIGHT, so the store redelivers the turn.
+ */
+export function barrierLostBeforePaste(attempts: number): CommandRunResult {
+  return result({
+    exitCode: 1,
+    harnessStarted: false,
+    stderr: `tmux perdió ${String(attempts)} veces seguidas el resultado al adquirir la exclusión de input;`
+      + " cada vez se acreditó que la caja quedó intacta y no se pegó nada: la entrega no se ejecutó",
   });
 }
 

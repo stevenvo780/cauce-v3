@@ -43,6 +43,14 @@ export interface PasteSessionOptions<E> {
   readonly quarantineOperationTimeoutMs?: number;
   /** How long consecutive unreadable liveness probes are tolerated mid-turn (see LIVENESS_UNREADABLE_GRACE_MS). */
   readonly livenessGraceMs?: number;
+  /**
+   * Re-probe budget for an input-barrier acquisition whose result tmux lost (see
+   * BARRIER_RESOLUTION_BUDGET_MS). 0 disables the re-probes: a CAS that may have applied is
+   * quarantined at once, as before.
+   */
+  readonly barrierResolutionBudgetMs?: number;
+  /** tmux deadline of each of those re-probes (BARRIER_RESOLUTION_PROBE_TIMEOUT_MS). */
+  readonly barrierResolutionProbeTimeoutMs?: number;
   /** Injectable persistence to attest failures and disk locks in tests. */
   readonly quarantinePersistence?: QuarantinePersistence;
   /** Wait time between the paste and the Enter submission. */

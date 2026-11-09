@@ -28,8 +28,11 @@ export {
   mutateUnderInputBarrier,
   paneQuarantineState,
   releasePaneInputBarrier,
+  resolveAmbiguousBarrierAcquisition,
   sessionOption,
   setSessionOption,
+  type AmbiguousBarrierResolution,
+  type AmbiguousBarrierResolutionOptions,
   type PaneInputBarrier,
   type TmuxMutationState,
 } from "./tmux/mutation.js";

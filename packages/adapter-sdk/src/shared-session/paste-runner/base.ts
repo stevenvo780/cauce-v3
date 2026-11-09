@@ -26,7 +26,9 @@ import {
   paneGenerationKey,
   paneIdentityStillCurrent,
   paneQuarantineState,
+  resolveAmbiguousBarrierAcquisition,
   samePaneIdentity,
+  type AmbiguousBarrierResolution,
   type PaneIdentity,
 } from "../tmux.js";
 import type { PasteSessionOptions, PendingQuarantine, QuarantinePersistence } from "./contracts.js";
@@ -39,11 +41,15 @@ import {
 import {
   beforeDeadline,
   ACQUIRE_MODAL_TIMEOUT_MS,
+  BARRIER_RESOLUTION_BUDGET_MS,
+  BARRIER_RESOLUTION_INTERVAL_MS,
+  BARRIER_RESOLUTION_PROBE_TIMEOUT_MS,
   DEFAULT_ACQUIRE_TIMEOUT_MS,
   DEFAULT_GENERATING_WAIT_MS,
   DEFAULT_POLL_MS,
   fileSize,
   QUARANTINE_OPERATION_TIMEOUT_MS,
+  replacedBeforeSubmission,
   result,
 } from "./runtime.js";
 
@@ -304,19 +310,28 @@ export abstract class PasteSessionRunnerBase<E> {
       : { ok: false };
   }
 
-  /** Called only after proven no-paste or a correlated/generation-aware terminal boundary. */
-  protected async disarmPendingQuarantine(pending: PendingQuarantine): Promise<void> {
+  /**
+   * Called only after proven no-paste or a correlated/generation-aware terminal boundary.
+   * True when both the on-disk pending and this generation's tmux mark are credited as gone.
+   */
+  protected async disarmPendingQuarantine(
+    pending: PendingQuarantine,
+    timeoutMs = this.quarantineOperationTimeoutMs(),
+  ): Promise<boolean> {
+    let fileCleared = true;
     if (pending.file !== undefined) {
-      await beforeDeadline(
+      const cleared = await beforeDeadline(
         this.quarantinePersistence().clear(pending.file),
-        this.quarantineDeadline(),
+        Date.now() + Math.max(1, timeoutMs),
       );
+      fileCleared = cleared.completed && cleared.value === true;
     }
-    await clearCurrentPaneQuarantine(
+    const markCleared = await clearCurrentPaneQuarantine(
       this.options.tmux,
       pending.identity,
-      this.tmuxControl(),
+      { timeoutMs: Math.max(1, timeoutMs) },
     );
+    return fileCleared && markCleared;
   }
 
   protected async quarantineState(
@@ -512,23 +527,132 @@ export abstract class PasteSessionRunnerBase<E> {
   }
 
   /**
-   * Uncertain acquisition occurs BEFORE paste: no turn yet exists that would justify killing the
-   * TUI. The proposed token also doesn't prove ownership, so attempting `release` could enable or
-   * alter a foreign barrier. The durable pending is preserved and no compensatory mutation is
-   * performed on the human process.
+   * Resolves an input-barrier acquisition whose result tmux lost before falling back to the
+   * durable quarantine of `ambiguousBarrierAcquisitionState`.
+   *
+   * The paste only happens later, in `commitUnderInputBarrier`, so an ambiguous ACQUISITION never
+   * means a model received the prompt. When the uncertainty came before the CAS (or the CAS
+   * witnessed its rejection) the pane is untouched by construction; otherwise
+   * `resolveAmbiguousBarrierAcquisition` re-probes the exact generation with a generous budget.
+   * `retry` means the pane is proven free of our barrier, nothing was pasted and the pending was
+   * withdrawn: the caller may acquire again. Anything else is already the delivery's result.
+   */
+  protected async recoverLostBarrierAcquisition(
+    identity: PaneIdentity,
+    token: string,
+    mutationMayHaveApplied: boolean,
+    pending: PendingQuarantine,
+    request: CommandRunRequest,
+    detail: string,
+  ): Promise<{ readonly retry: true } | { readonly retry: false; readonly result: CommandRunResult }> {
+    const budgetMs = Math.max(0, this.options.barrierResolutionBudgetMs ?? BARRIER_RESOLUTION_BUDGET_MS);
+    const probeTimeoutMs = Math.max(
+      1,
+      this.options.barrierResolutionProbeTimeoutMs ?? BARRIER_RESOLUTION_PROBE_TIMEOUT_MS,
+    );
+    const resolution: AmbiguousBarrierResolution = mutationMayHaveApplied
+      ? await resolveAmbiguousBarrierAcquisition(this.options.tmux, identity, token, {
+        budgetMs,
+        probeTimeoutMs,
+        intervalMs: BARRIER_RESOLUTION_INTERVAL_MS,
+        sleep: this.options.sleep,
+        signal: request.signal,
+      })
+      : { state: "not_applied" };
+    switch (resolution.state) {
+      case "released":
+      case "not_applied": {
+        const withdrawn = await this.withdrawRecoveredPending(pending, probeTimeoutMs);
+        const how = resolution.state === "released"
+          ? "al re-sondear la generación exacta se acreditó que la barrera era propia y se liberó"
+          : mutationMayHaveApplied
+            ? "al re-sondear la generación exacta se acreditó que la barrera nunca se aplicó"
+            : "la duda fue anterior a la mutación (o tmux atestiguó su rechazo): la caja quedó intacta";
+        try {
+          this.options.onNotice?.(`${detail}; ${how}; no se pegó nada y se reintenta sin cuarentena`
+            + (withdrawn ? "" : `; no se pudo acreditar el retiro de quarantine-pending ${pending.correlationId}`));
+        } catch { /* A notice cannot prevent a delivery from running. */ }
+        return { retry: true };
+      }
+      case "busy":
+        await this.disarmPendingQuarantine(pending, probeTimeoutMs);
+        if (signalAborted(request.signal)) {
+          return { retry: false, result: result({ cancelled: true, harnessStarted: false }) };
+        }
+        return {
+          retry: false,
+          result: await this.degrade(
+            "input_busy",
+            "otra exclusión de input ya protege la caja; no se adopta ni se concatena",
+            request,
+          ),
+        };
+      case "replaced":
+        await this.disarmPendingQuarantine(pending, probeTimeoutMs);
+        return { retry: false, result: replacedBeforeSubmission() };
+      case "held":
+        return {
+          retry: false,
+          result: this.ambiguousBarrierAcquisitionState(identity, detail, request.signal.aborted, pending, true),
+        };
+      case "ambiguous":
+        return {
+          retry: false,
+          result: this.ambiguousBarrierAcquisitionState(
+            identity,
+            budgetMs > 0 && mutationMayHaveApplied && !request.signal.aborted
+              ? `${detail}; tampoco se acreditó al re-sondear la generación exacta durante`
+                + ` ${String(Math.round(budgetMs / 1_000))} s`
+              : detail,
+            request.signal.aborted,
+            pending,
+          ),
+        };
+    }
+  }
+
+  /** A pending left behind blocks every later delivery, so withdrawing it is retried a few times. */
+  private async withdrawRecoveredPending(pending: PendingQuarantine, timeoutMs: number): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await this.options.sleep(BARRIER_RESOLUTION_INTERVAL_MS);
+      if (await this.disarmPendingQuarantine(pending, timeoutMs)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Last resort for an acquisition whose result tmux lost: `recoverLostBarrierAcquisition` could
+   * not classify the exact generation within its budget, or proved the barrier ours but tmux
+   * refused to release it (`held`: hooks appeared). It still occurs BEFORE paste, so no turn
+   * exists that would justify killing the TUI: the durable pending is preserved and no
+   * compensatory mutation is performed on the human process.
+   *
+   * What the recovery treats as proof of ownership, and why it is one: the exact process
+   * generation (session/window/pane id + PID) carrying `@cauce_input_barrier` == OUR token. Only
+   * the acquisition CAS writes that option, only when it was empty, and the token is this
+   * attempt's fresh 256-bit random correlation id: no other runner, human or earlier attempt can
+   * have written that value. It is the very postcondition the accepted branch already credits
+   * ownership with; the lost answer only delayed reading it. The release is itself a CAS on that
+   * token and generation, so a token that changed in between is rejected and nothing foreign is
+   * enabled or deleted. Without that postcondition the token proves nothing, which is why this
+   * state never attempts a release.
    */
   protected ambiguousBarrierAcquisitionState(
     identity: PaneIdentity,
     detail: string,
     cancelled: boolean,
     pending: PendingQuarantine,
+    heldButUnreleasable = false,
   ): CommandRunResult {
     this.locallyQuarantined = identity;
     const durableBoundary = pending.file === undefined ? "tmux" : "disco";
     return result({
       ...(cancelled ? { cancelled: true } : { exitCode: 1 }),
-      stderr: `${detail}; no se acreditó ownership de la barrera y no se intentó liberarla ni `
-        + `terminar el pane; quarantine-pending queda durable en ${durableBoundary}`,
+      stderr: heldButUnreleasable
+        ? `${detail}; se acreditó que la barrera es propia, pero tmux no permitió liberarla sin`
+          + ` disparar hooks; no se terminó el pane y quarantine-pending queda durable en ${durableBoundary}`
+        : `${detail}; no se acreditó ownership de la barrera y no se intentó liberarla ni `
+          + `terminar el pane; quarantine-pending queda durable en ${durableBoundary}`,
     });
   }
 

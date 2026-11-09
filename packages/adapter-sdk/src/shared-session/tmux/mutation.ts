@@ -35,6 +35,14 @@ interface CasWitness {
 }
 
 const CAS_WITNESS_SETTLE_MS = 100;
+/**
+ * Floor for the witness waiters. Above it they follow the deadline of the command they witness:
+ * a waiter that gave up first turned a CAS that tmux DID run within its own deadline into
+ * `ambiguous`. On a host starved of I/O (Praxis 9-nov, backup verification at load ~13)
+ * just spawning the three clients took over a second. `finish` still reaps both waiters right
+ * after the command returns, so a longer life never makes the happy path slower.
+ */
+const CAS_WITNESS_MIN_TIMEOUT_MS = 1_000;
 
 function casWitness(): CasWitness {
   const nonce = randomBytes(32).toString("hex");
@@ -61,18 +69,23 @@ interface CasObservation {
  * waiter consumes it; pre-starting the clients also covers `kill-pane`/`kill-session` of the
  * last pane, where the server may disappear right after the mutation.
  */
-function observeCasWitness(tmux: TmuxController, witness: CasWitness): CasObservation {
+function observeCasWitness(
+  tmux: TmuxController,
+  witness: CasWitness,
+  commandTimeoutMs?: number,
+): CasObservation {
   const acceptedAbort = new AbortController();
   const rejectedAbort = new AbortController();
+  const waiterTimeoutMs = Math.max(CAS_WITNESS_MIN_TIMEOUT_MS, commandTimeoutMs ?? 0);
   const accepted = tmux.run(
     ["wait-for", witness.acceptedChannel],
     undefined,
-    { signal: acceptedAbort.signal, timeoutMs: 1_000 },
+    { signal: acceptedAbort.signal, timeoutMs: waiterTimeoutMs },
   );
   const rejected = tmux.run(
     ["wait-for", witness.rejectedChannel],
     undefined,
-    { signal: rejectedAbort.signal, timeoutMs: 1_000 },
+    { signal: rejectedAbort.signal, timeoutMs: waiterTimeoutMs },
   );
   let finished = false;
   return {
@@ -129,7 +142,7 @@ export async function atomicCas(
   control?: TmuxRunControl,
 ): Promise<AtomicCasResult> {
   const witness = casWitness();
-  const observation = observeCasWitness(tmux, witness);
+  const observation = observeCasWitness(tmux, witness, control?.timeoutMs);
   let result: TmuxResult | undefined;
   try {
     result = await tmux.run([
@@ -275,7 +288,20 @@ type PaneInputBarrierAcquireResult =
   | { readonly state: "busy" }
   | { readonly state: "not_applied" }
   | { readonly state: "unsafe_hooks" }
-  | { readonly state: "ambiguous" };
+  | {
+    readonly state: "ambiguous";
+    /**
+     * False when the uncertainty came before the barrier CAS was sent, or the CAS witnessed its
+     * rejected branch: then the pane was provably left untouched. True only when the CAS may have
+     * run (lost witness, or accepted without a credited postcondition); see
+     * `resolveAmbiguousBarrierAcquisition`.
+     */
+    readonly mutationMayHaveApplied: boolean;
+  };
+
+/** tmux format true when ANY input exclusion (barrier option, `input_off`, copy/view-mode) is present. */
+const INPUT_BARRIER_BUSY_CONDITION = `#{||:#{!=:#{pane_input_off},0},`
+  + `#{||:#{!=:#{pane_in_mode},0},#{!=:#{${INPUT_BARRIER_OPTION}},}}}`;
 
 const EMPTY_TMUX_HOOK_NAME_PATTERN = /^[a-z][a-z0-9-]*$/u;
 
@@ -374,9 +400,10 @@ export async function acquirePaneInputBarrier(
   const barrier = { identity, token } as const;
   const paneCondition = exactPaneCondition(identity, "full");
   const barrierCondition = inputBarrierCondition(barrier);
-  if (paneCondition === undefined || barrierCondition === undefined) {
-    return { state: "ambiguous" };
-  }
+  // Every `ambiguous` before the CAS below carries `mutationMayHaveApplied: false`: up to there
+  // only hookless probes (`if-shell -F` + `wait-for`) and `show-hooks` ran.
+  const untouched = { state: "ambiguous", mutationMayHaveApplied: false } as const;
+  if (paneCondition === undefined || barrierCondition === undefined) return untouched;
 
   // A foreign barrier / copy-mode is a credit-worthy denial even if the administrator has hooks.
   // Classifying it before the inventory preserves guarantee R6: no hookable command is run, and
@@ -389,9 +416,8 @@ export async function acquirePaneInputBarrier(
     control,
   );
   if (sameIdentity === false) return { state: "not_applied" };
-  if (sameIdentity !== true) return { state: "ambiguous" };
-  const busyCondition = `#{||:#{!=:#{pane_input_off},0},`
-    + `#{||:#{!=:#{pane_in_mode},0},#{!=:#{${INPUT_BARRIER_OPTION}},}}}`;
+  if (sameIdentity !== true) return untouched;
+  const busyCondition = INPUT_BARRIER_BUSY_CONDITION;
   const busyBeforeHooks = await probeTmuxFormat(
     tmux,
     identity.paneId,
@@ -399,7 +425,7 @@ export async function acquirePaneInputBarrier(
     control,
   );
   if (busyBeforeHooks === true) return { state: "busy" };
-  if (busyBeforeHooks !== false) return { state: "ambiguous" };
+  if (busyBeforeHooks !== false) return untouched;
 
   if (!await inputBarrierHooksAreEmpty(tmux, identity.paneId, control)) {
     return { state: "unsafe_hooks" };
@@ -422,9 +448,9 @@ export async function acquirePaneInputBarrier(
     const postcondition = `#{&&:${paneCondition},${barrierCondition}}`;
     return await probeTmuxFormat(tmux, identity.paneId, postcondition, control) === true
       ? { state: "acquired", barrier }
-      : { state: "ambiguous" };
+      : { state: "ambiguous", mutationMayHaveApplied: true };
   }
-  if (mutation.branch !== "rejected") return { state: "ambiguous" };
+  if (mutation.branch !== "rejected") return { state: "ambiguous", mutationMayHaveApplied: true };
 
   // The rejected branch did not run any pane command. Classifying the reason is also done with
   // `if-shell`+`wait-for`: neither `display-message` nor `list-panes` can fire adversary hooks.
@@ -435,14 +461,125 @@ export async function acquirePaneInputBarrier(
     control,
   );
   if (sameIdentityAfterRejection === false) return { state: "not_applied" };
-  if (sameIdentityAfterRejection !== true) return { state: "ambiguous" };
+  if (sameIdentityAfterRejection !== true) return untouched;
   const busyAfterRejection = await probeTmuxFormat(
     tmux,
     identity.paneId,
     busyCondition,
     control,
   );
-  return busyAfterRejection === true ? { state: "busy" } : { state: "ambiguous" };
+  return busyAfterRejection === true ? { state: "busy" } : untouched;
+}
+
+/** How an acquisition whose result tmux lost was finally classified. */
+export type AmbiguousBarrierResolution =
+  /** Our token was on the exact generation and `releasePaneInputBarrier` restored the pane. */
+  | { readonly state: "released" }
+  /** The exact generation is free (no barrier, input enabled, no mode): the CAS never applied. */
+  | { readonly state: "not_applied" }
+  /** A FOREIGN exclusion protects the pane (another token, `input_off` without ours, a mode). */
+  | { readonly state: "busy" }
+  /** The process generation the CAS was fenced to is no longer the one in the pane. */
+  | { readonly state: "replaced" }
+  /** Our token is there, but tmux refused to release it (hooks appeared): nothing more is tried. */
+  | { readonly state: "held" }
+  /** Still undeterminable when the budget ran out or the signal aborted. */
+  | { readonly state: "ambiguous" };
+
+export interface AmbiguousBarrierResolutionOptions {
+  /** Total time to keep re-probing; 0 disables the resolution and answers `ambiguous` at once. */
+  readonly budgetMs: number;
+  /** tmux deadline of each probe and of the release (generous: a starved host is the usual cause). */
+  readonly probeTimeoutMs: number;
+  /** Pause between rounds that could not classify the pane. */
+  readonly intervalMs: number;
+  readonly sleep: (ms: number) => Promise<void>;
+  /** Aborts the PROBES; a release already sent runs to its end, like the commit's own release. */
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Re-classifies the exact generation after `acquirePaneInputBarrier` returned `ambiguous` with
+ * `mutationMayHaveApplied`, instead of quarantining the TUI on the first lost answer.
+ *
+ * Nothing is pasted until the barrier is held, so the only open question is whether OUR barrier
+ * ended up on the pane. Each round asks, with the same hookless `if-shell -F` + `wait-for` probes
+ * the acquisition uses, and stops at the first credited answer:
+ * 1. exact process generation AND `@cauce_input_barrier` == our token → the barrier is ours (the
+ *    postcondition the accepted branch credits; see `ambiguousBarrierAcquisitionState`). It is
+ *    released with `releasePaneInputBarrier`, itself a CAS on that token that re-checks hooks.
+ * 2. the process generation is gone → `replaced` (the CAS was fenced to the old one);
+ * 3. free: no barrier, input enabled, no mode → `not_applied`;
+ * 4. a foreign exclusion (any token but ours, `input_off`, a mode) → `busy`, left untouched.
+ * A probe without an answer, or a state that moved between probes, starts another round after
+ * `intervalMs`, until `budgetMs` runs out.
+ *
+ * Why a lost CAS should not land AFTER a "free" verdict: CliTmux resolves only once the CAS
+ * client exited, so every probe here is a later client, and tmux serves client command queues in
+ * connection order and frees the queue of a client it lost: whatever the dead client delivered
+ * ran before the probe or never runs. That ordering is tmux's, not something this code proves. If
+ * it ever failed, our token would appear after a `not_applied` verdict: a fenced pane that later
+ * acquisitions read as busy and never paste into, i.e. no worse than the quarantine it replaces.
+ */
+export async function resolveAmbiguousBarrierAcquisition(
+  tmux: TmuxController,
+  identity: PaneIdentity,
+  token: string,
+  options: AmbiguousBarrierResolutionOptions,
+): Promise<AmbiguousBarrierResolution> {
+  const processCondition = exactPaneCondition(identity, "process");
+  if (processCondition === undefined || !INPUT_BARRIER_TOKEN_PATTERN.test(token)
+    || options.budgetMs <= 0) return { state: "ambiguous" };
+  const ownedCondition = `#{&&:${processCondition},#{==:#{${INPUT_BARRIER_OPTION}},${token}}}`;
+  const freeCondition = `#{&&:${processCondition},#{&&:#{==:#{pane_input_off},0},`
+    + `#{&&:#{==:#{pane_in_mode},0},#{==:#{${INPUT_BARRIER_OPTION}},}}}}`;
+  // Our own token is excluded explicitly: a late look at it must never be mistaken for a foreign one.
+  const foreignCondition = `#{&&:${processCondition},`
+    + `#{&&:#{!=:#{${INPUT_BARRIER_OPTION}},${token}},${INPUT_BARRIER_BUSY_CONDITION}}}`;
+  const deadline = Date.now() + options.budgetMs;
+  const probe = async (condition: string): Promise<boolean | undefined> => probeTmuxFormat(
+    tmux,
+    identity.paneId,
+    condition,
+    {
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      timeoutMs: Math.max(1, Math.min(options.probeTimeoutMs, deadline - Date.now())),
+    },
+  );
+  let releaseSent = false;
+  let releaseRefused = false;
+  for (let round = 0; ; round += 1) {
+    if (round > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0 || options.signal?.aborted === true) return { state: "ambiguous" };
+      await options.sleep(Math.min(Math.max(0, options.intervalMs), remaining));
+    }
+    if (options.signal?.aborted === true || Date.now() >= deadline) return { state: "ambiguous" };
+    const owned = await probe(ownedCondition);
+    if (owned === undefined) continue;
+    if (owned) {
+      // A second refusal means hooks (or a token that moved and came back): stop and let the
+      // caller keep the durable quarantine instead of spinning on a barrier it cannot restore.
+      if (releaseRefused) return { state: "held" };
+      releaseSent = true;
+      const released = await releasePaneInputBarrier(
+        tmux,
+        { identity, token },
+        { timeoutMs: Math.max(1, options.probeTimeoutMs) },
+      );
+      if (released === "applied") return { state: "released" };
+      if (released === "not_applied") releaseRefused = true;
+      continue;
+    }
+    const alive = await probe(processCondition);
+    if (alive === undefined) continue;
+    if (!alive) return { state: "replaced" };
+    const free = await probe(freeCondition);
+    // Free after a release whose own answer was lost: that release is what freed it.
+    if (free === true) return { state: releaseSent ? "released" : "not_applied" };
+    if (free === undefined) continue;
+    if (await probe(foreignCondition) === true) return { state: "busy" };
+  }
 }
 
 /**

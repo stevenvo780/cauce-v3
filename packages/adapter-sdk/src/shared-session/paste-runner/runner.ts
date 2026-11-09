@@ -27,7 +27,16 @@ import {
 } from "../tmux.js";
 import type { PasteSessionOptions, PendingQuarantine } from "./contracts.js";
 import { PasteSessionHarvestRunner, type WakeCommit } from "./harvest.js";
-import { beforeDeadline, replacedBeforeSubmission, result, SETTLE_MS, turnBudgetMs } from "./runtime.js";
+import {
+  BARRIER_RESOLUTION_INTERVAL_MS,
+  barrierLostBeforePaste,
+  beforeDeadline,
+  MAX_RECOVERED_BARRIER_ACQUISITIONS,
+  replacedBeforeSubmission,
+  result,
+  SETTLE_MS,
+  turnBudgetMs,
+} from "./runtime.js";
 import { assertCommandPins } from '../../sdk/command-pins.js';
 import { ProcessExecutionError } from '../../sdk/errors.js';
 import { providerLoginError } from '../provider-login.js';
@@ -128,6 +137,7 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
       readonly promptFile: string | undefined;
     } | undefined;
     let stagedFile: string | undefined; // A long prompt staged for an attempt that never pasted must not outlive it.
+    let lostAcquisitions = 0; // Acquisitions whose lost answer was resolved as "nothing applied" in this delivery.
     try {
       while (attempt === undefined) {
         const acquired = await this.acquireInputBox(
@@ -220,12 +230,22 @@ export class PasteSessionRunner<E> extends PasteSessionHarvestRunner<E> implemen
           );
         }
         if (acquiredBarrier.state === "ambiguous") {
-          return this.ambiguousBarrierAcquisitionState(
+          // Nothing is pasted before `commitUnderInputBarrier`: re-classify before quarantining.
+          const recovered = await this.recoverLostBarrierAcquisition(
             identity,
-            "tmux perdió el resultado al adquirir la exclusión real de input",
-            request.signal.aborted,
+            correlationId,
+            acquiredBarrier.mutationMayHaveApplied,
             pending,
+            request,
+            "tmux perdió el resultado al adquirir la exclusión real de input",
           );
+          if (!recovered.retry) return recovered.result;
+          if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+          lostAcquisitions += 1;
+          if (lostAcquisitions > MAX_RECOVERED_BARRIER_ACQUISITIONS) return barrierLostBeforePaste(lostAcquisitions);
+          await this.options.sleep(BARRIER_RESOLUTION_INTERVAL_MS); // A starved host gets a breath before the next try.
+          if (signalAborted(request.signal)) return result({ cancelled: true, harnessStarted: false });
+          continue;
         }
         if (acquiredBarrier.state !== "acquired") { // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- A tmux boundary must fail closed if a runtime implementation returns a state outside its declared union.
           return await this.ambiguousCommittedState(

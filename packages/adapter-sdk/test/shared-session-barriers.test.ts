@@ -10,10 +10,12 @@ import {
   acquirePaneInputBarrier,
   pastePrompt,
   releasePaneInputBarrier,
+  resolveAmbiguousBarrierAcquisition,
   sendEnter,
   paneIdentity,
 } from "../src/shared-session/tmux.js";
 import type { TmuxController, TmuxResult } from "../src/shared-session/tmux.js";
+import { exactPaneCondition, probeTmuxFormat } from "../src/shared-session/tmux/mutation.js";
 import {
   FakeTmux,
   ambiguousTmuxResult,
@@ -133,14 +135,18 @@ test("copy-mode en el runner degrada sin liberar barrera inexistente ni terminar
   assert.equal(tmux.used("paste-buffer"), false);
 });
 
-test("adquisición no acreditada conserva pending sin release ni terminación", async () => {
+test("adquisición no acreditada con la caja intacta: reintento con tope, sin cuarentena, release ni terminación", async () => {
   const { home, workspace } = await freshState("input-barrier-no-acreditada");
   const tmux = new FakeTmux();
   const originalRun = tmux.run.bind(tmux);
+  let lost = 0;
   tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
     if (args[0] === "if-shell"
       && args.some((argument) => argument.includes("@cauce_input_barrier")
-        && argument.includes("select-pane -d"))) return ok(1);
+        && argument.includes("select-pane -d"))) {
+      lost += 1;
+      return ok(1);
+    }
     return originalRun(args, stdin, control);
   };
   const runner = claudeRunner({ alias: "kratos", home, workspace, tmux });
@@ -154,14 +160,18 @@ test("adquisición no acreditada conserva pending sin release ni terminación", 
     signal: new AbortController().signal,
   });
 
+  assert.equal(lost, 3, "dos recuperaciones en proceso y la tercera pasa al store");
   assert.equal(outcome.exitCode, 1);
-  assert.equal(outcome.harnessStarted, undefined);
-  assert.match(outcome.stderr, /no se acreditó ownership.*no se intentó liberarla ni terminar/u);
+  assert.equal(outcome.harnessStarted, false, "nada se pegó: el motor puede reintentar");
+  assert.match(outcome.stderr, /3 veces seguidas.*no se pegó nada/u);
   assert.equal(tmux.sessionExists, true);
   assert.equal(tmux.inputOff, false);
   assert.equal(tmux.paneOptions.has("@cauce_input_barrier"), false);
+  assert.equal(tmux.sessionOptions.has("@cauce_quarantined_pane"), false, "el pending de tmux se retiró");
   assert.equal(tmux.calls.some((call) => call[0] === "kill-pane"), false);
   assert.equal(tmux.calls.some((call) => call[0] === "select-pane" && call.includes("-e")), false);
+  assert.equal(tmux.used("paste-buffer"), false);
+  assert.equal(runner.takeDegradation(), undefined);
 });
 
 test(
@@ -424,3 +434,227 @@ test("la mutación atómica rechaza respawn-pane después del probe y antes de E
   assert.equal(pasteTmux.inputContent, "");
   assert.equal(pasteTmux.buffers.size, 0);
 });
+
+const RESOLVING_IDENTITY = {
+  sessionId: "$0",
+  sessionName: "cauce-kratos",
+  windowId: "@0",
+  windowName: "agente",
+  paneId: "%0",
+  panePid: "4242",
+} as const;
+const OWN_TOKEN = "d".repeat(64);
+const RESOLUTION = {
+  budgetMs: 5_000,
+  probeTimeoutMs: 1_000,
+  intervalMs: 0,
+  sleep: (): Promise<void> => Promise.resolve(),
+} as const;
+
+/** The next `count` hookless probes time out as on a starved host; Infinity silences them all. */
+function silenceProbes(tmux: FakeTmux, count: number): { readonly remaining: () => number } {
+  let remaining = count;
+  const originalRun = tmux.run.bind(tmux);
+  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+    if (remaining > 0 && args[0] === "if-shell"
+      && /^wait-for -S cauce-cas-v2-[a-f0-9]{64}-accepted$/u.test(args.at(-2) ?? "")) {
+      remaining -= 1;
+      return ambiguousTmuxResult("tmux client timed_out");
+    }
+    return originalRun(args, stdin, control);
+  };
+  return { remaining: () => remaining };
+}
+
+function assertHooklessReads(tmux: FakeTmux, label: string): void {
+  assert.equal(
+    tmux.calls.some((call) => call[0] !== undefined && ["display-message", "list-panes", "run-shell"].includes(call[0])),
+    false,
+    `${label}: la resolución sólo usa if-shell -F + wait-for`,
+  );
+}
+
+test("los testigos viven lo que su comando: tmux lento dentro del plazo no vuelve ambiguo un sondeo", async () => {
+  const tmux = new FakeTmux();
+  const originalRun = tmux.run.bind(tmux);
+  tmux.run = async (args, stdin, control): Promise<TmuxResult> => {
+    // Starved host: the if-shell client needs longer than the old fixed 1 s witness life.
+    if (args[0] === "if-shell") await new Promise((resolveSlow) => setTimeout(resolveSlow, 1_300));
+    return originalRun(args, stdin, control);
+  };
+
+  const condition = exactPaneCondition(RESOLVING_IDENTITY, "process");
+  assert.ok(condition);
+  assert.equal(await probeTmuxFormat(tmux, "%0", condition, { timeoutMs: 3_000 }), true);
+});
+
+test("resolución: el token propio en la generación exacta acredita ownership aunque los primeros sondeos fallen", async () => {
+  const tmux = new FakeTmux();
+  tmux.inputOff = true;
+  tmux.paneOptions.set("@cauce_input_barrier", OWN_TOKEN);
+  const silenced = silenceProbes(tmux, 2);
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, RESOLUTION),
+    { state: "released" },
+  );
+  assert.equal(silenced.remaining(), 0, "hizo falta re-sondear");
+  assert.equal(tmux.inputOff, false);
+  assert.equal(tmux.paneOptions.has("@cauce_input_barrier"), false);
+  assertHooklessReads(tmux, "propia");
+});
+
+test("resolución: la generación exacta libre prueba que la CAS no se aplicó y no se muta nada", async () => {
+  const tmux = new FakeTmux();
+  silenceProbes(tmux, 1);
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, RESOLUTION),
+    { state: "not_applied" },
+  );
+  assert.equal(tmux.used("select-pane"), false);
+  assert.equal(tmux.used("set-option"), false);
+  assertHooklessReads(tmux, "libre");
+});
+
+test("resolución: una exclusión ajena es busy y queda intacta", async () => {
+  const scenarios = [
+    { name: "token ajeno", inputOff: true, paneInMode: false, token: "f".repeat(64) },
+    { name: "input_off sin token", inputOff: true, paneInMode: false },
+    { name: "copy-mode", inputOff: false, paneInMode: true },
+  ] as const;
+  for (const scenario of scenarios) {
+    const tmux = new FakeTmux();
+    tmux.inputOff = scenario.inputOff;
+    tmux.paneInMode = scenario.paneInMode;
+    const token = "token" in scenario ? scenario.token : undefined;
+    if (token !== undefined) tmux.paneOptions.set("@cauce_input_barrier", token);
+
+    assert.deepEqual(
+      await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, RESOLUTION),
+      { state: "busy" },
+      scenario.name,
+    );
+    assert.equal(tmux.inputOff, scenario.inputOff, scenario.name);
+    assert.equal(tmux.paneInMode, scenario.paneInMode, scenario.name);
+    assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), token, scenario.name);
+    assert.equal(tmux.used("select-pane"), false, scenario.name);
+    assert.equal(tmux.used("set-option"), false, scenario.name);
+    assertHooklessReads(tmux, scenario.name);
+  }
+});
+
+test("resolución: otro proceso en el pane es replaced y no se toca", async () => {
+  const tmux = new FakeTmux();
+  tmux.respawnPane();
+  tmux.inputOff = true;
+  tmux.paneOptions.set("@cauce_input_barrier", OWN_TOKEN);
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, RESOLUTION),
+    { state: "replaced" },
+  );
+  assert.equal(tmux.inputOff, true, "la generación nueva no se habilita ni se desarma");
+  assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), OWN_TOKEN);
+  assert.equal(tmux.used("select-pane"), false);
+});
+
+test("resolución: sin respuesta en todo el plazo sigue ambigua y no libera; plazo 0 ni sondea", async () => {
+  const tmux = new FakeTmux();
+  tmux.inputOff = true;
+  tmux.paneOptions.set("@cauce_input_barrier", OWN_TOKEN);
+  silenceProbes(tmux, Number.POSITIVE_INFINITY);
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, { ...RESOLUTION, budgetMs: 300 }),
+    { state: "ambiguous" },
+  );
+  assert.equal(tmux.inputOff, true);
+  assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), OWN_TOKEN);
+  assert.equal(tmux.used("select-pane"), false);
+
+  const untouched = new FakeTmux();
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(untouched, RESOLVING_IDENTITY, OWN_TOKEN, { ...RESOLUTION, budgetMs: 0 }),
+    { state: "ambiguous" },
+  );
+  assert.deepEqual(untouched.calls, []);
+});
+
+test("resolución: si tmux no deja liberar la barrera propia (hook nuevo) queda held e intacta", async () => {
+  const tmux = new FakeTmux();
+  tmux.inputOff = true;
+  tmux.paneOptions.set("@cauce_input_barrier", OWN_TOKEN);
+  tmux.configuredInputHooks.add("after-select-pane");
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, RESOLUTION),
+    { state: "held" },
+  );
+  assert.equal(tmux.inputOff, true);
+  assert.equal(tmux.paneOptions.get("@cauce_input_barrier"), OWN_TOKEN);
+  assert.equal(tmux.configuredInputHooks.has("after-select-pane"), true);
+  assert.equal(tmux.used("select-pane"), false);
+});
+
+test("resolución: abortar corta el re-sondeo sin esperar el plazo", async () => {
+  const tmux = new FakeTmux();
+  silenceProbes(tmux, Number.POSITIVE_INFINITY);
+  const controller = new AbortController();
+  setTimeout(() => { controller.abort(); }, 30);
+  const started = Date.now();
+
+  assert.deepEqual(
+    await resolveAmbiguousBarrierAcquisition(tmux, RESOLVING_IDENTITY, OWN_TOKEN, {
+      ...RESOLUTION,
+      budgetMs: 60_000,
+      signal: controller.signal,
+    }),
+    { state: "ambiguous" },
+  );
+  assert.ok(Date.now() - started < 2_000);
+});
+
+test(
+  "tmux real: la resolución libera solo la barrera propia y deja intacta una ajena sin lecturas con hook",
+  async () => {
+    const socket = `cauce-resolution-${String(process.pid)}-${randomUUID().slice(0, 8)}`;
+    const tmux = new CliTmux(socket);
+    try {
+      assert.equal((await tmux.run([
+        "new-session", "-d", "-s", "resolution", "-n", "agente", "sleep 30",
+      ])).exitCode, 0);
+      const identity = await paneIdentity(tmux, "resolution:agente");
+      assert.ok(identity);
+      const initial = await exactTmuxPaneState(tmux, identity.paneId);
+      const acquired = await acquirePaneInputBarrier(tmux, identity, OWN_TOKEN);
+      assert.equal(acquired.state, "acquired");
+      assert.notEqual(await exactTmuxPaneState(tmux, identity.paneId), initial);
+
+      // The acquisition's answer is treated as lost: only the re-probes can credit the barrier.
+      assert.deepEqual(
+        await resolveAmbiguousBarrierAcquisition(tmux, identity, OWN_TOKEN, RESOLUTION),
+        { state: "released" },
+      );
+      assert.equal(await exactTmuxPaneState(tmux, identity.paneId), initial);
+
+      assert.equal((await tmux.run([
+        "set-option", "-p", "-t", identity.paneId, "@cauce_input_barrier", "f".repeat(64),
+      ])).exitCode, 0);
+      const foreign = await exactTmuxPaneState(tmux, identity.paneId);
+      const screen = await tmux.run(["capture-pane", "-p", "-t", identity.paneId]);
+      assert.equal((await tmux.run([
+        "set-hook", "-g", "after-display-message", `send-keys -t ${identity.paneId} X X`,
+      ])).exitCode, 0);
+      assert.deepEqual(
+        await resolveAmbiguousBarrierAcquisition(tmux, identity, OWN_TOKEN, RESOLUTION),
+        { state: "busy" },
+      );
+      assert.equal((await tmux.run(["set-hook", "-gu", "after-display-message"])).exitCode, 0);
+      assert.equal(await exactTmuxPaneState(tmux, identity.paneId), foreign);
+      assert.deepEqual(await tmux.run(["capture-pane", "-p", "-t", identity.paneId]), screen);
+    } finally {
+      await tmux.run(["kill-server"]).catch(() => undefined);
+    }
+  },
+);
